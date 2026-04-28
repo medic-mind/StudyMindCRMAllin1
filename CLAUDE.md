@@ -31,3 +31,28 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 6. **The booking site is read mostly.** We sync from booking.studymind.co.uk and surface its data. Writes back are scoped, explicit, and logged.
 7. **Background jobs do the work, request handlers stay thin.** API routes verify the signature, persist the raw payload, enqueue an Inngest job, return 200. Nothing else.
 8. **Style.** Small functions, descriptive names, no clever tricks. Optimise for the next engineer reading this in six months.
+
+---
+
+## 3. Tech stack (locked decisions)
+
+| Layer | Choice | Rationale |
+|---|---|---|
+| Framework | Next.js 15 App Router, TypeScript strict | Single deployable, RSC for fast contact lists, mature on Railway |
+| UI | Tailwind CSS + shadcn/ui + Radix primitives | Fast to build, accessible by default, easy to theme |
+| Forms | React Hook Form + Zod | Schema first, end to end typesafe |
+| DB | PostgreSQL on Railway | Plan for read replica from month 6 |
+| ORM | Prisma | Migrations, typesafe queries, broad team familiarity |
+| Background jobs | Inngest (chosen over Trigger.dev) | Better fan out, native step retries, cleaner local dev |
+| Auth | Clerk | SSO, MFA, RBAC, audit hooks out of the box |
+| File and audio storage | AWS S3 (eu-west-2) | Call recordings, email attachments, DSAR exports |
+| Encryption (field level) | AWS KMS envelope encryption | Safeguarding notes, EHCP extracts |
+| Email transactional | Resend | Outbound system email, not Gmail sync |
+| Observability | Sentry (errors), Axiom (logs), OpenTelemetry traces | Required from day one |
+| AI | OpenAI gpt-4o, gpt-4o-mini, Whisper | Mini for cheap classification, 4o for drafting |
+| Hosting | Railway (services: web, worker, postgres, redis) | Single platform for the whole stack |
+| Cache and rate limit | Redis on Railway (Upstash compatible) | Inngest queue, rate limit windows, response cache |
+
+**No new dependencies without an ADR.** See `docs/adr/`.
+
+> **Hosting note.** Frontend and backend live in this Next.js app on Railway. We do not use Supabase, Firebase, or any BaaS. Postgres is owned by us on Railway; row level security is enforced at the application layer through tRPC procedures and `packages/core/auth/policies.ts`, not in the database.
