@@ -493,3 +493,39 @@ OpenAI for everything AI today. Models per task:
 ### 19.2 Schema reference (top tables)
 
 `Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`. Definitive shape: `prisma/schema.prisma`.
+
+---
+
+## 20. Auth, RBAC, and access control
+
+**Auth.** Clerk handles sign in, MFA (mandatory for all users), session management.
+
+**Roles.** `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`.
+
+**Permission model.** RBAC with attribute checks on top.
+- Roles grant action lists (e.g. `finance` can `charge.refund`).
+- Attribute checks gate per-row access (e.g. only the assigned `dsl_user_id` can read `safeguarding_notes_encrypted`).
+- Never check permissions in components. Check in the tRPC procedure or server action. Components trust the server.
+
+**Audit.** Every read of a minor's profile, every write to a FinancialAccount, every safeguarding read, every export, lands in `AuditLogEntry`. The log is append only and partitioned by month.
+
+### 20.1 Permission matrix (high level)
+
+| Action | admin | ops_manager | agent | finance | dsl | read_only |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| `contact.read` (non-minor) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `contact.read` (minor) | ✓ | ✓ | ✓ (audited) | ✓ (audited) | ✓ (audited) | — |
+| `contact.write` | ✓ | ✓ | ✓ | — | — | — |
+| `family.merge` | ✓ | ✓ | — | — | — | — |
+| `interaction.create` | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `interaction.delete` | ✓ | — | — | — | — | — |
+| `charge.create_link` | ✓ | ✓ | ✓ | ✓ | — | — |
+| `charge.refund` | ✓ | — | — | ✓ | — | — |
+| `subscription.cancel` | ✓ | ✓ | — | ✓ | — | — |
+| `safeguarding.flag` | ✓ | ✓ | ✓ | — | ✓ | — |
+| `safeguarding.read_notes` | ✓ | — | — | — | ✓ (assigned only) | — |
+| `dsar.export` | ✓ | — | — | — | — | — |
+| `audit.read` | ✓ | ✓ | — | ✓ | ✓ (own) | — |
+| `settings.write` | ✓ | — | — | — | — | — |
+
+The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch.
