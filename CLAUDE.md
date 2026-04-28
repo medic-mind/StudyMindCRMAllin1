@@ -297,3 +297,19 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 **Reconciliation.** Allocation of a payment to bookings is one-to-many. When a payment settles, the reconciliation job allocates against the oldest unallocated booking line first (FIFO), and creates `Allocation` rows. Manual override is allowed and audit-logged.
 
 **Fixtures.** Sanitised payloads in `__tests__/fixtures/gocardless/`. Include both happy path and `late_failure_settled` to keep the reversal flow honest.
+
+---
+
+## 10. Aircall playbook
+
+**Subscribed events:** `call.created`, `call.ringing_on_agent`, `call.answered`, `call.hungup`, `call.ended`, `call.voicemail_left`, `call.tagged`, `call.commented`. If AI Assist is enabled on the line, also `transcription.created`.
+
+**Transcripts.** AI Assist gives us transcripts and summaries directly. If a line does not have AI Assist, we fall back: download `recording_url` from `call.ended`, push to S3 (`aircall/recordings/{call_id}`), send to Whisper via `packages/ai/transcribe.ts`, then to gpt-4o-mini for outcome classification (voicemail vs human, sentiment, suggested follow-up). The decision tree is in `packages/integrations/aircall/jobs.ts`.
+
+**Disabled webhooks.** Aircall disables a webhook after 10 consecutive failures. We monitor failure rate per webhook in Axiom and re-enable through the Public API if it ever flips. Runbook: `docs/runbooks/aircall-webhook-disabled.md`.
+
+**Recordings retention.** Deleting a recording in Aircall also deletes the transcript and AI insights forever. We persist a copy in S3 first if the parent contract requires retention beyond Aircall's window. The S3 bucket has bucket-level KMS encryption and lifecycle rules per contract.
+
+**Linking calls to Contacts.** Match by E.164 phone number. If multiple Contacts share a number (rare — happens for shared family lines), we attach the call to the Family and prompt the agent to assign.
+
+**Fixtures.** Real call payloads in `__tests__/fixtures/aircall/`. Numbers and names sanitised. Include voicemail and missed-call cases — they have different reconciliation rules than answered calls.
