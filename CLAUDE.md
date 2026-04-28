@@ -427,3 +427,45 @@ Every async unit of work is an Inngest function. Conventions:
 ### 17.2 Failure semantics
 
 A failed step retries with exponential backoff up to 6 attempts. After exhaustion the function lands in the dead-letter view with the original event payload. Dead-lettered events are surfaced in the on-call dashboard; we never silently drop work. Replays are explicit, audit-logged, and idempotent.
+
+---
+
+## 18. AI workflows
+
+OpenAI for everything AI today. Models per task:
+
+| Task | Model | Why |
+|---|---|---|
+| Call outcome classification (voicemail vs human) | gpt-4o-mini | Cheap, binary plus a label |
+| Slack summary parser | gpt-4o-mini | Structured extraction, low stakes |
+| Contact merge suggestion | gpt-4o-mini | Fast, surfaces candidates only — humans decide |
+| Status summary (2 sentence header) | gpt-4o-mini | High volume, low complexity |
+| Reply draft (email and Trengo) | gpt-4o | Quality matters, agent reads and edits |
+| Tender response drafting | gpt-4o | High stakes, long form, references house style |
+| Intent classifier (inbound message) | gpt-4o-mini | Routes to right team |
+| Churn score | gpt-4o-mini | Aggregates signals into a score |
+| Audio transcription (Aircall fallback) | Whisper | Only used when AI Assist not available |
+
+### 18.1 Prompt rules
+
+- Every prompt lives in `packages/ai/prompts/<task>.ts` as a typed function. No prompts inline in handlers.
+- Every AI call has a Zod output schema. We use `response_format: json_schema` (Structured Outputs) where possible so the model returns parseable JSON.
+- Every AI call logs: model, prompt version, input token count, output token count, latency, cost estimate, outcome.
+- Never feed safeguarding fields into a prompt. Those are encrypted; AI cannot see them.
+- Temperature defaults to 0.2 unless the task is creative drafting (then 0.7).
+
+### 18.2 Confidence and human in the loop
+
+- AI output below the task threshold lands in a triage queue, not in production data.
+- Merge suggestions, intent routing for safeguarding, and tender drafts are always human reviewed before they take effect.
+- "Confidence" is task-specific. For classifiers we use the model's logprob proxy; for extraction we score on schema completeness and presence of required fields.
+
+### 18.3 AI safety and evaluation
+
+- **Prompt versioning.** Every prompt has a semantic version; production calls record the version used. Rolling out a new prompt is a code change, reviewed and deployed via the normal pipeline. No live prompt edits in production.
+- **Eval harness.** `packages/ai/evals/` holds sets of fixtures and expected outputs per task. CI runs evals on every PR that touches `packages/ai/`. A regression beyond the per-task tolerance fails the build.
+- **Drift detection.** Production samples a fraction of AI outputs into `packages/ai/evals/drift/` automatically. Reviewers triage weekly; a confirmed drift opens a prompt issue.
+- **Red team.** Quarterly we run an internal red team pass: prompt injection, jailbreak attempts, PII leakage, and safeguarding bypass via creative input. Findings become test cases.
+- **Cost guardrail.** A daily cap per task category in `packages/ai/budget.ts`. Exceeding the cap puts the task into a degraded mode (skip, queue, or fall back to mini) and pages finance + tech lead.
+- **No PII in prompts unless necessary.** When sending family-identifying data, redact what is not needed. Email addresses and minor names are minimised.
+- **Logging.** AI logs are kept 90 days in Axiom and indexed by `prompt_version` and `task`. Beyond that, samples kept for evals only, with names redacted.
