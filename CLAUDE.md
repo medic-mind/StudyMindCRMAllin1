@@ -744,3 +744,53 @@ Violations of an SLO open a ticket automatically. Three consecutive quarter-miss
 **Performance budgets.** Critical pages (Inbox, Family, Finance) ship with a Lighthouse CI budget. Largest contentful paint under 2 s on a throttled fast 3G profile. Bundle size budgets per route segment, enforced in CI.
 
 **RSC ↔ client data boundary.** Never send full domain entities to the client when a view-model would do. View-models live in `apps/web/lib/view-models/<domain>.ts` and are constructed in RSC. Tests are unit tests on the constructor.
+
+---
+
+## 27. API design conventions (tRPC)
+
+**Naming.** Procedures are namespaced by domain: `contact.list`, `contact.get`, `contact.update`, `family.merge`, `finance.refund.create`. The verbs are `list`, `get`, `create`, `update`, `delete`, `restore`, `archive`, plus domain verbs (`merge`, `flag`, `assign`).
+
+**Inputs and outputs.** Every procedure declares Zod input and output schemas. Outputs are view-models, not raw rows. The same input schema is used by the matching React Hook Form so the client and server validate the same shape.
+
+**Errors.**
+- `BAD_REQUEST` for validation failures (the Zod parse error is preserved).
+- `UNAUTHORIZED` for unauthenticated callers.
+- `FORBIDDEN` for authenticated callers without the right action or attribute.
+- `NOT_FOUND` for missing rows the caller is allowed to see.
+- `CONFLICT` for concurrent edits and uniqueness collisions.
+- `TOO_MANY_REQUESTS` for rate-limited paths.
+- `INTERNAL_SERVER_ERROR` is a real bug. It pages on-call. Never throw `INTERNAL_SERVER_ERROR` to mask an expected condition.
+
+**Pagination.** Cursor-based on `(occurredAt, id)` tuples. Limit defaults to 25, max 100. Page sizes above 100 require explicit override and a reason. We never return all rows.
+
+**Rate limits.** Sliding-window counters in Redis per `(user_id, procedure)`. Limits are domain-specific; the defaults live in `packages/core/auth/rate-limits.ts`.
+
+**Audit context.** Every procedure receives a `ctx.audit` helper that records the action with actor, target, before/after diff, and a `request_id` from OpenTelemetry. Procedures that touch Contact, FinancialAccount, or safeguarding fields **must** call it.
+
+---
+
+## 28. Accessibility (WCAG 2.2 AA)
+
+The CRM is a workplace tool used at speed by a small set of people. That makes accessibility easier to ignore — and easier to break. We do not.
+
+**Targets.**
+- WCAG 2.2 AA across all primary surfaces.
+- Keyboard reachability for every action a mouse can do.
+- Visible focus rings everywhere; never `outline: none` without a replacement focus ring.
+- Colour contrast 4.5:1 for body text, 3:1 for large text, against the actual background (not the token).
+
+**Patterns.**
+- Use Radix primitives for dialogs, popovers, menus, and listboxes. Do not roll our own.
+- Form labels are real `<label>` elements, associated by `htmlFor`.
+- Errors are announced via `aria-live="polite"` on the form region; do not rely on colour alone.
+- Modals trap focus and restore it on close. Esc closes.
+- Skip-to-content link at the top of every page.
+- Tables that look like tables are tables (`<table>`, `<th scope=...>`).
+
+**Testing.**
+- `@axe-core/playwright` runs on the critical pages in CI. Any violation fails the build.
+- Manual keyboard sweep is part of the PR template for any UI change above the trivial line.
+- Screen reader smoke check on Sev-1 paths once per quarter using VoiceOver and NVDA.
+
+**Reduced motion.** Honour `prefers-reduced-motion`. Animations exceeding 200 ms are gated.
