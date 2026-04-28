@@ -896,3 +896,44 @@ When asked something that touches money, safeguarding, or external mutation:
 3. Make the change reversible if possible (soft delete, draft, manual confirmation).
 4. Add an audit entry.
 5. Write a test that exercises the failure path, not just the happy path.
+
+---
+
+## 35. What NOT to do
+
+- Do not call OpenAI directly from a React component or an API route. Always go through `packages/ai`.
+- Do not put business logic in API routes or server actions. They orchestrate; the domain layer decides.
+- Do not catch errors silently. If you swallow an error, you have created a future incident.
+- Do not store provider raw payloads in the normalised tables. They live in `ProviderEvent`.
+- Do not add a new third-party dependency without an ADR.
+- Do not write SQL by hand outside migrations. Use Prisma or a typed query builder.
+- Do not bypass the audit log "just this once".
+- Do not rely on Zapier for anything critical. Zapier is for partner integrations and lead capture, not for our own data flow.
+- Do not auto merge contacts, auto charge cards, auto delete data, or auto send messages. AI suggests, humans confirm.
+- Do not put real data in fixtures or seed files. Use generated synthetic data.
+- Do not introduce a BaaS (Supabase, Firebase, Hasura) for any new surface. We host frontend and backend in this Next.js app on Railway. Postgres is ours.
+- Do not use floating-point money anywhere.
+- Do not log decrypted safeguarding fields. Ever.
+- Do not silence ESLint with broad `eslint-disable` blocks. Disable the specific rule, on the specific line, with a comment explaining why.
+
+---
+
+## 36. Glossary
+
+- **AP.** Alternative Provision. Education for learners outside mainstream school, often commissioned by Local Authorities.
+- **Bacs.** UK bank-to-bank transfer system used by GoCardless Direct Debit.
+- **DSL.** Designated Safeguarding Lead.
+- **DSAR.** Data Subject Access Request.
+- **EHCP.** Education, Health and Care Plan. Statutory document for SEND learners in England.
+- **Family.** Our internal grouping of related Contacts that share a billing relationship.
+- **Interaction.** Any timeline event on a Contact or Family.
+- **LA.** Local Authority.
+- **Mandate.** GoCardless authorisation to collect Direct Debit from a customer's bank.
+- **PAYG.** Pay as you go. A booking pattern where families top up hours rather than subscribe.
+- **Reconciliation triangle.** Booking hours vs Stripe vs GoCardless. The three must agree.
+- **SEMH.** Social, Emotional and Mental Health needs.
+- **SEND.** Special Educational Needs and Disabilities.
+- **CMK / DEK.** Customer Master Key / Data Encryption Key in AWS KMS envelope encryption.
+- **PITR.** Point-in-time recovery for Postgres.
+- **RSC.** React Server Component.
+- **SLO.** Service Level Objective.
