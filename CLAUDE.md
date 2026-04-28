@@ -331,3 +331,67 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 **Token rotation.** Per-agent tokens rotate every 90 days. Renewal flow lives in agent settings; we surface a banner 14 days before expiry.
 
 **Fixtures.** `__tests__/fixtures/trengo/`. Cover all four channel types and the `assigned/closed/reopened` lifecycle.
+
+---
+
+## 12. Slack playbook
+
+**Auth.** Slack Events API with verified signing secret; we recompute the v0 signature and reject on mismatch. Replay protection: reject any request older than 5 minutes by `X-Slack-Request-Timestamp`.
+
+**Subscribed events.** `message.channels` on the agreed list of channels only — never workspace-wide. The list lives in `packages/integrations/slack/config.ts` and changes ship via PR, never via the Slack admin UI.
+
+**Summary parser.** A Slack message in a watched channel triggers an Inngest function that uses gpt-4o-mini to extract: candidate contact identifier (name, email, phone), summary text, sentiment, next action. The result becomes an Interaction of type `slack_summary` linked to the matched Contact.
+
+**Confidence threshold.** If the AI cannot match a Contact with confidence above 0.7, the summary lands in an "unassigned summaries" tray for an agent to triage. Never auto-attach below threshold.
+
+**Outbound.** We post status pings (e.g. dunning escalations) into a defined `#crm-alerts` channel via a single bot user. No DMs, no per-user posting.
+
+---
+
+## 13. Asana playbook
+
+**Scope.** Two way but scoped to a defined set of projects, never the whole workspace. Project allowlist in `packages/integrations/asana/config.ts`.
+
+**Webhooks.** Workspace-level webhooks with filters to limit noise. Respect Asana's 1000-webhook-per-resource limit. Webhook events are not replayable, so we persist every payload to `ProviderEvent` for our own replay.
+
+**Handshake.** When Asana sends `X-Hook-Secret`, echo it back in the response header. Done in middleware on `/api/webhooks/asana`. Skipping this breaks webhook setup — failures show up in tests.
+
+**CRM ↔ Asana linkage.** Each synced Asana task carries a custom field `crm_contact_id`. CRM tasks created from Asana copy this back so the link is reciprocal. Updates flow both ways but with last-writer-wins per field, with a clear log of who wrote what.
+
+---
+
+## 14. Gmail playbook
+
+**Auth.** OAuth 2.0 per agent. Refresh tokens encrypted with KMS, never logged. Granular scopes only — `gmail.readonly`, `gmail.send`, `gmail.modify` (no full account access).
+
+**Real-time push.** Google Cloud Pub/Sub `watch` for real-time delivery. Watch expires after 7 days, so we renew every 6 days via the `gmail/refresh-watch` job.
+
+**Phase 1 scope.** Read sync, reply from CRM, sent items reflect in Gmail. **Not in phase 1:** labels, drafts, snooze, undo send, scheduled send. Phase 2.
+
+**Threading.** Use Gmail's `thread_id` directly. Do not invent our own threading.
+
+**Contact matching.** Match by `from`, `to`, `cc`, `bcc` addresses. Many to many — one email touches several Contacts. Persist all links so each Contact's timeline shows the full thread regardless of which address was matched.
+
+**Attachments.** Stream to S3 on first sync; do not store payloads in Postgres. Reference by S3 key in `Interaction.payload`.
+
+---
+
+## 15. Booking site playbook (`booking.studymind.co.uk`)
+
+**Sync.** REST API with a service account token. Pull every 5 minutes for active families, every hour for inactive. Use `If-Modified-Since` to be polite.
+
+**Future.** Push from the booking site to a webhook here; documented in `docs/adr/0007-booking-push-vs-pull.md`. Until then, pulls are the contract.
+
+**Hours model.** A booking has `contracted | scheduled | delivered | cancelled | no_show` per session. Only `delivered` counts toward billed hours. The reconciliation engine in `packages/core/finance/reconcile.ts` is the only consumer of this rule.
+
+---
+
+## 16. Zapier playbook
+
+**Endpoint.** `/api/webhooks/lead` is a stable, versioned endpoint with a JSON schema documented in `docs/api/lead-webhook.md`.
+
+**Auth.** Static bearer token rotated quarterly. Stored in Railway env, mirrored from 1Password.
+
+**Schema discipline.** Additive only. Never remove or rename fields without bumping to `/api/webhooks/lead/v2`. Old endpoint stays alive for 12 months after a v2 ships.
+
+**Trust.** Zapier is fine for partner integrations and lead capture. It is **not** the source of truth for anything financial, safeguarding, or operational. Anything critical lives in a first-party integration with full audit and contract tests.
