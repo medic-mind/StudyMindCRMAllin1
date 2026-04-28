@@ -469,3 +469,27 @@ OpenAI for everything AI today. Models per task:
 - **Cost guardrail.** A daily cap per task category in `packages/ai/budget.ts`. Exceeding the cap puts the task into a degraded mode (skip, queue, or fall back to mini) and pages finance + tech lead.
 - **No PII in prompts unless necessary.** When sending family-identifying data, redact what is not needed. Email addresses and minor names are minimised.
 - **Logging.** AI logs are kept 90 days in Axiom and indexed by `prompt_version` and `task`. Beyond that, samples kept for evals only, with names redacted.
+
+---
+
+## 19. Database conventions (Prisma)
+
+- All IDs are `cuid2`. No incrementing integers in user-facing URLs.
+- Every table has `createdAt`, `updatedAt`, `createdById`, `updatedById` (nullable for system writes).
+- Soft delete: `deletedAt DateTime?` instead of `DELETE`. Hard delete only via the retention engine.
+- JSONB columns are typed via Zod schemas in `packages/core/<domain>/types.ts`.
+- Indices are explicit. Run `pnpm db:explain` on every new query that hits a table over 100k rows. Add the index in the same migration.
+- Migrations are forward only. No down migrations in production.
+- **Never run `prisma db push` against any environment except local.** Always go through `prisma migrate dev` then `prisma migrate deploy`.
+- Foreign keys are real foreign keys, not application-level associations. We rely on Postgres referential integrity.
+- Money is stored as integer minor units (pence) in a column suffixed `_minor`. No floats for money, ever.
+- Time is stored UTC. Locales are derived at the edge.
+
+### 19.1 Backfills
+
+- Backfills run as Inngest jobs (`migrations/<name>`), batched (default 1000 rows), with a `pg_advisory_lock` so two runners cannot race.
+- Schema additions are made in two PRs: (1) add the column, default null, deploy; (2) backfill via job; (3) optional follow-up to mark NOT NULL once the backfill is done. Never combine schema and backfill in a single migration that blocks deploy.
+
+### 19.2 Schema reference (top tables)
+
+`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`. Definitive shape: `prisma/schema.prisma`.
