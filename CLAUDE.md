@@ -395,3 +395,35 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 **Schema discipline.** Additive only. Never remove or rename fields without bumping to `/api/webhooks/lead/v2`. Old endpoint stays alive for 12 months after a v2 ships.
 
 **Trust.** Zapier is fine for partner integrations and lead capture. It is **not** the source of truth for anything financial, safeguarding, or operational. Anything critical lives in a first-party integration with full audit and contract tests.
+
+---
+
+## 17. Background jobs (Inngest)
+
+Every async unit of work is an Inngest function. Conventions:
+
+- Function ID is `<domain>/<action>` (e.g. `finance/reconcile-family`, `ai/classify-call-outcome`).
+- Use `step.run` for each external call so retries are granular.
+- Use `step.sleep` for delays, never `setTimeout`.
+- Concurrency limits per function. Default `{ limit: 10 }`. AI heavy: `{ limit: 3 }` to respect rate limits.
+- Idempotency key: every external mutation (refund, send message, create payment link) carries a key derived from `(domain entity id, action, day)` so retries do not double-act.
+- Every step that calls an external service tags the OpenTelemetry span with `provider`, `endpoint`, `entity_id`. Sentry breadcrumbs read those tags on error.
+
+### 17.1 Recurring jobs
+
+| Job | Schedule | Purpose |
+|---|---|---|
+| `finance/reconcile-all-families` | nightly 02:00 UTC | Walk every active Family, raise discrepancies |
+| `ai/score-churn-risk` | nightly 03:00 UTC | Score every Family, create retention tasks above threshold |
+| `compliance/enforce-retention` | nightly 04:00 UTC | Soft delete or hard delete data per RetentionPolicy |
+| `compliance/audit-log-archive` | weekly Sunday 05:00 | Archive AuditLogEntry older than 12 months to cold storage |
+| `gmail/refresh-watch` | daily 06:00 UTC | Renew Gmail Pub/Sub watch for every connected mailbox |
+| `booking/sync-active-families` | every 5 min | Pull booking changes for active Families |
+| `booking/sync-inactive-families` | hourly | Pull booking changes for inactive Families |
+| `ai/regenerate-status-summaries` | every 30 min for changed contacts | Refresh the 2 sentence "Current Status" header |
+| `aircall/recover-disabled-webhook` | hourly | Re-enable Aircall webhook if it was disabled by failures |
+| `gocardless/reconcile-late-failures` | every 4 hours | Walk recent confirmations and surface any new late failures |
+
+### 17.2 Failure semantics
+
+A failed step retries with exponential backoff up to 6 attempts. After exhaustion the function lands in the dead-letter view with the original event payload. Dead-lettered events are surfaced in the on-call dashboard; we never silently drop work. Replays are explicit, audit-logged, and idempotent.
