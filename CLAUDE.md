@@ -614,3 +614,28 @@ Required local services: Postgres 15, Redis 7. Provided via `docker-compose.yml`
 | Clerk | dev instance | dev instance | staging instance | production instance |
 
 PR previews are real environments — they exercise the full stack. They reset their database on every push.
+
+---
+
+## 23. Testing strategy
+
+- **Unit tests** (Vitest) live alongside source as `*.test.ts`. Domain logic in `packages/core` must hit 90 percent coverage.
+- **Integration tests** (Vitest, real Postgres via Testcontainers) for any function that reads or writes the DB. Live in `__tests__/integration/`.
+- **Webhook contract tests** for every external service. Replay sanitised real captured payloads from `__tests__/fixtures/<service>/`. Adding a new event handler means adding a fixture.
+- **E2E** (Playwright) for the critical flows only: sign in, create contact, view timeline, send Trengo reply, raise refund, complete reconciliation review.
+- **AI tests:** mocked OpenAI client by default. A small `pnpm test:ai-live` suite hits the real API with cached responses and runs in CI nightly only (cost control).
+
+CI runs typecheck, lint, unit, integration, and webhook contract tests on every PR. E2E runs on `main` and on PRs labelled `e2e`.
+
+### 23.1 Fixtures and synthetic data
+
+- **No real data in fixtures or seeds.** Use `@faker-js/faker` and our own `packages/core/test/factories.ts`. Names that look real but are not (e.g. `Test Family A1`, deterministic E.164 numbers in the `+44 70xx` test range).
+- **Sanitisation script.** `scripts/sanitise-fixture.ts` accepts a captured webhook payload and produces a fixture with replaced PII. It runs in pre-commit; a fixture cannot land if the script flags real-looking data.
+- **Determinism.** Seeds and factories accept a fixed seed so test output is reproducible. CI fails if a test relies on `Date.now()` without a clock injection.
+- **Replay corpus.** A growing set of captured-then-sanitised events for every provider lives in `__tests__/fixtures/`. Each fixture has a sibling `expected.json` describing the post-state we expect. The contract test diffs against `expected.json`.
+
+### 23.2 What we do not test
+
+- We do not test third-party SDK internals. Mocking those is fine where it removes flakiness.
+- We do not test that Postgres works. We test that our queries return what we expect.
+- We do not write tests against the live Stripe or GoCardless environments. Test mode and sandbox only.
