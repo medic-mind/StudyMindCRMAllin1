@@ -794,3 +794,34 @@ The CRM is a workplace tool used at speed by a small set of people. That makes a
 - Screen reader smoke check on Sev-1 paths once per quarter using VoiceOver and NVDA.
 
 **Reduced motion.** Honour `prefers-reduced-motion`. Animations exceeding 200 ms are gated.
+
+---
+
+## 29. Internationalisation
+
+**Today.** UK English, GBP, Europe/London. The product UI and outbound family comms are British English, including "favour", "organise", "behaviour".
+
+**Money.** Stored as `*_minor` integer pence. Formatted in the UI with `Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' })`. We do not display fractional pence to agents.
+
+**Dates and times.** Stored UTC. Displayed in the user's timezone (default `Europe/London`) via `Intl.DateTimeFormat`. Calls show local time and original timezone if the contact was abroad.
+
+**Phone numbers.** Stored E.164. Displayed in national format for UK numbers; international format otherwise. We never strip the leading zero from a UK display.
+
+**Tomorrow.** When we onboard non-UK partners we will introduce `next-intl` with namespace files per surface. Until then, no `t('key')` calls — strings are inline so we keep the migration cost on the right side of the move.
+
+---
+
+## 30. Code style and conventions
+
+- **Imports** are sorted: built-ins, third-party, `@studymind/*` packages, relative paths. Enforced by `eslint-plugin-simple-import-sort`.
+- **No default exports** for modules with more than one export. Named exports keep refactors safe.
+- **File names** are kebab-case for files, PascalCase for React components, camelCase for utility modules (`reconcile.ts`, `Family.tsx`, `format-money.ts`).
+- **Components** are colocated with their tests and styles. A folder is created when a component grows beyond a single file.
+- **Hooks** start with `use`, return tuples or objects matching the convention of the dependency they wrap. Custom hooks live next to the consumer or in `apps/web/lib/hooks/` if shared.
+- **Types** live alongside the function that uses them. Cross-cutting types live in `packages/core/<domain>/types.ts`.
+- **Comments** are rare. We comment WHY, not WHAT. If the code is hard to read, we rewrite the code, not annotate it.
+- **TODO comments** include an issue link and an owner. `// TODO(jane, #123)`.
+- **Errors** are typed. `throw new BusinessError('FAMILY_HAS_OPEN_BALANCE')` is preferred over a string `Error`. The error class lives in `packages/core/errors.ts`.
+- **No `any`** outside boundary files (`*.boundary.ts`) where we are explicitly converting from an external type. Lint rule enforces.
+- **Logging.** Prefer `log.info({ familyId, action }, 'reconciled')` over string concatenation. Structured fields make the logs queryable.
+- **Time** comes from `clock` (an injected dependency in domain code) so tests are deterministic. Never call `Date.now()` directly inside `packages/core`.
