@@ -529,3 +529,36 @@ OpenAI for everything AI today. Models per task:
 | `settings.write` | ✓ | — | — | — | — | — |
 
 The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch.
+
+---
+
+## 21. GDPR, retention, and DSAR
+
+This is not optional. Treat every line as a hard requirement.
+
+- **Data minimisation.** If a webhook payload includes a field we do not use, drop it before persisting to normalised tables. Raw payload still goes to `ProviderEvent` for replay; normalised tables only get used fields.
+- **Field level encryption.** Safeguarding notes, EHCP extracts, medical notes, and date of birth where the contact is a minor under 13. Envelope encryption with AWS KMS. Decryption requires both `dsl` role and an audit reason captured at read time.
+- **Retention.**
+  - Call recordings: 90 days default, configurable per LA contract.
+  - Call transcripts: 12 months.
+  - Emails: 7 years (HMRC).
+  - General notes: 7 years.
+  - Safeguarding notes: per LA contract (default 25 years from DOB).
+  - Audit log: 7 years.
+  - Marketing leads that did not convert: 12 months from last touch.
+- **DSAR.** `/api/internal/dsar/<contactId>` accessible to `admin` only, generates a zip containing every row mentioning the contact, every email, every call recording, every transcript, every interaction, plus a JSON manifest.
+- **Right to erasure.** Soft delete with 30-day grace period (so we can reverse a mistake), then hard delete. Hard delete includes file deletion in S3 and crypto shredding of any KMS keys exclusive to that contact.
+
+Full procedure: `docs/compliance/`.
+
+### 21.1 Encryption architecture (key hierarchy)
+
+- **CMK** (AWS KMS Customer Master Key) per environment: `crm-prod`, `crm-staging`, `crm-dev`. Rotation: AWS-managed annual.
+- **Per-tenant DEKs** are not used today (we are single-tenant). Per-contact DEKs are used for high-sensitivity contacts (DSL-flagged), so crypto-shred on erasure is real.
+- **Envelope encryption.** Each `EncryptedField` row holds `ciphertext`, `iv`, `dek_ciphertext` (DEK encrypted under CMK), `aad` (associated data binding the field to its row id and column name), and `key_version`.
+- **Decryption** is centralised in `packages/core/safeguarding/decrypt.ts`. That function:
+  1. Verifies the caller has the correct role and per-row attribute.
+  2. Records an `AuditLogEntry` with `actor_id`, `purpose`, `request_id`, before any decryption.
+  3. Calls KMS `Decrypt` with the AAD; mismatch fails closed.
+  4. Returns the plaintext to the caller, never to logs.
+- **Key access** in IAM is restricted to the `web` and `worker` Railway services and the on-call DSL break-glass role. Break-glass usage triggers a Slack alert and an audit entry.
