@@ -562,3 +562,55 @@ Full procedure: `docs/compliance/`.
   3. Calls KMS `Decrypt` with the AAD; mismatch fails closed.
   4. Returns the plaintext to the caller, never to logs.
 - **Key access** in IAM is restricted to the `web` and `worker` Railway services and the on-call DSL break-glass role. Break-glass usage triggers a Slack alert and an audit entry.
+
+---
+
+## 22. Local development
+
+```bash
+# First time
+pnpm install
+cp .env.example .env.local      # fill in values from 1Password vault "StudyMind CRM Dev"
+pnpm db:reset                   # creates local Postgres, runs migrations, seeds
+
+# Day to day
+pnpm dev                        # Next.js dev server on :3000
+pnpm dev:worker                 # Inngest dev server on :8288
+pnpm test                       # Vitest, runs unit + integration
+pnpm test:e2e                   # Playwright, requires `pnpm dev` running
+pnpm typecheck                  # tsc across all packages
+pnpm lint                       # eslint + prettier check
+
+# Database
+pnpm db:migrate                 # prisma migrate dev
+pnpm db:seed                    # idempotent seed
+pnpm db:studio                  # Prisma Studio
+pnpm db:reset                   # drop, recreate, migrate, seed
+
+# Webhook testing
+pnpm tunnel                     # ngrok forwards :3000, prints public URL
+# then point Stripe / GoCardless / Aircall test webhooks at that URL
+```
+
+Required local services: Postgres 15, Redis 7. Provided via `docker-compose.yml`. Run `docker compose up -d` before `pnpm dev`.
+
+### 22.1 Environment matrix
+
+| Surface | Local | Preview (PR) | Staging | Production |
+|---|---|---|---|---|
+| Domain | localhost:3000 | `<pr>.studymind-crm.up.railway.app` | `staging.crm.studymind.co.uk` | `crm.studymind.co.uk` |
+| Database | local docker | per-PR Railway plugin | Railway staging | Railway production with PITR |
+| Redis | local docker | per-PR Railway plugin | Railway staging | Railway production |
+| S3 | localstack | shared `studymind-crm-preview` | `studymind-crm-staging` | `studymind-crm-prod` |
+| Stripe | test mode | test mode | test mode | live mode |
+| GoCardless | sandbox | sandbox | sandbox | live |
+| Aircall | sandbox/dev line | sandbox | sandbox | live |
+| Trengo | sandbox workspace | sandbox | sandbox | live |
+| Slack | dev workspace | dev workspace | dev workspace | live |
+| Asana | dev workspace | dev workspace | dev workspace | live |
+| Gmail | dev account | dev account | dev account | live |
+| OpenAI | shared dev key | shared dev key | shared staging key | live key with cost alerts |
+| Sentry / Axiom | local emit-only | preview project | staging project | production project |
+| Clerk | dev instance | dev instance | staging instance | production instance |
+
+PR previews are real environments — they exercise the full stack. They reset their database on every push.
