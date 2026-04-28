@@ -207,3 +207,57 @@ Discrepancies become `ReconciliationDiscrepancy` rows on the finance dashboard. 
 **Booking state (booking site mirror).** `tentative | confirmed | delivered | no_show | cancelled`. Hours only count toward delivery on `delivered`. `no_show` and `cancelled` have separate finance treatment defined in `packages/core/finance/booking-rules.ts`.
 
 **Safeguarding flag.** `none | concern_logged | restricted_access`. A flag at `restricted_access` hides the contact's notes from everyone except the assigned DSL plus admins, and forces an audit prompt on every read.
+
+---
+
+## 7. Integrations: rules of engagement
+
+Each integration lives in `packages/integrations/<service>/` with this shape:
+
+```
+packages/integrations/stripe/
+├── client.ts          # Authenticated SDK client factory
+├── webhook.ts         # Signature verification + payload normalisation
+├── events/            # One file per event type we handle
+│   ├── invoice-paid.ts
+│   ├── invoice-payment-failed.ts
+│   └── ...
+├── jobs.ts            # Inngest functions that run after a webhook
+├── outbound.ts        # Functions that call OUT to Stripe (create payment link, refund)
+├── types.ts           # Domain mapped types (NOT raw Stripe types in the rest of the app)
+└── README.md          # Service specific quirks, links to docs
+```
+
+### 7.1 Webhook handler pattern (every service follows this)
+
+```ts
+// app/api/webhooks/<service>/route.ts
+export async function POST(req: Request) {
+  // 1. Raw body — signature needs raw bytes, do NOT parse yet
+  const raw = await req.text()
+  const signature = req.headers.get(SIGNATURE_HEADER)
+
+  // 2. Verify signature. Reject 400 if invalid.
+  const event = verifyAndParse(raw, signature)
+  if (!event) return new Response('invalid signature', { status: 400 })
+
+  // 3. Persist raw event for audit and replay (idempotent on provider event id)
+  await db.providerEvent.upsert({
+    where: { provider_eventId: { provider: 'stripe', eventId: event.id } },
+    create: { provider: 'stripe', eventId: event.id, type: event.type, raw, receivedAt: new Date() },
+    update: {}, // dedupe on conflict
+  })
+
+  // 4. Enqueue async processing
+  await inngest.send({ name: 'stripe/event.received', data: { eventId: event.id } })
+
+  // 5. Return 2xx FAST (Stripe will retry on 5xx)
+  return Response.json({ ok: true })
+}
+```
+
+The Inngest function picks up the event, looks up the canonical object on Stripe (do not trust the webhook payload for state — refetch), updates our DB, writes audit entries, and emits domain events.
+
+### 7.2 Why this shape, not something cleverer
+
+We considered a generic webhook gateway with per-provider plugins. Rejected: each provider has unique signature, retry, ordering, and dedupe semantics that bleed through any abstraction. Per-provider folders keep those quirks local to the code that owns them, and the contract test fixtures live next to the handler.
