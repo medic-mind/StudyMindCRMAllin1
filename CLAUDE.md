@@ -937,3 +937,70 @@ When asked something that touches money, safeguarding, or external mutation:
 - **PITR.** Point-in-time recovery for Postgres.
 - **RSC.** React Server Component.
 - **SLO.** Service Level Objective.
+
+---
+
+## 37. Quick reference: where things live
+
+| I want to... | Look here |
+|---|---|
+| Change how a Stripe webhook is handled | `packages/integrations/stripe/events/` and `packages/integrations/stripe/jobs.ts` |
+| Add a field to Contact | `prisma/schema.prisma`, then `packages/core/contact/types.ts` |
+| Change the timeline display | `apps/web/components/timeline/` |
+| Tweak an AI prompt | `packages/ai/prompts/<task>.ts` |
+| Add a new background job | `packages/jobs/` |
+| Change reconciliation logic | `packages/core/finance/reconcile.ts` |
+| Update RBAC rules | `packages/core/auth/policies.ts` |
+| Add a runbook | `docs/runbooks/` |
+| Record an architecture decision | `docs/adr/` |
+| Adjust a brand token | `packages/ui/tokens/` |
+| Update the budget for an AI task | `packages/ai/budget.ts` |
+| Add a new permission to the matrix | `packages/core/auth/policies.ts` (matrix in section 20 regenerates) |
+
+---
+
+## 38. Onboarding checklist (first week)
+
+Day 1
+- [ ] Get added to GitHub `medic-mind/studymindcrmallin1`, Railway project, 1Password vault, Sentry, Axiom, PagerDuty, Slack channels (`#crm-eng`, `#crm-incidents`, `#crm-finops`, `#crm-alerts`).
+- [ ] Clone, install, run `pnpm dev` and `pnpm dev:worker`. Sign in via Clerk dev.
+- [ ] Read CLAUDE.md fully. Skim `docs/adr/`.
+
+Day 2
+- [ ] Walk through one webhook end-to-end (Stripe `invoice.payment_failed` is a good first one). Replay the fixture, watch it land as a `ProviderEvent` and become an Interaction.
+- [ ] Pair with the on-call engineer for an hour.
+- [ ] Read the safeguarding section and the encryption module.
+
+Day 3
+- [ ] Pick up a `good first issue` PR. Aim to ship it the same day.
+- [ ] Add a runbook entry for any oddity you hit during setup.
+
+Day 4
+- [ ] Shadow a finance reconciliation review with the finance lead.
+- [ ] Review someone else's PR.
+
+Day 5
+- [ ] Submit a small ADR or doc update — anything you wished was documented when you joined.
+- [ ] Confirm you can be on call. Read the on-call runbooks.
+
+---
+
+## 39. Document maintenance
+
+CLAUDE.md is part of the codebase. Treat it like code.
+
+- A PR that contradicts CLAUDE.md updates CLAUDE.md in the same PR.
+- The doc is reviewed in the PR review like any other file.
+- Once a quarter, the tech lead does a full pass: stale flags, expired ADRs, integrations that no longer match reality.
+- Tables that mirror code (permission matrix, recurring jobs, environment matrix) are generated where possible. The build fails on drift.
+- If you do not understand a rule, do not delete it. Open an issue and ask.
+
+---
+
+## 40. Contact
+
+- Product owner: see `OWNERS.md`.
+- Tech lead: see `OWNERS.md`.
+- Escalation for safeguarding or GDPR questions: DSL and DPO listed in `OWNERS.md`. Do not guess on these. Ask.
+
+— end of CLAUDE.md —
