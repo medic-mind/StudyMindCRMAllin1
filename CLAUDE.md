@@ -673,3 +673,45 @@ Post-deploy (does not block; surfaces on the deploy dashboard):
 - **Application.** Railway one-click rollback to the previous deploy is the default; SHA pinned.
 - **Database.** Forward only. A bad migration rolls back the application but the migration stays. Recovery is by writing a follow-up migration that fixes the schema. PITR is available; using it is an incident, not a normal operation.
 - **External integrations.** Webhook handlers are versioned where it matters. Reverting code does not retroactively un-send messages or un-charge cards; we treat those as facts and reconcile.
+
+---
+
+## 25. Observability and on call
+
+- **Errors.** Sentry. Every API route, every Inngest function, every server action wraps its body in a try and reports.
+- **Logs.** Structured JSON via pino, shipped to Axiom. Never `console.log` in production code paths.
+- **Traces.** OpenTelemetry. Each webhook receives a trace ID that follows the resulting Inngest job, the AI call, and the DB writes.
+- **Metrics.** Webhook receive rate per provider, webhook 4xx/5xx rate, Inngest job duration, AI cost per day, reconciliation discrepancies opened per day.
+- **Alerts.** PagerDuty. Critical: webhook 5xx above 1 percent for 5 minutes, Inngest backlog above 1000 jobs, any unhandled error in finance or safeguarding paths. Non-critical: AI cost forecast above budget, retention engine backlog.
+- **Runbooks** for each alert in `docs/runbooks/`. Every alert links to its runbook.
+
+### 25.1 SLOs and performance budgets
+
+| Surface | SLO | Budget per quarter |
+|---|---|---|
+| Web availability | 99.9 percent | 13 m downtime |
+| Web TTFB (50p) | < 200 ms in EU | — |
+| Contact list cold load (90p) | < 800 ms | — |
+| Webhook receive 2xx | 99.95 percent | 1.3 h error budget |
+| Webhook to-DB end-to-end (90p) | < 30 s | — |
+| Inngest function success | 99.5 percent | — |
+| Reconciliation nightly | runs and completes by 06:00 UTC | — |
+| AI mini-task latency (90p) | < 2 s | — |
+| AI 4o-task latency (90p) | < 8 s | — |
+
+Violations of an SLO open a ticket automatically. Three consecutive quarter-misses on the same SLO triggers a structural review in `docs/adr/`.
+
+### 25.2 Severity definitions
+
+- **Sev 1.** Production data loss, leakage of safeguarding or financial data, or full outage of the CRM. Page within 5 minutes. Incident commander assigned.
+- **Sev 2.** Partial outage (one integration broken, dunning paused, etc), or wrong financial state visible to agents. Page within 15 minutes.
+- **Sev 3.** Degraded experience, no data integrity risk. Next business day.
+- **Sev 4.** Cosmetic, ergonomic. Backlog.
+
+### 25.3 Incident response (skeleton)
+
+1. **Acknowledge.** Page acked in PagerDuty within SLO.
+2. **Stabilise.** Mitigation first (rollback, feature flag, traffic shed). Root cause later.
+3. **Communicate.** `#crm-incidents` Slack channel updated every 30 minutes. External comms (LA contracts, parents) only with comms lead approval.
+4. **Resolve.** Verify by metric, not by feeling.
+5. **Postmortem.** Within 5 working days for Sev 1/2. Blameless. Action items tracked in Asana with owners.
