@@ -715,3 +715,32 @@ Violations of an SLO open a ticket automatically. Three consecutive quarter-miss
 3. **Communicate.** `#crm-incidents` Slack channel updated every 30 minutes. External comms (LA contracts, parents) only with comms lead approval.
 4. **Resolve.** Verify by metric, not by feeling.
 5. **Postmortem.** Within 5 working days for Sev 1/2. Blameless. Action items tracked in Asana with owners.
+
+---
+
+## 26. Frontend architecture
+
+**RSC by default.** Pages are React Server Components unless they need interactivity. Data fetching happens in the server component using tRPC server-side helpers; props are pre-shaped and minimal.
+
+**Client components are leaves.** Any interactive widget (form, dropdown, popover) is a leaf marked `'use client'`. Avoid lifting interactivity into a parent unless the state is genuinely shared. Composition wins over context.
+
+**State.**
+- Server state: TanStack Query via tRPC react helpers. The query key is the tRPC procedure path plus inputs.
+- URL state: nuqs or `useSearchParams` for shareable views. Filter state lives in the URL where possible.
+- Local UI state: `useState` and `useReducer`. No Redux, no Zustand by default. If a feature genuinely needs cross-cutting state, propose it via ADR.
+- Form state: React Hook Form with Zod resolvers. Schemas are imported from `packages/core/<domain>/types.ts`.
+
+**Mutations.** Always go through tRPC. The mutation handler returns the new server state, which TanStack Query cache invalidates by query key. Optimistic updates are allowed for fast paths (mark task done) but never for money or safeguarding.
+
+**Error and loading.**
+- Each route segment has `error.tsx` and `loading.tsx`.
+- `error.tsx` shows a friendly message with a `Retry` button and a `request_id` for support. It never renders raw error messages.
+- `loading.tsx` renders skeletons sized to the eventual layout to prevent CLS.
+
+**Data fetching shape.** Lists use server actions or RSC; details use RSC with streaming. Inline edits use mutations that return the patched object. We do not pre-fetch entire lists into the client when only a slice is visible.
+
+**Toasts.** A single `Toaster` mounted in the root layout. `toast.error` only on user-facing actions; system errors go to Sentry, not to a toast.
+
+**Performance budgets.** Critical pages (Inbox, Family, Finance) ship with a Lighthouse CI budget. Largest contentful paint under 2 s on a throttled fast 3G profile. Bundle size budgets per route segment, enforced in CI.
+
+**RSC ↔ client data boundary.** Never send full domain entities to the client when a view-model would do. View-models live in `apps/web/lib/view-models/<domain>.ts` and are constructed in RSC. Tests are unit tests on the constructor.
