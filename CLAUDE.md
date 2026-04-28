@@ -639,3 +639,37 @@ CI runs typecheck, lint, unit, integration, and webhook contract tests on every 
 - We do not test third-party SDK internals. Mocking those is fine where it removes flakiness.
 - We do not test that Postgres works. We test that our queries return what we expect.
 - We do not write tests against the live Stripe or GoCardless environments. Test mode and sandbox only.
+
+---
+
+## 24. Deployment (Railway)
+
+- Three Railway services in one project: `web`, `worker`, `postgres`. Plus Redis (Railway plugin) and S3 (AWS, not Railway).
+- `web` runs the Next.js app. `worker` runs the Inngest serve handler.
+- Branches deploy to preview environments automatically. `main` deploys to production after CI passes.
+- Migrations run as a Railway pre-deploy step on `web`: `prisma migrate deploy && next start`.
+- Secrets live in Railway environment variables, mirrored from 1Password. Never commit a real secret. `.env.example` is the documented contract.
+- Production database is backed up nightly (Railway managed) plus a weekly logical dump to S3 (our own job).
+
+`railway.json` and `Dockerfile` are committed at repo root.
+
+### 24.1 Pre-deploy and post-deploy contract
+
+Pre-deploy (blocks deploy if it fails):
+1. `pnpm typecheck`
+2. `pnpm lint`
+3. `pnpm test`
+4. `pnpm build` (Next.js + worker)
+5. `prisma migrate deploy`
+
+Post-deploy (does not block; surfaces on the deploy dashboard):
+1. Healthcheck `GET /api/health` returns 200 with build SHA matching the deploy
+2. Smoke test sends a synthetic Stripe webhook to the preview/production URL and asserts `ProviderEvent` row creation
+3. Sentry release marker created for the new SHA
+4. Inngest function manifest synced
+
+### 24.2 Rollback
+
+- **Application.** Railway one-click rollback to the previous deploy is the default; SHA pinned.
+- **Database.** Forward only. A bad migration rolls back the application but the migration stays. Recovery is by writing a follow-up migration that fixes the schema. PITR is available; using it is an incident, not a normal operation.
+- **External integrations.** Webhook handlers are versioned where it matters. Reverting code does not retroactively un-send messages or un-charge cards; we treat those as facts and reconcile.
