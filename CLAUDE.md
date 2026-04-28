@@ -82,3 +82,78 @@ The CRM is internal but it is the daily workspace for the people speaking to fam
 **Error states.** Plain English, owned by us. Say what failed, what we will do about it, and what the agent can do now. Include a request id for support. Never expose stack traces or provider error codes in user-facing copy — those go to Sentry.
 
 **Tone of AI output.** AI-drafted replies inside the CRM are clearly labelled as drafts. The agent must edit and confirm before sending. Drafts default to StudyMind house style: warm opener, specific to the family, action-oriented closer. Templates live in `packages/ai/prompts/style/` and are versioned.
+
+---
+
+## 5. Repository layout
+
+```
+/
+├── apps/
+│   └── web/                    # Next.js app — the only deployable web service
+│       ├── app/                # App Router pages and layouts
+│       │   ├── (auth)/         # Clerk sign in pages
+│       │   ├── (app)/          # Authenticated CRM shell
+│       │   │   ├── inbox/
+│       │   │   ├── contacts/
+│       │   │   ├── pipeline/
+│       │   │   ├── tasks/
+│       │   │   ├── finance/
+│       │   │   ├── reports/
+│       │   │   └── settings/
+│       │   └── api/
+│       │       ├── webhooks/   # All inbound webhooks live here
+│       │       │   ├── stripe/
+│       │       │   ├── gocardless/
+│       │       │   ├── aircall/
+│       │       │   ├── trengo/
+│       │       │   ├── slack/
+│       │       │   ├── asana/
+│       │       │   ├── gmail/
+│       │       │   ├── booking/
+│       │       │   └── lead/
+│       │       └── trpc/       # Internal RPC for the UI
+│       ├── components/
+│       │   ├── ui/             # shadcn primitives (do not modify, regenerate)
+│       │   ├── contact/
+│       │   ├── timeline/
+│       │   ├── finance/
+│       │   └── shared/
+│       └── lib/
+├── packages/
+│   ├── db/                     # Prisma schema, migrations, seed
+│   ├── core/                   # Domain logic (pure, no I/O)
+│   │   ├── contact/
+│   │   ├── family/             # Parent + student grouping
+│   │   ├── finance/            # Reconciliation engine
+│   │   ├── interaction/        # Polymorphic timeline events
+│   │   └── safeguarding/
+│   ├── integrations/           # One folder per external service
+│   │   ├── stripe/
+│   │   ├── gocardless/
+│   │   ├── aircall/
+│   │   ├── trengo/
+│   │   ├── slack/
+│   │   ├── asana/
+│   │   ├── gmail/
+│   │   └── booking/
+│   ├── jobs/                   # Inngest functions
+│   ├── ai/                     # OpenAI clients, prompts, classifiers
+│   ├── audit/                  # AuditLogEntry writer, retention engine
+│   └── ui/                     # Shared UI used in web (and future mobile)
+├── docs/
+│   ├── adr/                    # Architecture Decision Records
+│   ├── runbooks/               # On call playbooks
+│   └── compliance/             # GDPR, retention, DSAR procedures
+├── prisma/
+│   ├── schema.prisma
+│   └── migrations/
+├── .env.example
+├── railway.json
+├── Dockerfile
+├── turbo.json                  # Turborepo
+├── package.json
+└── CLAUDE.md
+```
+
+**Module boundaries are enforced by ESLint `no-restricted-imports`.** `packages/core` cannot import from `packages/integrations`. `packages/integrations` cannot import from `apps/web`. Cross cutting code goes in `packages/core` or `packages/audit`.
