@@ -157,3 +157,53 @@ The CRM is internal but it is the daily workspace for the people speaking to fam
 ```
 
 **Module boundaries are enforced by ESLint `no-restricted-imports`.** `packages/core` cannot import from `packages/integrations`. `packages/integrations` cannot import from `apps/web`. Cross cutting code goes in `packages/core` or `packages/audit`.
+
+---
+
+## 6. Domain model (mental map before code)
+
+Three concepts dominate everything.
+
+### 6.1 Contact, Family, FinancialAccount
+
+- **Contact** is one human: a parent, a student, a tutor, an LA caseworker.
+- **Family** groups contacts that pay together or live together. A Family has one **billing contact** (usually a parent) and zero or more **student contacts**. A Family is the unit at which we reconcile money and hours.
+- **FinancialAccount** is one per Family. It aggregates Stripe and GoCardless charges, booked hours from the booking site, and produces a single ledger view.
+
+A Contact can exist without a Family (e.g. an unconverted lead). A student Contact must always belong to a Family before billing starts.
+
+### 6.2 Interaction (the timeline)
+
+Every email, call, message, note, task, payment, booking, and AI insight is an **Interaction**. The timeline view is `Interaction.findMany({ where: { contactId | familyId } }).orderBy({ occurredAt: desc })`.
+
+Single polymorphic `Interaction` table with a `type` enum and a typed `payload` JSONB column, validated by Zod schemas per type. Trade-off documented in `docs/adr/0003-interaction-shape.md`.
+
+### 6.3 The reconciliation triangle
+
+```
+        Booking site
+         (hours)
+            |
+            |
+Stripe ----+---- GoCardless
+(£ paid)        (£ paid)
+```
+
+Every night we compare:
+- Hours contracted vs hours booked vs hours delivered (from booking site).
+- £ invoiced (Stripe + GoCardless + manual) vs £ collected vs £ refunded.
+- Allocation of payments to bookings.
+
+Discrepancies become `ReconciliationDiscrepancy` rows on the finance dashboard. Nothing is ever auto resolved.
+
+### 6.4 Lifecycle states (the ones that matter)
+
+**Family lifecycle.** `lead → trial → active → at_risk → churned`. Transitions are explicit; no row silently moves between states. The transition writes an Interaction of type `family.state_changed` with the previous state, new state, actor (user or `system`), and reason.
+
+**Subscription state (Stripe mirror).** We mirror Stripe statuses verbatim: `trialing | active | past_due | canceled | unpaid | paused | incomplete | incomplete_expired`. Our `at_risk` Family flag is derived (`past_due` for >3 days, or two consecutive failed Direct Debits, or churn score above threshold).
+
+**Mandate state (GoCardless mirror).** `pending_submission | submitted | active | failed | cancelled | expired | replaced`. A `replaced` mandate keeps a pointer to the new mandate; reconciliation walks the chain.
+
+**Booking state (booking site mirror).** `tentative | confirmed | delivered | no_show | cancelled`. Hours only count toward delivery on `delivered`. `no_show` and `cancelled` have separate finance treatment defined in `packages/core/finance/booking-rules.ts`.
+
+**Safeguarding flag.** `none | concern_logged | restricted_access`. A flag at `restricted_access` hides the contact's notes from everyone except the assigned DSL plus admins, and forces an audit prompt on every read.
