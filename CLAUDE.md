@@ -279,3 +279,21 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 **Payment Links** are the preferred way for agents to send a one off charge from inside the CRM. Created with metadata `{ familyId, contactId, agentId, reason }` so we can reconcile the resulting `checkout.session.completed`.
 
 **Fixtures.** Sanitised replay events in `__tests__/fixtures/stripe/`. New event handlers ship with the fixture they were developed against.
+
+---
+
+## 9. GoCardless playbook
+
+**Verification.** HMAC SHA-256 of the body using the webhook secret, in the `Webhook-Signature` header. A single request can contain multiple events in `events[]`. Loop and dedupe each on `(provider='gocardless', eventId=event.id)`.
+
+**Late failures matter.** A Bacs payment can be `confirmed` and then later `failed` up to two business days later via the `late_failure_settled` event. Our reconciliation reverses the "paid" state when this fires and re-opens any allocation against bookings. We mark the parent `FinancialAccount` as `reverted_payment_pending_action` so finance can act before dunning kicks in.
+
+**Mandate replacement.** Bacs mandates can be `replaced` — the mandate ID changes. Always follow `links.new_mandate` and update our `GcMandate` record, while keeping the old one with a `replacedById` pointer so historical events still resolve.
+
+**Instalment schedules.** Listen for `errored` state and surface to finance immediately as a discrepancy with the booking it backs.
+
+**Customer creation.** We do not create GoCardless customers from webhook flows. Customer + mandate creation happens in our flow when an agent (or the family via a hosted page link) confirms the bank details. The hosted page redirect URL embeds the `familyId`.
+
+**Reconciliation.** Allocation of a payment to bookings is one-to-many. When a payment settles, the reconciliation job allocates against the oldest unallocated booking line first (FIFO), and creates `Allocation` rows. Manual override is allowed and audit-logged.
+
+**Fixtures.** Sanitised payloads in `__tests__/fixtures/gocardless/`. Include both happy path and `late_failure_settled` to keep the reversal flow honest.
