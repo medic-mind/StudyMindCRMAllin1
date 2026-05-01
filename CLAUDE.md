@@ -436,6 +436,10 @@ Every async unit of work is an Inngest function. Conventions:
 
 A failed step retries with exponential backoff up to 6 attempts. After exhaustion the function lands in the dead-letter view with the original event payload. Dead-lettered events are surfaced in the on-call dashboard; we never silently drop work. Replays are explicit, audit-logged, and idempotent.
 
+### 17.3 Job ordering
+
+`compliance/enforce-retention` and `ai/score-churn-risk` depend on `finance/reconcile-all-families` completing. They use `step.waitForEvent('finance/reconcile.completed')` rather than wall-clock scheduling, so a slow reconciliation never causes a downstream job to read inconsistent state.
+
 ---
 
 ## 18. AI workflows
@@ -456,7 +460,7 @@ OpenAI for everything AI today. Models per task:
 
 ### 18.1 Prompt rules
 
-- Every prompt lives in `packages/ai/prompts/<task>.ts` as a typed function. No prompts inline in handlers.
+- Every prompt lives in `packages/ai/prompts/<task>.ts` as a typed function. No prompts inline in handlers. Tone/style fragments live in `packages/ai/prompts/style/` and are imported by task prompts. Tasks never inline style copy.
 - Every AI call has a Zod output schema. Use `response_format: json_schema` (Structured Outputs) for all classification and extraction tasks. Drafting tasks (reply, tender) return free text and are validated post-hoc with a content-shape Zod schema (length, no PII leak markers). The two patterns are implemented in `packages/ai/clients/structured.ts` and `packages/ai/clients/draft.ts`; do not call OpenAI directly.
 - Every AI call logs: model, prompt version, input token count, output token count, latency, cost estimate, outcome.
 - Never feed safeguarding fields into a prompt. Those are encrypted; AI cannot see them.
@@ -533,7 +537,7 @@ OpenAI for everything AI today. Models per task:
 | `charge.refund` | ✓ | — | — | ✓ | — | — |
 | `subscription.cancel` | ✓ | ✓ | — | ✓ | — | — |
 | `safeguarding.flag` | ✓ | ✓ | ✓ | — | ✓ | — |
-| `safeguarding.read_notes` | ✓ | — | — | — | ✓ (assigned only) | — |
+| `safeguarding.read_notes` | ✓ (audited) | — | — | — | ✓ (assigned only, audited) | — |
 | `dsar.export` | ✓ | — | — | — | — | — |
 | `audit.read` | ✓ | ✓ | — | ✓ | ✓ (own) | — |
 | `settings.write` | ✓ | — | — | — | — | — |
@@ -603,6 +607,8 @@ pnpm tunnel                     # ngrok forwards :3000, prints public URL
 ```
 
 Required local services: Postgres 15, Redis 7. Provided via `docker-compose.yml`. Run `docker compose up -d` before `pnpm dev`.
+
+**Local users.** `pnpm db:reset` also seeds Clerk dev users via the Clerk Backend API (see `prisma/seed.ts`). Seeded emails follow `<role>@dev.studymind` (e.g. `admin@dev.studymind`, `agent@dev.studymind`, `dsl@dev.studymind`). Passwords are documented in 1Password vault `StudyMind CRM Dev`.
 
 ### 22.1 Environment matrix
 
