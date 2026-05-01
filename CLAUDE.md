@@ -120,6 +120,9 @@ The CRM is internal but it is the daily workspace for the people speaking to fam
 │       │   ├── finance/
 │       │   └── shared/
 │       └── lib/
+│           ├── trpc/           # client + server helpers, procedure builders
+│           ├── view-models/    # RSC-side shapers consumed by client components
+│           └── hooks/          # shared client hooks
 ├── packages/
 │   ├── db/                     # Prisma schema, migrations, seed
 │   ├── core/                   # Domain logic (pure, no I/O)
@@ -485,6 +488,7 @@ OpenAI for everything AI today. Models per task:
 - Foreign keys are real foreign keys, not application-level associations. We rely on Postgres referential integrity.
 - Money is stored as integer minor units (pence) in a column suffixed `_minor`. No floats for money, ever.
 - Time is stored UTC. Locales are derived at the edge.
+- **Enum changes.** Postgres enums are append-only in a single migration; renames or removals require a two-PR shadow-column dance. New Stripe/GoCardless states added by the provider are added explicitly here — we fail closed on unknown values (Section 8).
 
 ### 19.1 Backfills
 
@@ -919,6 +923,9 @@ When asked something that touches money, safeguarding, or external mutation:
 - Do not use floating-point money anywhere.
 - Do not log decrypted safeguarding fields. Ever.
 - Do not silence ESLint with broad `eslint-disable` blocks. Disable the specific rule, on the specific line, with a comment explaining why.
+- Do not edit prompts in production. All prompt changes are code changes through the normal review pipeline (Section 18.3).
+- Do not include unredacted minor names or full email addresses in prompts unless the task strictly requires them. Use `packages/ai/sanitise.ts`.
+- Do not deploy a prompt change without passing the eval harness. CI gates this; do not bypass.
 
 ---
 
@@ -960,6 +967,11 @@ When asked something that touches money, safeguarding, or external mutation:
 | Adjust a brand token | `packages/ui/tokens/` |
 | Update the budget for an AI task | `packages/ai/budget.ts` |
 | Add a new permission to the matrix | `packages/core/auth/policies.ts` (matrix in section 20 regenerates) |
+| Add a tRPC procedure | `apps/web/app/api/trpc/routers/<domain>.ts`; register router in `root.ts` |
+| Add an Inngest function | Cross-cutting → `packages/jobs/`. Integration-specific → `packages/integrations/<svc>/jobs.ts` |
+| Add a webhook event handler | `packages/integrations/<svc>/events/<event-name>.ts` plus a fixture |
+| Register a new event name | `packages/core/events/registry.ts` (Section 45) |
+| Add a domain invariant | `packages/core/<domain>/invariants.ts` with a property-based test |
 
 ---
 
