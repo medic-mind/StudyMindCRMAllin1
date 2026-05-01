@@ -175,6 +175,8 @@ Three concepts dominate everything.
 
 A Contact can exist without a Family (e.g. an unconverted lead). A student Contact must always belong to a Family before billing starts.
 
+**Billing contact changes.** Switching the billing contact on a Family (mid-term separation, grandparent takes over) is an explicit `family.billing_contact_changed` Interaction with reason and effective date. Open Stripe subscriptions and GoCardless mandates do **not** auto-transfer — finance manually re-issues. Runbook: `docs/runbooks/billing-contact-change.md`.
+
 ### 6.2 Interaction (the timeline)
 
 Every email, call, message, note, task, payment, booking, and AI insight is an **Interaction**. The timeline view is `Interaction.findMany({ where: { contactId | familyId } }).orderBy({ occurredAt: desc })`.
@@ -259,6 +261,8 @@ export async function POST(req: Request) {
 }
 ```
 
+**Latency budget.** The handler itself returns within 500 ms (90p) — measured at the edge. The end-to-end normalised-write SLO of 30 s (Section 25.1) is the Inngest job's responsibility, not the handler's. Do not log the raw body of an unverified event; it may be hostile (Section 8).
+
 The Inngest function picks up the event, looks up the canonical object on Stripe (do not trust the webhook payload for state — refetch), updates our DB, writes audit entries, and emits domain events.
 
 ### 7.2 Why this shape, not something cleverer
@@ -275,7 +279,7 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 **Subscription statuses we care about:** `trialing | active | past_due | canceled | unpaid | paused | incomplete | incomplete_expired`. Each maps to a state in `packages/core/finance/subscription-state.ts`. New statuses introduced by Stripe must be added there explicitly — we fail closed (treat as `unknown`) rather than guess.
 
-**Dunning.** Listen to `invoice.payment_failed` and `customer.subscription.updated` (status `past_due`). Do not build our own retry schedule — Stripe Smart Retries owns that. We surface state, raise a Family `at_risk` flag if appropriate, and notify the assigned ops agent through Trengo or Slack.
+**Dunning.** Listen to `invoice.payment_failed` and `customer.subscription.updated` (status `past_due`). Do not build our own retry schedule — Stripe Smart Retries owns that. We surface state, raise a Family `at_risk` flag per the derivation in Section 6.4 (`packages/core/finance/at-risk.ts` is the single implementation), and notify the assigned ops agent through Trengo or Slack.
 
 **Refunds.** All refunds go through `outbound.ts` and require an `IdempotencyKey` of `refund:<charge_id>:<reason_code>`. The function persists a `RefundIntent` first, then issues the API call, then writes the AuditLogEntry on success. A failed call leaves the intent in `pending_review` for finance to retry manually — never automatic.
 
@@ -331,7 +335,7 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 **Outbound.** Always go through `outbound.ts` so we attach metadata (Interaction id, agent id) to the Trengo message custom fields. This lets us reconcile Trengo events back to our timeline without ambiguity.
 
-**Token rotation.** Per-agent tokens rotate every 90 days. Renewal flow lives in agent settings; we surface a banner 14 days before expiry.
+**Token rotation.** Per-agent tokens rotate every 90 days. Renewal flow lives in agent settings; we surface a banner 14 days before expiry. **Expired tokens fail closed:** outbound aborts with a `TOKEN_EXPIRED` BusinessError, the Interaction stays in `pending_send`, and the agent sees an inline banner. We never fall back to a shared service token — it would break agent attribution.
 
 **Fixtures.** `__tests__/fixtures/trengo/`. Cover all four channel types and the `assigned/closed/reopened` lifecycle.
 
@@ -421,7 +425,7 @@ Every async unit of work is an Inngest function. Conventions:
 | `ai/score-churn-risk` | nightly 03:00 UTC | Score every Family, create retention tasks above threshold |
 | `compliance/enforce-retention` | nightly 04:00 UTC | Soft delete or hard delete data per RetentionPolicy |
 | `compliance/audit-log-archive` | weekly Sunday 05:00 | Archive AuditLogEntry older than 12 months to cold storage |
-| `gmail/refresh-watch` | daily 06:00 UTC | Renew Gmail Pub/Sub watch for every connected mailbox |
+| `gmail/refresh-watch` | daily 06:00 UTC | Walks every connected mailbox; renews any watch within 24 h of expiry. Watch lifetime is 7 days, target renewal at 6 days (Section 14). |
 | `booking/sync-active-families` | every 5 min | Pull booking changes for active Families |
 | `booking/sync-inactive-families` | hourly | Pull booking changes for inactive Families |
 | `ai/regenerate-status-summaries` | every 30 min for changed contacts | Refresh the 2 sentence "Current Status" header |
@@ -857,7 +861,7 @@ The CRM is a workplace tool used at speed by a small set of people. That makes a
 We are a small team. Spend has to behave.
 
 - **OpenAI.** Daily and monthly caps per task category in `packages/ai/budget.ts`. At 80 percent we page finance; at 100 percent we degrade (skip, queue, or fall back to mini). Live numbers in Axiom.
-- **Aircall recordings.** S3 lifecycle: standard for 30 days, IA for 31–90, deletion at 91 unless contract retention says otherwise. Per-contract overrides via `RetentionPolicy`.
+- **Aircall recordings.** S3 lifecycle: standard 0–30 d, IA 31–90 d, deletion at 91 d **unless `RetentionPolicy` for the parent contract overrides** (Section 21). Per-object tags drive the lifecycle exception.
 - **Email attachments.** S3 lifecycle: standard for 90 days, then Glacier. Restore on demand from DSAR or audit triggers.
 - **Aircall AI Assist.** Audited usage; we keep AI Assist on the lines where the cost is justified by call volume and outcome quality. Quarterly review.
 - **Stripe.** Smart Retries reduce dunning churn; we do not pay for additional retry tooling.
