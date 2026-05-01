@@ -50,7 +50,7 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 | Email transactional | Resend | Outbound system email, not Gmail sync |
 | Observability | Sentry (errors), Axiom (logs), OpenTelemetry traces | Required from day one |
 | AI | OpenAI gpt-4o, gpt-4o-mini, Whisper | Mini for cheap classification, 4o for drafting |
-| Hosting | Railway (services: web, worker, postgres, redis) | Single platform for the whole stack |
+| Hosting | Railway (services: web, worker, postgres; Redis via Railway plugin) | Single platform for the whole stack |
 | Cache and rate limit | Redis on Railway (Upstash compatible) | Inngest queue, rate limit windows, response cache |
 
 **No new dependencies without an ADR.** See `docs/adr/`.
@@ -408,6 +408,7 @@ Every async unit of work is an Inngest function. Conventions:
 - Concurrency limits per function. Default `{ limit: 10 }`. AI heavy: `{ limit: 3 }` to respect rate limits.
 - Idempotency key: every external mutation (refund, send message, create payment link) carries a key derived from `(domain entity id, action, day)` so retries do not double-act.
 - Every step that calls an external service tags the OpenTelemetry span with `provider`, `endpoint`, `entity_id`. Sentry breadcrumbs read those tags on error.
+- **Where functions live.** Integration-specific Inngest functions live in `packages/integrations/<service>/jobs.ts` (close to the webhook that triggers them). Cross-cutting and recurring functions (reconciliation, retention, churn scoring) live in `packages/jobs/`. Section 37 reflects the cross-cutting case.
 
 ### 17.1 Recurring jobs
 
@@ -766,7 +767,9 @@ Violations of an SLO open a ticket automatically. Three consecutive quarter-miss
 
 **Rate limits.** Sliding-window counters in Redis per `(user_id, procedure)`. Limits are domain-specific; the defaults live in `packages/core/auth/rate-limits.ts`.
 
-**Audit context.** Every procedure receives a `ctx.audit` helper that records the action with actor, target, before/after diff, and a `request_id` from OpenTelemetry. Procedures that touch Contact, FinancialAccount, or safeguarding fields **must** call it.
+**Audit context.** Every procedure receives a `ctx.audit` helper that records the action with actor, target, before/after diff, and a `request_id` from OpenTelemetry. Procedures that touch Contact, FinancialAccount, or safeguarding fields **must** call it. See Section 20.1 for the action list and `packages/audit/` for the writer. Procedures listed in 20.1 with audit requirements fail CI if `ctx.audit` is not called — enforced by a custom ESLint rule in `tools/eslint-rules/require-audit.ts`.
+
+**Where things live.** Routers live in `apps/web/app/api/trpc/routers/<domain>.ts`. Register new routers in `apps/web/app/api/trpc/root.ts`. Procedures use the `protectedProcedure` builder from `apps/web/lib/trpc/builders.ts`, which injects `ctx.audit`, `ctx.user`, and the rate-limit middleware.
 
 ---
 
