@@ -450,7 +450,7 @@ OpenAI for everything AI today. Models per task:
 ### 18.1 Prompt rules
 
 - Every prompt lives in `packages/ai/prompts/<task>.ts` as a typed function. No prompts inline in handlers.
-- Every AI call has a Zod output schema. We use `response_format: json_schema` (Structured Outputs) where possible so the model returns parseable JSON.
+- Every AI call has a Zod output schema. Use `response_format: json_schema` (Structured Outputs) for all classification and extraction tasks. Drafting tasks (reply, tender) return free text and are validated post-hoc with a content-shape Zod schema (length, no PII leak markers). The two patterns are implemented in `packages/ai/clients/structured.ts` and `packages/ai/clients/draft.ts`; do not call OpenAI directly.
 - Every AI call logs: model, prompt version, input token count, output token count, latency, cost estimate, outcome.
 - Never feed safeguarding fields into a prompt. Those are encrypted; AI cannot see them.
 - Temperature defaults to 0.2 unless the task is creative drafting (then 0.7).
@@ -507,6 +507,7 @@ OpenAI for everything AI today. Models per task:
 - Roles grant action lists (e.g. `finance` can `charge.refund`).
 - Attribute checks gate per-row access (e.g. only the assigned `dsl_user_id` can read `safeguarding_notes_encrypted`).
 - Never check permissions in components. Check in the tRPC procedure or server action. Components trust the server.
+- RSC pages must read via tRPC server-side helpers (`apps/web/lib/trpc/server.ts`) or via domain functions in `packages/core` that take a `ctx` carrying actor identity. **No direct `db.contact.findMany` calls in `app/`** — enforced by ESLint `no-restricted-imports` blocking `@studymind/db` imports under `apps/web/app/**`.
 
 **Audit.** Every read of a minor's profile, every write to a FinancialAccount, every safeguarding read, every export, lands in `AuditLogEntry`. The log is append only and partitioned by month.
 
@@ -817,7 +818,7 @@ The CRM is a workplace tool used at speed by a small set of people. That makes a
 ## 30. Code style and conventions
 
 - **Imports** are sorted: built-ins, third-party, `@studymind/*` packages, relative paths. Enforced by `eslint-plugin-simple-import-sort`.
-- **No default exports** for modules with more than one export. Named exports keep refactors safe.
+- **No default exports** for modules with more than one export. Named exports keep refactors safe. Exception: Next.js App Router segment files (`page.tsx`, `layout.tsx`, `loading.tsx`, `error.tsx`, `not-found.tsx`, `route.ts` handlers) follow the framework's default-export convention.
 - **File names** are kebab-case for files, PascalCase for React components, camelCase for utility modules (`reconcile.ts`, `Family.tsx`, `format-money.ts`).
 - **Components** are colocated with their tests and styles. A folder is created when a component grows beyond a single file.
 - **Hooks** start with `use`, return tuples or objects matching the convention of the dependency they wrap. Custom hooks live next to the consumer or in `apps/web/lib/hooks/` if shared.
