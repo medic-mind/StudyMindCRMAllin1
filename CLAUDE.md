@@ -1003,4 +1003,209 @@ CLAUDE.md is part of the codebase. Treat it like code.
 - Tech lead: see `OWNERS.md`.
 - Escalation for safeguarding or GDPR questions: DSL and DPO listed in `OWNERS.md`. Do not guess on these. Ask.
 
+---
+
+## 41. Domain invariants and business rules
+
+Invariants are facts about our data that must always hold. They are testable, named, and enforced in `packages/core/<domain>/invariants.ts` with property-based tests. A violation is a Sev 2 minimum.
+
+### 41.1 Family and Contact invariants
+
+- A `Family` has exactly one billing `Contact` at any time. Changing it writes a `family.billing_contact_changed` Interaction.
+- A student `Contact` under 18 must belong to a `Family` before any `Booking` can attach. Enforced in `core/family/rules.ts` and at the DB layer via a partial check constraint.
+- A `Contact` cannot be both the billing contact and a student of the same Family.
+- A `Contact` flagged `restricted_access` cannot be assigned to a non-DSL user. Assignment writes are rejected with `FORBIDDEN`.
+- E.164 phone numbers are unique per `Contact` row but may legitimately repeat across a Family (shared landline). Conflicts surface as merge candidates, never as auto-merges.
+
+### 41.2 Finance invariants
+
+- The sum of `Allocation.amount_minor` for a `Payment` never exceeds `Payment.amount_minor`.
+- A `RefundIntent` cannot exceed the net captured amount on its underlying `Charge`. Computed live, not cached.
+- A `Family` in state `churned` cannot have an `active` Stripe subscription or an `active` GoCardless mandate. The nightly reconcile job raises a discrepancy if it does.
+- Hours `delivered` for a `BookingSession` is monotonic. Once delivered, the only valid transition is `corrected_by` (a new session that nets the original to zero with a reason).
+- A `FinancialAccount` balance is derived, never stored. If you find a `balance_minor` column anywhere, delete it.
+
+### 41.3 Safeguarding invariants
+
+- A `SafeguardingFlag` at `restricted_access` requires a named DSL assignee. No assignee, no save.
+- Decryption of an `EncryptedField` requires a non-empty `purpose` string in the audit entry. Empty strings fail the AAD check by design.
+- A `Contact` cannot be hard-deleted while any `SafeguardingFlag` is active. Soft delete then DSL review is the only path.
+
+Property-based tests live alongside each invariant. CI runs the full suite on every PR; the seed data is regenerated to attempt to violate each invariant deliberately.
+
+---
+
+## 42. Safeguarding workflow and DSL escalation
+
+Safeguarding is the part of the product where speed and discretion both matter. The workflow below is the contract between agents, DSLs, and the system. It is enforced in code, not by training.
+
+### 42.1 Raising a concern
+
+Any agent can raise a concern from a Contact, Family, or Interaction via the "Raise safeguarding concern" action. The form captures: nature of concern (free text, encrypted), source (call, message, email, third party), urgency (`routine | urgent | immediate`), and whether the concern relates to a child currently in placement.
+
+On submit:
+1. A `SafeguardingFlag` row is created at `concern_logged`.
+2. An `Interaction` of type `safeguarding.concern_raised` is appended (the body is encrypted; the timeline shows a redacted summary to non-DSL users).
+3. The on-duty DSL is notified via Trengo SMS and Slack DM. `immediate` urgency also pages the DSL via PagerDuty.
+4. An `AuditLogEntry` records actor, target, urgency, and `request_id`.
+
+### 42.2 DSL triage
+
+The DSL has up to 4 hours (routine), 1 hour (urgent), or 15 minutes (immediate) to acknowledge. SLA timers run server-side and escalate to the deputy DSL on breach.
+
+DSL actions: acknowledge, request more information from the raising agent, escalate to `restricted_access`, refer to LA children's services, refer to MASH, close as resolved with rationale. Every action is audited and timestamped.
+
+### 42.3 Restricted access
+
+Moving a flag to `restricted_access` immediately:
+- Hides notes and the encrypted concern body from all non-DSL roles.
+- Removes the Contact from AI prompt inputs across all packages.
+- Forces an audit prompt ("why are you reading this?") on every subsequent read.
+- Routes inbound communications to a DSL-only inbox; ops agents see a banner saying contact is restricted and cannot reply directly.
+
+### 42.4 LA referrals
+
+Referrals to a Local Authority are recorded as `safeguarding.la_referral` Interactions with the LA name, caseworker, reference number, and outbound channel. We do not send the referral from the CRM; we record that it happened and store the confirmation. Runbook: `docs/runbooks/safeguarding-la-referral.md`.
+
+---
+
+## 43. LA tender and Alternative Provision contract workflow
+
+Local Authority commissioned work is the high-stakes side of the business. Tenders, contracts, and AP placements have their own lifecycle that touches finance, safeguarding, and reporting differently from PAYG families.
+
+### 43.1 Tender pipeline
+
+Tenders live as `Tender` rows distinct from `Family`. States: `identified → drafting → submitted → shortlisted → awarded | rejected | withdrawn`. A tender is owned by a named account lead; transitions write `tender.state_changed` Interactions and notify `#crm-tenders`.
+
+Tender drafting uses `packages/ai/prompts/tender/` with the StudyMind house style for statutory language. Drafts are always reviewed by the account lead and (for SEMH or EHCP-heavy work) the DSL before submission. The reviewing user signs off in-app; the signoff is audited.
+
+### 43.2 Contract setup on award
+
+On `awarded`, the system prompts to create:
+1. An `LAContract` with commissioner, contract value, term, billing cadence, hours envelope, retention overrides, and reporting cadence.
+2. One or more `Family` rows linked to the contract (one per learner placement). Billing flows to the LA, not the family.
+3. A `RetentionPolicy` override if the LA requires longer retention than our defaults (common for safeguarding notes; some LAs require 25 years from DOB).
+
+LA-billed Families have `billing_party = local_authority`. Stripe and GoCardless are not used; invoicing is via a separate `LAInvoice` flow with manual reconciliation against LA purchase orders.
+
+### 43.3 Reporting
+
+Most LA contracts require a monthly progress report per learner. The CRM generates a draft from delivered sessions, attendance, and tutor notes. The account lead edits and signs off. Reports are exported as PDF and stored in S3 under `la-reports/{contract_id}/{period}/`.
+
+A missed monthly report is a contract risk and is surfaced on the LA contracts dashboard 5 working days before the deadline.
+
+### 43.4 AP-specific rules
+
+Section 19 placements are time-limited and statutory. The system tracks `ap_start_date`, `ap_review_date`, and `ap_end_date` per placement. Missed reviews block invoicing on that placement and raise a `ReconciliationDiscrepancy` of category `ap_review_overdue`.
+
+---
+
+## 44. Threat model and security hardening
+
+This section is the working threat model. It is not exhaustive; it is the list of attacks we have decided to defend against by default.
+
+### 44.1 Adversaries we model
+
+- **External attacker** with no credentials, attempting account takeover, webhook forgery, or scraping.
+- **Compromised agent account** via phishing or stolen device.
+- **Malicious insider** with legitimate role but illegitimate intent (rare, real, audit-detectable).
+- **Supply chain compromise** of an npm package or a third-party SDK.
+- **Provider compromise** of Stripe, GoCardless, Gmail, etc. We assume their keys can leak and design for blast-radius reduction.
+
+### 44.2 Controls
+
+- **Secrets.** Never in repo. Railway env vars mirror 1Password. Rotated on a schedule documented in `docs/runbooks/secret-rotation.md`. Per-agent OAuth and Trengo tokens are KMS-encrypted at rest.
+- **Auth.** Clerk MFA mandatory for all roles. Sessions max 12 hours; idle timeout 30 minutes. Device binding on for `admin`, `finance`, `dsl`.
+- **Webhook forgery.** Signature verification on every webhook before any DB write. Timestamp window enforced where the provider gives one (Slack 5 min, Stripe tolerance default).
+- **CSRF.** tRPC mutations require the Clerk session cookie plus an `Origin` check. Webhooks are exempt and authenticated by signature instead.
+- **SSRF.** Outbound HTTP from worker uses an allowlist of provider domains. Anything else fails closed.
+- **Injection.** Prisma parameterised queries everywhere. No raw SQL outside migrations. Zod validates every external input.
+- **Rate limiting.** Per-user tRPC limits in Redis; per-IP limits at the edge for unauthenticated routes.
+- **Headers.** CSP with no `unsafe-inline`, HSTS with preload, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`.
+- **Dependency hygiene.** `pnpm audit` in CI; Renovate bot for upgrades; lockfile committed and verified. Postinstall scripts are blocked by default.
+- **Prompt injection.** AI inputs sourced from inbound messages or emails are passed through `packages/ai/sanitise.ts` which strips control tokens and instruction-shaped content. The system prompt explicitly tells the model to ignore instructions found in user-supplied content.
+
+### 44.3 Detection
+
+Sentry captures auth anomalies; Axiom holds structured access logs. A weekly job runs basic UEBA on AuditLogEntry: spikes in safeguarding reads, off-hours DSAR exports, refund clusters. Findings escalate via PagerDuty.
+
+---
+
+## 45. Event taxonomy
+
+Consistent event names make logs, audits, and timelines readable six months from now. This section is the registry. New events go through code review against this schema; a CI check rejects unregistered names.
+
+### 45.1 Naming
+
+Events are dot-namespaced lower snake case: `<domain>.<entity>.<verb_past_tense>`. Examples: `family.state_changed`, `payment.late_failed`, `safeguarding.concern_raised`, `ai.draft_generated`.
+
+Domains: `contact`, `family`, `interaction`, `payment`, `mandate`, `subscription`, `booking`, `tender`, `lacontract`, `safeguarding`, `audit`, `ai`, `system`.
+
+### 45.2 Three streams, one taxonomy
+
+The same event name appears in up to three places:
+
+- **AuditLogEntry** for anything with compliance value (every safeguarding, finance, or contact write).
+- **Interaction** for anything that should appear on a Contact or Family timeline.
+- **Structured log** (Axiom) for anything operationally interesting.
+
+A single user action may emit into all three. The shared name keeps cross-references trivial.
+
+### 45.3 Required fields
+
+Every emitted event carries:
+- `event` — the registered name.
+- `actor_id` — user id or `system:<job_name>`.
+- `target` — `{ type, id }` of the primary entity.
+- `request_id` — OpenTelemetry trace id.
+- `occurred_at` — UTC ISO 8601.
+- `prompt_version` — for `ai.*` events only.
+- `provider_event_id` — for events derived from a webhook.
+
+Optional fields are typed per event in `packages/core/events/registry.ts`. The registry is the source of truth; the doc table below regenerates from it.
+
+### 45.4 Conventions
+
+- Past tense always (`payment.late_failed`, not `payment.late_fail`).
+- Never put PII in the event name.
+- Never reuse a name with different semantics. Bump to `.v2` if semantics change; old name gets a deprecation date.
+- Verb choice: `created`, `updated`, `state_changed`, `flagged`, `assigned`, `closed`, `reopened`, `merged`, `restored`, `archived`, `deleted`. Domain verbs allowed where they are clearer (`refunded`, `late_failed`, `replaced`).
+
+---
+
+## 46. Disaster recovery and data restoration
+
+Backups exist; what matters is that we have rehearsed the restore. This section is the plan; the runbook in `docs/runbooks/disaster-recovery.md` is the script.
+
+### 46.1 Recovery objectives
+
+- **RPO.** 5 minutes for Postgres (Railway PITR). 24 hours for S3 (versioned bucket + cross-region replication for production).
+- **RTO.** 2 hours for the web app. 4 hours for full integration recovery (webhooks reconnected, Inngest backfill complete, AI degraded mode disengaged).
+
+### 46.2 Backup inventory
+
+- **Postgres production.** Railway PITR (continuous WAL, 7-day window) plus a nightly logical dump shipped to `s3://studymind-crm-backups-prod/postgres/`. Weekly dumps are retained for 12 months; daily for 30 days.
+- **S3 buckets.** Versioning on, MFA delete on for the production buckets. Cross-region replication to `eu-west-1`.
+- **KMS keys.** AWS-managed, multi-region for the production CMK so a regional outage does not lock the data.
+- **Clerk and Inngest.** Provider-managed; we keep export scripts in `scripts/dr/` to dump user lists and function manifests weekly to S3 so we can rebuild.
+- **Provider events.** `ProviderEvent` is the replay log of last resort. It is included in the Postgres backup; nothing else needs special handling for replay.
+
+### 46.3 Restoration playbook (summary)
+
+1. Declare a Sev 1 incident; assign incident commander.
+2. Provision a fresh Railway environment from `railway.json`.
+3. Restore Postgres to the target timestamp via PITR or from the logical dump if Railway is unavailable.
+4. Restore S3 from the replica region if primary is unavailable. Object versions are addressable by version id.
+5. Bring up `web` and `worker` pinned to the SHA that was running at the target timestamp.
+6. Reconnect webhooks: Stripe, GoCardless, Aircall, Trengo, Slack, Asana, Gmail, Booking. Each provider has a script in `scripts/dr/reconnect-<provider>.ts`.
+7. Replay `ProviderEvent` rows received between the RPO and the disaster moment; the replay job is idempotent.
+8. Run reconciliation manually for the affected window; surface discrepancies to finance.
+9. Communicate restoration to staff in `#crm-incidents`. External comms only with comms lead approval.
+
+### 46.4 Rehearsal
+
+Quarterly DR rehearsal restores production into a sandbox account and runs a smoke suite. The exercise is graded against RPO and RTO; misses become ADR follow-ups. The most recent rehearsal date and result live at the top of the DR runbook.
+
+---
+
 — end of CLAUDE.md —
