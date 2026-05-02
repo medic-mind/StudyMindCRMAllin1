@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^6.5.1",
+    "@prisma/client": "^5.22.0",
     "@studymind/audit": "workspace:*",
     "@studymind/core": "workspace:*",
     "@studymind/db": "workspace:*",
@@ -29,7 +30,9 @@
     "@trpc/client": "^11.0.0-rc.638",
     "@trpc/react-query": "^11.0.0-rc.638",
     "@trpc/server": "^11.0.0-rc.638",
+    "@hookform/resolvers": "^3.9.0",
     "next": "^15.0.3",
+    "react-hook-form": "^7.53.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sonner": "^1.7.0",
