@@ -1,0 +1,25 @@
+{
+  "name": "@studymind/jobs",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet'",
+    "dev:worker": "echo 'inngest dev: not implemented'"
+  },
+  "dependencies": {
+    "@studymind/core": "workspace:*",
+    "@studymind/db": "workspace:*",
+    "inngest": "^3.27.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
