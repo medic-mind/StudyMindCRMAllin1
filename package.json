@@ -29,10 +29,13 @@
     "@types/node": "^20.14.10",
     "@vitest/coverage-v8": "^2.1.5",
     "eslint": "^9.13.0",
-    "vitest": "^2.1.5",
     "prettier": "^3.3.3",
     "turbo": "^2.2.3",
     "typescript": "^5.6.3",
-    "typescript-eslint": "^8.59.1"
+    "typescript-eslint": "^8.59.1",
+    "vitest": "^2.1.5"
+  },
+  "dependencies": {
+    "@paralleldrive/cuid2": "^3.3.0"
   }
 }
