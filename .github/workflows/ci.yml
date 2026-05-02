@@ -36,5 +36,6 @@ jobs:
       - name: Build
         run: pnpm build
         env:
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_dummy
-          CLERK_SECRET_KEY: sk_test_dummy
+          # Format-valid dummy keys; not real credentials. Build won't authenticate.
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
+          CLERK_SECRET_KEY: sk_test_dummy_dummy_dummy_dummy_dummy_dum

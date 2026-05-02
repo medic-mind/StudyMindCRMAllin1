@@ -18,18 +18,19 @@
     "test:e2e": "turbo run test:e2e",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md,json}\"",
-    "db:migrate": "pnpm --filter @studymind/db prisma migrate dev",
-    "db:seed": "pnpm --filter @studymind/db prisma db seed",
-    "db:reset": "pnpm --filter @studymind/db prisma migrate reset --force",
-    "db:studio": "pnpm --filter @studymind/db prisma studio",
-    "db:generate": "pnpm --filter @studymind/db prisma generate",
-    "db:explain": "pnpm --filter @studymind/db tsx scripts/explain.ts"
+    "db:migrate": "pnpm --filter @studymind/db exec prisma migrate dev",
+    "db:seed": "pnpm --filter @studymind/db exec prisma db seed",
+    "db:reset": "pnpm --filter @studymind/db exec prisma migrate reset --force",
+    "db:studio": "pnpm --filter @studymind/db exec prisma studio",
+    "db:generate": "pnpm --filter @studymind/db exec prisma generate"
   },
   "devDependencies": {
+    "@eslint/js": "^9.13.0",
     "@types/node": "^20.14.10",
     "eslint": "^9.13.0",
     "prettier": "^3.3.3",
     "turbo": "^2.2.3",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.59.1"
   }
 }

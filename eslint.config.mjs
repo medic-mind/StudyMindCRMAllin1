@@ -1,6 +1,9 @@
 // Flat ESLint config for the StudyMind CRM monorepo.
 // Module-boundary rules per CLAUDE.md Section 5.
 
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+
 export default [
   {
     ignores: [
@@ -12,7 +15,19 @@ export default [
       '**/coverage/**',
       '**/prisma/migrations/**',
       '**/*.generated.ts',
+      '**/next-env.d.ts',
     ],
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/no-explicit-any': 'warn',
+    },
   },
   {
     // packages/core may not import from packages/integrations.
