@@ -1,0 +1,156 @@
+// Interaction (timeline) router. See CLAUDE.md Sections 6.2, 27.
+
+import { TRPCError } from '@trpc/server'
+import { z } from 'zod'
+
+import {
+  InteractionCreateInput,
+  type InteractionListItem,
+} from '@studymind/core/interaction'
+
+import { toInteractionListItem } from '@/lib/view-models/interaction'
+
+import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
+
+const InteractionListInput = z
+  .object({
+    contactId: z.string().optional(),
+    familyId: z.string().optional(),
+    cursor: z
+      .object({
+        id: z.string(),
+        occurredAt: z.date(),
+      })
+      .nullish(),
+    limit: z.number().min(1).max(100).default(25),
+  })
+  .refine((v) => !!v.contactId || !!v.familyId, {
+    message: 'contactId or familyId is required',
+  })
+
+function newId(): string {
+  return crypto.randomUUID()
+}
+
+export const interactionRouter = router({
+  list: protectedProcedure
+    .input(InteractionListInput)
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.interaction.findMany({
+        where: {
+          deletedAt: null,
+          ...(input.contactId ? { contactId: input.contactId } : {}),
+          ...(input.familyId ? { familyId: input.familyId } : {}),
+          ...(input.cursor
+            ? {
+                OR: [
+                  { occurredAt: { lt: input.cursor.occurredAt } },
+                  {
+                    AND: [
+                      { occurredAt: input.cursor.occurredAt },
+                      { id: { lt: input.cursor.id } },
+                    ],
+                  },
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        take: input.limit + 1,
+        select: {
+          id: true,
+          type: true,
+          occurredAt: true,
+          summary: true,
+          contactId: true,
+          familyId: true,
+          createdById: true,
+        },
+      })
+
+      const hasMore = rows.length > input.limit
+      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      const items: InteractionListItem[] = sliced.map((r) =>
+        toInteractionListItem({
+          ...r,
+          // Prisma returns the enum verbatim; cast to our narrower union.
+          type: mapDbType(r.type),
+        }),
+      )
+      const last = sliced[sliced.length - 1]
+      const nextCursor =
+        hasMore && last ? { id: last.id, occurredAt: last.occurredAt } : null
+      return { items, nextCursor }
+    }),
+
+  create: auditedProcedure
+    .input(InteractionCreateInput)
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      // Phase 1: only manual notes from the UI. Other types come via integrations.
+      if (input.type !== 'note') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Only manual notes can be created via this endpoint today',
+        })
+      }
+      // Validate referenced row(s) exist and aren't soft-deleted.
+      if (input.contactId) {
+        const c = await ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: { id: true },
+        })
+        if (!c) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+      }
+      if (input.familyId) {
+        const f = await ctx.db.family.findFirst({
+          where: { id: input.familyId, deletedAt: null },
+          select: { id: true },
+        })
+        if (!f) throw new TRPCError({ code: 'NOT_FOUND', message: 'Family not found' })
+      }
+
+      const id = newId()
+      const created = await ctx.db.interaction.create({
+        data: {
+          id,
+          type: 'note',
+          contactId: input.contactId ?? null,
+          familyId: input.familyId ?? null,
+          occurredAt: input.occurredAt ?? new Date(),
+          summary: input.summary,
+          payload: { body: input.body },
+          createdById: user.id,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'interaction.created',
+        target: { type: 'Interaction', id: created.id },
+        before: null,
+        after: { id: created.id, type: created.type, summary: created.summary },
+      })
+      return { id: created.id }
+    }),
+})
+
+// Map the Prisma enum (uses underscores) to our domain enum (uses dots where
+// the event taxonomy demands it). See CLAUDE.md §45.
+function mapDbType(t: string): InteractionListItem['type'] {
+  switch (t) {
+    case 'note':
+      return 'note'
+    case 'call':
+      return 'call_logged'
+    case 'email':
+      return 'email_sent'
+    case 'family_state_changed':
+      return 'family.state_changed'
+    case 'family_billing_contact_changed':
+      return 'family.billing_contact_changed'
+    case 'safeguarding_concern_raised':
+      return 'safeguarding.concern_raised'
+    default:
+      return 'note'
+  }
+}

@@ -37,6 +37,10 @@ export interface TrpcContext {
   audit: AuditRecorder
 }
 
+export interface AuthedTrpcContext extends Omit<TrpcContext, 'user'> {
+  user: SessionUser
+}
+
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
@@ -55,23 +59,25 @@ export const router = t.router
 export const middleware = t.middleware
 export const publicProcedure = t.procedure
 
-const enforceUserMiddleware = t.middleware(({ ctx, next }) => {
-  if (!ctx.user) {
+const enforceUserAndRateLimitMiddleware = t.middleware(async ({ ctx, path, next }) => {
+  const user = ctx.user
+  if (!user) {
     throw new TRPCError({ code: 'UNAUTHORIZED' })
   }
-  return next({ ctx: { ...ctx, user: ctx.user } })
-})
-
-const rateLimitMiddleware = t.middleware(async ({ ctx, path, next }) => {
-  if (!ctx.user) return next()
-  const allowed = await rateLimit({ userId: ctx.user.id, procedure: path })
+  const allowed = await rateLimit({ userId: user.id, procedure: path })
   if (!allowed) {
     throw new TRPCError({
       code: 'TOO_MANY_REQUESTS',
       message: 'Slow down — try again in a moment.',
     })
   }
-  return next()
+  const authedCtx: AuthedTrpcContext = {
+    user,
+    requestId: ctx.requestId,
+    db: ctx.db,
+    audit: ctx.audit,
+  }
+  return next({ ctx: authedCtx })
 })
 
 const auditMiddleware = t.middleware(async ({ ctx, type, path, next }) => {
@@ -90,11 +96,22 @@ const auditMiddleware = t.middleware(async ({ ctx, type, path, next }) => {
   return result
 })
 
-export const protectedProcedure = publicProcedure
-  .use(enforceUserMiddleware)
-  .use(rateLimitMiddleware)
+export const protectedProcedure = publicProcedure.use(enforceUserAndRateLimitMiddleware)
 
 export const auditedProcedure = protectedProcedure.use(auditMiddleware)
+
+/**
+ * Narrows ctx.user from `SessionUser | null` to `SessionUser`. Use inside
+ * resolvers that come through protectedProcedure or auditedProcedure — the
+ * middleware has already enforced the user is present, this just re-asserts
+ * it for TypeScript without weakening the runtime contract.
+ */
+export function requireUser(ctx: TrpcContext): SessionUser {
+  if (!ctx.user) {
+    throw new TRPCError({ code: 'UNAUTHORIZED' })
+  }
+  return ctx.user
+}
 
 /** Build the audit recorder for a request. */
 export function createAuditRecorder(
