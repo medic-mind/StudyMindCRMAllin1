@@ -1,8 +1,19 @@
 // Flat ESLint config for the StudyMind CRM monorepo.
 // Module-boundary rules per CLAUDE.md Section 5.
 
+import { createRequire } from 'node:module'
+
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
+
+const require = createRequire(import.meta.url)
+const requireAuditRule = require('./tools/eslint-rules/require-audit.js')
+
+const studymindPlugin = {
+  rules: {
+    'require-audit': requireAuditRule,
+  },
+}
 
 export default [
   {
@@ -62,6 +73,14 @@ export default [
           ],
         },
       ],
+    },
+  },
+  {
+    // Custom rule: tRPC mutations that write to sensitive models must audit.
+    files: ['apps/web/app/api/trpc/routers/**/*.{ts,tsx}'],
+    plugins: { studymind: studymindPlugin },
+    rules: {
+      'studymind/require-audit': 'error',
     },
   },
   {
