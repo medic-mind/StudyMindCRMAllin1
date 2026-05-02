@@ -3,5 +3,5 @@
 
 export const FAMILY_DOMAIN = 'family' as const
 
-export * from './types.js'
-export * from './rules.js'
+export * from './types'
+export * from './rules'

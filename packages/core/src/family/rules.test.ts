@@ -2,9 +2,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { BusinessError } from '../errors.js'
+import { BusinessError } from '../errors'
 
-import { assertBillingContactNotStudent, assertBillingContactPresent } from './rules.js'
+import { assertBillingContactNotStudent, assertBillingContactPresent } from './rules'
 
 describe('assertBillingContactNotStudent', () => {
   it('passes when no billing contact is set', () => {

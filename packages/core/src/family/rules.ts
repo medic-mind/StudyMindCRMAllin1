@@ -1,6 +1,6 @@
 // Family invariants and rules. See CLAUDE.md Section 41.1.
 
-import { BusinessError } from '../errors.js'
+import { BusinessError } from '../errors'
 
 export interface FamilyMemberLink {
   contactId: string

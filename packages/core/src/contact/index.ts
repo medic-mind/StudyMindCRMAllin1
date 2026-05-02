@@ -3,4 +3,4 @@
 
 export const CONTACT_DOMAIN = 'contact' as const
 
-export * from './types.js'
+export * from './types'

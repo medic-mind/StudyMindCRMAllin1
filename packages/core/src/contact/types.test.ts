@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { ContactCreateInput, E164, Email, displayNameOf, isMinorByDob } from './types.js'
+import { ContactCreateInput, E164, Email, displayNameOf, isMinorByDob } from './types'
 
 describe('E164', () => {
   it('accepts a UK mobile number', () => {

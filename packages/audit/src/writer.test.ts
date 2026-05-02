@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { writeAuditLogEntry } from './writer.js'
+import { writeAuditLogEntry } from './writer'
 
 interface FakeRow {
   id: string

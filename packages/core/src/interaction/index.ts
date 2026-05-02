@@ -2,4 +2,4 @@
 
 export const INTERACTION_DOMAIN = 'interaction' as const
 
-export * from './types.js'
+export * from './types'
