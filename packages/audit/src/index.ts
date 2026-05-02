@@ -1,23 +1,16 @@
 // Audit log writer. Append-only. See CLAUDE.md Section 20 and 21.
 // Every write that touches Contact, FinancialAccount, or safeguarding fields
-// MUST call writeAuditLogEntry.
+// MUST go through writeAuditLogEntry.
 
-export interface AuditLogInput {
-  action: string
-  actorId: string | null
-  targetType: string
-  targetId: string
-  requestId?: string
-  purpose?: string
-  before?: unknown
-  after?: unknown
-}
+export type { AuditTarget, WriteAuditLogEntryInput, DbClient, WithAuditCtx, AuditingTx } from './writer.js'
+export { writeAuditLogEntry, withAudit } from './writer.js'
+export { jsonDiff } from './diff.js'
+export type { JsonDiffEntry } from './diff.js'
 
-export interface AuditWriter {
-  write(input: AuditLogInput): Promise<void>
-}
-
-export async function writeAuditLogEntry(_input: AuditLogInput): Promise<void> {
-  // Skeleton — real implementation persists to AuditLogEntry via @studymind/db.
-  throw new Error('not implemented')
-}
+// Back-compat alias used by the tRPC builder ctx. The audit middleware passes
+// the actor and request id from ctx; callers supply only the action, target,
+// and before/after.
+export type AuditLogInput = Omit<
+  import('./writer.js').WriteAuditLogEntryInput,
+  'actorId' | 'requestId'
+>
