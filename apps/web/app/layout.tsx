@@ -1,6 +1,9 @@
 import type { Metadata } from 'next'
 import { ClerkProvider } from '@clerk/nextjs'
 import { Toaster } from 'sonner'
+
+import { TrpcProvider } from '@/lib/trpc/Provider'
+
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -13,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <ClerkProvider>
       <html lang="en-GB">
         <body>
-          {children}
+          <TrpcProvider>{children}</TrpcProvider>
           <Toaster richColors position="top-right" />
         </body>
       </html>
