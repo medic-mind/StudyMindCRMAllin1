@@ -177,6 +177,12 @@ importers:
 
   packages/core:
     dependencies:
+      '@paralleldrive/cuid2':
+        specifier: ^3.3.0
+        version: 3.3.0
+      '@prisma/client':
+        specifier: ^5.22.0
+        version: 5.22.0(prisma@5.22.0)
       zod:
         specifier: ^3.23.8
         version: 3.25.76

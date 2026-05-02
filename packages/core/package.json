@@ -14,7 +14,8 @@
     "./auth/policies": "./src/auth/policies.ts",
     "./events/registry": "./src/events/registry.ts",
     "./errors": "./src/errors.ts",
-    "./flags": "./src/flags/index.ts"
+    "./flags": "./src/flags/index.ts",
+    "./provider-events": "./src/provider-events/index.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --emitDeclarationOnly false --noEmit",
@@ -23,6 +24,8 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
+    "@paralleldrive/cuid2": "^3.3.0",
+    "@prisma/client": "^5.22.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
