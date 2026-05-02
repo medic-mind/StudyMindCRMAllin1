@@ -1,5 +1,6 @@
 // Interaction (timeline) router. See CLAUDE.md Sections 6.2, 27.
 
+import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -29,7 +30,7 @@ const InteractionListInput = z
   })
 
 function newId(): string {
-  return crypto.randomUUID()
+  return createId()
 }
 
 export const interactionRouter = router({

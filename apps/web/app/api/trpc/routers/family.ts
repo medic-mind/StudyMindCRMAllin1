@@ -1,5 +1,6 @@
 // Family router. See CLAUDE.md Sections 6.1, 27, 41.1.
 
+import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -13,7 +14,7 @@ import {
 import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
 
 function newId(): string {
-  return crypto.randomUUID()
+  return createId()
 }
 
 export const familyRouter = router({

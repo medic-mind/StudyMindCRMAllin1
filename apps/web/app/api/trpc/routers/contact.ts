@@ -1,6 +1,7 @@
 // Contact router. See CLAUDE.md Sections 27, 20.
 // All mutations are audited (auditedProcedure runtime-checks ctx.audit was called).
 
+import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -27,7 +28,7 @@ const ListInput = z.object({
 })
 
 function newId(): string {
-  return crypto.randomUUID()
+  return createId()
 }
 
 export const contactRouter = router({

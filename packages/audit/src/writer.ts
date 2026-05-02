@@ -2,6 +2,7 @@
 // Every write that touches Contact, FinancialAccount, or safeguarding fields
 // MUST go through writeAuditLogEntry.
 
+import { createId } from '@paralleldrive/cuid2'
 import { Prisma, type PrismaClient } from '@prisma/client'
 
 export interface AuditTarget {
@@ -29,9 +30,8 @@ function toJsonValue(value: unknown): Prisma.InputJsonValue | typeof Prisma.Json
 }
 
 function newId(): string {
-  // CLAUDE.md §19 mandates cuid2 long-term. We use crypto.randomUUID() until the
-  // ADR adding @paralleldrive/cuid2 lands. The shape is opaque to callers.
-  return crypto.randomUUID()
+  // CLAUDE.md §19: all IDs are cuid2. See docs/adr/0002-id-strategy.md.
+  return createId()
 }
 
 /**

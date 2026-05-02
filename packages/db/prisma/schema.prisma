@@ -142,14 +142,14 @@ enum TaskStatus {
 // -----------------------------------------------------------------------------
 
 model User {
-  id          String   @id
-  clerkUserId String   @unique
-  email       String   @unique
+  id          String  @id
+  clerkUserId String  @unique
+  email       String  @unique
   name        String?
-  isActive    Boolean  @default(true)
+  isActive    Boolean @default(true)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
   deletedAt   DateTime?
@@ -180,15 +180,15 @@ model RoleAssignment {
 // -----------------------------------------------------------------------------
 
 model Contact {
-  id            String      @id
-  kind          ContactKind
-  firstName     String?
-  lastName      String?
-  email         String?
-  phoneE164     String?
-  dateOfBirth   DateTime?
-  isMinor       Boolean     @default(false)
-  notes         String?
+  id          String      @id
+  kind        ContactKind
+  firstName   String?
+  lastName    String?
+  email       String?
+  phoneE164   String?
+  dateOfBirth DateTime?
+  isMinor     Boolean     @default(false)
+  notes       String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -197,8 +197,8 @@ model Contact {
   deletedAt   DateTime?
 
   familyMembers     FamilyMember[]
-  billingForFamily  Family[]            @relation("BillingContact")
-  interactions      Interaction[]       @relation("ContactInteractions")
+  billingForFamily  Family[]           @relation("BillingContact")
+  interactions      Interaction[]      @relation("ContactInteractions")
   safeguardingFlags SafeguardingFlag[]
   encryptedFields   EncryptedField[]
 
@@ -208,13 +208,13 @@ model Contact {
 }
 
 model Family {
-  id                String        @id
-  name              String?
-  state             FamilyState   @default(lead)
-  billingParty      BillingParty  @default(family)
-  billingContactId  String?
-  laContractId      String?
-  churnScore        Float?
+  id               String       @id
+  name             String?
+  state            FamilyState  @default(lead)
+  billingParty     BillingParty @default(family)
+  billingContactId String?
+  laContractId     String?
+  churnScore       Float?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -222,13 +222,14 @@ model Family {
   updatedById String?
   deletedAt   DateTime?
 
-  billingContact   Contact?           @relation("BillingContact", fields: [billingContactId], references: [id])
-  laContract       LAContract?        @relation(fields: [laContractId], references: [id])
+  billingContact   Contact?                    @relation("BillingContact", fields: [billingContactId], references: [id])
+  laContract       LAContract?                 @relation(fields: [laContractId], references: [id])
   members          FamilyMember[]
   financialAccount FinancialAccount?
-  interactions     Interaction[]      @relation("FamilyInteractions")
+  interactions     Interaction[]               @relation("FamilyInteractions")
   bookings         Booking[]
   subscriptions    StripeSubscription[]
+  stripeCustomers  StripeCustomer[]
   mandates         GcMandate[]
   invoices         Invoice[]
   payments         Payment[]
@@ -241,7 +242,7 @@ model Family {
 }
 
 model FamilyMember {
-  id        String  @id
+  id        String @id
   familyId  String
   contactId String
   role      String
@@ -259,12 +260,12 @@ model FamilyMember {
 }
 
 model FinancialAccount {
-  id        String  @id
-  familyId  String  @unique
-  status    String  @default("ok")
+  id       String @id
+  familyId String @unique
+  status   String @default("ok")
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
   deletedAt   DateTime?
@@ -277,16 +278,16 @@ model FinancialAccount {
 // -----------------------------------------------------------------------------
 
 model Interaction {
-  id          String          @id
-  type        InteractionType
-  contactId   String?
-  familyId    String?
-  occurredAt  DateTime
-  summary     String?
-  payload     Json
+  id         String          @id
+  type       InteractionType
+  contactId  String?
+  familyId   String?
+  occurredAt DateTime
+  summary    String?
+  payload    Json
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
   deletedAt   DateTime?
@@ -304,12 +305,12 @@ model Interaction {
 // -----------------------------------------------------------------------------
 
 model ProviderEvent {
-  id         String   @id
-  provider   String
-  eventId    String
-  type       String
-  raw        Json
-  receivedAt DateTime @default(now())
+  id          String    @id
+  provider    String
+  eventId     String
+  type        String
+  raw         Json
+  receivedAt  DateTime  @default(now())
   processedAt DateTime?
 
   @@unique([provider, eventId])
@@ -317,16 +318,16 @@ model ProviderEvent {
 }
 
 model AuditLogEntry {
-  id          String   @id
-  action      String
-  actorId     String?
-  targetType  String
-  targetId    String
-  requestId   String?
-  purpose     String?
-  before      Json?
-  after       Json?
-  occurredAt  DateTime @default(now())
+  id         String   @id
+  action     String
+  actorId    String?
+  targetType String
+  targetId   String
+  requestId  String?
+  purpose    String?
+  before     Json?
+  after      Json?
+  occurredAt DateTime @default(now())
 
   @@index([targetType, targetId])
   @@index([actorId, occurredAt])
@@ -340,8 +341,8 @@ model RetentionPolicy {
   contractId    String?
   notes         String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
 }
@@ -351,16 +352,16 @@ model RetentionPolicy {
 // -----------------------------------------------------------------------------
 
 model SafeguardingFlag {
-  id           String                @id
-  contactId    String
-  state        SafeguardingFlagState @default(concern_logged)
-  urgency      SafeguardingUrgency   @default(routine)
-  dslUserId    String?
-  raisedById   String?
-  closedAt     DateTime?
+  id         String                @id
+  contactId  String
+  state      SafeguardingFlagState @default(concern_logged)
+  urgency    SafeguardingUrgency   @default(routine)
+  dslUserId  String?
+  raisedById String?
+  closedAt   DateTime?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
   deletedAt   DateTime?
@@ -373,7 +374,7 @@ model SafeguardingFlag {
 }
 
 model EncryptedField {
-  id            String  @id
+  id            String @id
   contactId     String
   column        String
   ciphertext    Bytes
@@ -409,8 +410,8 @@ model Booking {
   updatedById String?
   deletedAt   DateTime?
 
-  family   Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  sessions BookingSession[]
+  family      Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  sessions    BookingSession[]
   allocations Allocation[]
 
   @@index([familyId])
@@ -418,11 +419,11 @@ model Booking {
 }
 
 model BookingSession {
-  id          String       @id
-  bookingId   String
-  scheduledAt DateTime
-  state       BookingState @default(tentative)
-  hours       Int          @default(0)
+  id            String       @id
+  bookingId     String
+  scheduledAt   DateTime
+  state         BookingState @default(tentative)
+  hours         Int          @default(0)
   correctedById String?
 
   createdAt   DateTime  @default(now())
@@ -431,8 +432,8 @@ model BookingSession {
   updatedById String?
   deletedAt   DateTime?
 
-  booking     Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  correctedBy BookingSession? @relation("Correction", fields: [correctedById], references: [id])
+  booking     Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  correctedBy BookingSession?  @relation("Correction", fields: [correctedById], references: [id])
   corrections BookingSession[] @relation("Correction")
 
   @@index([bookingId, scheduledAt])
@@ -443,12 +444,28 @@ model BookingSession {
 // Finance
 // -----------------------------------------------------------------------------
 
+model StripeCustomer {
+  id               String @id
+  familyId         String
+  stripeCustomerId String @unique
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+}
+
 model StripeSubscription {
-  id                String            @id
-  familyId          String
-  stripeId          String            @unique
-  state             SubscriptionState @default(unknown)
-  currentPeriodEnd  DateTime?
+  id               String            @id
+  familyId         String
+  stripeId         String            @unique
+  state            SubscriptionState @default(unknown)
+  currentPeriodEnd DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -484,13 +501,13 @@ model GcMandate {
 }
 
 model Invoice {
-  id            String   @id
-  familyId      String
-  externalId    String   @unique
-  amountMinor   Int
-  currency      String   @default("GBP")
-  issuedAt      DateTime
-  dueAt         DateTime?
+  id          String    @id
+  familyId    String
+  externalId  String    @unique
+  amountMinor Int
+  currency    String    @default("GBP")
+  issuedAt    DateTime
+  dueAt       DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -505,15 +522,15 @@ model Invoice {
 }
 
 model Payment {
-  id            String   @id
-  familyId      String
-  invoiceId     String?
-  externalId    String   @unique
-  provider      String
-  amountMinor   Int
-  currency      String   @default("GBP")
-  receivedAt    DateTime
-  reverted      Boolean  @default(false)
+  id          String   @id
+  familyId    String
+  invoiceId   String?
+  externalId  String   @unique
+  provider    String
+  amountMinor Int
+  currency    String   @default("GBP")
+  receivedAt  DateTime
+  reverted    Boolean  @default(false)
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -521,9 +538,9 @@ model Payment {
   updatedById String?
   deletedAt   DateTime?
 
-  family      Family       @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  invoice     Invoice?     @relation(fields: [invoiceId], references: [id])
-  allocations Allocation[]
+  family        Family         @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  invoice       Invoice?       @relation(fields: [invoiceId], references: [id])
+  allocations   Allocation[]
   refundIntents RefundIntent[]
 
   @@index([familyId])
@@ -549,13 +566,13 @@ model Allocation {
 }
 
 model RefundIntent {
-  id              String             @id
-  paymentId       String
-  amountMinor     Int
-  reasonCode      String
-  status          RefundIntentStatus @default(pending)
-  idempotencyKey  String             @unique
-  externalId      String?
+  id             String             @id
+  paymentId      String
+  amountMinor    Int
+  reasonCode     String
+  status         RefundIntentStatus @default(pending)
+  idempotencyKey String             @unique
+  externalId     String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -570,12 +587,12 @@ model RefundIntent {
 }
 
 model ReconciliationDiscrepancy {
-  id         String                 @id
-  familyId   String
-  category   ReconciliationCategory
-  summary    String
-  payload    Json
-  resolvedAt DateTime?
+  id           String                 @id
+  familyId     String
+  category     ReconciliationCategory
+  summary      String
+  payload      Json
+  resolvedAt   DateTime?
   resolvedById String?
 
   createdAt   DateTime @default(now())
@@ -595,16 +612,16 @@ model ReconciliationDiscrepancy {
 // -----------------------------------------------------------------------------
 
 model Lead {
-  id          String   @id
-  source      String
-  rawPayload  Json
-  email       String?
-  phoneE164   String?
-  name        String?
+  id                   String  @id
+  source               String
+  rawPayload           Json
+  email                String?
+  phoneE164            String?
+  name                 String?
   convertedToContactId String?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
   deletedAt   DateTime?
@@ -635,13 +652,13 @@ model Task {
 }
 
 model Tender {
-  id            String      @id
-  name          String
-  laName        String
-  state         TenderState @default(identified)
-  ownerUserId   String?
+  id                 String      @id
+  name               String
+  laName             String
+  state              TenderState @default(identified)
+  ownerUserId        String?
   contractValueMinor Int?
-  submittedAt   DateTime?
+  submittedAt        DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -655,14 +672,14 @@ model Tender {
 }
 
 model LAContract {
-  id              String   @id
-  tenderId        String?
-  laName          String
-  reference       String   @unique
+  id                 String    @id
+  tenderId           String?
+  laName             String
+  reference          String    @unique
   contractValueMinor Int
-  startDate       DateTime
-  endDate         DateTime?
-  hoursEnvelope   Int?
+  startDate          DateTime
+  endDate            DateTime?
+  hoursEnvelope      Int?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -678,9 +695,9 @@ model LAContract {
 }
 
 model LAInvoice {
-  id          String   @id
+  id          String    @id
   contractId  String
-  reference   String   @unique
+  reference   String    @unique
   amountMinor Int
   issuedAt    DateTime
   paidAt      DateTime?
@@ -701,9 +718,9 @@ model LAInvoice {
 // -----------------------------------------------------------------------------
 
 model FeatureFlag {
-  id          String   @id
-  key         String   @unique
-  enabled     Boolean  @default(false)
+  id          String  @id
+  key         String  @unique
+  enabled     Boolean @default(false)
   description String?
   payload     Json?
 
