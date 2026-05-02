@@ -1,0 +1,714 @@
+// StudyMind CRM Prisma schema.
+// See CLAUDE.md Section 19 for conventions.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum FamilyState {
+  lead
+  trial
+  active
+  at_risk
+  churned
+}
+
+enum BillingParty {
+  family
+  local_authority
+}
+
+enum SubscriptionState {
+  trialing
+  active
+  past_due
+  canceled
+  unpaid
+  paused
+  incomplete
+  incomplete_expired
+  unknown
+}
+
+enum MandateState {
+  pending_submission
+  submitted
+  active
+  failed
+  cancelled
+  expired
+  replaced
+}
+
+enum BookingState {
+  tentative
+  confirmed
+  delivered
+  no_show
+  cancelled
+}
+
+enum SafeguardingFlagState {
+  none
+  concern_logged
+  restricted_access
+}
+
+enum SafeguardingUrgency {
+  routine
+  urgent
+  immediate
+}
+
+enum InteractionType {
+  email
+  call
+  message
+  note
+  task
+  payment
+  booking
+  ai_insight
+  family_state_changed
+  family_billing_contact_changed
+  safeguarding_concern_raised
+  safeguarding_la_referral
+  slack_summary
+  tender_state_changed
+  system
+}
+
+enum ContactKind {
+  parent
+  student
+  tutor
+  la_caseworker
+  other
+}
+
+enum UserRole {
+  admin
+  ops_manager
+  agent
+  finance
+  dsl
+  read_only
+}
+
+enum RefundIntentStatus {
+  pending
+  pending_review
+  succeeded
+  failed
+}
+
+enum ReconciliationCategory {
+  hours_mismatch
+  payment_unallocated
+  late_failure
+  ap_review_overdue
+  other
+}
+
+enum TenderState {
+  identified
+  drafting
+  submitted
+  shortlisted
+  awarded
+  rejected
+  withdrawn
+}
+
+enum TaskStatus {
+  open
+  in_progress
+  blocked
+  done
+  cancelled
+}
+
+// -----------------------------------------------------------------------------
+// Identity
+// -----------------------------------------------------------------------------
+
+model User {
+  id          String   @id
+  clerkUserId String   @unique
+  email       String   @unique
+  name        String?
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  roleAssignments RoleAssignment[]
+
+  @@index([email])
+}
+
+model RoleAssignment {
+  id     String   @id
+  userId String
+  role   UserRole
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([role])
+}
+
+// -----------------------------------------------------------------------------
+// Contacts and Families
+// -----------------------------------------------------------------------------
+
+model Contact {
+  id            String      @id
+  kind          ContactKind
+  firstName     String?
+  lastName      String?
+  email         String?
+  phoneE164     String?
+  dateOfBirth   DateTime?
+  isMinor       Boolean     @default(false)
+  notes         String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  familyMembers     FamilyMember[]
+  billingForFamily  Family[]            @relation("BillingContact")
+  interactions      Interaction[]       @relation("ContactInteractions")
+  safeguardingFlags SafeguardingFlag[]
+  encryptedFields   EncryptedField[]
+
+  @@index([email])
+  @@index([phoneE164])
+  @@index([kind])
+}
+
+model Family {
+  id                String        @id
+  name              String?
+  state             FamilyState   @default(lead)
+  billingParty      BillingParty  @default(family)
+  billingContactId  String?
+  laContractId      String?
+  churnScore        Float?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  billingContact   Contact?           @relation("BillingContact", fields: [billingContactId], references: [id])
+  laContract       LAContract?        @relation(fields: [laContractId], references: [id])
+  members          FamilyMember[]
+  financialAccount FinancialAccount?
+  interactions     Interaction[]      @relation("FamilyInteractions")
+  bookings         Booking[]
+  subscriptions    StripeSubscription[]
+  mandates         GcMandate[]
+  invoices         Invoice[]
+  payments         Payment[]
+  discrepancies    ReconciliationDiscrepancy[]
+  tasks            Task[]
+
+  @@index([state])
+  @@index([billingContactId])
+  @@index([laContractId])
+}
+
+model FamilyMember {
+  id        String  @id
+  familyId  String
+  contactId String
+  role      String
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  family  Family  @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, contactId])
+  @@index([contactId])
+}
+
+model FinancialAccount {
+  id        String  @id
+  familyId  String  @unique
+  status    String  @default("ok")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+}
+
+// -----------------------------------------------------------------------------
+// Interactions (the timeline)
+// -----------------------------------------------------------------------------
+
+model Interaction {
+  id          String          @id
+  type        InteractionType
+  contactId   String?
+  familyId    String?
+  occurredAt  DateTime
+  summary     String?
+  payload     Json
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  contact Contact? @relation("ContactInteractions", fields: [contactId], references: [id])
+  family  Family?  @relation("FamilyInteractions", fields: [familyId], references: [id])
+
+  @@index([contactId, occurredAt])
+  @@index([familyId, occurredAt])
+  @@index([type, occurredAt])
+}
+
+// -----------------------------------------------------------------------------
+// Provider events and audit
+// -----------------------------------------------------------------------------
+
+model ProviderEvent {
+  id         String   @id
+  provider   String
+  eventId    String
+  type       String
+  raw        Json
+  receivedAt DateTime @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, eventId])
+  @@index([provider, type])
+}
+
+model AuditLogEntry {
+  id          String   @id
+  action      String
+  actorId     String?
+  targetType  String
+  targetId    String
+  requestId   String?
+  purpose     String?
+  before      Json?
+  after       Json?
+  occurredAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([actorId, occurredAt])
+  @@index([action, occurredAt])
+}
+
+model RetentionPolicy {
+  id            String  @id
+  scope         String
+  retentionDays Int
+  contractId    String?
+  notes         String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+}
+
+// -----------------------------------------------------------------------------
+// Safeguarding
+// -----------------------------------------------------------------------------
+
+model SafeguardingFlag {
+  id           String                @id
+  contactId    String
+  state        SafeguardingFlagState @default(concern_logged)
+  urgency      SafeguardingUrgency   @default(routine)
+  dslUserId    String?
+  raisedById   String?
+  closedAt     DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@index([state])
+  @@index([dslUserId])
+}
+
+model EncryptedField {
+  id            String  @id
+  contactId     String
+  column        String
+  ciphertext    Bytes
+  iv            Bytes
+  dekCiphertext Bytes
+  aad           Bytes
+  keyVersion    Int
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, column])
+}
+
+// -----------------------------------------------------------------------------
+// Bookings
+// -----------------------------------------------------------------------------
+
+model Booking {
+  id              String       @id
+  familyId        String
+  externalId      String       @unique
+  state           BookingState @default(tentative)
+  contractedHours Int          @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family   Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  sessions BookingSession[]
+  allocations Allocation[]
+
+  @@index([familyId])
+  @@index([state])
+}
+
+model BookingSession {
+  id          String       @id
+  bookingId   String
+  scheduledAt DateTime
+  state       BookingState @default(tentative)
+  hours       Int          @default(0)
+  correctedById String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  booking     Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  correctedBy BookingSession? @relation("Correction", fields: [correctedById], references: [id])
+  corrections BookingSession[] @relation("Correction")
+
+  @@index([bookingId, scheduledAt])
+  @@index([state])
+}
+
+// -----------------------------------------------------------------------------
+// Finance
+// -----------------------------------------------------------------------------
+
+model StripeSubscription {
+  id                String            @id
+  familyId          String
+  stripeId          String            @unique
+  state             SubscriptionState @default(unknown)
+  currentPeriodEnd  DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([state])
+}
+
+model GcMandate {
+  id           String       @id
+  familyId     String
+  gcMandateId  String       @unique
+  state        MandateState @default(pending_submission)
+  replacedById String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family     Family      @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  replacedBy GcMandate?  @relation("MandateChain", fields: [replacedById], references: [id])
+  replaces   GcMandate[] @relation("MandateChain")
+
+  @@index([familyId])
+  @@index([state])
+}
+
+model Invoice {
+  id            String   @id
+  familyId      String
+  externalId    String   @unique
+  amountMinor   Int
+  currency      String   @default("GBP")
+  issuedAt      DateTime
+  dueAt         DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family   Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@index([familyId])
+}
+
+model Payment {
+  id            String   @id
+  familyId      String
+  invoiceId     String?
+  externalId    String   @unique
+  provider      String
+  amountMinor   Int
+  currency      String   @default("GBP")
+  receivedAt    DateTime
+  reverted      Boolean  @default(false)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family      Family       @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  invoice     Invoice?     @relation(fields: [invoiceId], references: [id])
+  allocations Allocation[]
+  refundIntents RefundIntent[]
+
+  @@index([familyId])
+  @@index([provider])
+}
+
+model Allocation {
+  id          String @id
+  paymentId   String
+  bookingId   String
+  amountMinor Int
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([bookingId])
+}
+
+model RefundIntent {
+  id              String             @id
+  paymentId       String
+  amountMinor     Int
+  reasonCode      String
+  status          RefundIntentStatus @default(pending)
+  idempotencyKey  String             @unique
+  externalId      String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([status])
+}
+
+model ReconciliationDiscrepancy {
+  id         String                 @id
+  familyId   String
+  category   ReconciliationCategory
+  summary    String
+  payload    Json
+  resolvedAt DateTime?
+  resolvedById String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([category])
+  @@index([resolvedAt])
+}
+
+// -----------------------------------------------------------------------------
+// Leads, tasks, tenders, LA
+// -----------------------------------------------------------------------------
+
+model Lead {
+  id          String   @id
+  source      String
+  rawPayload  Json
+  email       String?
+  phoneE164   String?
+  name        String?
+  convertedToContactId String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([email])
+  @@index([phoneE164])
+}
+
+model Task {
+  id          String     @id
+  title       String
+  description String?
+  status      TaskStatus @default(open)
+  assigneeId  String?
+  familyId    String?
+  dueAt       DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  family Family? @relation(fields: [familyId], references: [id])
+
+  @@index([assigneeId, status])
+  @@index([familyId])
+}
+
+model Tender {
+  id            String      @id
+  name          String
+  laName        String
+  state         TenderState @default(identified)
+  ownerUserId   String?
+  contractValueMinor Int?
+  submittedAt   DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  contracts LAContract[]
+
+  @@index([state])
+}
+
+model LAContract {
+  id              String   @id
+  tenderId        String?
+  laName          String
+  reference       String   @unique
+  contractValueMinor Int
+  startDate       DateTime
+  endDate         DateTime?
+  hoursEnvelope   Int?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  tender   Tender?     @relation(fields: [tenderId], references: [id])
+  families Family[]
+  invoices LAInvoice[]
+
+  @@index([laName])
+}
+
+model LAInvoice {
+  id          String   @id
+  contractId  String
+  reference   String   @unique
+  amountMinor Int
+  issuedAt    DateTime
+  paidAt      DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  contract LAContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+}
+
+// -----------------------------------------------------------------------------
+// Feature flags
+// -----------------------------------------------------------------------------
+
+model FeatureFlag {
+  id          String   @id
+  key         String   @unique
+  enabled     Boolean  @default(false)
+  description String?
+  payload     Json?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+}
