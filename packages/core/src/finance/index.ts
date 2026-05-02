@@ -2,3 +2,5 @@
 // See CLAUDE.md Sections 6.3, 9, and 41.2.
 
 export const FINANCE_DOMAIN = 'finance' as const
+
+export * from './sync-stripe'
