@@ -2,3 +2,5 @@
 // See CLAUDE.md Section 6.1 and Section 41.1.
 
 export const CONTACT_DOMAIN = 'contact' as const
+
+export * from './types.js'
