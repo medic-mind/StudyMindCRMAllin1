@@ -151,6 +151,9 @@ importers:
 
   packages/ai:
     dependencies:
+      '@studymind/core':
+        specifier: workspace:*
+        version: link:../core
       openai:
         specifier: ^6.36.0
         version: 6.36.0(zod@3.25.76)

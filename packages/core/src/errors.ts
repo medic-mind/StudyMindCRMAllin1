@@ -6,6 +6,8 @@ export type BusinessErrorCode =
   | 'INVALID_STATE_TRANSITION'
   | 'TOKEN_EXPIRED'
   | 'NOT_IMPLEMENTED'
+  | 'AI_OUTPUT_INVALID'
+  | 'AI_BUDGET_EXCEEDED'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

@@ -15,9 +15,10 @@
     "build": "tsc --noEmit",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'no tests yet'"
+    "test": "vitest run"
   },
   "dependencies": {
+    "@studymind/core": "workspace:*",
     "openai": "^6.36.0",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.25.2"
