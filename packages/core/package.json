@@ -15,6 +15,9 @@
     "./events/registry": "./src/events/registry.ts",
     "./errors": "./src/errors.ts",
     "./flags": "./src/flags/index.ts",
+    "./flags/admin": "./src/flags/admin.ts",
+    "./flags/registry": "./src/flags/registry.ts",
+    "./logger": "./src/logger/index.ts",
     "./provider-events": "./src/provider-events/index.ts"
   },
   "scripts": {
