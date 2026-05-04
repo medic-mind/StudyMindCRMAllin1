@@ -183,6 +183,9 @@ importers:
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
+      '@studymind/audit':
+        specifier: workspace:*
+        version: link:../audit
       pino:
         specifier: ^9.5.0
         version: 9.14.0
