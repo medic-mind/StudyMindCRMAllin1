@@ -15,7 +15,9 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
-    "test:e2e": "turbo run test:e2e",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "playwright:install": "playwright install chromium",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md,json}\"",
     "db:migrate": "pnpm --filter @studymind/db exec prisma migrate dev",
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "@playwright/test": "^1.48.0",
     "@types/node": "^20.14.10",
     "@vitest/coverage-v8": "^2.1.5",
     "eslint": "^9.13.0",
