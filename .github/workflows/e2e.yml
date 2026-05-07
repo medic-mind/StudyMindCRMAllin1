@@ -1,0 +1,84 @@
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+
+jobs:
+  e2e:
+    # Runs on every push to main, but only on PRs that explicitly opt in
+    # via the `e2e` label (CLAUDE.md §23: E2E gated to keep PR CI fast).
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'e2e'))
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: studymind_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studymind_e2e
+      # Format-valid dummy Clerk keys, mirrored from ci.yml so the build
+      # succeeds. Real sign-in needs a live Clerk dev instance — provision
+      # via E2E_USER_EMAIL / E2E_USER_PASSWORD secrets.
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
+      CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY || 'sk_test_dummy_dummy_dummy_dummy_dummy_dum' }}
+      E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+      E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Migrate database
+        run: pnpm --filter @studymind/db exec prisma migrate deploy
+
+      - name: Seed database
+        run: pnpm --filter @studymind/db exec prisma db seed
+        continue-on-error: true
+
+      - name: Install Playwright browsers
+        run: pnpm playwright:install
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
