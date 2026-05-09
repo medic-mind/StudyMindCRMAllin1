@@ -13,7 +13,14 @@ import { writeAuditLogEntry, type WriteAuditLogEntryInput } from '@studymind/aud
 
 import { rateLimit } from './rate-limit'
 
-export type UserRole = 'admin' | 'ops_manager' | 'agent' | 'finance' | 'dsl' | 'read_only'
+export type UserRole =
+  | 'super_admin'
+  | 'admin'
+  | 'ops_manager'
+  | 'agent'
+  | 'finance'
+  | 'dsl'
+  | 'read_only'
 
 export interface SessionUser {
   id: string

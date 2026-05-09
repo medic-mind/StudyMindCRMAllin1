@@ -513,7 +513,7 @@ OpenAI for everything AI today. Models per task:
 
 **Auth.** Clerk handles sign in, MFA (mandatory for all users), session management.
 
-**Roles.** `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`.
+**Roles.** `super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`. `super_admin` sits above `admin`: it inherits every `admin` action plus the exclusive ability to grant or revoke `admin` and `super_admin`, rotate org-wide secrets, and write tenant config. See ADR 0009.
 
 **Permission model.** RBAC with attribute checks on top.
 - Roles grant action lists (e.g. `finance` can `charge.refund`).
@@ -525,22 +525,28 @@ OpenAI for everything AI today. Models per task:
 
 ### 20.1 Permission matrix (high level)
 
-| Action | admin | ops_manager | agent | finance | dsl | read_only |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| `contact.read` (non-minor) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `contact.read` (minor) | ✓ | ✓ | ✓ (audited) | ✓ (audited) | ✓ (audited) | — |
-| `contact.write` | ✓ | ✓ | ✓ | — | — | — |
-| `family.merge` | ✓ | ✓ | — | — | — | — |
-| `interaction.create` | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| `interaction.delete` | ✓ | — | — | — | — | — |
-| `charge.create_link` | ✓ | ✓ | ✓ | ✓ | — | — |
-| `charge.refund` | ✓ | — | — | ✓ | — | — |
-| `subscription.cancel` | ✓ | ✓ | — | ✓ | — | — |
-| `safeguarding.flag` | ✓ | ✓ | ✓ | — | ✓ | — |
-| `safeguarding.read_notes` | ✓ (audited) | — | — | — | ✓ (assigned only, audited) | — |
-| `dsar.export` | ✓ | — | — | — | — | — |
-| `audit.read` | ✓ | ✓ | — | ✓ | ✓ (own) | — |
-| `settings.write` | ✓ | — | — | — | — | — |
+| Action | super_admin | admin | ops_manager | agent | finance | dsl | read_only |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `contact.read` (non-minor) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `contact.read` (minor) | ✓ | ✓ | ✓ | ✓ (audited) | ✓ (audited) | ✓ (audited) | — |
+| `contact.write` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| `family.merge` | ✓ | ✓ | ✓ | — | — | — | — |
+| `interaction.create` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `interaction.delete` | ✓ | ✓ | — | — | — | — | — |
+| `charge.create_link` | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| `charge.refund` | ✓ | ✓ | — | — | ✓ | — | — |
+| `subscription.cancel` | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| `safeguarding.flag` | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| `safeguarding.read_notes` | ✓ (audited) | ✓ (audited) | — | — | — | ✓ (assigned only, audited) | — |
+| `dsar.export` | ✓ | ✓ | — | — | — | — | — |
+| `audit.read` | ✓ | ✓ | ✓ | — | ✓ | ✓ (own) | — |
+| `settings.write` | ✓ | ✓ | — | — | — | — | — |
+| `user.invite` | ✓ | ✓ | — | — | — | — | — |
+| `user.role.grant_admin` | ✓ | — | — | — | — | — | — |
+| `user.role.grant_super_admin` | ✓ | — | — | — | — | — | — |
+| `user.role.revoke_admin` | ✓ | — | — | — | — | — | — |
+| `secrets.rotate` | ✓ | — | — | — | — | — | — |
+| `tenant.config.write` | ✓ | — | — | — | — | — | — |
 
 The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch.
 
