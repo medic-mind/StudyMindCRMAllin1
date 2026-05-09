@@ -179,10 +179,16 @@ enum TaskStatus {
 
 model User {
   id          String  @id
-  clerkUserId String  @unique
+  // Slice 14: clerkUserId is now optional so seeded super-admins can exist
+  // pre-signup. The Clerk webhook reconciles on first sign-up.
+  clerkUserId String? @unique
   email       String  @unique
   name        String?
   isActive    Boolean @default(true)
+
+  // Slice 14: deactivation (CLAUDE.md §20, ADR 0009).
+  deactivatedAt       DateTime?
+  deactivationReason  String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -193,6 +199,43 @@ model User {
   roleAssignments RoleAssignment[]
 
   @@index([email])
+}
+
+model UserInvite {
+  id                String           @id
+  email             String
+  firstName         String?
+  lastName          String?
+  // Roles requested for the invitee. Stored as JSON for flexibility.
+  rolesJson         Json
+  clerkInvitationId String?
+  status            UserInviteStatus @default(pending)
+  invitedById       String
+  acceptedAt        DateTime?
+  acceptedUserId    String?
+  cancelledAt       DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([email])
+  @@index([status])
+}
+
+// Slice 14: Cron heartbeat for the watchdog. CLAUDE.md §17, §25.
+model CronRun {
+  id         String   @id
+  functionId String
+  success    Boolean
+  durationMs Int
+  startedAt  DateTime @default(now())
+  finishedAt DateTime
+  errorCode  String?
+
+  @@index([functionId, finishedAt])
 }
 
 model RoleAssignment {
