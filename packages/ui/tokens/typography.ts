@@ -1,10 +1,22 @@
-// Typography tokens. One sans family for product UI, one mono for code/IDs/amounts.
-// Numerals tabular wherever they line up vertically.
+// Typography tokens. One sans family for product UI, one mono for
+// code / IDs / amounts. Numerals are tabular wherever they line up
+// vertically (CLAUDE.md §4): finance tables, reconciliation, ledgers.
+// The `tnum` font feature is wired into `fontFeatureSettings.tabular`;
+// consumers apply it via Tailwind utilities on finance + reconciliation
+// surfaces.
 
 export const typography = {
   fontFamily: {
     sans: ['"Inter"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
     mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+  },
+  /**
+   * Font-feature presets. `tabular` enables `tnum` + `lnum` so digits
+   * occupy fixed advance width — required for ledger columns to align.
+   */
+  fontFeatureSettings: {
+    tabular: '"tnum" 1, "lnum" 1',
+    default: 'normal',
   },
   fontSize: {
     xs: ['0.75rem', { lineHeight: '1rem' }],
