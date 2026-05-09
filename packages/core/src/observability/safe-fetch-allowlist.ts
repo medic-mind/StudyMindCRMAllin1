@@ -47,6 +47,8 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   '*.sentry.io',
   // Resend
   'api.resend.com',
+  // PagerDuty (Events API v2)
+  'events.pagerduty.com',
 ]
 
 /** True if `host` is exactly listed or matches a `*.suffix` wildcard entry. */

@@ -46,6 +46,16 @@ The pattern is the same for every secret.
 
 For per-agent OAuth and Trengo tokens, the agent re-consents themselves through the in-app settings flow. We surface a banner 14 days before expiry (CLAUDE.md §11). Expired tokens fail closed; outbound messages stay in `pending_send`.
 
+### Trengo webhook secret
+
+Use the helper script — it generates a fresh secret, posts the webhook to Trengo (or prints the manual UI checklist if the workspace API path is unavailable), and verifies the public endpoint rejects mismatched signatures with a 400.
+
+```bash
+pnpm setup:trengo
+```
+
+Mirror the printed `TRENGO_WEBHOOK_SECRET` to Railway env and 1Password. The endpoint must already be deployed for the verify step to pass.
+
 ## If a secret leaks
 
 Treat as a Sev 2 minimum. Sev 1 if the leaked secret is Stripe live-mode, GoCardless live token, AWS access key, or anything that can read safeguarding data.

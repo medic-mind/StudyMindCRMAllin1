@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./cost-summary": "./src/cost-summary.ts",
-    "./lacontract/deadline-watcher": "./src/lacontract/deadline-watcher.ts"
+    "./lacontract/deadline-watcher": "./src/lacontract/deadline-watcher.ts",
+    "./compliance/audit-log-archive": "./src/compliance/audit-log-archive.ts",
+    "./security/ueba": "./src/security/ueba.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

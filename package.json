@@ -35,12 +35,14 @@
     "dr:asana": "tsx scripts/dr/reconnect-asana.ts",
     "dr:gmail": "tsx scripts/dr/reconnect-gmail.ts",
     "dr:booking": "tsx scripts/dr/reconnect-booking.ts",
-    "dr:replay": "tsx scripts/dr/replay-provider-events.ts"
+    "dr:replay": "tsx scripts/dr/replay-provider-events.ts",
+    "setup:trengo": "tsx scripts/setup/setup-trengo.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-kms": "^3.658.0",
     "@eslint/js": "^9.13.0",
     "@axe-core/playwright": "^4.10.0",
+    "@lhci/cli": "^0.14.0",
     "@playwright/test": "^1.48.0",
     "@types/archiver": "^6.0.0",
     "@types/node": "^20.14.10",

@@ -221,4 +221,74 @@ describe('decryptFieldById', () => {
       }),
     ).rejects.toThrow(/purpose/)
   })
+
+  it('break-glass path writes a safeguarding.break_glass audit and invokes the reporter without plaintext', async () => {
+    const db = makeFakeDb()
+    const row = await encryptField(db as never, {
+      ownerType: 'Contact',
+      ownerId: 'contact-1',
+      fieldName: 'safeguarding_body',
+      plaintext: 'classified',
+      ctx: { actorId: 'dsl-1' },
+    })
+    db.audits.length = 0
+
+    const reportedAlerts: unknown[] = []
+    const plaintext = await decryptFieldById(db as never, {
+      encryptedFieldId: row.id,
+      actorId: 'admin-99',
+      purpose: 'urgent triage',
+      requestId: 'req-BG',
+      breakGlass: {
+        isBreakGlass: true,
+        actorRoles: ['admin'],
+        assignedDslUserId: 'dsl-1',
+      },
+      breakGlassReporter: async (alert) => {
+        reportedAlerts.push(alert)
+      },
+    })
+
+    expect(plaintext).toBe('classified')
+    expect(db.audits).toHaveLength(2)
+    expect(db.audits[0]?.action).toBe('safeguarding.field_decrypted')
+    expect(db.audits[1]?.action).toBe('safeguarding.break_glass')
+    expect((db.audits[1]?.after as Record<string, unknown>).assignedDslUserId).toBe('dsl-1')
+    expect((db.audits[1]?.after as Record<string, unknown>).kmsCallId).toBeDefined()
+
+    expect(reportedAlerts).toHaveLength(1)
+    const alert = reportedAlerts[0] as Record<string, unknown>
+    expect(alert.actorId).toBe('admin-99')
+    expect(alert.assignedDslUserId).toBe('dsl-1')
+    expect(alert.kmsCallId).toBeDefined()
+    // No plaintext fields in the alert.
+    expect(JSON.stringify(alert)).not.toContain('classified')
+  })
+
+  it('non-break-glass DSL access does not write break_glass audit and does not invoke the reporter', async () => {
+    const db = makeFakeDb()
+    const row = await encryptField(db as never, {
+      ownerType: 'Contact',
+      ownerId: 'contact-1',
+      fieldName: 'safeguarding_body',
+      plaintext: 'normal',
+      ctx: { actorId: 'dsl-1' },
+    })
+    db.audits.length = 0
+
+    let called = 0
+    const plaintext = await decryptFieldById(db as never, {
+      encryptedFieldId: row.id,
+      actorId: 'dsl-1',
+      purpose: 'standard read',
+      breakGlass: { isBreakGlass: false, actorRoles: ['dsl'] },
+      breakGlassReporter: async () => {
+        called++
+      },
+    })
+    expect(plaintext).toBe('normal')
+    expect(db.audits).toHaveLength(1)
+    expect(db.audits[0]?.action).toBe('safeguarding.field_decrypted')
+    expect(called).toBe(0)
+  })
 })

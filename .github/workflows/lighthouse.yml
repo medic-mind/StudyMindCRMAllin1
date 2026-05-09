@@ -1,0 +1,48 @@
+name: Lighthouse CI
+
+# CLAUDE.md §26. Critical-route performance + accessibility budgets.
+#
+# Runs on:
+#   - Every push to main (post-merge regression check).
+#   - PRs labelled `lighthouse` (opt-in for UI changes).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+jobs:
+  lighthouse:
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'lighthouse')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_URL: ${{ vars.LIGHTHOUSE_BASE_URL || 'https://staging.crm.studymind.co.uk' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Lighthouse CI
+        run: pnpm exec lhci autorun --config=./lighthouserc.json
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+      - name: Upload Lighthouse HTML reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: .lighthouseci/
+          retention-days: 14

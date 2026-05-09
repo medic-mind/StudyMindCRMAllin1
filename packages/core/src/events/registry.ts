@@ -66,6 +66,7 @@ export const EVENT_NAMES = [
   'safeguarding.field_encrypted',
   'safeguarding.field_decrypted',
   'safeguarding.read_attempt',
+  'safeguarding.break_glass',
 
   // Tenders / LA
   'tender.created',
@@ -107,6 +108,7 @@ export const EVENT_NAMES = [
   // System / audit
   'audit.logged',
   'system.job_completed',
+  'auth.signin_failed',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
