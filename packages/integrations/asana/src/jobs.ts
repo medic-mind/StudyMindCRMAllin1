@@ -1,6 +1,4 @@
-// Inngest functions triggered after a Asana webhook lands.
-// See CLAUDE.md Section 17.
+// Inngest functions triggered after an Asana webhook lands.
+// CLAUDE.md §13, §17. Filled in by chunk 6.
 
-export const JOBS: readonly { id: string; description: string }[] = [
-  // { id: 'asana/event.received', description: 'Process a Asana event from ProviderEvent' },
-]
+export const FUNCTIONS = [] as const

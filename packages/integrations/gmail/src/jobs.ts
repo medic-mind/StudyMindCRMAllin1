@@ -1,6 +1,4 @@
-// Inngest functions triggered after a Gmail webhook lands.
-// See CLAUDE.md Section 17.
+// Inngest functions triggered after a Gmail Pub/Sub push lands.
+// CLAUDE.md §14, §17. Filled in by chunk 9.
 
-export const JOBS: readonly { id: string; description: string }[] = [
-  // { id: 'gmail/event.received', description: 'Process a Gmail event from ProviderEvent' },
-]
+export const FUNCTIONS = [] as const
