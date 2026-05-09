@@ -12,21 +12,13 @@ RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY turbo.json tsconfig.base.json ./
-COPY apps/web/package.json ./apps/web/
-COPY packages/db/package.json ./packages/db/
-COPY packages/core/package.json ./packages/core/
-COPY packages/audit/package.json ./packages/audit/
-COPY packages/ai/package.json ./packages/ai/
-COPY packages/jobs/package.json ./packages/jobs/
-COPY packages/ui/package.json ./packages/ui/
-COPY packages/integrations/stripe/package.json ./packages/integrations/stripe/
-COPY packages/integrations/gocardless/package.json ./packages/integrations/gocardless/
-COPY packages/integrations/aircall/package.json ./packages/integrations/aircall/
-COPY packages/integrations/trengo/package.json ./packages/integrations/trengo/
-COPY packages/integrations/slack/package.json ./packages/integrations/slack/
-COPY packages/integrations/asana/package.json ./packages/integrations/asana/
-COPY packages/integrations/gmail/package.json ./packages/integrations/gmail/
-COPY packages/integrations/booking/package.json ./packages/integrations/booking/
+# Copy every workspace package.json without enumerating each so the Dockerfile
+# stays stable as new packages land. We strip non-manifest files after the COPY
+# to keep the deps layer cache hot when source code changes.
+COPY apps ./apps
+COPY packages ./packages
+RUN find apps packages -mindepth 2 -type f ! -name package.json -delete \
+ && find apps packages -depth -mindepth 2 -type d -empty -delete
 RUN pnpm install --frozen-lockfile || pnpm install
 
 # ---- builder ----
