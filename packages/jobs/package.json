@@ -15,6 +15,7 @@
     "dev:worker": "echo 'inngest dev: not implemented'"
   },
   "dependencies": {
+    "@paralleldrive/cuid2": "^3.3.0",
     "@studymind/core": "workspace:*",
     "@studymind/db": "workspace:*",
     "inngest": "^3.27.5"

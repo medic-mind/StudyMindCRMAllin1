@@ -403,6 +403,9 @@ importers:
 
   packages/jobs:
     dependencies:
+      '@paralleldrive/cuid2':
+        specifier: ^3.3.0
+        version: 3.3.0
       '@studymind/core':
         specifier: workspace:*
         version: link:../core

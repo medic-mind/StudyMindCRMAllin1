@@ -2,17 +2,17 @@
 // Integration-specific jobs live in packages/integrations/<svc>/jobs.ts.
 // See CLAUDE.md Section 17.
 
-import { Inngest } from 'inngest'
+import { inngest } from './client'
+import { RECONCILE_FUNCTIONS } from './reconcile'
 
-export const inngest = new Inngest({
-  id: 'studymind-crm',
-  eventKey: process.env['INNGEST_EVENT_KEY'],
-})
+export { inngest } from './client'
 
 // Cross-cutting Inngest functions (reconciliation, retention, churn) land
 // here as they are implemented. Integration-specific functions are imported
 // in `apps/web/app/api/inngest/route.ts` from each integration package.
-export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[] = []
+export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[] = [
+  ...RECONCILE_FUNCTIONS,
+]
 
 export interface RecurringJobSpec {
   id: string
