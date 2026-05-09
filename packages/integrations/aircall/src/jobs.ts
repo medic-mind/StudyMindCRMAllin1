@@ -17,6 +17,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { createClient, type AircallCallResource } from './client'
+import { getRecordingBuffer, putRecording } from './s3'
 import {
   isAircallEventName,
   mapAircallEventToInteraction,
@@ -215,23 +216,33 @@ export const aircallTranscribeFallback = inngest.createFunction(
       return { skipped: true, reason: 'no_recording_url' }
     }
 
-    // Download + transcribe in a single step. Inngest's step boundary is
-    // JSON-serialised, so a Buffer cannot pass between steps without an
-    // intermediate persistent store. Once S3 is wired (see TODO below), this
-    // will split into download->upload (step 1) and read->transcribe (step 2)
-    // with the S3 key crossing the boundary.
-    // TODO(slice-6): persist to S3 at aircall/recordings/{call_id} before
-    //                transcribing, per CLAUDE.md §10 retention.
-    const transcript = await step.run('download-and-transcribe', async () => {
+    // Step 1: download from Aircall and persist to S3 before Aircall's
+    // retention window expires (CLAUDE.md §10). The S3 key crosses the step
+    // boundary; the recording itself does not (Buffers do not survive
+    // Inngest step JSON-serialisation).
+    const { s3Key, contentType } = await step.run('persist-to-s3', async () => {
       const res = await fetch(recordingUrl)
       if (!res.ok) {
         throw new Error(`recording download failed: ${res.status}`)
       }
+      const ct = res.headers.get('content-type') ?? 'audio/mpeg'
       const buf = Buffer.from(await res.arrayBuffer())
+      const put = await putRecording({
+        callId: aircallCallId,
+        body: buf,
+        contentType: ct,
+      })
+      return { s3Key: put.s3Key, contentType: ct }
+    })
+
+    // Step 2: read the recording back from S3 and send to Whisper.
+    const transcript = await step.run('transcribe', async () => {
+      const buf = await getRecordingBuffer(s3Key)
+      const ext = contentType.includes('wav') ? 'wav' : 'mp3'
       const result = await transcribeAudio({
         audio: buf,
-        filename: `${aircallCallId}.mp3`,
-        ctx: { aircallCallId },
+        filename: `${aircallCallId}.${ext}`,
+        ctx: { aircallCallId, s3Key },
       })
       return result.text
     })
