@@ -27,6 +27,7 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.658.0",
     "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/client": "^5.22.0",
     "@studymind/audit": "workspace:*",
