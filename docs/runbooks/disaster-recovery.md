@@ -173,3 +173,9 @@ Every production and staging deploy is followed by a synthetic Stripe webhook sm
 - Required secrets: `STRIPE_TEST_WEBHOOK_SECRET`, `SMOKE_ADMIN_TOKEN`
 
 If the smoke fails after a deploy, the on-call engineer rolls the Railway service back via the dashboard one-click and opens a Sev 2 incident.
+
+## Infrastructure as code (CLAUDE.md §46.2)
+
+KMS CMKs, S3 buckets, lifecycle rules, cross-region replication, and the IAM policies bound to the Railway services are managed in `infra/terraform/`. See `infra/terraform/README.md` for plan/apply/destroy. State backend: S3 + DynamoDB lock; bootstrapped manually.
+
+When provisioning a recovery environment, run `terraform apply -var-file=env.<env>.tfvars` against a fresh workspace; the replica buckets in eu-west-1 are already populated via cross-region replication and so are recoverable independently of the primary region.
