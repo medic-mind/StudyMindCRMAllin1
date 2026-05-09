@@ -43,6 +43,19 @@ export function makeGoogleVerifier(): JwtVerifier {
   }
 }
 
+// Test seam: a process-global verifier override. Tests set this so they do
+// not have to mock the google-auth-library module surface; production code
+// never sets it. Cleared at the end of each test.
+let injectedVerifier: JwtVerifier | null = null
+
+export function setVerifier(v: JwtVerifier | null): void {
+  injectedVerifier = v
+}
+
+export function getInjectedVerifier(): JwtVerifier | null {
+  return injectedVerifier
+}
+
 export interface VerifyOptions {
   audience: string
   /** Email address of the Pub/Sub service account, e.g.
@@ -63,7 +76,7 @@ export async function verifyAndParse(
   const idToken = authorizationHeader.slice('bearer '.length).trim()
   if (!idToken) return { ok: false, reason: 'missing_token' }
 
-  const verifier = opts.verifier ?? makeGoogleVerifier()
+  const verifier = opts.verifier ?? injectedVerifier ?? makeGoogleVerifier()
   let payload: { email?: string | null }
   try {
     payload = await verifier.verify(idToken, opts.audience)

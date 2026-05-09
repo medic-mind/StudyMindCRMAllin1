@@ -1,0 +1,9 @@
+{
+  "message": {
+    "data": "eyJlbWFpbEFkZHJlc3MiOiJhZ2VudEBkZXYuc3R1ZHltaW5kIiwiaGlzdG9yeUlkIjoiOTk5OSJ9",
+    "messageId": "msg_fake_pubsub_1",
+    "publishTime": "2026-05-09T10:00:00Z",
+    "attributes": {}
+  },
+  "subscription": "projects/studymind-dev/subscriptions/gmail-watch-sub"
+}

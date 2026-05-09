@@ -1,0 +1,15 @@
+{
+  "type": "event_callback",
+  "event_id": "Ev0SLICE7TEST1",
+  "event_time": 1715260000,
+  "team_id": "T0FAKETEAM",
+  "api_app_id": "A0FAKEAPP",
+  "event": {
+    "type": "message",
+    "channel": "C0WATCHED01",
+    "channel_type": "channel",
+    "user": "U0FAKEAGNT",
+    "text": "Spoke with the parent test_family_a1@dev.studymind — they confirmed Tuesday at 4pm.",
+    "ts": "1715260000.000100"
+  }
+}
