@@ -4,6 +4,7 @@
 import { createId } from '@paralleldrive/cuid2'
 
 import { reconcileFamily } from '@studymind/core/finance'
+import { isExpired, listSafeguardingRetentionRows } from '@studymind/core/safeguarding'
 import { db } from '@studymind/db'
 
 import { inngest } from './client'
@@ -86,15 +87,84 @@ export const financeReconcileAllFamilies = inngest.createFunction(
 export const complianceEnforceRetention = inngest.createFunction(
   {
     id: 'compliance/enforce-retention',
-    name: 'Compliance: enforce retention (stub — waits for reconcile)',
+    name: 'Compliance: enforce retention (safeguarding)',
     concurrency: { limit: 1 },
     retries: 1,
   },
   { event: 'finance/reconcile.completed' },
-  async ({ logger }) => {
-    // TODO(slice 5): walk RetentionPolicy and soft/hard delete. CLAUDE.md §21.
-    logger.info('compliance/enforce-retention stub — no-op')
-    return { ok: true, stub: true }
+  async ({ logger, step }) => {
+    // Walk every active SafeguardingFlag and apply effectiveRetention.
+    // CLAUDE.md §21 retention table; safeguarding default is 25y from DOB,
+    // overridable per LAContract.
+    const serialisedRows = await step.run('list-safeguarding-rows', async () => {
+      const r = await listSafeguardingRetentionRows(db)
+      return r.map((row) => ({
+        flagId: row.flagId,
+        contactId: row.contactId,
+        contactDob: row.contactDob ? row.contactDob.toISOString() : null,
+        flagCreatedAt: row.flagCreatedAt.toISOString(),
+        contractOverrideDays: row.contractOverrideDays,
+      }))
+    })
+    const rows = serialisedRows.map((row) => ({
+      flagId: row.flagId,
+      contactId: row.contactId,
+      contactDob: row.contactDob ? new Date(row.contactDob) : null,
+      flagCreatedAt: new Date(row.flagCreatedAt),
+      contractOverrideDays: row.contractOverrideDays,
+    }))
+    let softDeleted = 0
+    let hardDeleted = 0
+    const systemDefaultDays = 7 * 365
+    const now = new Date()
+
+    for (const r of rows) {
+      const expired = isExpired({
+        flagId: r.flagId,
+        contactDob: r.contactDob,
+        defaultDays: systemDefaultDays,
+        contractOverrideDays: r.contractOverrideDays ?? null,
+        createdAt: r.flagCreatedAt,
+        now,
+      })
+      if (!expired) continue
+
+      // CLAUDE.md §21: soft delete first, then hard delete after grace period.
+      // The grace is enforced by the retention engine itself: a row already
+      // soft-deleted long enough is hard-deleted on this pass.
+      const result = await step.run(`retain-${r.flagId}`, async () => {
+        const flag = await db.safeguardingFlag.findUnique({
+          where: { id: r.flagId },
+          select: { id: true, deletedAt: true },
+        })
+        if (!flag) return { kind: 'gone' as const }
+        if (!flag.deletedAt) {
+          await db.safeguardingFlag.update({
+            where: { id: r.flagId },
+            data: { deletedAt: now },
+          })
+          return { kind: 'soft' as const }
+        }
+        // Soft-deleted at least 30 days — hard delete + crypto-shred.
+        const graceMs = 30 * 24 * 60 * 60 * 1000
+        if (now.getTime() - flag.deletedAt.getTime() < graceMs) {
+          return { kind: 'in_grace' as const }
+        }
+        await db.encryptedField.deleteMany({
+          where: { contactId: r.contactId, column: { startsWith: 'safeguarding_body:' } },
+        })
+        await db.safeguardingFlag.delete({ where: { id: r.flagId } })
+        return { kind: 'hard' as const }
+      })
+      if (result.kind === 'soft') softDeleted += 1
+      if (result.kind === 'hard') hardDeleted += 1
+    }
+
+    logger.info(
+      { scanned: rows.length, softDeleted, hardDeleted },
+      'compliance.enforce_retention.completed',
+    )
+    return { scanned: rows.length, softDeleted, hardDeleted }
   },
 )
 
