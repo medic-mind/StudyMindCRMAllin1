@@ -8,10 +8,12 @@ import tseslint from 'typescript-eslint'
 
 const require = createRequire(import.meta.url)
 const requireAuditRule = require('./tools/eslint-rules/require-audit.js')
+const registeredEventNamesRule = require('./tools/eslint-rules/registered-event-names.js')
 
 const studymindPlugin = {
   rules: {
     'require-audit': requireAuditRule,
+    'registered-event-names': registeredEventNamesRule,
   },
 }
 
@@ -112,6 +114,23 @@ export default [
           ],
         },
       ],
+    },
+  },
+  {
+    // CLAUDE.md §45.1: every static event name passed to inngest.send,
+    // db.interaction.create, or writeAuditLogEntry must be registered in
+    // packages/core/src/events/registry.ts. Dynamic strings are skipped;
+    // disable per-line with the documented escape hatch when necessary.
+    files: ['packages/**/*.{ts,tsx}', 'apps/**/*.{ts,tsx}'],
+    ignores: [
+      '**/*.test.ts',
+      '**/__tests__/**',
+      'packages/core/src/events/registry.ts',
+      'tools/**',
+    ],
+    plugins: { studymind: studymindPlugin },
+    rules: {
+      'studymind/registered-event-names': 'error',
     },
   },
 ]

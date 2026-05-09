@@ -10,6 +10,7 @@ export default defineConfig({
     include: [
       'packages/**/*.test.ts',
       'apps/**/*.test.ts',
+      'tools/**/*.test.ts',
       // Webhook contract tests for external services. Replays of sanitised
       // captured payloads — see CLAUDE.md §23 (testing strategy).
       '__tests__/contract/**/*.test.ts',
