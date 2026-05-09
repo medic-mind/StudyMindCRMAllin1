@@ -21,13 +21,22 @@ import { FUNCTIONS as STRIPE_FUNCTIONS } from '@studymind/integration-stripe/job
 import { FUNCTIONS as TRENGO_FUNCTIONS } from '@studymind/integration-trengo/jobs'
 import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 
+import { costSummaryWeekly } from './_boundary/cost-summary'
+import { lacontractDeadlineWatcherBoundary } from './_boundary/lacontract-deadline-watcher'
+
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+// Worker-boundary functions: registrations that pair pure jobs with
+// integration-side glue (S3, Slack outbound) without creating a
+// jobs ↔ integrations import cycle (CLAUDE.md §17).
+const BOUNDARY_FUNCTIONS = [costSummaryWeekly, lacontractDeadlineWatcherBoundary]
 
 const handlers = serve({
   client: inngest,
   functions: [
     ...CROSS_CUTTING_FUNCTIONS,
+    ...BOUNDARY_FUNCTIONS,
     ...STRIPE_FUNCTIONS,
     ...GOCARDLESS_FUNCTIONS,
     ...BOOKING_FUNCTIONS,

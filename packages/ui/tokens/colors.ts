@@ -1,4 +1,21 @@
-// Brand colour palette. Tailwind reads from these — never hard-code hex in components.
+// Brand colour palette. Tailwind reads from these — never hard-code hex
+// in components (CLAUDE.md §4). Placeholder pending design review; the
+// token *names* are the contract, the values may shift.
+//
+// Use-case mapping:
+// - `primary.*`     → trust, clinical calm. Default action surfaces.
+// - `secondary.*`   → warm accent, used sparingly. Marks safeguarding
+//                     banners and finance affordances that need attention
+//                     without alarm.
+// - `neutral.*`     → page chrome, body text, dividers. Body text uses
+//                     `neutral.700+` against `neutral.0`/`neutral.50` to
+//                     keep contrast ≥ 4.5:1 (WCAG 2.2 AA, CLAUDE.md §28).
+// - `success/warning/danger/info` → status only. Mapping: success = good
+//                     outcome, warning = degraded but working,
+//                     danger = action required (finance or safeguarding),
+//                     info = neutral state.
+//
+// No additional status colours land without a new token here.
 
 export const colors = {
   // Primary blue: trust, clinical calm.
