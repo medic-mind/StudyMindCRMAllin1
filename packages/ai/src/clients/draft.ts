@@ -11,6 +11,7 @@ import { BusinessError, logger } from '@studymind/core'
 import { z } from 'zod'
 
 import { type AiTaskCategory, checkBudget, recordUsage } from '../budget.js'
+import { assertContactNotRestricted } from './restricted-guard.js'
 import { getOpenAI } from './openai.js'
 import { estimateCostUsd } from './pricing.js'
 
@@ -37,6 +38,8 @@ export interface RunDraftInput {
   temperature?: number
   contentShape?: z.ZodType<string>
   ctx?: Record<string, unknown>
+  /** When provided, the call aborts if this contact is restricted_access. */
+  contactId?: string
 }
 
 export interface RunDraftResult {
@@ -53,7 +56,10 @@ export async function runDraft(input: RunDraftInput): Promise<RunDraftResult> {
     temperature = 0.7,
     contentShape = defaultDraftShape,
     ctx,
+    contactId,
   } = input
+
+  await assertContactNotRestricted(contactId)
 
   const budget = checkBudget(task)
   if (!budget.allowed) {

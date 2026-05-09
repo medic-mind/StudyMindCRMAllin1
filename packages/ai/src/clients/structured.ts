@@ -14,6 +14,7 @@ import type { z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 
 import { type AiTaskCategory, checkBudget, recordUsage } from '../budget.js'
+import { assertContactNotRestricted } from './restricted-guard.js'
 import { getOpenAI } from './openai.js'
 import { estimateCostUsd } from './pricing.js'
 
@@ -30,6 +31,8 @@ export interface RunStructuredInput<T> {
   temperature?: number
   /** Free-form context for log correlation (request id, family id, etc). */
   ctx?: Record<string, unknown>
+  /** When provided, the call aborts if this contact is restricted_access. */
+  contactId?: string
 }
 
 export async function runStructured<T>(input: RunStructuredInput<T>): Promise<T> {
@@ -43,7 +46,10 @@ export async function runStructured<T>(input: RunStructuredInput<T>): Promise<T>
     model = 'gpt-4o-mini',
     temperature = 0.2,
     ctx,
+    contactId,
   } = input
+
+  await assertContactNotRestricted(contactId)
 
   const budget = checkBudget(task)
   if (!budget.allowed) {

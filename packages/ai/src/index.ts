@@ -8,6 +8,13 @@
 // Sanitisation — call BEFORE feeding any user content into a prompt.
 export { redactPII, sanitiseUserContent, type RedactPIIOptions } from './sanitise.js'
 
+// Restricted-contact guard. The web app injects a db client at boot so
+// AI clients can refuse prompts that reference a restricted_access contact.
+export {
+  setRestrictedGuardDb,
+  type RestrictedGuardDb,
+} from './clients/restricted-guard.js'
+
 // Budget guardrail.
 export {
   BUDGETS,
