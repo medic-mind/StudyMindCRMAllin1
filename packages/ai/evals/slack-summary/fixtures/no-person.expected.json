@@ -1,0 +1,11 @@
+{
+  "candidateContactIdentifier": {
+    "name": null,
+    "email": null,
+    "phone": null
+  },
+  "summary": "Reminder posted about a weekly finance review.",
+  "sentiment": "neutral",
+  "suggestedNextAction": null,
+  "confidence": 0.0
+}

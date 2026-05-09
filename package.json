@@ -15,6 +15,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
+    "test:ai-live": "vitest run packages/ai/evals --config vitest.ai-live.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "playwright:install": "playwright install chromium",

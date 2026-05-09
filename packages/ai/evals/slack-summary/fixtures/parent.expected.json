@@ -1,0 +1,11 @@
+{
+  "candidateContactIdentifier": {
+    "name": null,
+    "email": null,
+    "phone": "+447000000044"
+  },
+  "summary": "Parent confirmed availability for Tuesday session.",
+  "sentiment": "positive",
+  "suggestedNextAction": "Book the Tuesday slot",
+  "confidence": 0.78
+}

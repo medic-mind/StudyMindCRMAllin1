@@ -1,0 +1,10 @@
+{
+  "score": 0.85,
+  "drivers": [
+    "Three payment failures in last 60 days",
+    "No interaction in 45 days",
+    "Two unresolved discrepancies",
+    "Negative sentiment trend"
+  ],
+  "rationale": "Repeated payment failures, prolonged silence, and negative sentiment indicate imminent churn risk."
+}

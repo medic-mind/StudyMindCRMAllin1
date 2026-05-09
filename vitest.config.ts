@@ -16,7 +16,14 @@ export default defineConfig({
       // Integration tests with mocked DBs / external clients.
       '__tests__/integration/**/*.test.ts',
     ],
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/.turbo/**'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.next/**',
+      '**/.turbo/**',
+      // Live AI evals run via `pnpm test:ai-live` only. CLAUDE.md §18.3.
+      '**/*.live.test.ts',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

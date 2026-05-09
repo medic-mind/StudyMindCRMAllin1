@@ -1,0 +1,11 @@
+{
+  "signals": {
+    "daysSinceLastInteraction": 45,
+    "paymentFailuresLast60d": 3,
+    "missedSessionsLast60d": 2,
+    "sentimentMean": -0.4,
+    "laContractDaysRemaining": null,
+    "state": "at_risk",
+    "openDiscrepancies": 2
+  }
+}
