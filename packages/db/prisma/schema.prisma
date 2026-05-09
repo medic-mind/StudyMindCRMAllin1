@@ -101,6 +101,15 @@ enum InteractionType {
   task_created
   task_updated
   task_completed
+  // Slice 10: Tender pipeline + LA contract workflow (CLAUDE.md §43).
+  tender_draft_signed_off
+  lacontract_created
+  lacontract_invoice_generated
+  lacontract_invoice_sent
+  lacontract_invoice_paid
+  lacontract_progress_report_signed
+  ap_review_overdue
+  tutor_session_note
 }
 
 enum ContactKind {
@@ -134,6 +143,7 @@ enum ReconciliationCategory {
   late_failure_pending_action
   churned_with_active_subscription
   ap_review_overdue
+  la_family_with_card_subscription
   other
 }
 
@@ -234,6 +244,9 @@ model Family {
   laContractId     String?
   churnScore       Float?
   lastBookingSyncAt DateTime?
+  /// AP (Section 19) placement summary. Mirrors `APPlacement` for fast UI
+  /// reads; CLAUDE.md §43.4. Nullable for non-AP families.
+  apPlacement      Json?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -301,6 +314,11 @@ model Interaction {
   type       InteractionType
   contactId  String?
   familyId   String?
+  /// Interactions originating on a Tender (which pre-dates the Family). See
+  /// CLAUDE.md §43.1.
+  tenderId   String?
+  /// Interactions originating on an LAContract. CLAUDE.md §43.2.
+  laContractId String?
   occurredAt DateTime
   summary    String?
   payload    Json
@@ -311,11 +329,15 @@ model Interaction {
   updatedById String?
   deletedAt   DateTime?
 
-  contact Contact? @relation("ContactInteractions", fields: [contactId], references: [id])
-  family  Family?  @relation("FamilyInteractions", fields: [familyId], references: [id])
+  contact    Contact?    @relation("ContactInteractions", fields: [contactId], references: [id])
+  family     Family?     @relation("FamilyInteractions", fields: [familyId], references: [id])
+  tender     Tender?     @relation("TenderInteractions", fields: [tenderId], references: [id])
+  laContract LAContract? @relation("LAContractInteractions", fields: [laContractId], references: [id])
 
   @@index([contactId, occurredAt])
   @@index([familyId, occurredAt])
+  @@index([tenderId, occurredAt])
+  @@index([laContractId, occurredAt])
   @@index([type, occurredAt])
 }
 
@@ -693,10 +715,26 @@ model Tender {
   id                 String      @id
   name               String
   laName             String
+  /// LA commissioner / contracting authority name (e.g. "London Borough of X
+  /// — Inclusion Service"). Distinct from `laName` which may abbreviate.
+  commissioner       String?
+  /// Provider-supplied opportunity reference (Find a Tender / Contracts Finder).
+  opportunityRef     String?
   state              TenderState @default(identified)
   ownerUserId        String?
+  /// Account lead user id (CLAUDE.md §43.1). Same role as ownerUserId today;
+  /// retained for clarity.
+  accountLeadId      String?
   contractValueMinor Int?
+  /// Bid submission deadline.
+  dueAt              DateTime?
   submittedAt        DateTime?
+  /// True for tenders flagged SEMH or EHCP-heavy. DSL signoff is required
+  /// before submission — see packages/core/src/tender/signoff.ts.
+  isSemhOrEhcpHeavy  Boolean     @default(false)
+  /// Outcome captured on terminal-state transitions.
+  outcome            String?
+  outcomeReason      String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -704,20 +742,57 @@ model Tender {
   updatedById String?
   deletedAt   DateTime?
 
-  contracts LAContract[]
+  contracts    LAContract[]
+  interactions Interaction[]    @relation("TenderInteractions")
+  draftRequests TenderDraftRequest[]
 
   @@index([state])
+  @@index([accountLeadId])
+}
+
+model TenderDraftRequest {
+  id              String   @id
+  tenderId        String
+  brief           String
+  sectionsToDraft String[] @default([])
+  draftText       String
+  promptVersion   String
+  /// Signoff state: pending | account_lead_approved | dsl_approved | approved
+  /// | request_changes | rejected. `approved` is terminal and locks the
+  /// draft for editing. `account_lead_approved` requires a follow-up DSL
+  /// signoff for SEMH/EHCP-heavy tenders.
+  signoffState    String   @default("pending")
+  requesterId     String
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  tender Tender @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+
+  @@index([tenderId])
+  @@index([signoffState])
 }
 
 model LAContract {
   id                 String    @id
   tenderId           String?
   laName             String
+  commissioner       String?
   reference          String    @unique
   contractValueMinor Int
   startDate          DateTime
   endDate            DateTime?
   hoursEnvelope      Int?
+  /// monthly | termly | per_session
+  billingCadence     String    @default("monthly")
+  /// monthly | termly
+  reportingCadence   String    @default("monthly")
+  /// Account lead user id.
+  accountLeadId      String?
+  /// Optional retention policy override (CLAUDE.md §21, §43.2).
+  retentionPolicyId  String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -725,20 +800,35 @@ model LAContract {
   updatedById String?
   deletedAt   DateTime?
 
-  tender   Tender?     @relation(fields: [tenderId], references: [id])
-  families Family[]
-  invoices LAInvoice[]
+  tender       Tender?              @relation(fields: [tenderId], references: [id])
+  families     Family[]
+  invoices     LAInvoice[]
+  reports      LAProgressReport[]
+  interactions Interaction[]        @relation("LAContractInteractions")
 
   @@index([laName])
+  @@index([retentionPolicyId])
 }
 
 model LAInvoice {
-  id          String    @id
-  contractId  String
-  reference   String    @unique
-  amountMinor Int
-  issuedAt    DateTime
-  paidAt      DateTime?
+  id              String    @id
+  contractId      String
+  /// Invoice covers a learner-Family for a given period.
+  familyId        String?
+  reference       String    @unique
+  /// draft | sent | paid | disputed | written_off
+  state           String    @default("draft")
+  amountMinor     Int
+  /// Period the invoice covers.
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  /// LA purchase order number captured at send time.
+  poNumber        String?
+  /// LA payment reference captured at paid time.
+  paymentReference String?
+  issuedAt        DateTime
+  sentAt          DateTime?
+  paidAt          DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -749,6 +839,54 @@ model LAInvoice {
   contract LAContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
 
   @@index([contractId])
+  @@index([familyId])
+  @@index([state])
+}
+
+model LAProgressReport {
+  id            String    @id
+  contractId    String
+  familyId      String
+  periodStart   DateTime
+  periodEnd     DateTime
+  draftText     String
+  promptVersion String
+  /// draft | signed | rejected
+  state         String    @default("draft")
+  signedById    String?
+  signedAt      DateTime?
+  pdfS3Key      String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  contract LAContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, familyId, periodStart, periodEnd])
+  @@index([state])
+  @@index([familyId])
+}
+
+model APPlacement {
+  id              String    @id
+  familyId        String    @unique
+  apStartDate     DateTime
+  apReviewDate    DateTime
+  apEndDate       DateTime?
+  statutoryReason String
+  /// pending | overdue | completed
+  reviewStatus    String    @default("pending")
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([reviewStatus])
+  @@index([apReviewDate])
 }
 
 // -----------------------------------------------------------------------------

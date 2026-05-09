@@ -11,6 +11,8 @@
     "./finance": "./src/finance/index.ts",
     "./interaction": "./src/interaction/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
+    "./tender": "./src/tender/index.ts",
+    "./lacontract": "./src/lacontract/index.ts",
     "./auth/policies": "./src/auth/policies.ts",
     "./compliance/dsar": "./src/compliance/dsar.ts",
     "./events/registry": "./src/events/registry.ts",
