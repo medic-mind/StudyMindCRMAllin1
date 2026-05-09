@@ -5,6 +5,9 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)',
   '/api/health',
   '/api/webhooks/(.*)',
+  // Inngest sync + invoke endpoints are authenticated by INNGEST_SIGNING_KEY,
+  // not Clerk. Marking public lets the framework verify the signature itself.
+  '/api/inngest(.*)',
 ])
 
 export default clerkMiddleware(async (auth, req) => {

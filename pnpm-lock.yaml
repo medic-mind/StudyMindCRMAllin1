@@ -111,6 +111,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      inngest:
+        specifier: ^3.27.5
+        version: 3.54.2(@opentelemetry/core@2.7.1(@opentelemetry/api@1.9.1))(next@15.5.15(@opentelemetry/api@1.9.1)(@playwright/test@1.59.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(typescript@5.9.3)(zod@3.25.76)
       next:
         specifier: ^15.0.3
         version: 15.5.15(@opentelemetry/api@1.9.1)(@playwright/test@1.59.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
