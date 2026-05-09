@@ -14,6 +14,7 @@ import { FUNCTIONS as AIRCALL_FUNCTIONS } from '@studymind/integration-aircall/j
 import { FUNCTIONS as BOOKING_FUNCTIONS } from '@studymind/integration-booking/jobs'
 import { FUNCTIONS as GOCARDLESS_FUNCTIONS } from '@studymind/integration-gocardless/jobs'
 import { FUNCTIONS as STRIPE_FUNCTIONS } from '@studymind/integration-stripe/jobs'
+import { FUNCTIONS as TRENGO_FUNCTIONS } from '@studymind/integration-trengo/jobs'
 import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 
 export const runtime = 'nodejs'
@@ -27,6 +28,7 @@ export const { GET, POST, PUT } = serve({
     ...GOCARDLESS_FUNCTIONS,
     ...BOOKING_FUNCTIONS,
     ...AIRCALL_FUNCTIONS,
+    ...TRENGO_FUNCTIONS,
   ],
   signingKey: process.env['INNGEST_SIGNING_KEY'],
 })
