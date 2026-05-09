@@ -1,0 +1,19 @@
+{
+  "events": [
+    {
+      "id": "EV_TEST_MANDATE_REPLACED_001",
+      "created_at": "2026-04-15T11:30:00.000Z",
+      "resource_type": "mandates",
+      "action": "replaced",
+      "links": {
+        "mandate": "MD_TEST_OLD_001",
+        "new_mandate": "MD_TEST_NEW_001"
+      },
+      "details": {
+        "origin": "bank",
+        "cause": "bank_account_transferred",
+        "description": "The customer's bank account has moved to a new sort code; a replacement mandate has been created."
+      }
+    }
+  ]
+}

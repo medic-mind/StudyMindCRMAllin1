@@ -1,0 +1,21 @@
+{
+  "event": "call.ended",
+  "resource": "call",
+  "timestamp": "2026-05-09T10:00:00.000Z",
+  "token": "TEST_AIRCALL_TOKEN",
+  "data": {
+    "id": 9000001,
+    "direction": "inbound",
+    "status": "done",
+    "started_at": 1746783540,
+    "answered_at": 1746783545,
+    "ended_at": 1746783750,
+    "duration": 210,
+    "raw_digits": "+447700900001",
+    "number": { "id": 1, "digits": "+443330000000", "name": "StudyMind Main Line" },
+    "contact": { "phone_numbers": [{ "value": "+447700900001" }] },
+    "recording": "https://recordings.test.aircall.io/9000001.mp3",
+    "voicemail": null,
+    "transcription": null
+  }
+}

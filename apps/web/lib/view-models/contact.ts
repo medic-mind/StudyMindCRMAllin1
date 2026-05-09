@@ -15,6 +15,7 @@ export interface ContactDetailViewModel {
   isMinor: boolean
   notes: string | null
   hasSafeguardingFlag: boolean
+  isRestricted: boolean
   family: { id: string; name: string | null } | null
   createdAt: Date
 }
@@ -61,6 +62,9 @@ export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
   const hasFlag = row.safeguardingFlags.some(
     (f) => f.state === 'concern_logged' || f.state === 'restricted_access',
   )
+  const isRestricted = row.safeguardingFlags.some(
+    (f) => f.state === 'restricted_access',
+  )
   return {
     id: row.id,
     kind: row.kind,
@@ -70,6 +74,7 @@ export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
     isMinor: row.isMinor,
     notes: row.notes,
     hasSafeguardingFlag: hasFlag,
+    isRestricted,
     family,
     createdAt: row.createdAt,
   }

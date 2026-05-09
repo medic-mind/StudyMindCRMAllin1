@@ -6,6 +6,8 @@ import { notFound } from 'next/navigation'
 
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { RestrictedAccessBanner } from '@/components/safeguarding/RestrictedAccessBanner'
+
 import { AddNote } from './AddNote'
 import { Timeline } from './Timeline'
 
@@ -23,6 +25,19 @@ export default async function ContactDetailPage({
     notFound()
   }
   if (!contact) notFound()
+
+  // CLAUDE.md §42.3: restricted contacts hide their timeline from non-DSL.
+  // contact.get already enforces; if we got here as non-DSL the contact is
+  // not restricted. We still render the banner when isRestricted so DSLs
+  // see the cue.
+  if (contact.isRestricted) {
+    return (
+      <div className="max-w-3xl">
+        <h1 className="text-2xl font-semibold tracking-tight">{contact.displayName}</h1>
+        <RestrictedAccessBanner />
+      </div>
+    )
+  }
 
   const timeline = await caller.interaction.list({ contactId: id, limit: 25 })
 

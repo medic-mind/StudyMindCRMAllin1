@@ -12,6 +12,25 @@ export const EVENT_NAMES = [
   'interaction.created',
   'interaction.deleted',
 
+  // Calls (Aircall — CLAUDE.md §10)
+  'call.started',
+  'call.answered',
+  'call.ended',
+  'call.voicemail_left',
+  'call.tagged',
+  'call.commented',
+  'call.transcription_added',
+
+  // Messaging (Trengo — CLAUDE.md §11)
+  'message.inbound',
+  'message.outbound',
+  'ticket.assigned',
+  'ticket.closed',
+  'ticket.reopened',
+  'label.added',
+  'label.removed',
+  'lead.created',
+
   // Finance
   'payment.created',
   'payment.late_failed',

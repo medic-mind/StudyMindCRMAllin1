@@ -1,0 +1,14 @@
+{
+  "id": "TRENGO_EV_TICKET_ASSIGNED_001",
+  "event": "ticket.assigned",
+  "occurred_at": "2026-05-09T09:10:00.000Z",
+  "data": {
+    "ticket_id": 7700001,
+    "channel": "whatsapp",
+    "assignee_id": 4242,
+    "contact": {
+      "phone": "+447700900010",
+      "name": "Test Family A1"
+    }
+  }
+}

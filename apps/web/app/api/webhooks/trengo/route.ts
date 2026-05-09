@@ -1,7 +1,15 @@
-// trengo webhook handler. See CLAUDE.md Section 7.1.
-// Verify signature, persist raw event, enqueue Inngest job, return 2xx fast.
+// Trengo webhook handler. CLAUDE.md §7.1, §11.
+// Verify signature -> upsert ProviderEvent (idempotent on envelope.id) ->
+// enqueue Inngest -> 200 fast. All real work happens in the Inngest job.
 
-import { SIGNATURE_HEADER, verifyAndParse } from '@studymind/integration-trengo/webhook'
+import { upsertProviderEvent } from '@studymind/core/provider-events'
+import {
+  SIGNATURE_HEADER,
+  verifyAndParse,
+} from '@studymind/integration-trengo/webhook'
+import { inngest } from '@studymind/jobs'
+
+import { db } from '@/lib/db'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -10,18 +18,30 @@ export async function POST(req: Request): Promise<Response> {
   const raw = await req.text()
   const signature = req.headers.get(SIGNATURE_HEADER)
 
-  let result
-  try {
-    result = verifyAndParse(raw, signature)
-  } catch {
-    // Skeleton — verifyAndParse throws 'not implemented' until we ship the integration.
-    return new Response('not implemented', { status: 501 })
-  }
-
-  if (!result.ok || !result.event) {
+  const result = verifyAndParse(raw, signature)
+  if (!result.ok) {
+    // CLAUDE.md §11: never log the raw body of an unverified event.
     return new Response('invalid signature', { status: 400 })
   }
 
-  // TODO: persist to ProviderEvent (idempotent on (provider, eventId)) then enqueue Inngest.
+  const envelope = result.envelope
+
+  const upsert = await upsertProviderEvent(db, {
+    provider: 'trengo',
+    eventId: envelope.id,
+    type: envelope.event,
+    raw: envelope as unknown,
+    receivedAt: new Date(envelope.occurred_at),
+  })
+
+  await inngest.send({
+    name: 'trengo/event.received',
+    data: {
+      eventId: envelope.id,
+      providerEventRowId: upsert.id,
+      type: envelope.event,
+    },
+  })
+
   return Response.json({ ok: true })
 }

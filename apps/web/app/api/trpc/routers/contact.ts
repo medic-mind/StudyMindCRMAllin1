@@ -14,7 +14,13 @@ import {
 
 import { toContactDetail, toContactSummary } from '@/lib/view-models/contact'
 
-import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
+import {
+  auditedProcedure,
+  enforceRestrictedAccess,
+  protectedProcedure,
+  requireUser,
+  router,
+} from '@/lib/trpc/builders'
 
 const ListInput = z.object({
   cursor: z
@@ -88,8 +94,9 @@ export const contactRouter = router({
     }),
 
   get: protectedProcedure
-    .input(z.object({ id: z.string() }))
+    .input(z.object({ id: z.string(), purpose: z.string().min(1).optional() }))
     .query(async ({ ctx, input }) => {
+      await enforceRestrictedAccess(ctx, input.id, input.purpose ?? '')
       const row = await ctx.db.contact.findFirst({
         where: { id: input.id, deletedAt: null },
         include: {

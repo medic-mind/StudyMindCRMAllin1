@@ -33,6 +33,7 @@
     "@trpc/server": "^11.0.0-rc.638",
     "@hookform/resolvers": "^3.9.0",
     "clsx": "^2.1.1",
+    "inngest": "^3.27.5",
     "next": "^15.0.3",
     "react-hook-form": "^7.53.0",
     "react": "^18.3.1",

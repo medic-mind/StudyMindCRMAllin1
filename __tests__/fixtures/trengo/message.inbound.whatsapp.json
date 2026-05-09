@@ -1,0 +1,16 @@
+{
+  "id": "TRENGO_EV_INBOUND_WA_001",
+  "event": "message.inbound",
+  "occurred_at": "2026-05-09T09:00:00.000Z",
+  "data": {
+    "ticket_id": 7700001,
+    "message_id": 8800001,
+    "direction": "inbound",
+    "channel": "whatsapp",
+    "contact": {
+      "phone": "+447700900010",
+      "name": "Test Family A1"
+    },
+    "body": "Hello, can we book a trial session for next Tuesday?"
+  }
+}

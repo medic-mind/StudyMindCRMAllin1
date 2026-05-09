@@ -11,12 +11,20 @@ import {
 
 import { toInteractionListItem } from '@/lib/view-models/interaction'
 
-import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
+import {
+  auditedProcedure,
+  enforceRestrictedAccess,
+  protectedProcedure,
+  requireUser,
+  router,
+} from '@/lib/trpc/builders'
 
 const InteractionListInput = z
   .object({
     contactId: z.string().optional(),
     familyId: z.string().optional(),
+    /** Required when listing for a restricted contact. CLAUDE.md §42.3. */
+    purpose: z.string().min(1).optional(),
     cursor: z
       .object({
         id: z.string(),
@@ -37,11 +45,29 @@ export const interactionRouter = router({
   list: protectedProcedure
     .input(InteractionListInput)
     .query(async ({ ctx, input }) => {
+      // Restricted-access enforcement. When listing for a specific contact,
+      // we run the gate up-front. When listing by family, we filter out any
+      // interaction tied to a restricted contact unless the caller is admin
+      // or an assigned DSL on every restricted contact in that family.
+      if (input.contactId) {
+        await enforceRestrictedAccess(
+          ctx,
+          input.contactId,
+          input.purpose ?? '',
+        )
+      }
+      const restrictedContactIds = await getRestrictedContactIdsToHide(
+        ctx,
+        input.familyId,
+      )
       const rows = await ctx.db.interaction.findMany({
         where: {
           deletedAt: null,
           ...(input.contactId ? { contactId: input.contactId } : {}),
           ...(input.familyId ? { familyId: input.familyId } : {}),
+          ...(restrictedContactIds.length > 0
+            ? { contactId: { notIn: restrictedContactIds } }
+            : {}),
           ...(input.cursor
             ? {
                 OR: [
@@ -134,6 +160,37 @@ export const interactionRouter = router({
       return { id: created.id }
     }),
 })
+
+/**
+ * For a family-scoped list, return the contact ids whose timeline rows must
+ * be hidden from this caller because they are restricted_access and the
+ * caller is neither admin nor the assigned DSL on every such row.
+ *
+ * When called without a familyId (or when the caller is admin) returns [].
+ */
+async function getRestrictedContactIdsToHide(
+  ctx: Parameters<typeof enforceRestrictedAccess>[0],
+  familyId: string | undefined,
+): Promise<string[]> {
+  if (!familyId) return []
+  const user = ctx.user
+  if (!user || user.role === 'admin') return []
+  const flags = await ctx.db.safeguardingFlag.findMany({
+    where: {
+      deletedAt: null,
+      state: 'restricted_access',
+      contact: { familyMembers: { some: { familyId } } },
+    },
+    select: { contactId: true, dslUserId: true },
+  })
+  if (flags.length === 0) return []
+  const hide: string[] = []
+  for (const f of flags) {
+    const isAssigned = user.role === 'dsl' && f.dslUserId === user.id
+    if (!isAssigned) hide.push(f.contactId)
+  }
+  return hide
+}
 
 // Map the Prisma enum (uses underscores) to our domain enum (uses dots where
 // the event taxonomy demands it). See CLAUDE.md §45.

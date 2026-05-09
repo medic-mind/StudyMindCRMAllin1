@@ -1,0 +1,41 @@
+{
+  "id": "evt_test_invoice_payment_failed_001",
+  "object": "event",
+  "api_version": "2025-02-24.acacia",
+  "created": 1714492800,
+  "type": "invoice.payment_failed",
+  "livemode": false,
+  "pending_webhooks": 0,
+  "request": {
+    "id": "req_test_001",
+    "idempotency_key": null
+  },
+  "data": {
+    "object": {
+      "id": "in_test_001",
+      "object": "invoice",
+      "customer": "cus_test_family_a1",
+      "amount_due": 19500,
+      "amount_paid": 0,
+      "amount_remaining": 19500,
+      "currency": "gbp",
+      "status": "open",
+      "attempt_count": 1,
+      "attempted": true,
+      "billing_reason": "subscription_cycle",
+      "collection_method": "charge_automatically",
+      "created": 1714400000,
+      "due_date": 1715004800,
+      "next_payment_attempt": 1715091200,
+      "paid": false,
+      "payment_intent": "pi_test_001",
+      "subscription": "sub_test_a1",
+      "lines": {
+        "object": "list",
+        "data": [],
+        "has_more": false,
+        "url": "/v1/invoices/in_test_001/lines"
+      }
+    }
+  }
+}

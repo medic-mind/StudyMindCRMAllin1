@@ -85,6 +85,14 @@ enum InteractionType {
   slack_summary
   tender_state_changed
   system
+  // Trengo ticket lifecycle (CLAUDE.md §11). Calls reuse `call`; messages
+  // reuse `message`; tickets and labels get explicit values so the timeline
+  // can filter on lifecycle without unpacking JSONB.
+  ticket_assigned
+  ticket_closed
+  ticket_reopened
+  label_added
+  label_removed
 }
 
 enum ContactKind {
@@ -115,6 +123,8 @@ enum ReconciliationCategory {
   hours_mismatch
   payment_unallocated
   late_failure
+  late_failure_pending_action
+  churned_with_active_subscription
   ap_review_overdue
   other
 }
@@ -215,6 +225,7 @@ model Family {
   billingContactId String?
   laContractId     String?
   churnScore       Float?
+  lastBookingSyncAt DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -419,12 +430,16 @@ model Booking {
 }
 
 model BookingSession {
-  id            String       @id
-  bookingId     String
-  scheduledAt   DateTime
-  state         BookingState @default(tentative)
-  hours         Int          @default(0)
-  correctedById String?
+  id              String       @id
+  bookingId       String
+  externalId      String       @unique
+  scheduledAt     DateTime
+  state           BookingState @default(tentative)
+  hours           Int          @default(0)
+  contractedHours Int          @default(0)
+  scheduledHours  Int          @default(0)
+  deliveredHours  Int          @default(0)
+  correctedById   String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -522,15 +537,17 @@ model Invoice {
 }
 
 model Payment {
-  id          String   @id
+  id          String    @id
   familyId    String
   invoiceId   String?
-  externalId  String   @unique
+  externalId  String    @unique
   provider    String
   amountMinor Int
-  currency    String   @default("GBP")
+  currency    String    @default("GBP")
   receivedAt  DateTime
-  reverted    Boolean  @default(false)
+  confirmedAt DateTime?
+  reverted    Boolean   @default(false)
+  revertedAt  DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -592,6 +609,7 @@ model ReconciliationDiscrepancy {
   category     ReconciliationCategory
   summary      String
   payload      Json
+  contextHash  String
   resolvedAt   DateTime?
   resolvedById String?
 
@@ -602,6 +620,7 @@ model ReconciliationDiscrepancy {
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
+  @@unique([familyId, category, contextHash])
   @@index([familyId])
   @@index([category])
   @@index([resolvedAt])
@@ -714,6 +733,56 @@ model LAInvoice {
 }
 
 // -----------------------------------------------------------------------------
+// GoCardless mandate creation flow
+// -----------------------------------------------------------------------------
+
+model MandateIntent {
+  id                 String  @id
+  familyId           String
+  billingContactId   String
+  idempotencyKey     String  @unique
+  redirectFlowId     String?
+  redirectUrl        String?
+  status             String  @default("pending")
+  // Resolved GoCardless mandate id once the redirect flow completes.
+  gcMandateId        String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([familyId])
+  @@index([billingContactId])
+  @@index([status])
+}
+
+// -----------------------------------------------------------------------------
+// Trengo per-agent OAuth tokens (CLAUDE.md §11).
+// Each agent's outbound goes through their own Trengo API token, KMS-
+// encrypted at rest. Expiry is enforced fail-closed in outbound.ts.
+// -----------------------------------------------------------------------------
+
+model TrengoToken {
+  /// Clerk user id (== User.id). One token per agent.
+  agentId         String   @id
+  tokenCiphertext Bytes
+  tokenIv         Bytes
+  dekCiphertext   Bytes
+  aad             Bytes
+  keyVersion      Int
+  expiresAt       DateTime
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([expiresAt])
+}
+
+// -----------------------------------------------------------------------------
 // Feature flags
 // -----------------------------------------------------------------------------
 
@@ -728,4 +797,31 @@ model FeatureFlag {
   updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
+}
+
+// -----------------------------------------------------------------------------
+// DSL rota (CLAUDE.md §42).
+// One primary + one deputy per ISO week; raiseConcern resolves the on-duty
+// DSL from this table at runtime. Empty rota → DEFAULT_DSL_USER_ID env.
+// -----------------------------------------------------------------------------
+
+enum DslRotaRole {
+  primary
+  deputy
+}
+
+model DslRota {
+  id        String      @id
+  userId    String
+  weekStart DateTime
+  weekEnd   DateTime
+  role      DslRotaRole
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@unique([weekStart, role])
+  @@index([userId])
 }
