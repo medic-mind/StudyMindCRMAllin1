@@ -10,6 +10,7 @@
 
 import { serve } from 'inngest/next'
 
+import { FUNCTIONS as GOCARDLESS_FUNCTIONS } from '@studymind/integration-gocardless/jobs'
 import { FUNCTIONS as STRIPE_FUNCTIONS } from '@studymind/integration-stripe/jobs'
 import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 
@@ -18,6 +19,6 @@ export const dynamic = 'force-dynamic'
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [...CROSS_CUTTING_FUNCTIONS, ...STRIPE_FUNCTIONS],
+  functions: [...CROSS_CUTTING_FUNCTIONS, ...STRIPE_FUNCTIONS, ...GOCARDLESS_FUNCTIONS],
   signingKey: process.env['INNGEST_SIGNING_KEY'],
 })
