@@ -248,6 +248,13 @@ export async function createLAContractFromTender(
 
 export * from './invariants'
 export {
+  apReviewOverdue,
+  completeApReview,
+  getApPlacement,
+  type APPlacementSnapshot,
+  type CompleteApReviewInput,
+} from './ap'
+export {
   generateProgressReportDraft,
   signoffProgressReport,
   type GenerateProgressReportInput,
