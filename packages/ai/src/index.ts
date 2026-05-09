@@ -60,6 +60,15 @@ export {
   type SlackSummaryPromptInput,
 } from './prompts/slack-summary.js'
 export {
+  buildMergeCandidatesPrompt,
+  mergeCandidateSchema,
+  MERGE_SUGGESTION_THRESHOLD,
+  VERSION as MERGE_CANDIDATES_PROMPT_VERSION,
+  type ContactSummaryForMerge,
+  type MergeCandidate,
+  type MergeCandidatesPromptInput,
+} from './prompts/merge-candidates.js'
+export {
   buildChurnScorePrompt,
   CHURN_TASK_THRESHOLD,
   churnScoreSchema,
