@@ -113,7 +113,46 @@ export interface DecryptByIdInput {
   actorId: string | null
   purpose: string
   requestId?: string
+  /**
+   * Break-glass metadata. Pass this when the caller has the `admin` role and
+   * is not the assigned DSL for the EncryptedField's owning Contact. The
+   * caller resolves "is admin" and "is assigned DSL" from RBAC + safeguarding
+   * flags; here we just record + dispatch.
+   *
+   * When `isBreakGlass === true`, decryptFieldById writes an additional
+   * `safeguarding.break_glass` audit entry and invokes the optional
+   * `breakGlassReporter` callback. Plaintext is NEVER passed to the reporter
+   * — only metadata. CLAUDE.md §21.1.
+   */
+  breakGlass?: {
+    isBreakGlass: boolean
+    /** Names of roles the actor holds (for the audit row). */
+    actorRoles?: readonly string[]
+    /** Optional id of the assigned DSL we expected, for context. */
+    assignedDslUserId?: string | null
+  }
+  /**
+   * Optional dispatcher for break-glass alerts (Slack, PagerDuty, Resend).
+   * Injection avoids a core ↔ integrations cycle; the worker boundary wires
+   * up the real implementation. When omitted, audit is still written.
+   */
+  breakGlassReporter?: BreakGlassReporter
 }
+
+export interface BreakGlassAlert {
+  encryptedFieldId: string
+  contactId: string
+  column: string
+  actorId: string | null
+  actorRoles: readonly string[]
+  assignedDslUserId: string | null
+  purpose: string
+  requestId: string | null
+  kmsCallId: string
+  occurredAt: Date
+}
+
+export type BreakGlassReporter = (alert: BreakGlassAlert) => Promise<void>
 
 /**
  * Audited decrypt: looks up the EncryptedField row, writes an
@@ -156,6 +195,43 @@ export async function decryptFieldById(
       keyVersion: row.keyVersion,
     },
   })
+
+  // Break-glass: an additional audit entry plus a fan-out to alert sinks.
+  // The plaintext is never passed to the reporter — only metadata.
+  // CLAUDE.md §21.1.
+  if (input.breakGlass?.isBreakGlass) {
+    const occurredAt = new Date()
+    const kmsCallId = `kms:${row.id}:${occurredAt.getTime()}`
+    await writeAuditLogEntry(db, {
+      actorId: ctx.actorId,
+      action: 'safeguarding.break_glass',
+      target: { type: 'EncryptedField', id: row.id },
+      requestId: ctx.requestId,
+      purpose: ctx.purpose,
+      after: {
+        contactId: row.contactId,
+        column: row.column,
+        keyVersion: row.keyVersion,
+        actorRoles: input.breakGlass.actorRoles ?? [],
+        assignedDslUserId: input.breakGlass.assignedDslUserId ?? null,
+        kmsCallId,
+      },
+    })
+    if (input.breakGlassReporter) {
+      await input.breakGlassReporter({
+        encryptedFieldId: row.id,
+        contactId: row.contactId,
+        column: row.column,
+        actorId: ctx.actorId,
+        actorRoles: input.breakGlass.actorRoles ?? [],
+        assignedDslUserId: input.breakGlass.assignedDslUserId ?? null,
+        purpose: ctx.purpose,
+        requestId: ctx.requestId ?? null,
+        kmsCallId,
+        occurredAt,
+      })
+    }
+  }
 
   return decryptField(
     {

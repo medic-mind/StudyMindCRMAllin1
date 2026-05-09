@@ -66,6 +66,7 @@ export const EVENT_NAMES = [
   'safeguarding.field_encrypted',
   'safeguarding.field_decrypted',
   'safeguarding.read_attempt',
+  'safeguarding.break_glass',
 
   // Tenders / LA
   'tender.created',
