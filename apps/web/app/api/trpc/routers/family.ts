@@ -177,4 +177,124 @@ export const familyRouter = router({
       if (!f) throw new TRPCError({ code: 'NOT_FOUND' })
       return f
     }),
+
+  /**
+   * View-model for the Family detail page. Returns a shaped object — never
+   * the raw row — and includes AP placement, open discrepancies, and recent
+   * timeline entries. CLAUDE.md §26 (RSC ↔ client data boundary), §43.4.
+   */
+  getDetail: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const f = await ctx.db.family.findFirst({
+        where: { id: input.id, deletedAt: null },
+        include: {
+          members: {
+            include: {
+              contact: {
+                select: {
+                  id: true,
+                  kind: true,
+                  firstName: true,
+                  lastName: true,
+                  isMinor: true,
+                },
+              },
+            },
+          },
+          billingContact: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
+        },
+      })
+      if (!f) throw new TRPCError({ code: 'NOT_FOUND' })
+
+      const [discrepancies, recentInteractions] = await Promise.all([
+        ctx.db.reconciliationDiscrepancy.findMany({
+          where: { familyId: f.id, resolvedAt: null },
+          orderBy: { createdAt: 'desc' },
+          take: 25,
+          select: {
+            id: true,
+            category: true,
+            createdAt: true,
+            contextHash: true,
+          },
+        }),
+        ctx.db.interaction.findMany({
+          where: { familyId: f.id, deletedAt: null },
+          orderBy: { occurredAt: 'desc' },
+          take: 25,
+          select: {
+            id: true,
+            type: true,
+            occurredAt: true,
+            summary: true,
+          },
+        }),
+      ])
+
+      const apPlacement = (f.apPlacement as Record<string, unknown> | null) ?? null
+      const apReviewDateStr =
+        apPlacement && typeof apPlacement['apReviewDate'] === 'string'
+          ? (apPlacement['apReviewDate'] as string)
+          : null
+      const reviewStatus =
+        apPlacement && typeof apPlacement['reviewStatus'] === 'string'
+          ? (apPlacement['reviewStatus'] as string)
+          : null
+      const apReviewDate = apReviewDateStr ? new Date(apReviewDateStr) : null
+      const apOverdue =
+        apReviewDate !== null && reviewStatus !== 'completed' && apReviewDate < new Date()
+
+      return {
+        id: f.id,
+        name: f.name,
+        state: f.state,
+        billingParty: f.billingParty,
+        churnScore: f.churnScore,
+        billingContact: f.billingContact
+          ? {
+              id: f.billingContact.id,
+              name: [f.billingContact.firstName, f.billingContact.lastName]
+                .filter(Boolean)
+                .join(' '),
+              email: f.billingContact.email,
+            }
+          : null,
+        members: f.members.map((m) => ({
+          contactId: m.contactId,
+          role: m.role,
+          name: [m.contact.firstName, m.contact.lastName].filter(Boolean).join(' '),
+          isMinor: m.contact.isMinor,
+          kind: m.contact.kind,
+        })),
+        ap: apPlacement
+          ? {
+              statutoryReason:
+                typeof apPlacement['statutoryReason'] === 'string'
+                  ? (apPlacement['statutoryReason'] as string)
+                  : null,
+              apStartDate:
+                typeof apPlacement['apStartDate'] === 'string'
+                  ? (apPlacement['apStartDate'] as string)
+                  : null,
+              apReviewDate: apReviewDateStr,
+              reviewStatus,
+              overdue: apOverdue,
+            }
+          : null,
+        openDiscrepancies: discrepancies.map((d) => ({
+          id: d.id,
+          category: d.category as string,
+          createdAt: d.createdAt,
+        })),
+        recentInteractions: recentInteractions.map((i) => ({
+          id: i.id,
+          type: i.type as string,
+          occurredAt: i.occurredAt,
+          summary: i.summary,
+        })),
+      }
+    }),
 })
