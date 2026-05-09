@@ -8,6 +8,7 @@
 // enqueue, dedupe-keyed on (provider='gocardless', eventId=event.id).
 
 import { withSentry } from '@studymind/core/observability/sentry'
+import { withSpan } from '@studymind/core/observability/trace'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
 import {
   SIGNATURE_HEADER,
@@ -39,24 +40,28 @@ async function handlePost(req: Request): Promise<Response> {
   // Process each event independently. The order of `events[]` is the order
   // GoCardless emitted them; we preserve it across enqueues.
   for (const event of payload.events) {
-    const upsert = await upsertProviderEvent(db, {
-      provider: 'gocardless',
-      eventId: event.id,
-      type: gcEventKey(event),
-      raw: event as unknown,
-      receivedAt: new Date(event.created_at),
-    })
+    await withSpan(
+      'webhook.gocardless.persist',
+      async () => {
+        const upsert = await upsertProviderEvent(db, {
+          provider: 'gocardless',
+          eventId: event.id,
+          type: gcEventKey(event),
+          raw: event as unknown,
+          receivedAt: new Date(event.created_at),
+        })
 
-    // Always enqueue: the Inngest job is itself idempotent, and a duplicate
-    // delivery from GoCardless after a previous failure must still re-trigger.
-    await inngest.send({
-      name: 'gocardless/event.received',
-      data: {
-        eventId: event.id,
-        providerEventRowId: upsert.id,
-        type: gcEventKey(event),
+        await inngest.send({
+          name: 'gocardless/event.received',
+          data: {
+            eventId: event.id,
+            providerEventRowId: upsert.id,
+            type: gcEventKey(event),
+          },
+        })
       },
-    })
+      { provider: 'gocardless', endpoint: 'webhook', entity_id: event.id },
+    )
   }
 
   return Response.json({ ok: true })
