@@ -9,11 +9,13 @@ import tseslint from 'typescript-eslint'
 const require = createRequire(import.meta.url)
 const requireAuditRule = require('./tools/eslint-rules/require-audit.js')
 const registeredEventNamesRule = require('./tools/eslint-rules/registered-event-names.js')
+const releaseFlagStalenessRule = require('./tools/eslint-rules/release-flag-staleness.js')
 
 const studymindPlugin = {
   rules: {
     'require-audit': requireAuditRule,
     'registered-event-names': registeredEventNamesRule,
+    'release-flag-staleness': releaseFlagStalenessRule,
   },
 }
 
@@ -131,6 +133,15 @@ export default [
     plugins: { studymind: studymindPlugin },
     rules: {
       'studymind/registered-event-names': 'error',
+    },
+  },
+  {
+    // CLAUDE.md §31: release flags older than 30 days are stale and should
+    // be removed. The rule only fires on the registry file itself.
+    files: ['packages/core/src/flags/registry.ts'],
+    plugins: { studymind: studymindPlugin },
+    rules: {
+      'studymind/release-flag-staleness': 'warn',
     },
   },
 ]

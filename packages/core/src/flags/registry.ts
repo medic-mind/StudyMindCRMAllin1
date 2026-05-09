@@ -13,6 +13,15 @@ export interface FlagMetadata {
   kind: 'release' | 'operational'
   default: boolean
   owner: string
+  /**
+   * ISO date the release flag first shipped behind. Set this when a
+   * `release` flag is first deployed (not when it lands in the registry).
+   * The `studymind/release-flag-staleness` ESLint rule reports any
+   * release flag whose firstShippedAt is more than 30 days ago.
+   * CLAUDE.md §31. Operational flags do not need this — they are
+   * long-lived by design.
+   */
+  firstShippedAt?: string
 }
 
 export const FLAGS = {
@@ -34,12 +43,14 @@ export const FLAGS = {
     kind: 'release',
     default: false,
     owner: 'tech-lead',
+    firstShippedAt: '2026-05-09',
   },
   'ai.draft_replies_enabled': {
     description: 'Show AI-drafted reply suggestions in the inbox composer.',
     kind: 'release',
     default: false,
     owner: 'tech-lead',
+    firstShippedAt: '2026-05-09',
   },
   'finance.dunning_paused': {
     description: 'Kill switch to pause all dunning notifications and escalations.',
@@ -52,6 +63,7 @@ export const FLAGS = {
     kind: 'release',
     default: false,
     owner: 'design',
+    firstShippedAt: '2026-05-09',
   },
   'booking.push_webhook_enabled': {
     description:
@@ -59,6 +71,7 @@ export const FLAGS = {
     kind: 'release',
     default: false,
     owner: 'tech-lead',
+    firstShippedAt: '2026-05-09',
   },
 } as const satisfies Record<string, FlagMetadata>
 
