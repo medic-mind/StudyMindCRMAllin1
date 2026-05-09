@@ -170,47 +170,9 @@ export function costSummaryS3Key(weekIso: string): string {
   return `cost-reports/${weekIso}.md`
 }
 
-import { db } from '@studymind/db'
-
-import { inngest } from './client'
-
-export const costSummaryFunction = inngest.createFunction(
-  {
-    id: 'cost/weekly-summary',
-    name: 'Cost: weekly AI + storage summary',
-    concurrency: { limit: 1 },
-    retries: 3,
-  },
-  // Mondays 09:00 UTC — CLAUDE.md §32.
-  { cron: '0 9 * * 1' },
-  async ({ step, logger }) => {
-    const now = new Date()
-    const inputs = (await step.run('collect', () =>
-      collectCostInputs(db as unknown as CostDbReader, now),
-    )) as unknown as CollectCostInputsResult
-    const summary = aggregateCostSummary({
-      samples: inputs.samples.map((s) => ({
-        task: s.task,
-        costUsd: s.costUsd,
-        sampledAt: new Date(s.sampledAt),
-      })),
-      storage: inputs.storage,
-      now,
-    })
-    const md = renderCostMarkdown(summary)
-    const s3Key = costSummaryS3Key(summary.weekIso)
-    logger.info(
-      {
-        weekIso: summary.weekIso,
-        aiTotalUsd: summary.aiTotalUsd,
-        s3Key,
-      },
-      'cost.summary.generated',
-    )
-    // S3 put + Slack post are wired at the worker boundary in
-    // apps/web/app/api/inngest/route.ts to avoid jobs↔integration cycles.
-    return { s3Key, weekIso: summary.weekIso, aiTotalUsd: summary.aiTotalUsd, markdown: md }
-  },
-)
-
-export const COST_SUMMARY_FUNCTIONS = [costSummaryFunction]
+// The Inngest registration for cost/weekly-summary lives at the worker
+// boundary (apps/web/app/api/inngest/_boundary/cost-summary.ts) so it can
+// import Slack outbound + S3 helpers without a jobs ↔ integrations cycle.
+// The pure aggregator above is shared by the boundary function and the
+// live tRPC dashboard.
+export const COST_SUMMARY_FUNCTIONS: never[] = []

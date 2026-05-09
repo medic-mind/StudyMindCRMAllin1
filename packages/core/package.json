@@ -21,6 +21,7 @@
     "./flags/admin": "./src/flags/admin.ts",
     "./flags/registry": "./src/flags/registry.ts",
     "./logger": "./src/logger/index.ts",
+    "./observability/cost-reports-s3": "./src/observability/cost-reports-s3.ts",
     "./observability/safe-fetch": "./src/observability/safe-fetch.ts",
     "./observability/sentry": "./src/observability/sentry.ts",
     "./observability/trace": "./src/observability/trace.ts",
@@ -34,6 +35,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.658.0",
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@aws-sdk/s3-request-presigner": "^3.658.0",
     "@opentelemetry/api": "^1.9",
     "@opentelemetry/auto-instrumentations-node": "^0.53",
     "@opentelemetry/sdk-node": "^0.55",

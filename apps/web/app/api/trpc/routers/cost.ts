@@ -10,6 +10,11 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  getCostReportMarkdown,
+  listCostReports,
+  signCostReportUrl,
+} from '@studymind/core/observability/cost-reports-s3'
+import {
   aggregateCostSummary,
   collectCostInputs,
   renderCostMarkdown,
@@ -58,6 +63,40 @@ export const costRouter = router({
           markdown: renderCostMarkdown(summary),
         })
       }
+      return { reports }
+    }),
+
+  /**
+   * History view backed by the S3 archive. Returns the latest N keys
+   * with 7-day signed URLs and inline markdown for rendering. Falls
+   * back to an empty list if the bucket is not configured (dev).
+   */
+  history: protectedProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(24).default(12) }))
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!READ_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      if (!process.env['S3_COST_REPORTS_BUCKET']) {
+        return { reports: [] as Array<{
+          weekIso: string
+          s3Key: string
+          signedUrl: string
+          lastModified: string | null
+          markdown: string
+        }> }
+      }
+      const keys = await listCostReports(input.limit)
+      const reports = await Promise.all(
+        keys.map(async (k) => ({
+          weekIso: k.weekIso,
+          s3Key: k.s3Key,
+          signedUrl: await signCostReportUrl(k.s3Key),
+          lastModified: k.lastModified ? k.lastModified.toISOString() : null,
+          markdown: await getCostReportMarkdown(k.s3Key),
+        })),
+      )
       return { reports }
     }),
 })
