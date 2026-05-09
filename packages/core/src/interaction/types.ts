@@ -9,6 +9,22 @@ export const InteractionType = z.enum([
   'family.state_changed',
   'family.billing_contact_changed',
   'safeguarding.concern_raised',
+  // Calls (Aircall — §10).
+  'call.started',
+  'call.answered',
+  'call.ended',
+  'call.voicemail_left',
+  'call.tagged',
+  'call.commented',
+  'call.transcription_added',
+  // Messaging (Trengo — §11).
+  'message.inbound',
+  'message.outbound',
+  'ticket.assigned',
+  'ticket.closed',
+  'ticket.reopened',
+  'label.added',
+  'label.removed',
 ])
 export type InteractionType = z.infer<typeof InteractionType>
 
