@@ -10,6 +10,7 @@
 
 import { serve } from 'inngest/next'
 
+import { FUNCTIONS as AIRCALL_FUNCTIONS } from '@studymind/integration-aircall/jobs'
 import { FUNCTIONS as BOOKING_FUNCTIONS } from '@studymind/integration-booking/jobs'
 import { FUNCTIONS as GOCARDLESS_FUNCTIONS } from '@studymind/integration-gocardless/jobs'
 import { FUNCTIONS as STRIPE_FUNCTIONS } from '@studymind/integration-stripe/jobs'
@@ -25,6 +26,7 @@ export const { GET, POST, PUT } = serve({
     ...STRIPE_FUNCTIONS,
     ...GOCARDLESS_FUNCTIONS,
     ...BOOKING_FUNCTIONS,
+    ...AIRCALL_FUNCTIONS,
   ],
   signingKey: process.env['INNGEST_SIGNING_KEY'],
 })

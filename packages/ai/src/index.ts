@@ -31,6 +31,11 @@ export {
   type RunDraftInput,
   type RunDraftResult,
 } from './clients/draft.js'
+export {
+  transcribeAudio,
+  type TranscribeAudioInput,
+  type TranscribeAudioResult,
+} from './clients/transcribe.js'
 
 // Prompt builders. Each task ships a typed builder + a schema + a VERSION.
 export {
