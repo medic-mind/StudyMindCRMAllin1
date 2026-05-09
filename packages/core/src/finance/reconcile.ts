@@ -28,6 +28,7 @@ export type ReconciliationCategoryValue =
   | 'late_failure_pending_action'
   | 'churned_with_active_subscription'
   | 'ap_review_overdue'
+  | 'la_family_with_card_subscription'
 
 export interface ReconciliationDiscrepancyInput {
   familyId: string
@@ -74,6 +75,7 @@ interface SubscriptionRow {
 interface FamilyRow {
   id: string
   state: string
+  billingParty?: string
   financialAccount: { status: string } | null
 }
 
@@ -91,6 +93,7 @@ export async function reconcileFamily(
     select: {
       id: true,
       state: true,
+      billingParty: true,
       financialAccount: { select: { status: true } },
     },
   })) as FamilyRow | null
@@ -235,8 +238,87 @@ export async function reconcileFamily(
     }
   }
 
-  // Leg 5 — ap_review_overdue. Placeholder; AP review tracking lands with the
-  // tender slice (§43.4). Returns nothing today.
+  // ---------------------------------------------------------------------------
+  // Leg 5 — LA-billed Family must not carry a card subscription or mandate.
+  // §43.2, §41.2.
+  // ---------------------------------------------------------------------------
+  if (family.billingParty === 'local_authority') {
+    const liveSubs = (await db.stripeSubscription.findMany({
+      where: {
+        familyId,
+        deletedAt: null,
+        state: { in: ['active', 'trialing', 'past_due'] },
+      },
+      select: { id: true },
+    })) as Array<{ id: string }>
+    const liveMandates = (await db.gcMandate.findMany({
+      where: {
+        familyId,
+        state: { in: ['pending_submission', 'submitted', 'active'] },
+      },
+      select: { id: true },
+    })) as Array<{ id: string }>
+
+    if (liveSubs.length > 0 || liveMandates.length > 0) {
+      const subIds = liveSubs.map((s) => s.id).sort()
+      const mandateIds = liveMandates.map((m) => m.id).sort()
+      discrepancies.push({
+        familyId,
+        category: 'la_family_with_card_subscription',
+        summary:
+          `LA-billed Family has ${liveSubs.length} live subscription(s) and ${liveMandates.length} live mandate(s)`,
+        payload: {
+          activeStripeSubscriptionIds: subIds,
+          activeGcMandateIds: mandateIds,
+        },
+        contextHash: hashContext([
+          'la_family_with_card_subscription',
+          familyId,
+          subIds.join(','),
+          mandateIds.join(','),
+        ]),
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Leg 6 — AP review overdue. §43.4. Block invoicing on this Family until
+  // the review completes.
+  // ---------------------------------------------------------------------------
+  const apModel = (db as unknown as Record<string, unknown>)['aPPlacement']
+  if (apModel && typeof apModel === 'object') {
+    const placement = (await (
+      db as unknown as {
+        aPPlacement: {
+          findUnique: (args: unknown) => Promise<{
+            id: string
+            apReviewDate: Date
+            reviewStatus: string
+          } | null>
+        }
+      }
+    ).aPPlacement.findUnique({
+      where: { familyId },
+      select: { id: true, apReviewDate: true, reviewStatus: true },
+    })) ?? null
+    if (placement && placement.reviewStatus !== 'completed' && placement.apReviewDate < new Date()) {
+      discrepancies.push({
+        familyId,
+        category: 'ap_review_overdue',
+        summary: `AP review overdue since ${placement.apReviewDate.toISOString().slice(0, 10)}`,
+        payload: {
+          placementId: placement.id,
+          apReviewDate: placement.apReviewDate.toISOString(),
+          reviewStatus: placement.reviewStatus,
+        },
+        contextHash: hashContext([
+          'ap_review_overdue',
+          familyId,
+          placement.apReviewDate.toISOString(),
+        ]),
+      })
+    }
+  }
 
   return { discrepancies }
 }
