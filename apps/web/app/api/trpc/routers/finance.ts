@@ -36,6 +36,7 @@ const ListInput = z.object({
       'late_failure_pending_action',
       'churned_with_active_subscription',
       'ap_review_overdue',
+      'la_family_with_card_subscription',
       'other',
     ])
     .optional(),

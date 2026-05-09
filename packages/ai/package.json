@@ -8,6 +8,8 @@
     ".": "./src/index.ts",
     "./clients/structured": "./src/clients/structured.ts",
     "./clients/draft": "./src/clients/draft.ts",
+    "./prompts/tender/draft": "./src/prompts/tender/draft.ts",
+    "./prompts/lacontract/progress-report": "./src/prompts/lacontract/progress-report.ts",
     "./budget": "./src/budget.ts",
     "./sanitise": "./src/sanitise.ts"
   },

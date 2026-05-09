@@ -8,6 +8,7 @@ import { reconcileFamily } from './reconcile'
 interface FakeFamily {
   id: string
   state: string
+  billingParty?: string
   financialAccount: { status: string } | null
 }
 
@@ -46,6 +47,19 @@ interface FakeBooking {
   familyId: string
 }
 
+interface FakeMandate {
+  id: string
+  familyId: string
+  state: string
+}
+
+interface FakePlacement {
+  id: string
+  familyId: string
+  apReviewDate: Date
+  reviewStatus: string
+}
+
 interface FakeData {
   families: FakeFamily[]
   bookings: FakeBooking[]
@@ -53,6 +67,8 @@ interface FakeData {
   payments: FakePayment[]
   allocations: FakeAllocation[]
   subscriptions: FakeSubscription[]
+  mandates: FakeMandate[]
+  placements: FakePlacement[]
 }
 
 function makeFakeDb(seed: Partial<FakeData> = {}) {
@@ -63,6 +79,8 @@ function makeFakeDb(seed: Partial<FakeData> = {}) {
     payments: seed.payments ?? [],
     allocations: seed.allocations ?? [],
     subscriptions: seed.subscriptions ?? [],
+    mandates: seed.mandates ?? [],
+    placements: seed.placements ?? [],
   }
 
   return {
@@ -91,12 +109,35 @@ function makeFakeDb(seed: Partial<FakeData> = {}) {
       },
     },
     stripeSubscription: {
-      findMany: ({ where }: { where: { familyId: string; state: string } }) =>
-        Promise.resolve(
+      findMany: ({
+        where,
+      }: {
+        where: { familyId: string; state: string | { in: string[] } }
+      }) => {
+        const states =
+          typeof where.state === 'string' ? [where.state] : where.state.in
+        return Promise.resolve(
           data.subscriptions.filter(
-            (s) => s.familyId === where.familyId && s.state === where.state,
+            (s) => s.familyId === where.familyId && states.includes(s.state),
+          ),
+        )
+      },
+    },
+    gcMandate: {
+      findMany: ({
+        where,
+      }: {
+        where: { familyId: string; state: { in: string[] } }
+      }) =>
+        Promise.resolve(
+          data.mandates.filter(
+            (m) => m.familyId === where.familyId && where.state.in.includes(m.state),
           ),
         ),
+    },
+    aPPlacement: {
+      findUnique: ({ where }: { where: { familyId: string } }) =>
+        Promise.resolve(data.placements.find((p) => p.familyId === where.familyId) ?? null),
     },
   } as never
 }
@@ -218,6 +259,71 @@ describe('reconcileFamily', () => {
     const result = await reconcileFamily(db, 'f1')
     expect(result.discrepancies).toHaveLength(1)
     expect(result.discrepancies[0]?.category).toBe('hours_mismatch')
+  })
+
+  it('surfaces la_family_with_card_subscription when an LA-billed Family has an active Stripe sub', async () => {
+    const db = makeFakeDb({
+      families: [
+        {
+          id: 'f1',
+          state: 'active',
+          billingParty: 'local_authority',
+          financialAccount: { status: 'ok' },
+        },
+      ],
+      subscriptions: [{ id: 'sub_1', familyId: 'f1', state: 'active' }],
+    })
+    const result = await reconcileFamily(db, 'f1')
+    const violation = result.discrepancies.find(
+      (d) => d.category === 'la_family_with_card_subscription',
+    )
+    expect(violation).toBeDefined()
+    expect(violation?.payload).toMatchObject({ activeStripeSubscriptionIds: ['sub_1'] })
+  })
+
+  it('does not surface la_family_with_card_subscription on a family-billed Family', async () => {
+    const db = makeFakeDb({
+      families: [
+        {
+          id: 'f1',
+          state: 'active',
+          billingParty: 'family',
+          financialAccount: { status: 'ok' },
+        },
+      ],
+      subscriptions: [{ id: 'sub_1', familyId: 'f1', state: 'active' }],
+    })
+    const result = await reconcileFamily(db, 'f1')
+    expect(
+      result.discrepancies.find((d) => d.category === 'la_family_with_card_subscription'),
+    ).toBeUndefined()
+  })
+
+  it('surfaces ap_review_overdue when the placement review is past due', async () => {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    const db = makeFakeDb({
+      families: [{ id: 'f1', state: 'active', financialAccount: { status: 'ok' } }],
+      placements: [
+        { id: 'ap_1', familyId: 'f1', apReviewDate: yesterday, reviewStatus: 'pending' },
+      ],
+    })
+    const result = await reconcileFamily(db, 'f1')
+    const overdue = result.discrepancies.find((d) => d.category === 'ap_review_overdue')
+    expect(overdue).toBeDefined()
+  })
+
+  it('does not surface ap_review_overdue when review is completed', async () => {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    const db = makeFakeDb({
+      families: [{ id: 'f1', state: 'active', financialAccount: { status: 'ok' } }],
+      placements: [
+        { id: 'ap_1', familyId: 'f1', apReviewDate: yesterday, reviewStatus: 'completed' },
+      ],
+    })
+    const result = await reconcileFamily(db, 'f1')
+    expect(
+      result.discrepancies.find((d) => d.category === 'ap_review_overdue'),
+    ).toBeUndefined()
   })
 
   it('produces stable contextHash for identical inputs', async () => {

@@ -45,8 +45,20 @@ export const EVENT_NAMES = [
   'safeguarding.restricted',
 
   // Tenders / LA
+  'tender.created',
   'tender.state_changed',
+  'tender.draft_requested',
+  'tender.draft_signed_off',
   'lacontract.created',
+  'lacontract.invoice_generated',
+  'lacontract.invoice_sent',
+  'lacontract.invoice_paid',
+  'lacontract.progress_report_drafted',
+  'lacontract.progress_report_signed',
+  'ap_placement.created',
+  'ap_placement.review_overdue',
+  'ap_placement.review_completed',
+  'tutor.session_note_added',
 
   // AI
   'ai.draft_generated',
