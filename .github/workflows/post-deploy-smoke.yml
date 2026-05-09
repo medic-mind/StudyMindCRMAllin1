@@ -1,0 +1,59 @@
+name: Post-deploy synthetic Stripe smoke
+
+# CLAUDE.md §24.1.
+#
+# Triggered manually for now (workflow_dispatch). When the Railway deploy
+# webhook is wired we'll switch this to repository_dispatch on the
+# `railway-deploy-completed` event.
+#
+# Steps:
+#   1. Wait 30 s for the new deploy to be healthy at WEBHOOK_BASE_URL.
+#   2. Build a signed `invoice.payment_failed` test event with a known
+#      Stripe test secret and POST it to /api/webhooks/stripe.
+#   3. Poll /api/internal/smoke/last-provider-event with an admin token
+#      until the row appears (max 30 s).
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Base URL to smoke (e.g. https://staging.crm.studymind.co.uk)'
+        required: true
+        default: 'https://staging.crm.studymind.co.uk'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait 30s for deploy to settle
+        run: sleep 30
+
+      - name: Health check
+        run: |
+          curl --fail --silent --show-error \
+            "${{ github.event.inputs.base_url }}/api/health" \
+            | tee /dev/stderr | grep -q '"ok":true' || (
+              echo "Health check failed"; exit 1
+            )
+
+      - name: Run synthetic Stripe smoke
+        env:
+          BASE_URL: ${{ github.event.inputs.base_url }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
+          SMOKE_ADMIN_TOKEN: ${{ secrets.SMOKE_ADMIN_TOKEN }}
+        run: pnpm tsx scripts/smoke/stripe-smoke.ts

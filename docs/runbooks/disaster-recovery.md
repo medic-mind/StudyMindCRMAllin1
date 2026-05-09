@@ -161,3 +161,15 @@ Steps:
 [ ] 12. External comms (comms lead approval)
 [ ] 13. Postmortem ticket opened
 ```
+
+## Post-deploy smoke (CLAUDE.md §24.1)
+
+Every production and staging deploy is followed by a synthetic Stripe webhook smoke that posts a signed `invoice.payment_failed` event and asserts the resulting `ProviderEvent` row appears within 30 s.
+
+- Workflow: `.github/workflows/post-deploy-smoke.yml`
+- Script: `scripts/smoke/stripe-smoke.ts`
+- Health probe: `/api/health`
+- Verification endpoint: `/api/internal/smoke/last-provider-event`
+- Required secrets: `STRIPE_TEST_WEBHOOK_SECRET`, `SMOKE_ADMIN_TOKEN`
+
+If the smoke fails after a deploy, the on-call engineer rolls the Railway service back via the dashboard one-click and opens a Sev 2 incident.
