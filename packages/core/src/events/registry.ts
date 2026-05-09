@@ -107,6 +107,7 @@ export const EVENT_NAMES = [
   // System / audit
   'audit.logged',
   'system.job_completed',
+  'auth.signin_failed',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

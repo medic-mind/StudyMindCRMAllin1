@@ -24,6 +24,7 @@ import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 import { costSummaryWeekly } from './_boundary/cost-summary'
 import { lacontractDeadlineWatcherBoundary } from './_boundary/lacontract-deadline-watcher'
 import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
+import { uebaWeekly } from './_boundary/ueba'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -35,6 +36,7 @@ const BOUNDARY_FUNCTIONS = [
   costSummaryWeekly,
   lacontractDeadlineWatcherBoundary,
   auditLogArchiveWeekly,
+  uebaWeekly,
 ]
 
 const handlers = serve({

@@ -23,6 +23,8 @@
     "@studymind/integration-booking": "workspace:*",
     "@studymind/integration-gmail": "workspace:*",
     "@studymind/integration-gocardless": "workspace:*",
+    "@studymind/integration-pagerduty": "workspace:*",
+    "@studymind/integration-resend": "workspace:*",
     "@studymind/integration-slack": "workspace:*",
     "@studymind/integration-stripe": "workspace:*",
     "@studymind/integration-trengo": "workspace:*",
