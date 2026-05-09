@@ -8,6 +8,9 @@ export type BusinessErrorCode =
   | 'NOT_IMPLEMENTED'
   | 'AI_OUTPUT_INVALID'
   | 'AI_BUDGET_EXCEEDED'
+  | 'CONTACT_MERGE_SELF'
+  | 'CONTACT_NOT_FOUND'
+  | 'CONTACT_MERGE_RESTRICTED_DSL_CONFLICT'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {
