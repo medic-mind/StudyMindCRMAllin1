@@ -14,6 +14,7 @@ import type { z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 
 import { type AiTaskCategory, checkBudget, recordUsage } from '../budget.js'
+import { sampleForDrift } from '../drift.js'
 import { assertContactNotRestricted } from './restricted-guard.js'
 import { getOpenAI } from './openai.js'
 import { estimateCostUsd } from './pricing.js'
@@ -136,6 +137,16 @@ export async function runStructured<T>(input: RunStructuredInput<T>): Promise<T>
     },
     'ai.structured.completed',
   )
+
+  // CLAUDE.md §18.3 — sample 1% of production calls for drift triage.
+  await sampleForDrift({
+    task,
+    model,
+    promptVersion,
+    input: { user, ctx },
+    output: result.data,
+    costUsd,
+  })
 
   return result.data
 }

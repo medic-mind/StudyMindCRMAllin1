@@ -15,6 +15,16 @@ export {
   type RestrictedGuardDb,
 } from './clients/restricted-guard.js'
 
+// Drift sampling — 1% of production AI calls land in DriftSample for
+// weekly reviewer triage. Web app injects the db at boot.
+export {
+  sampleForDrift,
+  setDriftSampleDb,
+  setDriftSampleRate,
+  type DriftSampleDb,
+  type SampleForDriftInput,
+} from './drift.js'
+
 // Budget guardrail.
 export {
   BUDGETS,
