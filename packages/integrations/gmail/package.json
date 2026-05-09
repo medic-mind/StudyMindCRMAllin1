@@ -10,7 +10,8 @@
     "./webhook": "./src/webhook.ts",
     "./jobs": "./src/jobs.ts",
     "./outbound": "./src/outbound.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./s3": "./src/s3.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
@@ -19,8 +20,15 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@paralleldrive/cuid2": "^3.3.0",
+    "@prisma/client": "^5.22.0",
+    "@studymind/audit": "workspace:*",
     "@studymind/core": "workspace:*",
     "@studymind/db": "workspace:*",
+    "@studymind/jobs": "workspace:*",
+    "google-auth-library": "^9.14.0",
+    "googleapis": "^144.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
