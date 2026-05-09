@@ -247,3 +247,13 @@ export async function createLAContractFromTender(
 }
 
 export * from './invariants'
+export {
+  generateLAInvoice,
+  markLAInvoicePaid,
+  markLAInvoiceSent,
+  type GenerateLAInvoiceInput,
+  type GenerateLAInvoiceResult,
+  type LAInvoiceState,
+  type MarkLAInvoicePaidInput,
+  type MarkLAInvoiceSentInput,
+} from './invoicing'
