@@ -27,6 +27,7 @@
     "db:generate": "pnpm --filter @studymind/db exec prisma generate"
   },
   "devDependencies": {
+    "@aws-sdk/client-kms": "^3.658.0",
     "@eslint/js": "^9.13.0",
     "@playwright/test": "^1.48.0",
     "@types/node": "^20.14.10",
@@ -38,10 +39,13 @@
     "turbo": "^2.2.3",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.59.1",
-    "vitest": "^2.1.5"
+    "vitest": "^2.1.5",
+    "zod": "^3.23.8"
   },
   "dependencies": {
     "@paralleldrive/cuid2": "^3.3.0",
+    "@studymind/ai": "workspace:*",
+    "@studymind/core": "workspace:*",
     "@studymind/jobs": "workspace:*"
   }
 }

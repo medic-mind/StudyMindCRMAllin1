@@ -13,6 +13,8 @@ export default defineConfig({
       // Webhook contract tests for external services. Replays of sanitised
       // captured payloads — see CLAUDE.md §23 (testing strategy).
       '__tests__/contract/**/*.test.ts',
+      // Integration tests with mocked DBs / external clients.
+      '__tests__/integration/**/*.test.ts',
     ],
     exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/.turbo/**'],
     coverage: {

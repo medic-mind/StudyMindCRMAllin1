@@ -11,10 +11,19 @@ importers:
       '@paralleldrive/cuid2':
         specifier: ^3.3.0
         version: 3.3.0
+      '@studymind/ai':
+        specifier: workspace:*
+        version: link:packages/ai
+      '@studymind/core':
+        specifier: workspace:*
+        version: link:packages/core
       '@studymind/jobs':
         specifier: workspace:*
         version: link:packages/jobs
     devDependencies:
+      '@aws-sdk/client-kms':
+        specifier: ^3.658.0
+        version: 3.1045.0
       '@eslint/js':
         specifier: ^9.13.0
         version: 9.39.4
@@ -51,6 +60,9 @@ importers:
       vitest:
         specifier: ^2.1.5
         version: 2.1.9(@types/node@20.19.39)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
 
   apps/web:
     dependencies:
