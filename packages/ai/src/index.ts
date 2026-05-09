@@ -59,3 +59,11 @@ export {
   type SlackSummary,
   type SlackSummaryPromptInput,
 } from './prompts/slack-summary.js'
+export {
+  buildStatusSummaryPrompt,
+  statusSummarySchema,
+  VERSION as STATUS_SUMMARY_PROMPT_VERSION,
+  type ContactContext,
+  type StatusSummary,
+  type StatusSummaryPromptInput,
+} from './prompts/status-summary.js'
