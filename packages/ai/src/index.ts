@@ -52,3 +52,10 @@ export {
   type CallOutcome,
   type CallOutcomePromptInput,
 } from './prompts/call-outcome.js'
+export {
+  buildSlackSummaryPrompt,
+  slackSummarySchema,
+  VERSION as SLACK_SUMMARY_PROMPT_VERSION,
+  type SlackSummary,
+  type SlackSummaryPromptInput,
+} from './prompts/slack-summary.js'
