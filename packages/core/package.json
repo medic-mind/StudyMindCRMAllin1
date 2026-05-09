@@ -18,6 +18,8 @@
     "./flags/admin": "./src/flags/admin.ts",
     "./flags/registry": "./src/flags/registry.ts",
     "./logger": "./src/logger/index.ts",
+    "./observability/sentry": "./src/observability/sentry.ts",
+    "./observability/trace": "./src/observability/trace.ts",
     "./provider-events": "./src/provider-events/index.ts"
   },
   "scripts": {

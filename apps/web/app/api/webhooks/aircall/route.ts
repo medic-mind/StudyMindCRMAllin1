@@ -5,6 +5,7 @@
 // Aircall does not send a unique delivery id; we derive a synthetic id from
 // (event, data.id|call_id, timestamp) so a true redelivery dedupes cleanly.
 
+import { withSentry } from '@studymind/core/observability/sentry'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
 import {
   aircallEventId,
@@ -21,7 +22,9 @@ import { db } from '@/lib/db'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request): Promise<Response> {
+export const POST = withSentry(handlePost, { provider: 'aircall', surface: 'webhook' })
+
+async function handlePost(req: Request): Promise<Response> {
   const raw = await req.text()
   const signature = req.headers.get(SIGNATURE_HEADER)
 

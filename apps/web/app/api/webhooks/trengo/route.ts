@@ -2,6 +2,7 @@
 // Verify signature -> upsert ProviderEvent (idempotent on envelope.id) ->
 // enqueue Inngest -> 200 fast. All real work happens in the Inngest job.
 
+import { withSentry } from '@studymind/core/observability/sentry'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
 import {
   SIGNATURE_HEADER,
@@ -14,7 +15,9 @@ import { db } from '@/lib/db'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request): Promise<Response> {
+export const POST = withSentry(handlePost, { provider: 'trengo', surface: 'webhook' })
+
+async function handlePost(req: Request): Promise<Response> {
   const raw = await req.text()
   const signature = req.headers.get(SIGNATURE_HEADER)
 

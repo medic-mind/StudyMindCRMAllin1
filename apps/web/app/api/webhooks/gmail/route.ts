@@ -4,6 +4,7 @@
 // keys, decode the inner notification ({ emailAddress, historyId }), upsert
 // ProviderEvent, enqueue gmail/history.changed, return 200 fast.
 
+import { withSentry } from '@studymind/core/observability/sentry'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
 import { AUTH_HEADER, verifyAndParse } from '@studymind/integration-gmail/webhook'
 import { inngest } from '@studymind/jobs'
@@ -13,7 +14,9 @@ import { db } from '@/lib/db'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request): Promise<Response> {
+export const POST = withSentry(handlePost, { provider: 'gmail', surface: 'webhook' })
+
+async function handlePost(req: Request): Promise<Response> {
   const raw = await req.text()
   const auth = req.headers.get(AUTH_HEADER)
 

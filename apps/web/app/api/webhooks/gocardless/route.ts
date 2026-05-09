@@ -7,6 +7,7 @@
 // gets its own ProviderEvent row and its own `gocardless/event.received`
 // enqueue, dedupe-keyed on (provider='gocardless', eventId=event.id).
 
+import { withSentry } from '@studymind/core/observability/sentry'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
 import {
   SIGNATURE_HEADER,
@@ -20,7 +21,9 @@ import { db } from '@/lib/db'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request): Promise<Response> {
+export const POST = withSentry(handlePost, { provider: 'gocardless', surface: 'webhook' })
+
+async function handlePost(req: Request): Promise<Response> {
   // Raw body bytes — required for HMAC verification.
   const raw = await req.text()
   const signature = req.headers.get(SIGNATURE_HEADER)

@@ -44,6 +44,15 @@ export interface AuthedTrpcContext extends Omit<TrpcContext, 'user'> {
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
+    // Forward unexpected errors to Sentry. Validation/auth errors are noisy
+    // and expected, so we only capture INTERNAL_SERVER_ERROR (real bugs per
+    // CLAUDE.md §27).
+    if (error.code === 'INTERNAL_SERVER_ERROR') {
+      const sentry = (globalThis as unknown as {
+        Sentry?: { captureException: (e: unknown, hint?: { tags?: Record<string, string> }) => void }
+      }).Sentry
+      sentry?.captureException(error, { tags: { surface: 'trpc' } })
+    }
     return {
       ...shape,
       data: {

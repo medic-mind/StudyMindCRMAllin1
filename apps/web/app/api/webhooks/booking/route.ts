@@ -1,12 +1,15 @@
 // booking webhook handler. See CLAUDE.md Section 7.1.
 // Verify signature, persist raw event, enqueue Inngest job, return 2xx fast.
 
+import { withSentry } from '@studymind/core/observability/sentry'
 import { SIGNATURE_HEADER, verifyAndParse } from '@studymind/integration-booking/webhook'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request): Promise<Response> {
+export const POST = withSentry(handlePost, { provider: 'booking', surface: 'webhook' })
+
+async function handlePost(req: Request): Promise<Response> {
   const raw = await req.text()
   const signature = req.headers.get(SIGNATURE_HEADER)
 

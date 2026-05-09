@@ -1,3 +1,5 @@
+import { withSentryConfig } from '@sentry/nextjs'
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -21,4 +23,15 @@ const nextConfig = {
   },
 }
 
-export default nextConfig
+// withSentryConfig uploads source maps when SENTRY_AUTH_TOKEN is set (CI / Railway).
+// Locally the token is absent, so this is a no-op pass-through.
+const sentryWebpackPluginOptions = {
+  silent: true,
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  disableServerWebpackPlugin: !process.env.SENTRY_AUTH_TOKEN,
+  disableClientWebpackPlugin: !process.env.SENTRY_AUTH_TOKEN,
+}
+
+export default withSentryConfig(nextConfig, sentryWebpackPluginOptions)

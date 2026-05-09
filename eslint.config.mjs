@@ -32,6 +32,18 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Node-runtime config files (next.config.mjs etc.). Permit `process`.
+    files: ['**/*.config.{mjs,cjs,js}'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        __dirname: 'readonly',
+        require: 'readonly',
+        module: 'readonly',
+      },
+    },
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'error',
