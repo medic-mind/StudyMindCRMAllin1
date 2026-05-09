@@ -1,6 +1,8 @@
 // Slack Web API client. CLAUDE.md §12.
 // One bot user posts to the agreed `#crm-alerts` channel only. No DMs.
 
+import { safeFetch } from '@studymind/core/observability/safe-fetch'
+
 export const SLACK_API_BASE = 'https://slack.com/api' as const
 
 export class SlackApiError extends Error {
@@ -41,7 +43,7 @@ export function createClient(opts: CreateSlackClientOptions = {}): SlackClient {
   if (!token) throw new Error('SLACK_BOT_TOKEN is not set')
 
   const baseUrl = opts.baseUrl ?? SLACK_API_BASE
-  const fetchImpl = opts.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl ?? safeFetch
 
   async function call<T>(endpoint: string, body: unknown): Promise<T> {
     const res = await fetchImpl(`${baseUrl}${endpoint}`, {

@@ -13,6 +13,7 @@ import {
   transcribeAudio,
 } from '@studymind/ai'
 import { writeAuditLogEntry } from '@studymind/audit'
+import { safeFetch } from '@studymind/core/observability/safe-fetch'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -221,7 +222,7 @@ export const aircallTranscribeFallback = inngest.createFunction(
     // boundary; the recording itself does not (Buffers do not survive
     // Inngest step JSON-serialisation).
     const { s3Key, contentType } = await step.run('persist-to-s3', async () => {
-      const res = await fetch(recordingUrl)
+      const res = await safeFetch(recordingUrl)
       if (!res.ok) {
         throw new Error(`recording download failed: ${res.status}`)
       }

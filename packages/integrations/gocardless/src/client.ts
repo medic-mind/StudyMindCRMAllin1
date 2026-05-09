@@ -8,6 +8,8 @@
 //
 // One factory per process is fine — `fetch` handles connection pooling.
 
+import { safeFetch } from '@studymind/core/observability/safe-fetch'
+
 import type {
   GcMandateResource,
   GcPaymentResource,
@@ -79,7 +81,7 @@ export function createClient(opts: GocardlessClientOptions = {}): GocardlessClie
   }
   const baseUrl = BASE_URL_BY_ENV[envName]
   const apiVersion = opts.apiVersion ?? GOCARDLESS_API_VERSION
-  const fetchImpl = opts.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl ?? safeFetch
 
   // Cache only the env-driven instance; explicit overrides skip the cache.
   const cacheKey = `${envName}:${apiVersion}`

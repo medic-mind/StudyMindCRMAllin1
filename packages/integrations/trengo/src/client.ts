@@ -7,6 +7,7 @@
 // service token — that would break attribution.
 
 import { BusinessError } from '@studymind/core'
+import { safeFetch } from '@studymind/core/observability/safe-fetch'
 import { decryptField } from '@studymind/core/safeguarding'
 import { db } from '@studymind/db'
 
@@ -74,7 +75,7 @@ export async function createClientForAgent(
   opts: CreateTrengoClientOptions,
 ): Promise<TrengoClient> {
   const baseUrl = opts.baseUrl ?? TRENGO_API_BASE
-  const fetchImpl = opts.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl ?? safeFetch
 
   let token = opts.token
   if (!token) {
