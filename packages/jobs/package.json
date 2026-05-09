@@ -6,7 +6,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./cost-summary": "./src/cost-summary.ts"
+    "./cost-summary": "./src/cost-summary.ts",
+    "./lacontract/deadline-watcher": "./src/lacontract/deadline-watcher.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
