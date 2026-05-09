@@ -9,6 +9,7 @@ import { financeRouter } from './routers/finance'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
 import { lacontractRouter } from './routers/lacontract'
+import { reportsRouter } from './routers/reports'
 import { safeguardingRouter } from './routers/safeguarding'
 import { tenderRouter } from './routers/tender'
 
@@ -20,6 +21,7 @@ export const appRouter = router({
   inbox: inboxRouter,
   interaction: interactionRouter,
   lacontract: lacontractRouter,
+  reports: reportsRouter,
   safeguarding: safeguardingRouter,
   tender: tenderRouter,
 })
