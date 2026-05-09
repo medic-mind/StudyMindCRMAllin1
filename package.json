@@ -31,6 +31,7 @@
     "@aws-sdk/client-kms": "^3.658.0",
     "@eslint/js": "^9.13.0",
     "@playwright/test": "^1.48.0",
+    "@types/archiver": "^6.0.0",
     "@types/node": "^20.14.10",
     "@vitest/coverage-v8": "^2.1.5",
     "aws-sdk-client-mock": "^4.1.0",

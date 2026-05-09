@@ -12,6 +12,7 @@
     "./interaction": "./src/interaction/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
     "./auth/policies": "./src/auth/policies.ts",
+    "./compliance/dsar": "./src/compliance/dsar.ts",
     "./events/registry": "./src/events/registry.ts",
     "./errors": "./src/errors.ts",
     "./flags": "./src/flags/index.ts",
@@ -37,6 +38,7 @@
     "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/client": "^5.22.0",
     "@studymind/audit": "workspace:*",
+    "archiver": "^7.0.0",
     "pino": "^9.5.0",
     "zod": "^3.23.8"
   },
