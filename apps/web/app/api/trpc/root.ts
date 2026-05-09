@@ -7,6 +7,7 @@ import { familyRouter } from './routers/family'
 import { financeRouter } from './routers/finance'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
+import { safeguardingRouter } from './routers/safeguarding'
 
 export const appRouter = router({
   contact: contactRouter,
@@ -14,6 +15,7 @@ export const appRouter = router({
   finance: financeRouter,
   inbox: inboxRouter,
   interaction: interactionRouter,
+  safeguarding: safeguardingRouter,
 })
 
 export type AppRouter = typeof appRouter
