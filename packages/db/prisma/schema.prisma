@@ -911,6 +911,62 @@ model GmailMailbox {
   @@index([watchExpiresAt])
 }
 
+// -----------------------------------------------------------------------------
+// Slice 8: AI features — status summary, churn score, drift sampling.
+// CLAUDE.md §18.
+// -----------------------------------------------------------------------------
+
+/// Two-line "Current Status" header for a Contact, refreshed every 30 min
+/// for changed contacts. CLAUDE.md §17.1, §18. One row per contact.
+model ContactStatusSummary {
+  contactId     String   @id
+  headerLine    String
+  bodyLine      String
+  generatedAt   DateTime @default(now())
+  promptVersion String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([generatedAt])
+}
+
+/// Family churn score, regenerated nightly by ai/score-churn-risk after
+/// finance/reconcile.completed (CLAUDE.md §17.3). Score ∈ [0,1].
+model ChurnScore {
+  id            String   @id
+  familyId      String
+  score         Float
+  drivers       Json
+  rationale     String
+  scoredAt      DateTime @default(now())
+  promptVersion String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([familyId, scoredAt])
+}
+
+/// 1% production sample of AI inputs/outputs for drift triage.
+/// CLAUDE.md §18.3 — reviewed weekly; never store unredacted minor names
+/// or full email addresses without clear need.
+model DriftSample {
+  id            String   @id
+  task          String
+  model         String
+  promptVersion String
+  input         Json
+  output        Json
+  costUsd       Float
+  sampledAt     DateTime @default(now())
+  reviewed      Boolean  @default(false)
+  reviewerNote  String?
+
+  @@index([task, sampledAt])
+  @@index([reviewed])
+}
+
 model GmailToken {
   /// Clerk user id (== User.id). One OAuth refresh token per agent.
   agentId         String   @id

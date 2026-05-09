@@ -1,0 +1,18 @@
+{
+  "a": {
+    "firstName": "Sam",
+    "lastInitial": "D",
+    "phoneMasked": "•••• ••44",
+    "emailMasked": "samd••@",
+    "kind": "parent",
+    "postcodeArea": "SE1"
+  },
+  "b": {
+    "firstName": "Sam",
+    "lastInitial": "D",
+    "phoneMasked": "•••• ••44",
+    "emailMasked": null,
+    "kind": "parent",
+    "postcodeArea": "SE1"
+  }
+}

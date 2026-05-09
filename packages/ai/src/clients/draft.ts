@@ -11,6 +11,7 @@ import { BusinessError, logger } from '@studymind/core'
 import { z } from 'zod'
 
 import { type AiTaskCategory, checkBudget, recordUsage } from '../budget.js'
+import { sampleForDrift } from '../drift.js'
 import { assertContactNotRestricted } from './restricted-guard.js'
 import { getOpenAI } from './openai.js'
 import { estimateCostUsd } from './pricing.js'
@@ -122,6 +123,17 @@ export async function runDraft(input: RunDraftInput): Promise<RunDraftResult> {
     },
     'ai.draft.completed',
   )
+
+  // CLAUDE.md §18.3 — drift sampling. Output text is bounded; input is the
+  // user-side prompt content already sanitised by the prompt builder.
+  await sampleForDrift({
+    task,
+    model,
+    promptVersion,
+    input: { user, ctx },
+    output: { text: result.data },
+    costUsd,
+  })
 
   return { text: result.data }
 }

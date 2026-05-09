@@ -502,6 +502,12 @@ importers:
       '@paralleldrive/cuid2':
         specifier: ^3.3.0
         version: 3.3.0
+      '@studymind/ai':
+        specifier: workspace:*
+        version: link:../ai
+      '@studymind/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@studymind/core':
         specifier: workspace:*
         version: link:../core

@@ -1,0 +1,10 @@
+{
+  "likelyMatch": false,
+  "confidence": 0.05,
+  "signals": [
+    "Different first names",
+    "Different surname initial",
+    "Different phone last-2",
+    "Different kind (parent vs tutor)"
+  ]
+}

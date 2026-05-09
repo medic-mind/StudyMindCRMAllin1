@@ -168,23 +168,10 @@ export const complianceEnforceRetention = inngest.createFunction(
   },
 )
 
-export const aiScoreChurnRisk = inngest.createFunction(
-  {
-    id: 'ai/score-churn-risk',
-    name: 'AI: score churn risk (stub — waits for reconcile)',
-    concurrency: { limit: 3 },
-    retries: 1,
-  },
-  { event: 'finance/reconcile.completed' },
-  async ({ logger }) => {
-    // TODO(ai-slice): score every Family, create retention tasks above threshold.
-    logger.info('ai/score-churn-risk stub — no-op')
-    return { ok: true, stub: true }
-  },
-)
+// `aiScoreChurnRisk` lives in ./ai/churn-score.ts — replaced the stub
+// that was previously inlined here.
 
 export const RECONCILE_FUNCTIONS = [
   financeReconcileAllFamilies,
   complianceEnforceRetention,
-  aiScoreChurnRisk,
 ] as const

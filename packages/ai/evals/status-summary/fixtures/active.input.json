@@ -1,0 +1,13 @@
+{
+  "context": {
+    "firstName": "Sam",
+    "kind": "parent",
+    "recentInteractions": [
+      { "type": "call", "occurredAt": "2026-05-08T10:00:00Z", "brief": "Confirmed trial booking" },
+      { "type": "email", "occurredAt": "2026-05-07T09:00:00Z", "brief": "Sent welcome pack" }
+    ],
+    "openTasks": [{ "title": "Confirm trial slot", "dueAt": "2026-05-12T09:00:00Z" }],
+    "openDiscrepancies": [],
+    "hasSafeguardingFlag": false
+  }
+}

@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@paralleldrive/cuid2": "^3.3.0",
+    "@studymind/ai": "workspace:*",
+    "@studymind/audit": "workspace:*",
     "@studymind/core": "workspace:*",
     "@studymind/db": "workspace:*",
     "inngest": "^3.27.5"

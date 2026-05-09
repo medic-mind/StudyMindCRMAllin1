@@ -4,6 +4,8 @@
 
 import { inngest } from './client'
 import { RECONCILE_FUNCTIONS } from './reconcile'
+import { CHURN_SCORE_FUNCTIONS } from './ai/churn-score'
+import { STATUS_SUMMARY_FUNCTIONS } from './ai/status-summary'
 
 export { inngest } from './client'
 
@@ -12,6 +14,8 @@ export { inngest } from './client'
 // in `apps/web/app/api/inngest/route.ts` from each integration package.
 export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[] = [
   ...RECONCILE_FUNCTIONS,
+  ...STATUS_SUMMARY_FUNCTIONS,
+  ...CHURN_SCORE_FUNCTIONS,
 ]
 
 export interface RecurringJobSpec {

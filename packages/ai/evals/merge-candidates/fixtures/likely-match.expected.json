@@ -1,0 +1,10 @@
+{
+  "likelyMatch": true,
+  "confidence": 0.88,
+  "signals": [
+    "First name match",
+    "Surname initial match",
+    "Phone last-2 match",
+    "Same postcode area"
+  ]
+}

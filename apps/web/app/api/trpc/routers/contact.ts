@@ -12,6 +12,8 @@ import {
   isMinorByDob,
 } from '@studymind/core/contact'
 
+import { mergeContacts } from '@/lib/services/contact-merge'
+import { findMergeCandidates } from '@/lib/services/merge-suggestions'
 import { toContactDetail, toContactSummary } from '@/lib/view-models/contact'
 
 import {
@@ -170,4 +172,42 @@ export const contactRouter = router({
       })
       return { id: after.id }
     }),
+
+  // CLAUDE.md §18, §20.1 — listing AI-derived merge suggestions is a read.
+  // Any agent role can request suggestions; only admin/ops_manager can
+  // perform the merge itself (`merge` mutation below).
+  mergeSuggestions: router({
+    list: protectedProcedure
+      .input(z.object({ contactId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!['admin', 'ops_manager', 'agent'].includes(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        return findMergeCandidates(ctx.db, input.contactId)
+      }),
+  }),
+
+  // CLAUDE.md §20.1 — `family.merge` is admin/ops_manager only.
+  merge: router({
+    confirm: auditedProcedure
+      .input(z.object({ survivorId: z.string(), loserId: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!['admin', 'ops_manager'].includes(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const result = await mergeContacts(ctx.db, {
+          survivorId: input.survivorId,
+          loserId: input.loserId,
+          actorUserId: user.id,
+        })
+        await ctx.audit({
+          action: 'contact.merged',
+          target: { type: 'Contact', id: result.survivorId },
+          after: result,
+        })
+        return result
+      }),
+  }),
 })

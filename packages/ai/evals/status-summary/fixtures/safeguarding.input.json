@@ -1,0 +1,10 @@
+{
+  "context": {
+    "firstName": "Jay",
+    "kind": "student",
+    "recentInteractions": [],
+    "openTasks": [],
+    "openDiscrepancies": [],
+    "hasSafeguardingFlag": true
+  }
+}

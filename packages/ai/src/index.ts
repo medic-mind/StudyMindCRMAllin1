@@ -15,6 +15,16 @@ export {
   type RestrictedGuardDb,
 } from './clients/restricted-guard.js'
 
+// Drift sampling — 1% of production AI calls land in DriftSample for
+// weekly reviewer triage. Web app injects the db at boot.
+export {
+  sampleForDrift,
+  setDriftSampleDb,
+  setDriftSampleRate,
+  type DriftSampleDb,
+  type SampleForDriftInput,
+} from './drift.js'
+
 // Budget guardrail.
 export {
   BUDGETS,
@@ -59,3 +69,37 @@ export {
   type SlackSummary,
   type SlackSummaryPromptInput,
 } from './prompts/slack-summary.js'
+export {
+  buildMergeCandidatesPrompt,
+  mergeCandidateSchema,
+  MERGE_SUGGESTION_THRESHOLD,
+  VERSION as MERGE_CANDIDATES_PROMPT_VERSION,
+  type ContactSummaryForMerge,
+  type MergeCandidate,
+  type MergeCandidatesPromptInput,
+} from './prompts/merge-candidates.js'
+export {
+  buildChurnScorePrompt,
+  CHURN_TASK_THRESHOLD,
+  churnScoreSchema,
+  VERSION as CHURN_SCORE_PROMPT_VERSION,
+  type ChurnScoreOutput,
+  type ChurnScorePromptInput,
+  type ChurnSignals,
+} from './prompts/churn-score.js'
+export {
+  buildReplyDraftPrompt,
+  replyDraftShape,
+  VERSION as REPLY_DRAFT_PROMPT_VERSION,
+  type InteractionListItem,
+  type ReplyChannel,
+  type ReplyDraftPromptInput,
+} from './prompts/reply-draft.js'
+export {
+  buildStatusSummaryPrompt,
+  statusSummarySchema,
+  VERSION as STATUS_SUMMARY_PROMPT_VERSION,
+  type ContactContext,
+  type StatusSummary,
+  type StatusSummaryPromptInput,
+} from './prompts/status-summary.js'
