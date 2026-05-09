@@ -1,18 +1,27 @@
-// Field-level decryption placeholder. CLAUDE.md §21.1.
+// Field-level decryption. CLAUDE.md §21.1.
 //
-// The production implementation is envelope encryption with AWS KMS:
-//   1. RBAC + per-row attribute check (caller must have the right role).
-//   2. AuditLogEntry write BEFORE the decryption call.
-//   3. KMS Decrypt with the AAD; mismatch fails closed.
-//   4. Return plaintext to the caller; never log it.
+// Production path: KMS Decrypt + AES-256-GCM with AAD verification.
 //
-// For Slice 5 we ship the function shape and a deterministic dev stub so
-// callers (Trengo per-agent tokens, future safeguarding fields) can be
-// written and tested without the AWS SDK landing first. The real
-// implementation will replace this body in a follow-up PR with the KMS
-// dependency added behind an ADR.
+//   1. Caller's role + per-row attribute check is the responsibility of the
+//      tRPC procedure / domain function calling decryptField. The Zod policy
+//      below enforces a non-empty `purpose`, which keeps audit honest.
+//   2. AuditLogEntry is written BEFORE any decryption (CLAUDE.md §21.1).
+//   3. KMS.Decrypt unwraps the DEK; AAD binds the field to its owner row, so
+//      a swapped envelope fails closed at the GCM auth-tag check.
+//   4. Plaintext is returned to the caller. Never logged.
+
+import { createDecipheriv } from 'node:crypto'
+
+import { DecryptCommand } from '@aws-sdk/client-kms'
+import type { Prisma, PrismaClient } from '@prisma/client'
+import { z } from 'zod'
+
+import { writeAuditLogEntry } from '@studymind/audit'
 
 import { BusinessError } from '../errors'
+import { getKmsClient } from './kms'
+
+export type DbReader = PrismaClient | Prisma.TransactionClient
 
 export interface EnvelopeCiphertext {
   ciphertext: Uint8Array
@@ -22,39 +31,140 @@ export interface EnvelopeCiphertext {
   keyVersion: number
 }
 
-export interface DecryptContext {
-  /** Caller identity for the audit entry. */
-  actorId: string | null
-  /** Why the decryption is happening — required by AAD policy. */
-  purpose: string
-  /** Trace correlation id. */
-  requestId?: string
-}
+export const DecryptContextSchema = z.object({
+  actorId: z.string().min(1).nullable(),
+  // Empty purpose is a hard fail — see CLAUDE.md §41.3 invariant.
+  purpose: z.string().min(1, 'decryptField requires a non-empty purpose'),
+  requestId: z.string().optional(),
+})
+
+export type DecryptContext = z.infer<typeof DecryptContextSchema>
 
 /**
- * Decrypt an envelope-encrypted field. Returns the plaintext as a UTF-8
- * string. Fails closed on any verification failure.
- *
- * This is the seam the production KMS implementation will replace. The
- * stub interprets `ciphertext` as already-plaintext UTF-8 bytes when
- * `keyVersion === 0`, which is what the development seed produces. Any
- * non-zero keyVersion routes through KMS in production.
+ * Decrypt a raw envelope. Used by callers that already have the bytes loaded
+ * (e.g. Trengo per-agent token cache). Audit is the caller's responsibility
+ * here because the caller knows the owning entity and purpose; this overload
+ * does NOT write an audit row by itself. Use `decryptField` (below) for the
+ * audited path that loads from EncryptedField by id.
  */
 export async function decryptField(
   envelope: EnvelopeCiphertext,
   ctx: DecryptContext,
 ): Promise<string> {
-  if (!ctx.purpose || ctx.purpose.trim().length === 0) {
-    // Empty purpose is a hard fail — see CLAUDE.md §41.3 invariant.
-    throw new BusinessError('CONTACT_RESTRICTED', 'decryptField requires a non-empty purpose')
+  const parsed = DecryptContextSchema.safeParse(ctx)
+  if (!parsed.success) {
+    throw new BusinessError(
+      'CONTACT_RESTRICTED',
+      parsed.error.issues[0]?.message ?? 'invalid decrypt context',
+    )
   }
   if (envelope.keyVersion === 0) {
-    // Dev / seed mode: ciphertext is plaintext UTF-8 bytes.
+    // Legacy dev/seed path. Only valid when no real KMS material has been
+    // generated yet (e.g. seed scripts pre-Slice 6). Production rows are
+    // keyVersion >= 1.
     return Buffer.from(envelope.ciphertext).toString('utf8')
   }
-  // Production path is not in this slice; refuse to silently downgrade.
-  throw new BusinessError(
-    'NOT_IMPLEMENTED',
-    'KMS decryption is not yet wired; only keyVersion=0 stubs are supported in dev.',
+
+  return runKmsDecrypt(envelope)
+}
+
+async function runKmsDecrypt(envelope: EnvelopeCiphertext): Promise<string> {
+  const kms = getKmsClient()
+  const dek = await kms.send(
+    new DecryptCommand({
+      CiphertextBlob: envelope.dekCiphertext,
+      // EncryptionContext could be added here for KMS-side AAD; we keep the
+      // AAD inside the GCM tag so a tampered AAD also fails closed locally.
+    }),
+  )
+  if (!dek.Plaintext) {
+    throw new BusinessError('CONTACT_RESTRICTED', 'KMS Decrypt returned no key material')
+  }
+  const dekPlain = Buffer.from(dek.Plaintext)
+
+  // The encrypt path appends the GCM auth tag to ciphertext.
+  const cBuf = Buffer.from(envelope.ciphertext)
+  if (cBuf.length < 16) {
+    throw new BusinessError('CONTACT_RESTRICTED', 'ciphertext too short to contain GCM tag')
+  }
+  const ct = cBuf.subarray(0, cBuf.length - 16)
+  const tag = cBuf.subarray(cBuf.length - 16)
+
+  const decipher = createDecipheriv('aes-256-gcm', dekPlain, Buffer.from(envelope.iv))
+  decipher.setAuthTag(tag)
+  decipher.setAAD(Buffer.from(envelope.aad))
+
+  let plaintext: string
+  try {
+    plaintext = Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8')
+  } catch {
+    // GCM auth failure — AAD or ciphertext was tampered with. Fail closed.
+    dekPlain.fill(0)
+    throw new BusinessError('CONTACT_RESTRICTED', 'envelope authentication failed')
+  } finally {
+    dekPlain.fill(0)
+  }
+
+  return plaintext
+}
+
+export interface DecryptByIdInput {
+  encryptedFieldId: string
+  actorId: string | null
+  purpose: string
+  requestId?: string
+}
+
+/**
+ * Audited decrypt: looks up the EncryptedField row, writes an
+ * AuditLogEntry BEFORE any decryption, then performs KMS-backed decrypt.
+ */
+export async function decryptFieldById(
+  db: DbReader,
+  input: DecryptByIdInput,
+): Promise<string> {
+  const ctx = DecryptContextSchema.parse({
+    actorId: input.actorId,
+    purpose: input.purpose,
+    requestId: input.requestId,
+  })
+
+  const row = await db.encryptedField.findUniqueOrThrow({
+    where: { id: input.encryptedFieldId },
+    select: {
+      id: true,
+      contactId: true,
+      column: true,
+      ciphertext: true,
+      iv: true,
+      dekCiphertext: true,
+      aad: true,
+      keyVersion: true,
+    },
+  })
+
+  // Audit BEFORE decryption — non-negotiable per CLAUDE.md §21.1.
+  await writeAuditLogEntry(db, {
+    actorId: ctx.actorId,
+    action: 'safeguarding.field_decrypted',
+    target: { type: 'EncryptedField', id: row.id },
+    requestId: ctx.requestId,
+    purpose: ctx.purpose,
+    after: {
+      contactId: row.contactId,
+      column: row.column,
+      keyVersion: row.keyVersion,
+    },
+  })
+
+  return decryptField(
+    {
+      ciphertext: row.ciphertext,
+      iv: row.iv,
+      dekCiphertext: row.dekCiphertext,
+      aad: row.aad,
+      keyVersion: row.keyVersion,
+    },
+    ctx,
   )
 }
