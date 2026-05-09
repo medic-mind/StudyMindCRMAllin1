@@ -20,6 +20,9 @@ export async function createServerCaller() {
     requestId,
     db,
     audit: createAuditRecorder(db, { actorId: userId ?? null, requestId }),
+    // RSC server callers are not subject to CSRF; mutations through this
+    // path are RSC-internal and never triggered by an external Origin.
+    headers: { origin: null, host: null },
   }
   return appRouter.createCaller(ctx)
 }

@@ -12,7 +12,10 @@ type AuthFn = () => Promise<{
   sessionClaims?: Record<string, unknown> | null
 }>
 
-export async function trpcContextFactory(authFn: AuthFn): Promise<TrpcContext> {
+export async function trpcContextFactory(
+  authFn: AuthFn,
+  req?: Request,
+): Promise<TrpcContext> {
   const { userId, sessionClaims } = await authFn()
   const email = (sessionClaims?.['email'] as string | undefined) ?? ''
   const role = (sessionClaims?.['role'] as SessionUser['role'] | undefined) ?? 'agent'
@@ -24,5 +27,8 @@ export async function trpcContextFactory(authFn: AuthFn): Promise<TrpcContext> {
     requestId,
     db,
     audit: createAuditRecorder(db, { actorId: userId ?? null, requestId }),
+    headers: req
+      ? { origin: req.headers.get('origin'), host: req.headers.get('host') }
+      : { origin: null, host: null },
   }
 }
