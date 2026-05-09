@@ -5,6 +5,13 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  buildReplyDraftPrompt,
+  REPLY_DRAFT_PROMPT_VERSION,
+  replyDraftShape,
+  runDraft,
+  type ReplyChannel,
+} from '@studymind/ai'
+import {
   InteractionCreateInput,
   type InteractionListItem,
 } from '@studymind/core/interaction'
@@ -158,6 +165,95 @@ export const interactionRouter = router({
         after: { id: created.id, type: created.type, summary: created.summary },
       })
       return { id: created.id }
+    }),
+
+  // CLAUDE.md §18 — AI-drafted reply. Returns text + promptVersion for
+  // traceability. The agent edits and confirms via the existing outbound
+  // path (Trengo, Gmail) which marks the Interaction as sent.
+  draftReply: auditedProcedure
+    .input(
+      z.object({
+        interactionId: z.string(),
+        goal: z.string().min(1).max(500),
+        channel: z.enum(['email', 'whatsapp', 'sms', 'web_chat']),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const seed = await ctx.db.interaction.findFirst({
+        where: { id: input.interactionId, deletedAt: null },
+        select: { id: true, contactId: true, familyId: true, occurredAt: true },
+      })
+      if (!seed) throw new TRPCError({ code: 'NOT_FOUND' })
+      if (seed.contactId) {
+        await enforceRestrictedAccess(ctx, seed.contactId, 'reply-draft')
+      }
+
+      // Pull a small thread window. Prefer contact scope; fall back to family.
+      const threadRows = await ctx.db.interaction.findMany({
+        where: {
+          deletedAt: null,
+          ...(seed.contactId
+            ? { contactId: seed.contactId }
+            : { familyId: seed.familyId ?? undefined }),
+        },
+        orderBy: { occurredAt: 'desc' },
+        take: 20,
+        select: {
+          type: true,
+          occurredAt: true,
+          summary: true,
+          payload: true,
+          createdById: true,
+        },
+      })
+      const thread = threadRows.reverse().map((r) => {
+        const payload = (r.payload ?? {}) as { body?: string; text?: string }
+        const text = payload.body ?? payload.text ?? r.summary ?? ''
+        const direction: 'inbound' | 'outbound' | 'internal' = r.createdById
+          ? 'outbound'
+          : 'inbound'
+        return {
+          type: r.type,
+          occurredAt: r.occurredAt.toISOString(),
+          direction,
+          text,
+        }
+      })
+
+      const channel = input.channel as ReplyChannel
+      const prompt = buildReplyDraftPrompt({
+        channel,
+        goal: input.goal,
+        thread,
+      })
+      const result = await runDraft({
+        task: 'reply_draft',
+        promptVersion: prompt.promptVersion,
+        system: prompt.system,
+        user: prompt.user,
+        model: 'gpt-4o',
+        contentShape: replyDraftShape(channel),
+        contactId: seed.contactId ?? undefined,
+        ctx: { interactionId: input.interactionId, agentId: user.id },
+      })
+
+      await ctx.audit({
+        action: 'ai.draft_generated',
+        target: { type: 'Interaction', id: input.interactionId },
+        purpose: 'reply-draft',
+        after: {
+          channel,
+          promptVersion: REPLY_DRAFT_PROMPT_VERSION,
+          length: result.text.length,
+        },
+      })
+
+      return {
+        text: result.text,
+        promptVersion: REPLY_DRAFT_PROMPT_VERSION,
+        channel,
+      }
     }),
 })
 

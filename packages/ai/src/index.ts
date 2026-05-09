@@ -78,6 +78,14 @@ export {
   type ChurnSignals,
 } from './prompts/churn-score.js'
 export {
+  buildReplyDraftPrompt,
+  replyDraftShape,
+  VERSION as REPLY_DRAFT_PROMPT_VERSION,
+  type InteractionListItem,
+  type ReplyChannel,
+  type ReplyDraftPromptInput,
+} from './prompts/reply-draft.js'
+export {
   buildStatusSummaryPrompt,
   statusSummarySchema,
   VERSION as STATUS_SUMMARY_PROMPT_VERSION,
