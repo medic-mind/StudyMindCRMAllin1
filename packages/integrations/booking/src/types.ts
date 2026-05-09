@@ -4,6 +4,13 @@
 // We never let raw booking-site types leak into the rest of the app; this
 // module owns the mappers and fails closed on unknown values.
 
+// Webhook envelope (kept for the webhook stub; phase 2 — push-based sync).
+export interface BookingEventEnvelope {
+  id: string
+  type: string
+  receivedAt: Date
+}
+
 export type BookingState = 'tentative' | 'confirmed' | 'delivered' | 'no_show' | 'cancelled'
 
 const BOOKING_STATES: ReadonlySet<BookingState> = new Set([
