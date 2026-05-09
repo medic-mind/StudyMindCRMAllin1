@@ -798,3 +798,30 @@ model FeatureFlag {
   createdById String?
   updatedById String?
 }
+
+// -----------------------------------------------------------------------------
+// DSL rota (CLAUDE.md §42).
+// One primary + one deputy per ISO week; raiseConcern resolves the on-duty
+// DSL from this table at runtime. Empty rota → DEFAULT_DSL_USER_ID env.
+// -----------------------------------------------------------------------------
+
+enum DslRotaRole {
+  primary
+  deputy
+}
+
+model DslRota {
+  id        String      @id
+  userId    String
+  weekStart DateTime
+  weekEnd   DateTime
+  role      DslRotaRole
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@unique([weekStart, role])
+  @@index([userId])
+}
