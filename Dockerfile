@@ -25,7 +25,11 @@ RUN pnpm install --frozen-lockfile || pnpm install
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm --filter @studymind/db prisma generate
+# Re-run install so per-package node_modules symlink farms are recreated against
+# the full source tree (the deps stage stripped non-manifest files, so the per-
+# package .bin directories were never materialised). pnpm is fast on cache hit.
+RUN pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile
+RUN pnpm --filter @studymind/db exec prisma generate
 RUN pnpm build
 
 # ---- runner (web) ----
