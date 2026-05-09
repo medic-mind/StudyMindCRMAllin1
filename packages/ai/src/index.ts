@@ -60,6 +60,15 @@ export {
   type SlackSummaryPromptInput,
 } from './prompts/slack-summary.js'
 export {
+  buildChurnScorePrompt,
+  CHURN_TASK_THRESHOLD,
+  churnScoreSchema,
+  VERSION as CHURN_SCORE_PROMPT_VERSION,
+  type ChurnScoreOutput,
+  type ChurnScorePromptInput,
+  type ChurnSignals,
+} from './prompts/churn-score.js'
+export {
   buildStatusSummaryPrompt,
   statusSummarySchema,
   VERSION as STATUS_SUMMARY_PROMPT_VERSION,
