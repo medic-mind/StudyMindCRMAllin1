@@ -115,6 +115,8 @@ enum ReconciliationCategory {
   hours_mismatch
   payment_unallocated
   late_failure
+  late_failure_pending_action
+  churned_with_active_subscription
   ap_review_overdue
   other
 }
@@ -215,6 +217,7 @@ model Family {
   billingContactId String?
   laContractId     String?
   churnScore       Float?
+  lastBookingSyncAt DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -419,12 +422,16 @@ model Booking {
 }
 
 model BookingSession {
-  id            String       @id
-  bookingId     String
-  scheduledAt   DateTime
-  state         BookingState @default(tentative)
-  hours         Int          @default(0)
-  correctedById String?
+  id              String       @id
+  bookingId       String
+  externalId      String       @unique
+  scheduledAt     DateTime
+  state           BookingState @default(tentative)
+  hours           Int          @default(0)
+  contractedHours Int          @default(0)
+  scheduledHours  Int          @default(0)
+  deliveredHours  Int          @default(0)
+  correctedById   String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -594,6 +601,7 @@ model ReconciliationDiscrepancy {
   category     ReconciliationCategory
   summary      String
   payload      Json
+  contextHash  String
   resolvedAt   DateTime?
   resolvedById String?
 
@@ -604,6 +612,7 @@ model ReconciliationDiscrepancy {
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
+  @@unique([familyId, category, contextHash])
   @@index([familyId])
   @@index([category])
   @@index([resolvedAt])
