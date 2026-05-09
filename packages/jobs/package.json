@@ -20,7 +20,6 @@
     "@studymind/audit": "workspace:*",
     "@studymind/core": "workspace:*",
     "@studymind/db": "workspace:*",
-    "@studymind/integration-slack": "workspace:*",
     "inngest": "^3.27.5"
   },
   "devDependencies": {

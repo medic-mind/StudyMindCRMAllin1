@@ -5,7 +5,6 @@
 import { inngest } from './client'
 import { RECONCILE_FUNCTIONS } from './reconcile'
 import { CHURN_SCORE_FUNCTIONS } from './ai/churn-score'
-import { DRIFT_TRIAGE_FUNCTIONS } from './ai/drift-triage'
 import { STATUS_SUMMARY_FUNCTIONS } from './ai/status-summary'
 
 export { inngest } from './client'
@@ -17,7 +16,6 @@ export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[
   ...RECONCILE_FUNCTIONS,
   ...STATUS_SUMMARY_FUNCTIONS,
   ...CHURN_SCORE_FUNCTIONS,
-  ...DRIFT_TRIAGE_FUNCTIONS,
 ]
 
 export interface RecurringJobSpec {
