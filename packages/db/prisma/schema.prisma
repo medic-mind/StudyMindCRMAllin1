@@ -93,6 +93,14 @@ enum InteractionType {
   ticket_reopened
   label_added
   label_removed
+  // Slice 7: Gmail (CLAUDE.md §14) and Asana (CLAUDE.md §13).
+  // Underscored variants — Postgres enums cannot contain dots; the
+  // dotted event name (Section 45) lives in Interaction.payload.event.
+  email_received
+  email_sent
+  task_created
+  task_updated
+  task_completed
 }
 
 enum ContactKind {
@@ -656,7 +664,16 @@ model Task {
   status      TaskStatus @default(open)
   assigneeId  String?
   familyId    String?
+  /// Optional Contact linkage (CLAUDE.md §13 — Asana sync stores the CRM
+  /// contact id in the `crm_contact_id` custom field on the Asana task).
+  contactId   String?
   dueAt       DateTime?
+  /// Asana task linkage (CLAUDE.md §13). Unique when set.
+  asanaTaskId String?
+  /// Last writer attribution: "crm", "asana", or a user id. Used to avoid
+  /// echo loops when both sides update the same field in quick succession.
+  lastWrittenBy String?
+  lastWrittenAt DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -666,8 +683,10 @@ model Task {
 
   family Family? @relation(fields: [familyId], references: [id])
 
+  @@unique([asanaTaskId])
   @@index([assigneeId, status])
   @@index([familyId])
+  @@index([contactId])
 }
 
 model Tender {
@@ -824,4 +843,87 @@ model DslRota {
 
   @@unique([weekStart, role])
   @@index([userId])
+}
+
+// -----------------------------------------------------------------------------
+// Slice 7: Slack summary triage, Slack outbound idempotency, Asana webhook
+// secrets, Gmail mailbox watch lifecycle, Gmail per-agent OAuth tokens.
+// CLAUDE.md §12, §13, §14.
+// -----------------------------------------------------------------------------
+
+model UnassignedSummary {
+  id           String    @id
+  /// Slack message id (the `ts` field in a message event).
+  slackTs      String
+  channelId    String
+  /// Output of the slack-summary AI prompt.
+  parsed       Json
+  confidence   Float
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+  resolvedById String?
+
+  @@unique([slackTs, channelId])
+  @@index([resolvedAt])
+}
+
+model SlackPost {
+  /// Outbound idempotency key (CLAUDE.md §17). Repeat sends with the same
+  /// key return the existing slackTs rather than double-posting.
+  idempotencyKey String   @id
+  slackTs        String
+  channelId      String
+  postedAt       DateTime @default(now())
+
+  @@index([postedAt])
+}
+
+model AsanaWebhook {
+  id            String   @id
+  projectId     String
+  /// Secret Asana sends in the X-Hook-Secret header on creation; we echo it
+  /// back to complete the handshake and store it for subsequent payload
+  /// signature verification (CLAUDE.md §13).
+  webhookSecret String
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([projectId])
+}
+
+model GmailMailbox {
+  /// Clerk user id (== User.id). One mailbox watch per agent.
+  agentId        String    @id
+  address        String    @unique
+  historyId      String?
+  watchExpiresAt DateTime?
+  topicName      String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([watchExpiresAt])
+}
+
+model GmailToken {
+  /// Clerk user id (== User.id). One OAuth refresh token per agent.
+  agentId         String   @id
+  tokenCiphertext Bytes
+  tokenIv         Bytes
+  dekCiphertext   Bytes
+  aad             Bytes
+  keyVersion      Int
+  expiresAt       DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
 }
