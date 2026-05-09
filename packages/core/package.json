@@ -12,12 +12,16 @@
     "./interaction": "./src/interaction/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
     "./auth/policies": "./src/auth/policies.ts",
+    "./compliance/dsar": "./src/compliance/dsar.ts",
     "./events/registry": "./src/events/registry.ts",
     "./errors": "./src/errors.ts",
     "./flags": "./src/flags/index.ts",
     "./flags/admin": "./src/flags/admin.ts",
     "./flags/registry": "./src/flags/registry.ts",
     "./logger": "./src/logger/index.ts",
+    "./observability/safe-fetch": "./src/observability/safe-fetch.ts",
+    "./observability/sentry": "./src/observability/sentry.ts",
+    "./observability/trace": "./src/observability/trace.ts",
     "./provider-events": "./src/provider-events/index.ts"
   },
   "scripts": {
@@ -28,9 +32,13 @@
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.658.0",
+    "@opentelemetry/api": "^1.9",
+    "@opentelemetry/auto-instrumentations-node": "^0.53",
+    "@opentelemetry/sdk-node": "^0.55",
     "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/client": "^5.22.0",
     "@studymind/audit": "workspace:*",
+    "archiver": "^7.0.0",
     "pino": "^9.5.0",
     "zod": "^3.23.8"
   },

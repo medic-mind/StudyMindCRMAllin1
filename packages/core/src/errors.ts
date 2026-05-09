@@ -11,6 +11,7 @@ export type BusinessErrorCode =
   | 'CONTACT_MERGE_SELF'
   | 'CONTACT_NOT_FOUND'
   | 'CONTACT_MERGE_RESTRICTED_DSL_CONFLICT'
+  | 'OUTBOUND_HOST_BLOCKED'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

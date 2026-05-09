@@ -2,6 +2,8 @@
 // Verify signature -> upsert ProviderEvent (idempotent) -> enqueue Inngest -> 200.
 // All real work happens in the Inngest job. Latency budget: 500 ms p90.
 
+import { withSentry } from '@studymind/core/observability/sentry'
+import { withSpan } from '@studymind/core/observability/trace'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
 import { SIGNATURE_HEADER, verifyAndParse } from '@studymind/integration-stripe/webhook'
 import { inngest } from '@studymind/jobs'
@@ -11,35 +13,40 @@ import { db } from '@/lib/db'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request): Promise<Response> {
-  // Raw body bytes — required for signature verification.
-  const raw = await req.text()
-  const signature = req.headers.get(SIGNATURE_HEADER)
+export const POST = withSentry(handlePost, { provider: 'stripe', surface: 'webhook' })
 
-  const result = verifyAndParse(raw, signature)
-  if (!result.ok) {
-    // CLAUDE.md §8: never log the raw body of an unverified event.
-    return new Response('invalid signature', { status: 400 })
-  }
+async function handlePost(req: Request): Promise<Response> {
+  return withSpan('webhook.stripe', async () => {
+    const raw = await req.text()
+    const signature = req.headers.get(SIGNATURE_HEADER)
 
-  const { event } = result
+    const result = verifyAndParse(raw, signature)
+    if (!result.ok) {
+      // CLAUDE.md §8: never log the raw body of an unverified event.
+      return new Response('invalid signature', { status: 400 })
+    }
 
-  // Persist raw event for audit and replay. Idempotent on (provider, eventId).
-  const upsert = await upsertProviderEvent(db, {
-    provider: 'stripe',
-    eventId: event.id,
-    type: event.type,
-    raw: event as unknown,
-    receivedAt: new Date(event.created * 1000),
+    const { event } = result
+
+    return withSpan(
+      'webhook.stripe.persist',
+      async () => {
+        const upsert = await upsertProviderEvent(db, {
+          provider: 'stripe',
+          eventId: event.id,
+          type: event.type,
+          raw: event as unknown,
+          receivedAt: new Date(event.created * 1000),
+        })
+
+        await inngest.send({
+          name: 'stripe/event.received',
+          data: { eventId: event.id, providerEventRowId: upsert.id, type: event.type },
+        })
+
+        return Response.json({ ok: true })
+      },
+      { provider: 'stripe', endpoint: 'webhook', entity_id: event.id },
+    )
   })
-
-  // Always enqueue: the Inngest job is itself idempotent so a duplicate
-  // delivery from Stripe is safe. Skipping on dedupe would also block a
-  // legitimate retry from Stripe after a previous failed run.
-  await inngest.send({
-    name: 'stripe/event.received',
-    data: { eventId: event.id, providerEventRowId: upsert.id, type: event.type },
-  })
-
-  return Response.json({ ok: true })
 }

@@ -9,6 +9,8 @@
 // Auth: Aircall uses HTTP Basic with `(api_id, api_token)`. Both are read
 // from env: AIRCALL_API_ID, AIRCALL_API_TOKEN.
 
+import { safeFetch } from '@studymind/core/observability/safe-fetch'
+
 export const AIRCALL_API_BASE = 'https://api.aircall.io/v1' as const
 
 export interface AircallCallResource {
@@ -80,7 +82,7 @@ export function createClient(opts: AircallClientOptions = {}): AircallClient {
     throw new Error('AIRCALL_API_ID and AIRCALL_API_TOKEN must be set')
   }
   const baseUrl = opts.baseUrl ?? AIRCALL_API_BASE
-  const fetchImpl = opts.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl ?? safeFetch
   const isEnvDriven =
     !opts.apiId && !opts.apiToken && !opts.baseUrl && !opts.fetchImpl
 

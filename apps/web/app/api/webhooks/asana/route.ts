@@ -10,6 +10,7 @@
 
 import { createId } from '@paralleldrive/cuid2'
 
+import { withSentry } from '@studymind/core/observability/sentry'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
 import { isAllowedProject } from '@studymind/integration-asana/config'
 import { asanaEventId } from '@studymind/integration-asana/types'
@@ -25,7 +26,9 @@ import { db } from '@/lib/db'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: Request): Promise<Response> {
+export const POST = withSentry(handlePost, { provider: 'asana', surface: 'webhook' })
+
+async function handlePost(req: Request): Promise<Response> {
   const url = new URL(req.url)
   const projectGid = url.searchParams.get('project') ?? ''
 

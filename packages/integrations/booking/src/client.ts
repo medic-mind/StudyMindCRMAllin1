@@ -7,6 +7,8 @@
 // We use plain `fetch` (no SDK) — the surface is small and we want signature
 // verification, idempotency, and retry semantics in our hands.
 
+import { safeFetch } from '@studymind/core/observability/safe-fetch'
+
 import {
   mapBooking,
   mapBookingSession,
@@ -58,7 +60,7 @@ export function createClient(opts: BookingClientOptions = {}): BookingClient {
   }
   const baseUrl =
     opts.baseUrl ?? process.env['BOOKING_API_BASE_URL'] ?? 'https://booking.studymind.co.uk'
-  const fetchImpl = opts.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl ?? safeFetch
   const cacheKey = `${apiToken}|${baseUrl}`
   if (cached && cached.key === cacheKey && !opts.fetchImpl) return cached.client
 

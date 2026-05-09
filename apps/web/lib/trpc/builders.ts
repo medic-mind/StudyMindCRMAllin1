@@ -35,6 +35,12 @@ export interface TrpcContext {
   requestId: string
   db: PrismaClient
   audit: AuditRecorder
+  /**
+   * Subset of the inbound request headers needed for security checks
+   * (CSRF Origin/Host comparison, CLAUDE.md §44.2). Empty when running
+   * from RSC-side server actions where there is no HTTP request.
+   */
+  headers: { origin: string | null; host: string | null }
 }
 
 export interface AuthedTrpcContext extends Omit<TrpcContext, 'user'> {
@@ -44,6 +50,15 @@ export interface AuthedTrpcContext extends Omit<TrpcContext, 'user'> {
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
+    // Forward unexpected errors to Sentry. Validation/auth errors are noisy
+    // and expected, so we only capture INTERNAL_SERVER_ERROR (real bugs per
+    // CLAUDE.md §27).
+    if (error.code === 'INTERNAL_SERVER_ERROR') {
+      const sentry = (globalThis as unknown as {
+        Sentry?: { captureException: (e: unknown, hint?: { tags?: Record<string, string> }) => void }
+      }).Sentry
+      sentry?.captureException(error, { tags: { surface: 'trpc' } })
+    }
     return {
       ...shape,
       data: {
@@ -58,6 +73,40 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router
 export const middleware = t.middleware
 export const publicProcedure = t.procedure
+
+/**
+ * CSRF guard. Mutations require the Origin host to match Host (Same-Origin).
+ * Webhook routes are exempt — they authenticate by signature instead and do
+ * not flow through tRPC. CLAUDE.md §44.2.
+ *
+ * Queries (read-only) are not gated: GET requests are not state-changing and
+ * Origin is unreliable on cross-origin GETs from clients we want to support
+ * (e.g. internal scripts). The tight gate is on mutations.
+ */
+const csrfMiddleware = t.middleware(async ({ ctx, type, next }) => {
+  if (type === 'mutation') {
+    const origin = ctx.headers.origin
+    const host = ctx.headers.host
+    // RSC server callers have neither — they are in-process and not driven
+    // by an external HTTP request. Skip the check in that case.
+    if (origin === null && host === null) {
+      return next()
+    }
+    if (!origin || !host) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Origin header required' })
+    }
+    let originHost: string
+    try {
+      originHost = new URL(origin).host
+    } catch {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Invalid Origin' })
+    }
+    if (originHost !== host) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Cross-origin mutation rejected' })
+    }
+  }
+  return next()
+})
 
 const enforceUserAndRateLimitMiddleware = t.middleware(async ({ ctx, path, next }) => {
   const user = ctx.user
@@ -76,6 +125,7 @@ const enforceUserAndRateLimitMiddleware = t.middleware(async ({ ctx, path, next 
     requestId: ctx.requestId,
     db: ctx.db,
     audit: ctx.audit,
+    headers: ctx.headers,
   }
   return next({ ctx: authedCtx })
 })
@@ -96,7 +146,9 @@ const auditMiddleware = t.middleware(async ({ ctx, type, path, next }) => {
   return result
 })
 
-export const protectedProcedure = publicProcedure.use(enforceUserAndRateLimitMiddleware)
+export const protectedProcedure = publicProcedure
+  .use(csrfMiddleware)
+  .use(enforceUserAndRateLimitMiddleware)
 
 export const auditedProcedure = protectedProcedure.use(auditMiddleware)
 

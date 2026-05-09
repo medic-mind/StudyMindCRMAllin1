@@ -10,6 +10,7 @@
 
 import { serve } from 'inngest/next'
 
+import { withSentry } from '@studymind/core/observability/sentry'
 import { FUNCTIONS as AIRCALL_FUNCTIONS } from '@studymind/integration-aircall/jobs'
 import { FUNCTIONS as ASANA_FUNCTIONS } from '@studymind/integration-asana/jobs'
 import { FUNCTIONS as BOOKING_FUNCTIONS } from '@studymind/integration-booking/jobs'
@@ -23,7 +24,7 @@ import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export const { GET, POST, PUT } = serve({
+const handlers = serve({
   client: inngest,
   functions: [
     ...CROSS_CUTTING_FUNCTIONS,
@@ -38,3 +39,8 @@ export const { GET, POST, PUT } = serve({
   ],
   signingKey: process.env['INNGEST_SIGNING_KEY'],
 })
+
+const tags = { surface: 'inngest_serve' }
+export const GET = withSentry(handlers.GET, tags)
+export const POST = withSentry(handlers.POST, tags)
+export const PUT = withSentry(handlers.PUT, tags)

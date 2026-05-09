@@ -2,6 +2,8 @@
 // PAT-authenticated. Scoped to allowed projects only — caller is expected to
 // pass project gids that match `isAllowedProject`.
 
+import { safeFetch } from '@studymind/core/observability/safe-fetch'
+
 import type { AsanaTaskResource } from './types.js'
 
 export const ASANA_API_BASE = 'https://app.asana.com/api/1.0' as const
@@ -52,7 +54,7 @@ export function createClient(opts: CreateAsanaClientOptions = {}): AsanaClient {
   if (!pat) throw new Error('ASANA_PAT is not set')
 
   const baseUrl = opts.baseUrl ?? ASANA_API_BASE
-  const fetchImpl = opts.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl ?? safeFetch
 
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = {
