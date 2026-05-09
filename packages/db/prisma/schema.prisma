@@ -522,15 +522,17 @@ model Invoice {
 }
 
 model Payment {
-  id          String   @id
+  id          String    @id
   familyId    String
   invoiceId   String?
-  externalId  String   @unique
+  externalId  String    @unique
   provider    String
   amountMinor Int
-  currency    String   @default("GBP")
+  currency    String    @default("GBP")
   receivedAt  DateTime
-  reverted    Boolean  @default(false)
+  confirmedAt DateTime?
+  reverted    Boolean   @default(false)
+  revertedAt  DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -711,6 +713,31 @@ model LAInvoice {
   contract LAContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
 
   @@index([contractId])
+}
+
+// -----------------------------------------------------------------------------
+// GoCardless mandate creation flow
+// -----------------------------------------------------------------------------
+
+model MandateIntent {
+  id                 String  @id
+  familyId           String
+  billingContactId   String
+  idempotencyKey     String  @unique
+  redirectFlowId     String?
+  redirectUrl        String?
+  status             String  @default("pending")
+  // Resolved GoCardless mandate id once the redirect flow completes.
+  gcMandateId        String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([familyId])
+  @@index([billingContactId])
+  @@index([status])
 }
 
 // -----------------------------------------------------------------------------
