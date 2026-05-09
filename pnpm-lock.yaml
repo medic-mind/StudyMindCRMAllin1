@@ -11,6 +11,9 @@ importers:
       '@paralleldrive/cuid2':
         specifier: ^3.3.0
         version: 3.3.0
+      '@studymind/jobs':
+        specifier: workspace:*
+        version: link:packages/jobs
     devDependencies:
       '@eslint/js':
         specifier: ^9.13.0
@@ -30,6 +33,9 @@ importers:
       prettier:
         specifier: ^3.3.3
         version: 3.8.3
+      stripe:
+        specifier: ^17.4.0
+        version: 17.7.0
       turbo:
         specifier: ^2.2.3
         version: 2.9.7

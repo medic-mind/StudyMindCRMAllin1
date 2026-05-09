@@ -1,0 +1,48 @@
+{
+  "id": "evt_test_customer_subscription_updated_001",
+  "object": "event",
+  "api_version": "2025-02-24.acacia",
+  "created": 1714492900,
+  "type": "customer.subscription.updated",
+  "livemode": false,
+  "pending_webhooks": 0,
+  "request": {
+    "id": "req_test_002",
+    "idempotency_key": null
+  },
+  "data": {
+    "object": {
+      "id": "sub_test_a1",
+      "object": "subscription",
+      "customer": "cus_test_family_a1",
+      "status": "past_due",
+      "cancel_at_period_end": false,
+      "collection_method": "charge_automatically",
+      "created": 1710000000,
+      "current_period_start": 1714000000,
+      "current_period_end": 1716592000,
+      "default_payment_method": "pm_test_001",
+      "items": {
+        "object": "list",
+        "data": [
+          {
+            "id": "si_test_001",
+            "object": "subscription_item",
+            "price": {
+              "id": "price_test_monthly",
+              "object": "price",
+              "currency": "gbp",
+              "unit_amount": 19500
+            },
+            "quantity": 1,
+            "subscription": "sub_test_a1"
+          }
+        ],
+        "has_more": false
+      }
+    },
+    "previous_attributes": {
+      "status": "active"
+    }
+  }
+}

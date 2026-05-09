@@ -33,12 +33,14 @@
     "@vitest/coverage-v8": "^2.1.5",
     "eslint": "^9.13.0",
     "prettier": "^3.3.3",
+    "stripe": "^17.4.0",
     "turbo": "^2.2.3",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.59.1",
     "vitest": "^2.1.5"
   },
   "dependencies": {
-    "@paralleldrive/cuid2": "^3.3.0"
+    "@paralleldrive/cuid2": "^3.3.0",
+    "@studymind/jobs": "workspace:*"
   }
 }
