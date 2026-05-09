@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server'
 
 import { logger } from '@studymind/core/logger'
 
+import { buildCsp, generateNonce } from '@/lib/security/csp'
+
 const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
@@ -35,9 +37,22 @@ export default async function middleware(
 ): Promise<NextResponse> {
   const start = Date.now()
   const requestId = req.headers.get('x-request-id') ?? cryptoRandomId()
+  // Per-request CSP nonce. Strict CSP — no unsafe-inline (CLAUDE.md §44.2).
+  // Clerk hosted forms / Sentry replay are allowlisted by host; any first
+  // party script that needs to inline must read this nonce from `headers()`
+  // server-side and emit `<script nonce={nonce}>`.
+  const nonce = generateNonce()
+  const csp = buildCsp(nonce)
+  // Forward the nonce to RSC via a request header so layouts/pages can read
+  // it through `headers()` and stamp <script> tags with nonce attributes.
+  const requestHeaders = new Headers(req.headers)
+  requestHeaders.set('x-csp-nonce', nonce)
+  requestHeaders.set('x-request-id', requestId)
+
   const result = (await clerk(req, evt)) as NextResponse | undefined
-  const res = result ?? NextResponse.next()
+  const res = result ?? NextResponse.next({ request: { headers: requestHeaders } })
   res.headers.set('x-request-id', requestId)
+  res.headers.set('Content-Security-Policy', csp)
   const pathname = req.nextUrl.pathname
   if (!shouldSkipAccessLog(pathname)) {
     const actorId = req.headers.get('x-clerk-user-id') ?? null
@@ -63,6 +78,7 @@ function cryptoRandomId(): string {
   crypto.getRandomValues(bytes)
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
+
 
 export const config = {
   matcher: ['/((?!_next|.*\\..*).*)', '/(api|trpc)(.*)'],
