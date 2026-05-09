@@ -359,20 +359,23 @@ model ProviderEvent {
 }
 
 model AuditLogEntry {
-  id         String   @id
-  action     String
-  actorId    String?
-  targetType String
-  targetId   String
-  requestId  String?
-  purpose    String?
-  before     Json?
-  after      Json?
-  occurredAt DateTime @default(now())
+  id           String    @id
+  action       String
+  actorId      String?
+  targetType   String
+  targetId     String
+  requestId    String?
+  purpose      String?
+  before       Json?
+  after        Json?
+  occurredAt   DateTime  @default(now())
+  archivedAt   DateTime?
+  archiveS3Key String?
 
   @@index([targetType, targetId])
   @@index([actorId, occurredAt])
   @@index([action, occurredAt])
+  @@index([archivedAt, occurredAt])
 }
 
 model RetentionPolicy {
