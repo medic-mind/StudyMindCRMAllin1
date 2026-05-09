@@ -25,7 +25,17 @@
     "db:seed": "pnpm --filter @studymind/db exec prisma db seed",
     "db:reset": "pnpm --filter @studymind/db exec prisma migrate reset --force",
     "db:studio": "pnpm --filter @studymind/db exec prisma studio",
-    "db:generate": "pnpm --filter @studymind/db exec prisma generate"
+    "db:generate": "pnpm --filter @studymind/db exec prisma generate",
+    "dr": "tsx scripts/dr/run-dr.ts",
+    "dr:stripe": "tsx scripts/dr/reconnect-stripe.ts",
+    "dr:gocardless": "tsx scripts/dr/reconnect-gocardless.ts",
+    "dr:aircall": "tsx scripts/dr/reconnect-aircall.ts",
+    "dr:trengo": "tsx scripts/dr/reconnect-trengo.ts",
+    "dr:slack": "tsx scripts/dr/reconnect-slack.ts",
+    "dr:asana": "tsx scripts/dr/reconnect-asana.ts",
+    "dr:gmail": "tsx scripts/dr/reconnect-gmail.ts",
+    "dr:booking": "tsx scripts/dr/reconnect-booking.ts",
+    "dr:replay": "tsx scripts/dr/replay-provider-events.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-kms": "^3.658.0",
@@ -38,6 +48,7 @@
     "eslint": "^9.13.0",
     "prettier": "^3.3.3",
     "stripe": "^17.4.0",
+    "tsx": "^4.19.2",
     "turbo": "^2.2.3",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.59.1",

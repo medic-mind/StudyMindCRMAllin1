@@ -79,14 +79,19 @@ Communicate: post the recovery URL to `#crm-incidents`. Do **not** route public 
 Pre-conditions: app is up at the recovery URL. Each provider needs its webhook target updated.
 
 ```bash
-pnpm tsx scripts/dr/reconnect-stripe.ts
-pnpm tsx scripts/dr/reconnect-gocardless.ts
-pnpm tsx scripts/dr/reconnect-aircall.ts
-pnpm tsx scripts/dr/reconnect-trengo.ts
-pnpm tsx scripts/dr/reconnect-slack.ts
-pnpm tsx scripts/dr/reconnect-asana.ts
-pnpm tsx scripts/dr/reconnect-gmail.ts
-pnpm tsx scripts/dr/reconnect-booking.ts
+# Run them in order via the orchestrator (prompts between each step):
+pnpm dr
+
+# Or run individually (idempotent — re-uses an existing endpoint with our
+# URL where the provider exposes CRUD):
+pnpm dr:stripe
+pnpm dr:gocardless
+pnpm dr:aircall
+pnpm dr:trengo      # prints a manual UI checklist; Trengo has no CRUD API
+pnpm dr:slack       # prints a manual app-config checklist
+pnpm dr:asana       # recreates per-project webhooks for the allowlist
+pnpm dr:gmail       # renews users.watch for every connected mailbox
+pnpm dr:booking     # verifies pull connectivity (no webhook to register)
 ```
 
 Each script confirms the webhook is reachable and signed correctly before reporting success. Verify in the provider dashboard that the latest test event landed.
@@ -96,9 +101,7 @@ Each script confirms the webhook is reachable and signed correctly before report
 Pre-conditions: webhooks reconnected. `ProviderEvent` rows from the recovery point onward exist in the restored DB.
 
 ```bash
-pnpm tsx scripts/dr/replay-provider-events.ts \
-  --from "<recovery point ISO>" \
-  --to "<T0 ISO>"
+pnpm dr:replay --from "<recovery point ISO>" --to "<T0 ISO>"
 ```
 
 The replay job is idempotent on `(provider, eventId)` (CLAUDE.md §7.1). It re-enqueues each event into Inngest. Watch the Inngest dashboard for queue depth — it will spike, then drain.
