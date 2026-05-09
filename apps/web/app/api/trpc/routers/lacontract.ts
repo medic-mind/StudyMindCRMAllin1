@@ -8,6 +8,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  completeApReview,
   generateLAInvoice,
   generateProgressReportDraft,
   markLAInvoicePaid,
@@ -160,6 +161,37 @@ export const lacontractRouter = router({
         return { reportId: result.reportId, promptVersion: result.promptVersion }
       }),
   }),
+
+  /**
+   * Mark the AP placement review complete for a Family. CLAUDE.md §43.4.
+   * Account leads (ops_manager) and admin only.
+   */
+  completeApReview: auditedProcedure
+    .input(
+      z.object({
+        familyId: z.string(),
+        nextReviewDate: z.coerce.date().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!WRITE_ROLES.has(user.role)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'only an account lead (ops_manager) or admin may complete reviews',
+        })
+      }
+      const r = await completeApReview(ctx.db, input, {
+        actorId: user.id,
+        requestId: ctx.requestId,
+      })
+      await ctx.audit({
+        action: 'ap_placement.review_completed.acked',
+        target: { type: 'APPlacement', id: r.placementId },
+        after: { nextReviewDate: input.nextReviewDate?.toISOString() ?? null },
+      })
+      return r
+    }),
 
   invoice: router({
     generate: auditedProcedure
