@@ -13,6 +13,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   late_failure_pending_action: 'Late failure — pending action',
   churned_with_active_subscription: 'Churned with active subscription',
   ap_review_overdue: 'AP review overdue',
+  la_family_with_card_subscription: 'LA-billed family has card subscription',
   other: 'Other',
 }
 
