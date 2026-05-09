@@ -82,3 +82,16 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 14
+
+      - name: Upload axe-core violations
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          # CLAUDE.md §28: surface a11y violations as a first-class CI
+          # artifact so reviewers can triage them quickly.
+          name: axe-violations
+          path: |
+            playwright-report/**/*axe*
+            test-results/**/*axe*
+          retention-days: 14
+          if-no-files-found: ignore
