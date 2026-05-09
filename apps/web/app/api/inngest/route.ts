@@ -23,6 +23,7 @@ import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 
 import { costSummaryWeekly } from './_boundary/cost-summary'
 import { lacontractDeadlineWatcherBoundary } from './_boundary/lacontract-deadline-watcher'
+import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -30,7 +31,11 @@ export const dynamic = 'force-dynamic'
 // Worker-boundary functions: registrations that pair pure jobs with
 // integration-side glue (S3, Slack outbound) without creating a
 // jobs ↔ integrations import cycle (CLAUDE.md §17).
-const BOUNDARY_FUNCTIONS = [costSummaryWeekly, lacontractDeadlineWatcherBoundary]
+const BOUNDARY_FUNCTIONS = [
+  costSummaryWeekly,
+  lacontractDeadlineWatcherBoundary,
+  auditLogArchiveWeekly,
+]
 
 const handlers = serve({
   client: inngest,

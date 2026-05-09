@@ -21,6 +21,7 @@
     "./flags/admin": "./src/flags/admin.ts",
     "./flags/registry": "./src/flags/registry.ts",
     "./logger": "./src/logger/index.ts",
+    "./observability/audit-archive-s3": "./src/observability/audit-archive-s3.ts",
     "./observability/cost-reports-s3": "./src/observability/cost-reports-s3.ts",
     "./observability/safe-fetch": "./src/observability/safe-fetch.ts",
     "./observability/sentry": "./src/observability/sentry.ts",

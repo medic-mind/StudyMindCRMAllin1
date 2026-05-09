@@ -8,6 +8,7 @@ import { CHURN_SCORE_FUNCTIONS } from './ai/churn-score'
 import { STATUS_SUMMARY_FUNCTIONS } from './ai/status-summary'
 import { COST_SUMMARY_FUNCTIONS } from './cost-summary'
 import { LACONTRACT_FUNCTIONS } from './lacontract/deadline-watcher'
+import { AUDIT_LOG_ARCHIVE_FUNCTIONS } from './compliance/audit-log-archive'
 
 export { inngest } from './client'
 
@@ -20,6 +21,7 @@ export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[
   ...CHURN_SCORE_FUNCTIONS,
   ...LACONTRACT_FUNCTIONS,
   ...COST_SUMMARY_FUNCTIONS,
+  ...AUDIT_LOG_ARCHIVE_FUNCTIONS,
 ]
 
 export interface RecurringJobSpec {
