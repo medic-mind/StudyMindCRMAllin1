@@ -4,9 +4,11 @@
 import { router } from '@/lib/trpc/builders'
 
 import { adminFlagsRouter } from './flags'
+import { adminIntegrationsRouter } from './integrations'
 import { adminUsersRouter } from './users'
 
 export const adminRouter = router({
   flags: adminFlagsRouter,
+  integrations: adminIntegrationsRouter,
   users: adminUsersRouter,
 })
