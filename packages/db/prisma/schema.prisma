@@ -85,6 +85,14 @@ enum InteractionType {
   slack_summary
   tender_state_changed
   system
+  // Trengo ticket lifecycle (CLAUDE.md §11). Calls reuse `call`; messages
+  // reuse `message`; tickets and labels get explicit values so the timeline
+  // can filter on lifecycle without unpacking JSONB.
+  ticket_assigned
+  ticket_closed
+  ticket_reopened
+  label_added
+  label_removed
 }
 
 enum ContactKind {
@@ -747,6 +755,31 @@ model MandateIntent {
   @@index([familyId])
   @@index([billingContactId])
   @@index([status])
+}
+
+// -----------------------------------------------------------------------------
+// Trengo per-agent OAuth tokens (CLAUDE.md §11).
+// Each agent's outbound goes through their own Trengo API token, KMS-
+// encrypted at rest. Expiry is enforced fail-closed in outbound.ts.
+// -----------------------------------------------------------------------------
+
+model TrengoToken {
+  /// Clerk user id (== User.id). One token per agent.
+  agentId         String   @id
+  tokenCiphertext Bytes
+  tokenIv         Bytes
+  dekCiphertext   Bytes
+  aad             Bytes
+  keyVersion      Int
+  expiresAt       DateTime
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([expiresAt])
 }
 
 // -----------------------------------------------------------------------------
