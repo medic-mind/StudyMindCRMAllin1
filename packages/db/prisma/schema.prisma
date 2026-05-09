@@ -127,6 +127,14 @@ enum UserRole {
   finance
   dsl
   read_only
+  super_admin
+}
+
+enum UserInviteStatus {
+  pending
+  accepted
+  cancelled
+  expired
 }
 
 enum RefundIntentStatus {
