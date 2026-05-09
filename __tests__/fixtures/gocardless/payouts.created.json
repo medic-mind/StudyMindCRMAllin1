@@ -1,0 +1,13 @@
+{
+  "events": [
+    {
+      "id": "EV_TEST_PAYOUT_CREATED_001",
+      "created_at": "2026-05-01T06:00:00.000Z",
+      "resource_type": "payouts",
+      "action": "created",
+      "links": {
+        "payout": "PO_TEST_001"
+      }
+    }
+  ]
+}
