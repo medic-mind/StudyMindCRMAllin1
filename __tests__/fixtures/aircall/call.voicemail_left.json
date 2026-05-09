@@ -1,0 +1,21 @@
+{
+  "event": "call.voicemail_left",
+  "resource": "call",
+  "timestamp": "2026-05-09T11:15:00.000Z",
+  "token": "TEST_AIRCALL_TOKEN",
+  "data": {
+    "id": 9000002,
+    "direction": "inbound",
+    "status": "done",
+    "started_at": 1746788100,
+    "answered_at": null,
+    "ended_at": 1746788130,
+    "duration": 30,
+    "raw_digits": "+447700900002",
+    "number": { "id": 1, "digits": "+443330000000", "name": "StudyMind Main Line" },
+    "contact": { "phone_numbers": [{ "value": "+447700900002" }] },
+    "recording": null,
+    "voicemail": "https://voicemails.test.aircall.io/9000002.mp3",
+    "transcription": null
+  }
+}

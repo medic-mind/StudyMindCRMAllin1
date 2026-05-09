@@ -1,0 +1,16 @@
+{
+  "id": "TRENGO_EV_OUTBOUND_EMAIL_001",
+  "event": "message.outbound",
+  "occurred_at": "2026-05-09T09:05:00.000Z",
+  "data": {
+    "ticket_id": 7700002,
+    "message_id": 8800002,
+    "direction": "outbound",
+    "channel": "email",
+    "contact": {
+      "email": "test.parent.a1@dev.studymind",
+      "name": "Test Family A1"
+    },
+    "body": "Thanks for getting in touch — I'll send a trial session link shortly."
+  }
+}

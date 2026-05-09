@@ -1,0 +1,11 @@
+{
+  "event": "transcription.created",
+  "resource": "transcription",
+  "timestamp": "2026-05-09T10:02:30.000Z",
+  "token": "TEST_AIRCALL_TOKEN",
+  "data": {
+    "call_id": 9000001,
+    "content": "Hi, this is a test transcript for Test Family A1. Returning a call about a trial session.",
+    "language": "en"
+  }
+}
