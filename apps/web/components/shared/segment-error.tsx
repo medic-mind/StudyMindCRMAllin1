@@ -31,7 +31,7 @@ export function SegmentError({ error, reset, title = 'Something went wrong' }: S
   const requestId = error.digest ?? 'unavailable'
   const errorName = error.name || 'Error'
   // Take the first line of the message only — keep multi-line stacks out of the DOM.
-  const errorMessage = (error.message ?? '').split('\n')[0].slice(0, 300)
+  const errorMessage = ((error.message ?? '').split('\n')[0] ?? '').slice(0, 300)
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-6">

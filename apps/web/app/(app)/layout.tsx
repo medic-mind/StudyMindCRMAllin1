@@ -1,6 +1,7 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 
-import { getCurrentUser, legacyAuth as auth } from '@/lib/auth/server'
+import { getCurrentUser } from '@/lib/auth/server'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
 import { TrengoTokenBanner } from '@/components/shell/trengo-token-banner'
 
@@ -96,12 +97,23 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
 }
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  // Stub: real session check returns in chunk 5 of ADR 0010.
-  const { userId } = await auth()
-  void userId
+  // Defence-in-depth: middleware redirects unauthenticated requests at the
+  // edge, but if for any reason it doesn't (matcher miss, edge fallback,
+  // stale build), the (app) shell MUST refuse to render to an anonymous
+  // visitor. Without this guard the layout was happily rendering the app
+  // shell with a fallback role of 'agent'.
   const me = await getCurrentUser()
-  const role: Role = (me?.role as Role | undefined) ?? 'agent'
-  const totpEnabled = !!me?.totpEnabledAt
+  if (!me) {
+    redirect('/sign-in')
+  }
+  // Force mustResetPassword users to the change-password page even on direct
+  // (app) navigation — middleware does this too, but this guarantees the
+  // child page never renders against a half-bootstrapped account.
+  if (me.mustResetPassword) {
+    redirect('/account/change-password')
+  }
+  const role: Role = me.role
+  const totpEnabled = !!me.totpEnabledAt
   const nav = buildNav(role, totpEnabled)
 
   return (
