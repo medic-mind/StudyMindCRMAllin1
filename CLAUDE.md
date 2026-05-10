@@ -44,7 +44,7 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 | DB | PostgreSQL on Railway | Plan for read replica from month 6 |
 | ORM | Prisma | Migrations, typesafe queries, broad team familiarity |
 | Background jobs | Inngest (chosen over Trigger.dev) | Better fan out, native step retries, cleaner local dev |
-| Auth | Clerk | SSO, MFA, RBAC, audit hooks out of the box |
+| Auth | Auth.js v5 (next-auth) — self-hosted, Postgres-backed | Email + bcrypt password, optional TOTP MFA, sessions in our DB; no third-party processor for staff identity (ADR 0010) |
 | File and audio storage | AWS S3 (eu-west-2) | Call recordings, email attachments, DSAR exports |
 | Encryption (field level) | AWS KMS envelope encryption | Safeguarding notes, EHCP extracts |
 | Email transactional | Resend | Outbound system email, not Gmail sync |
@@ -511,7 +511,7 @@ OpenAI for everything AI today. Models per task:
 
 ## 20. Auth, RBAC, and access control
 
-**Auth.** Clerk handles sign in, MFA (mandatory for all users), session management.
+**Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and (optional) TOTP MFA (mandatory for `super_admin`, `admin`, `finance`, `dsl`). No third-party identity processor — see ADR 0010.
 
 **Roles.** `super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`. `super_admin` sits above `admin`: it inherits every `admin` action plus the exclusive ability to grant or revoke `admin` and `super_admin`, rotate org-wide secrets, and write tenant config. See ADR 0009.
 
