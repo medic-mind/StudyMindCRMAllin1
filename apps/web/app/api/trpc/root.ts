@@ -6,6 +6,7 @@ import { accountRouter } from './routers/account'
 import { adminRouter } from './routers/admin'
 import { contactRouter } from './routers/contact'
 import { costRouter } from './routers/cost'
+import { dashboardRouter } from './routers/dashboard'
 import { familyRouter } from './routers/family'
 import { financeRouter } from './routers/finance'
 import { inboxRouter } from './routers/inbox'
@@ -22,6 +23,7 @@ export const appRouter = router({
   admin: adminRouter,
   contact: contactRouter,
   cost: costRouter,
+  dashboard: dashboardRouter,
   family: familyRouter,
   finance: financeRouter,
   inbox: inboxRouter,
