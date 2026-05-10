@@ -777,21 +777,54 @@ model Payment {
 }
 
 model Allocation {
-  id          String @id
+  id          String  @id
   paymentId   String
   bookingId   String
   amountMinor Int
+  /// Manual override rationale (CLAUDE.md §6.3, §9). Auto-allocations leave
+  /// this null; agent-driven overrides require a short reason captured at
+  /// upsert time and surfaced in the audit row.
+  reason      String?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
+  /// Soft-delete only — historical allocations stay queryable. Hard-delete
+  /// happens via the retention engine (CLAUDE.md §21).
+  deletedAt   DateTime?
 
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([paymentId])
   @@index([bookingId])
+}
+
+// Audit-B2: agent-initiated Stripe Payment Link. CLAUDE.md §8.
+// Persisted BEFORE the Stripe API call so the request is recoverable across
+// crashes; idempotencyKey on Stripe binds to PaymentLinkIntent.id.
+model PaymentLinkIntent {
+  id                  String  @id
+  familyId            String
+  contactId           String?
+  agentId             String
+  amountMinor         Int
+  currency            String  @default("gbp")
+  reason              String
+  stripePaymentLinkId String?
+  url                 String?
+  /// pending | created | completed | expired | cancelled
+  status              String  @default("pending")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([familyId])
+  @@index([agentId])
+  @@index([stripePaymentLinkId])
 }
 
 model RefundIntent {
@@ -1294,6 +1327,32 @@ model DriftSample {
 
   @@index([task, sampledAt])
   @@index([reviewed])
+}
+
+// Audit-B2 Chunk 5: outbound Gmail send idempotency. CLAUDE.md §14.
+// One row per outbound Gmail send. The unique key is (threadId, requestId)
+// — replaying the same tRPC mutation must not send twice.
+model OutboundEmailIntent {
+  id             String  @id
+  agentId        String
+  threadId       String
+  requestId      String
+  gmailMessageId String?
+  subject        String
+  toAddresses    String[] @default([])
+  ccAddresses    String[] @default([])
+  bccAddresses   String[] @default([])
+  /// pending | sent | failed
+  status         String  @default("pending")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@unique([threadId, requestId])
+  @@index([agentId])
+  @@index([gmailMessageId])
 }
 
 model GmailToken {

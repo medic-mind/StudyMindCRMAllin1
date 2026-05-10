@@ -4,6 +4,7 @@
 
 import { TRPCError } from '@trpc/server'
 
+import { DiscrepancyActions } from '@/components/finance/DiscrepancyActions'
 import { createServerCaller } from '@/lib/trpc/server'
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -24,8 +25,23 @@ interface DiscrepancyItem {
   familyState: string
   category: string
   summary: string
+  payload?: unknown
   createdAt: Date
   resolvedAt: Date | null
+}
+
+function readPaymentIdFromPayload(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined
+  const p = payload as Record<string, unknown>
+  const candidate = p['paymentId'] ?? p['payment_id']
+  return typeof candidate === 'string' ? candidate : undefined
+}
+
+function readBookingIdsFromPayload(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return []
+  const p = payload as Record<string, unknown>
+  const candidate = p['candidateBookingIds'] ?? p['bookingIds']
+  return Array.isArray(candidate) ? candidate.filter((x): x is string => typeof x === 'string') : []
 }
 
 function groupByCategory(items: DiscrepancyItem[]): Map<string, DiscrepancyItem[]> {
@@ -70,12 +86,20 @@ export default async function FinancePage() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
-        <a
-          href="/finance/refunds"
-          className="text-sm text-neutral-700 hover:underline"
-        >
-          Refunds →
-        </a>
+        <div className="flex items-center gap-3 text-sm">
+          <a
+            href="/finance/payment-links"
+            className="text-neutral-700 hover:underline"
+          >
+            Payment links →
+          </a>
+          <a
+            href="/finance/refunds"
+            className="text-neutral-700 hover:underline"
+          >
+            Refunds →
+          </a>
+        </div>
       </div>
       <p className="mt-2 text-sm text-neutral-600">
         Open reconciliation discrepancies across active families. Nothing is
@@ -99,19 +123,27 @@ export default async function FinancePage() {
               </h2>
               <ul className="mt-3 divide-y divide-neutral-200 rounded-lg border border-neutral-200">
                 {group.map((d) => (
-                  <li key={d.id} className="flex items-start justify-between gap-4 p-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-neutral-900">
-                        {d.familyName ?? d.familyId}
-                        <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">
-                          {d.familyState}
-                        </span>
+                  <li key={d.id} className="flex flex-col gap-2 p-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-neutral-900">
+                          {d.familyName ?? d.familyId}
+                          <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">
+                            {d.familyState}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm text-neutral-700">{d.summary}</div>
                       </div>
-                      <div className="mt-1 text-sm text-neutral-700">{d.summary}</div>
+                      <div className="shrink-0 font-mono text-xs text-neutral-500 tabular-nums">
+                        {d.createdAt.toISOString().slice(0, 10)}
+                      </div>
                     </div>
-                    <div className="shrink-0 font-mono text-xs text-neutral-500 tabular-nums">
-                      {d.createdAt.toISOString().slice(0, 10)}
-                    </div>
+                    <DiscrepancyActions
+                      discrepancyId={d.id}
+                      category={d.category}
+                      paymentId={readPaymentIdFromPayload(d.payload)}
+                      candidateBookingIds={readBookingIdsFromPayload(d.payload)}
+                    />
                   </li>
                 ))}
               </ul>
