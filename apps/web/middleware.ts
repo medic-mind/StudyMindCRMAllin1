@@ -26,6 +26,7 @@ const PUBLIC_PATH_PREFIXES = [
   '/verify-email-sent',
   '/forgot',
   '/reset',
+  '/setup',
   '/auth/error',
   '/api/auth',
   '/api/webhooks',

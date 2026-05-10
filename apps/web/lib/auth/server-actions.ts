@@ -437,3 +437,142 @@ export async function resetPassword(input: ResetPasswordInput): Promise<ResetPas
 
   return { ok: true, email: user.email }
 }
+
+/* -------------------------------------------------------------------------- */
+/* first-run setup — claim the seeded super_admin                              */
+/* -------------------------------------------------------------------------- */
+
+export interface ClaimInitialAdminInput {
+  email: string
+  password: string
+}
+
+export type ClaimInitialAdminResult =
+  | { ok: true; email: string }
+  | { ok: false; error: string }
+
+/**
+ * One-shot bootstrap path for the first super_admin. The seed script
+ * (`packages/db/prisma/seed-super-admin.ts`) creates a User row with the
+ * super_admin role but leaves `passwordHash` null when no
+ * `INITIAL_SUPER_ADMIN_PASSWORD` env var is set. Without this flow, the
+ * only way to set that password is another env-var redeploy or a manual
+ * DB write. This action lets the legitimate operator set the password in
+ * the browser — once.
+ *
+ * Self-disabling: as soon as ANY super_admin has a non-null passwordHash,
+ * the action returns an error and the matching `/setup` page returns 404,
+ * so this surface vanishes after first use.
+ */
+export async function claimInitialAdmin(
+  input: ClaimInitialAdminInput,
+): Promise<ClaimInitialAdminResult> {
+  const email = (input.email ?? '').trim().toLowerCase()
+  if (!email) return { ok: false, error: 'Email is required.' }
+
+  try {
+    assertStrongPassword(input.password)
+  } catch (e) {
+    if (e instanceof BusinessError) return { ok: false, error: e.message }
+    throw e
+  }
+
+  const ip = await clientIp()
+  const okIp = await requireRateLimit('setup:ip', ip)
+  if (!okIp) {
+    return { ok: false, error: 'Too many attempts. Try again in a few minutes.' }
+  }
+
+  // Hard gate: any super_admin already has a password → this surface is
+  // closed. Check inside the transaction below as well to defeat a race
+  // between two concurrent claim attempts.
+  const anyClaimed = await db.user.findFirst({
+    where: {
+      passwordHash: { not: null },
+      deletedAt: null,
+      roleAssignments: { some: { role: 'super_admin' } },
+    },
+    select: { id: true },
+  })
+  if (anyClaimed) {
+    return {
+      ok: false,
+      error: 'Setup has already been completed. Use Sign in or Forgot password.',
+    }
+  }
+
+  const user = await db.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      passwordHash: true,
+      deactivatedAt: true,
+      roleAssignments: { select: { role: true } },
+    },
+  })
+  if (!user || user.deactivatedAt) {
+    return {
+      ok: false,
+      error:
+        'No matching account. Make sure the seed has run (it creates the first super_admin).',
+    }
+  }
+  const isSuperAdmin = user.roleAssignments.some((r) => r.role === 'super_admin')
+  if (!isSuperAdmin) {
+    return { ok: false, error: 'This account is not the initial super admin.' }
+  }
+  if (user.passwordHash) {
+    return {
+      ok: false,
+      error: 'This account already has a password. Use Sign in or Forgot password.',
+    }
+  }
+
+  const passwordHash = await hashPassword(input.password)
+  const now = new Date()
+  try {
+    await db.$transaction(async (tx) => {
+      // Re-check inside the transaction so a concurrent claim cannot win
+      // the race after our outer guard.
+      const racing = await tx.user.findFirst({
+        where: {
+          passwordHash: { not: null },
+          deletedAt: null,
+          roleAssignments: { some: { role: 'super_admin' } },
+        },
+        select: { id: true },
+      })
+      if (racing) {
+        throw new BusinessError('SETUP_ALREADY_COMPLETED')
+      }
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          emailVerifiedAt: now,
+          mustResetPassword: false,
+          failedSignInAttempts: 0,
+          lockedUntil: null,
+        },
+      })
+    })
+  } catch (e) {
+    if (e instanceof BusinessError && e.message === 'SETUP_ALREADY_COMPLETED') {
+      return {
+        ok: false,
+        error: 'Setup has already been completed. Use Sign in or Forgot password.',
+      }
+    }
+    throw e
+  }
+
+  await writeAuditLogEntry(db, {
+    actorId: user.id,
+    action: 'auth.super_admin_claimed',
+    target: { type: 'User', id: user.id },
+    after: { ip },
+  })
+  logger.info({ userId: user.id, email }, 'auth.super_admin_claimed')
+
+  return { ok: true, email }
+}
