@@ -1,10 +1,15 @@
 // Mailbox settings — connect/disconnect Gmail per agent. ADR 0012, §14.
 
-import Link from 'next/link'
-
+import { PageBody } from '@/components/shell/page-body'
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { DisconnectGmailButton } from './disconnect-button'
+
+const BREADCRUMBS = [
+  { label: 'Settings', href: '/settings' },
+  { label: 'Mailbox', href: '/settings/mailbox' },
+]
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -28,22 +33,16 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
   const status = await trpc.oauth.gmail.status()
 
   return (
-    <div className="max-w-2xl">
-      <div className="mb-2 text-sm text-neutral-500">
-        <Link href="/settings" className="hover:underline">
-          Settings
-        </Link>{' '}
-        / Mailbox
-      </div>
-      <h1 className="text-2xl font-semibold tracking-tight">Mailbox</h1>
-      <p className="mt-1 text-sm text-neutral-600">
-        Connect your Gmail mailbox so messages, sent items, and drafts appear in
-        your CRM timeline. Per-agent — your token is scoped to you and never
-        shared.
-      </p>
-
+    <>
+      <PageHeader
+        title="Mailbox"
+        subtitle="Connect your Gmail mailbox so messages, sent items, and drafts appear in your CRM timeline. Per-agent — your token is scoped to you and never shared."
+        breadcrumbs={BREADCRUMBS}
+      />
+      <PageBody>
+        <div className="max-w-2xl">
       {errorParam ? (
-        <div className="mt-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900">
           We couldn't connect your mailbox: <code>{errorParam}</code>. Try
           reconnecting; if the problem persists, contact support.
         </div>
@@ -57,7 +56,7 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
         </div>
       ) : null}
 
-      <div className="mt-6 rounded-md border border-neutral-200 bg-white p-4">
+      <div className="mt-6 rounded-md border border-neutral-200 bg-white p-4 shadow-sm">
         {status.status === 'connected' ? (
           <>
             <div className="flex items-center justify-between">
@@ -116,6 +115,8 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
           </>
         )}
       </div>
-    </div>
+        </div>
+      </PageBody>
+    </>
   )
 }

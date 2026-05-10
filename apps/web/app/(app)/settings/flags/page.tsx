@@ -3,16 +3,17 @@
 
 import { legacyAuth as auth } from '@/lib/auth/server'
 
+import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
+
+import { FlagToggle } from './toggle'
 
 const BREADCRUMBS = [
   { label: 'Settings', href: '/settings' },
   { label: 'Flags', href: '/settings/flags' },
 ]
-
-import { FlagToggle } from './toggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,12 +22,14 @@ export default async function FlagsSettingsPage() {
   const role = (sessionClaims?.['role'] as string | undefined) ?? 'agent'
   if (role !== 'admin' && role !== 'ops_manager') {
     return (
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Feature flags</h1>
-        <p className="mt-2 text-sm text-neutral-600">
-          Restricted to administrators and ops managers.
-        </p>
-      </div>
+      <>
+        <PageHeader title="Feature flags" breadcrumbs={BREADCRUMBS} />
+        <PageBody>
+          <p className="text-sm text-neutral-600">
+            Restricted to administrators and ops managers.
+          </p>
+        </PageBody>
+      </>
     )
   }
 
@@ -36,16 +39,11 @@ export default async function FlagsSettingsPage() {
   const stale = data.items.filter((f) => f.stale)
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Feature flags</h1>
-        <Link href="/settings" className="text-sm text-neutral-600 underline">
-          Back to settings
-        </Link>
-      </div>
-
+    <>
+      <PageHeader title="Feature flags" breadcrumbs={BREADCRUMBS} />
+      <PageBody>
       {stale.length > 0 ? (
-        <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           <strong>{stale.length} stale release flag{stale.length === 1 ? '' : 's'}</strong> —
           older than 30 days. Per CLAUDE.md §31, release flags should be removed
           within 30 days of full launch:
@@ -59,7 +57,7 @@ export default async function FlagsSettingsPage() {
         </div>
       ) : null}
 
-      <div className="mt-6 rounded-md border border-neutral-200 bg-white">
+      <div className="mt-6 rounded-md border border-neutral-200 bg-white shadow-sm">
         <Table>
           <Thead>
             <Tr>
@@ -119,6 +117,7 @@ export default async function FlagsSettingsPage() {
           </Tbody>
         </Table>
       </div>
-    </div>
+      </PageBody>
+    </>
   )
 }
