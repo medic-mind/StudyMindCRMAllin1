@@ -22,7 +22,6 @@ import { FUNCTIONS as TRENGO_FUNCTIONS } from '@studymind/integration-trengo/job
 import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 
 import { costSummaryWeekly } from './_boundary/cost-summary'
-import { lacontractDeadlineWatcherBoundary } from './_boundary/lacontract-deadline-watcher'
 import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
 import { uebaWeekly } from './_boundary/ueba'
 
@@ -34,7 +33,6 @@ export const dynamic = 'force-dynamic'
 // jobs ↔ integrations import cycle (CLAUDE.md §17).
 const BOUNDARY_FUNCTIONS = [
   costSummaryWeekly,
-  lacontractDeadlineWatcherBoundary,
   auditLogArchiveWeekly,
   uebaWeekly,
 ]
