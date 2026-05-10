@@ -18,7 +18,7 @@
         "buildCommand": "pnpm build --filter=web"
       },
       "deploy": {
-        "startCommand": "pnpm --filter @studymind/db prisma migrate deploy && pnpm --filter web start",
+        "startCommand": "pnpm --filter @studymind/db prisma migrate deploy && pnpm seed:super-admin || true && pnpm --filter web start",
         "healthcheckPath": "/api/health",
         "healthcheckTimeout": 30
       }
