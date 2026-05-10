@@ -15,6 +15,7 @@ import {
   verifyPassword,
 } from '@studymind/core/auth/passwords'
 import { BusinessError } from '@studymind/core/errors'
+import { decryptFieldById, encryptField } from '@studymind/core/safeguarding'
 
 import {
   auditedProcedure,
@@ -23,6 +24,12 @@ import {
   requireUser,
   router,
 } from '@/lib/trpc/builders'
+import {
+  buildRecoveryCodeRows,
+  generateRecoveryCodes,
+  generateTotpSecret,
+  verifyTotpCode,
+} from '@/lib/auth/totp'
 
 export const accountRouter = router({
   /** Profile summary for the /account landing page. */
@@ -36,6 +43,7 @@ export const accountRouter = router({
         name: true,
         lastSignInAt: true,
         mustResetPassword: true,
+        totpEnabledAt: true,
       },
     })
     if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -113,6 +121,164 @@ export const accountRouter = router({
 
       return { ok: true as const }
     }),
+
+  totp: router({
+    /**
+     * Stage 1 of TOTP enrolment: generate a fresh base32 secret and the
+     * `otpauth://` URL for the user's Authenticator app. The secret is NOT
+     * persisted yet — it round-trips through the client and is committed
+     * only when `confirmSetup` succeeds with a matching code.
+     */
+    beginSetup: auditedProcedureBypassMustReset.mutation(async ({ ctx }) => {
+      const actor = requireUser(ctx)
+      const secret = generateTotpSecret()
+      await ctx.audit({
+        action: 'auth.totp_setup_started',
+        target: { type: 'User', id: actor.id },
+      })
+      return {
+        secret: secret.base32,
+        otpauthUrl: secret.otpauthUrl(actor.email, 'StudyMind CRM'),
+      }
+    }),
+
+    /**
+     * Stage 2 of enrolment: verify the user's first code against the
+     * candidate secret, then encrypt + persist the secret and generate
+     * 10 recovery codes. The plaintext recovery codes are returned ONCE
+     * for one-time display.
+     */
+    confirmSetup: auditedProcedureBypassMustReset
+      .input(
+        z.object({
+          secret: z.string().min(16),
+          code: z.string().min(6).max(8),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireUser(ctx)
+        if (!verifyTotpCode({ secret: input.secret, code: input.code })) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'That code did not match. Try the latest code from your Authenticator app.',
+          })
+        }
+        const existing = await ctx.db.user.findUnique({
+          where: { id: actor.id },
+          select: { totpEnabledAt: true },
+        })
+        if (existing?.totpEnabledAt) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'Two-factor is already enabled. Disable it first to re-enrol.',
+          })
+        }
+
+        const encrypted = await encryptField(ctx.db, {
+          ownerType: 'User',
+          ownerId: actor.id,
+          fieldName: 'totp.secret',
+          plaintext: input.secret,
+          ctx: {
+            actorId: actor.id,
+            requestId: ctx.requestId,
+            purpose: 'totp.enrolment',
+          },
+        })
+
+        const { plain, hashes } = generateRecoveryCodes()
+        const rows = buildRecoveryCodeRows(actor.id, hashes)
+
+        await ctx.db.$transaction([
+          ctx.db.user.update({
+            where: { id: actor.id },
+            data: {
+              totpSecretCipherId: encrypted.id,
+              totpEnabledAt: new Date(),
+            },
+          }),
+          ctx.db.totpRecoveryCode.deleteMany({ where: { userId: actor.id } }),
+          ctx.db.totpRecoveryCode.createMany({ data: rows }),
+        ])
+
+        await ctx.audit({
+          action: 'auth.totp_enabled',
+          target: { type: 'User', id: actor.id },
+        })
+
+        return { recoveryCodes: plain }
+      }),
+
+    /**
+     * Disable MFA. Requires the current password AND a current TOTP code
+     * (defence in depth: a stolen session alone cannot turn off MFA). The
+     * encrypted secret + recovery codes are deleted in the same transaction.
+     */
+    disable: auditedProcedure
+      .input(
+        z.object({
+          currentPassword: z.string().min(1),
+          totpCode: z.string().min(6).max(8),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const actor = requireUser(ctx)
+        const row = await ctx.db.user.findUnique({
+          where: { id: actor.id },
+          select: {
+            id: true,
+            passwordHash: true,
+            totpSecretCipherId: true,
+            totpEnabledAt: true,
+          },
+        })
+        if (!row?.passwordHash) {
+          throw new TRPCError({ code: 'CONFLICT', message: 'No password set.' })
+        }
+        if (!row.totpEnabledAt || !row.totpSecretCipherId) {
+          throw new TRPCError({ code: 'CONFLICT', message: 'Two-factor is not enabled.' })
+        }
+        const passOk = await verifyPassword(input.currentPassword, row.passwordHash)
+        if (!passOk) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Current password is incorrect.',
+          })
+        }
+        const secret = await decryptFieldById(ctx.db, {
+          encryptedFieldId: row.totpSecretCipherId,
+          actorId: actor.id,
+          purpose: 'totp.disable',
+          requestId: ctx.requestId,
+        })
+        if (!verifyTotpCode({ secret, code: input.totpCode })) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'That code did not match. Try the latest code from your Authenticator app.',
+          })
+        }
+
+        await ctx.db.$transaction([
+          ctx.db.user.update({
+            where: { id: actor.id },
+            data: { totpEnabledAt: null, totpSecretCipherId: null },
+          }),
+          ctx.db.totpRecoveryCode.deleteMany({ where: { userId: actor.id } }),
+          // EncryptedField is keyed by (contactId, column); the encrypt path
+          // stored ownerId as contactId, so we can scope by both for safety.
+          ctx.db.encryptedField.deleteMany({
+            where: { id: row.totpSecretCipherId },
+          }),
+        ])
+
+        await ctx.audit({
+          action: 'auth.totp_disabled',
+          target: { type: 'User', id: actor.id },
+        })
+
+        return { ok: true as const }
+      }),
+  }),
 
   sessions: router({
     list: auditedProcedure.query(async ({ ctx }) => {

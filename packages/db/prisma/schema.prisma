@@ -201,6 +201,12 @@ model User {
   mustResetPassword    Boolean   @default(false)
   mfaSecretCipherId    String?
   mfaEnabled           Boolean   @default(false)
+  // Audit-A2 / ADR 0010: TOTP MFA. The encrypted secret lives in
+  // EncryptedField (KMS envelope; ownerType='User'). totpEnabledAt is the
+  // single source of truth for "MFA on" — the middleware enrolment gate
+  // and the credentials authorize callback both read it.
+  totpSecretCipherId   String?
+  totpEnabledAt        DateTime?
   lastSignInAt         DateTime?
   lastSignInIp         String?
   lastSignInUa         String?
@@ -224,8 +230,25 @@ model User {
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
   oauthStates             OAuthState[]
+  totpRecoveryCodes       TotpRecoveryCode[]
 
   @@index([email])
+}
+
+// Audit-A2: TOTP recovery codes. 10 codes generated at MFA enrolment time;
+// each one is single-use (`usedAt` is set when consumed). Codes are stored
+// as sha256 hashes — the plaintext is shown to the user once at setup and
+// never again.
+model TotpRecoveryCode {
+  id        String    @id
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
 }
 
 // ADR 0010: server-side session table. The cookie is JWT, but we keep a row
@@ -470,6 +493,11 @@ model Interaction {
   updatedById String?
   deletedAt   DateTime?
 
+  /// CLAUDE.md §21 retention. Soft-delete sets `softDeletedAt`; the row is
+  /// then hard-deleted after `pendingHardDeleteAt` elapses (default 30d).
+  softDeletedAt        DateTime?
+  pendingHardDeleteAt  DateTime?
+
   contact    Contact?    @relation("ContactInteractions", fields: [contactId], references: [id])
   family     Family?     @relation("FamilyInteractions", fields: [familyId], references: [id])
   tender     Tender?     @relation("TenderInteractions", fields: [tenderId], references: [id])
@@ -480,6 +508,7 @@ model Interaction {
   @@index([tenderId, occurredAt])
   @@index([laContractId, occurredAt])
   @@index([type, occurredAt])
+  @@index([pendingHardDeleteAt])
 }
 
 // -----------------------------------------------------------------------------

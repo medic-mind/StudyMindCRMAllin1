@@ -19,11 +19,14 @@ import { z } from 'zod'
 import { BusinessError } from '@studymind/core/errors'
 import { assertNotLocked, recordFailedAttempt, recordSuccessfulSignIn } from '@studymind/core/auth/lockout'
 import { generateToken, hashToken, verifyPassword } from '@studymind/core/auth/passwords'
+import { decryptFieldById } from '@studymind/core/safeguarding'
+import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 
 import type { UserRole } from '@/lib/trpc/builders'
 
 import { pickPrimaryRole } from './pick-primary-role'
+import { verifyRecoveryCode, verifyTotpCode } from './totp'
 
 class AuthError extends CredentialsSignin {
   override code: string
@@ -36,6 +39,11 @@ class AuthError extends CredentialsSignin {
 const credentialsSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  // CLAUDE.md §20: optional TOTP factor. Empty / missing means the client
+  // has not yet been told MFA is required; the authorize() callback throws
+  // TOTP_REQUIRED in that case so the UI can render the second step.
+  totpCode: z.string().optional(),
+  recoveryCode: z.string().optional(),
 })
 
 const isProd = process.env.NODE_ENV === 'production'
@@ -69,13 +77,15 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
+        totpCode: { label: 'TOTP code', type: 'text' },
+        recoveryCode: { label: 'Recovery code', type: 'text' },
       },
       async authorize(credentials, req) {
         const parsed = credentialsSchema.safeParse(credentials)
         if (!parsed.success) {
           throw new AuthError('INVALID_CREDENTIALS')
         }
-        const { email, password } = parsed.data
+        const { email, password, totpCode, recoveryCode } = parsed.data
 
         const user = await db.user.findUnique({
           where: { email: email.toLowerCase() },
@@ -89,6 +99,8 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
             failedSignInAttempts: true,
             lockedUntil: true,
             deactivatedAt: true,
+            totpEnabledAt: true,
+            totpSecretCipherId: true,
           },
         })
         // Generic error path — never reveal that an account does not exist.
@@ -113,6 +125,51 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
 
         if (!user.emailVerifiedAt) {
           throw new AuthError('EMAIL_NOT_VERIFIED')
+        }
+
+        // CLAUDE.md §20: TOTP gate. If MFA is enabled and the client has not
+        // yet supplied a code, throw TOTP_REQUIRED so the UI can render the
+        // second-step form. If a code/recovery is supplied, verify it; on
+        // failure we return the generic INVALID_CREDENTIALS to avoid leaking
+        // whether the password vs the second factor was wrong.
+        if (user.totpEnabledAt && user.totpSecretCipherId) {
+          if (!totpCode && !recoveryCode) {
+            throw new AuthError('TOTP_REQUIRED')
+          }
+          let factorOk = false
+          if (totpCode) {
+            const secret = await decryptFieldById(db, {
+              encryptedFieldId: user.totpSecretCipherId,
+              actorId: user.id,
+              purpose: 'auth.totp_verify',
+            })
+            factorOk = verifyTotpCode({ secret, code: totpCode })
+            if (!factorOk) {
+              await writeAuditLogEntry(db, {
+                actorId: user.id,
+                action: 'auth.totp_failed',
+                target: { type: 'User', id: user.id },
+              })
+            }
+          }
+          if (!factorOk && recoveryCode) {
+            factorOk = await verifyRecoveryCode({
+              db,
+              userId: user.id,
+              code: recoveryCode,
+            })
+            if (factorOk) {
+              await writeAuditLogEntry(db, {
+                actorId: user.id,
+                action: 'auth.recovery_code_used',
+                target: { type: 'User', id: user.id },
+              })
+            }
+          }
+          if (!factorOk) {
+            await recordFailedAttempt(user, db)
+            throw new AuthError('INVALID_CREDENTIALS')
+          }
         }
 
         const headers = req?.headers as Headers | undefined
@@ -141,6 +198,9 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
           email: user.email,
           name: user.name ?? null,
           mustResetPassword: user.mustResetPassword,
+          totpEnabledAt: user.totpEnabledAt
+            ? user.totpEnabledAt.toISOString()
+            : null,
           sessionId,
         }
       },
@@ -154,19 +214,26 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
         token.email = user.email ?? token.email
         token.mustResetPassword = (user as { mustResetPassword?: boolean }).mustResetPassword ?? false
         token.sid = (user as { sessionId?: string }).sessionId
+        token.totpEnabledAt =
+          (user as { totpEnabledAt?: string | null }).totpEnabledAt ?? null
         token.roles = await loadRoles(user.id as string)
         token.rolesLoadedAt = Date.now()
       } else if (trigger === 'update' || shouldRefreshRoles(token)) {
         if (typeof token.uid === 'string') {
           token.roles = await loadRoles(token.uid)
           token.rolesLoadedAt = Date.now()
-          // Refresh mustResetPassword from the database so the change-password
-          // flow takes effect on the next request without a forced re-sign-in.
+          // Refresh mustResetPassword + totpEnabledAt so middleware reflects
+          // the latest state without a forced re-sign-in.
           const fresh = await db.user.findUnique({
             where: { id: token.uid },
-            select: { mustResetPassword: true },
+            select: { mustResetPassword: true, totpEnabledAt: true },
           })
-          if (fresh) token.mustResetPassword = fresh.mustResetPassword
+          if (fresh) {
+            token.mustResetPassword = fresh.mustResetPassword
+            token.totpEnabledAt = fresh.totpEnabledAt
+              ? fresh.totpEnabledAt.toISOString()
+              : null
+          }
         }
       }
       // Server-side revocation: if the session id baked into the JWT no
@@ -194,6 +261,8 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
         session.user.roles = roles
         session.user.role = pickPrimaryRole(roles)
         session.user.mustResetPassword = Boolean(token.mustResetPassword)
+        session.user.totpEnabledAt =
+          typeof token.totpEnabledAt === 'string' ? token.totpEnabledAt : null
         if (typeof token.sid === 'string') session.user.sessionId = token.sid
       }
       return session

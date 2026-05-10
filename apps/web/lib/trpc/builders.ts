@@ -27,6 +27,8 @@ export interface SessionUser {
   email: string
   role: UserRole
   mustResetPassword?: boolean
+  /** ISO string when MFA was last enabled, or null. CLAUDE.md §20. */
+  totpEnabledAt?: string | null
   /** The Session row id (when one exists for this cookie). ADR 0010 chunk 7. */
   sessionId?: string
 }

@@ -14,6 +14,8 @@ declare module 'next-auth' {
       role: UserRole
       roles: UserRole[]
       mustResetPassword: boolean
+      /** ISO string when MFA was last enabled, or null. CLAUDE.md §20. */
+      totpEnabledAt: string | null
       /** The Session row id this cookie maps to. Used by the sessions UI. */
       sessionId?: string
     }
@@ -23,6 +25,7 @@ declare module 'next-auth' {
     id?: string
     mustResetPassword?: boolean
     sessionId?: string
+    totpEnabledAt?: string | null
   }
 }
 
@@ -33,5 +36,6 @@ declare module 'next-auth/jwt' {
     roles?: UserRole[]
     rolesLoadedAt?: number
     mustResetPassword?: boolean
+    totpEnabledAt?: string | null
   }
 }

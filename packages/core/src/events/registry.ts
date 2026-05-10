@@ -110,6 +110,12 @@ export const EVENT_NAMES = [
   'auth.user_deactivated',
   'auth.user_reactivated',
   'auth.super_admin_seeded',
+  // Audit-A2 / CLAUDE.md §20: TOTP MFA lifecycle and authn events.
+  'auth.totp_setup_started',
+  'auth.totp_enabled',
+  'auth.totp_disabled',
+  'auth.totp_failed',
+  'auth.recovery_code_used',
 
   // OAuth (Gmail per-agent — ADR 0012)
   'gmail.oauth_connected',

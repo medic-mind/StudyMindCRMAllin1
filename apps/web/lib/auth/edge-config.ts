@@ -43,6 +43,17 @@ export const authEdgeConfig: NextAuthConfig = {
       if (token && session.user) {
         if (typeof token.uid === 'string') session.user.id = token.uid
         session.user.mustResetPassword = Boolean(token.mustResetPassword)
+        // CLAUDE.md §20 — middleware enrolment gate reads totpEnabledAt to
+        // decide if a privileged-role user must be redirected to setup-2fa.
+        session.user.totpEnabledAt =
+          typeof token.totpEnabledAt === 'string' ? token.totpEnabledAt : null
+        // Roles are JWT-only on the edge; pull them through so the
+        // mandatory-MFA gate can branch on role without a DB read.
+        if (Array.isArray(token.roles)) {
+          session.user.roles = token.roles as typeof session.user.roles
+          session.user.role =
+            (token.roles[0] as typeof session.user.role) ?? 'read_only'
+        }
       }
       return session
     },
