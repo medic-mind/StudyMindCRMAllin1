@@ -26,6 +26,7 @@ export interface SessionUser {
   id: string
   email: string
   role: UserRole
+  mustResetPassword?: boolean
 }
 
 export type AuditCallInput = Omit<WriteAuditLogEntryInput, 'actorId' | 'requestId'>
@@ -153,7 +154,34 @@ const auditMiddleware = t.middleware(async ({ ctx, type, path, next }) => {
   return result
 })
 
+/**
+ * Gate procedures behind `mustResetPassword`. A user with the flag set may
+ * only call procedures that opt out via `bypassMustReset` (the change-
+ * password procedure, and the sign-out path). Everything else returns
+ * FORBIDDEN until they pick a new password. ADR 0010.
+ */
+const mustResetPasswordMiddleware = t.middleware(async ({ ctx, next }) => {
+  const user = ctx.user
+  if (user?.mustResetPassword) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'You must set a new password before continuing.',
+    })
+  }
+  return next()
+})
+
 export const protectedProcedure = publicProcedure
+  .use(csrfMiddleware)
+  .use(enforceUserAndRateLimitMiddleware)
+  .use(mustResetPasswordMiddleware)
+
+/**
+ * Same as protectedProcedure but skips the mustResetPassword gate. Intended
+ * for the change-password procedure and any other path that the user must
+ * be allowed to reach while holding the reset flag.
+ */
+export const protectedProcedureBypassMustReset = publicProcedure
   .use(csrfMiddleware)
   .use(enforceUserAndRateLimitMiddleware)
 

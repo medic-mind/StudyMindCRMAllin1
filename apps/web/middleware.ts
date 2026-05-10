@@ -1,40 +1,78 @@
-// HTTP middleware. Auth gating returns in chunk 5 of ADR 0010 once
-// Auth.js v5 is wired in. Until then this is a no-op pass-through that
-// only enforces CSP, request id, and access logging.
+// HTTP middleware. ADR 0010 chunk 5: real auth gate via NextAuth v5.
 //
+// We use an edge-safe NextAuth config (lib/auth/edge-config) because the
+// full config pulls Prisma + bcrypt which the Edge runtime cannot run.
+// The JWT cookie carries everything middleware needs.
+//
+// Public paths bypass the session check (sign-in, password reset, webhooks,
+// healthcheck, OAuth callbacks). Everything else redirects to /sign-in.
 // CLAUDE.md §25 (observability), §44.2 (CSP).
 
+import NextAuth from 'next-auth'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 import { logger } from '@studymind/core/logger'
 
+import { authEdgeConfig } from '@/lib/auth/edge-config'
 import { buildCsp, generateNonce } from '@/lib/security/csp'
 
-// Paths we never log to keep Axiom signal-to-noise high.
-function shouldSkipAccessLog(pathname: string): boolean {
-  if (pathname === '/api/health') return true
-  if (pathname.startsWith('/_next')) return true
-  if (pathname.match(/\.[a-zA-Z0-9]{2,5}$/)) return true // static assets
+const { auth: authMiddleware } = NextAuth(authEdgeConfig)
+
+const PUBLIC_PATH_PREFIXES = [
+  '/sign-in',
+  '/sign-up',
+  '/verify',
+  '/verify-email-sent',
+  '/forgot',
+  '/reset',
+  '/auth/error',
+  '/api/auth',
+  '/api/webhooks',
+  '/api/oauth/gmail/callback',
+  '/api/health',
+  '/_next',
+]
+
+function isPublicPath(pathname: string): boolean {
+  if (pathname === '/') return true
+  if (
+    PUBLIC_PATH_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  ) {
+    return true
+  }
+  if (/\.[a-zA-Z0-9]{2,5}$/.test(pathname)) return true
   return false
 }
 
-export default async function middleware(req: NextRequest): Promise<NextResponse> {
+function shouldSkipAccessLog(pathname: string): boolean {
+  if (pathname === '/api/health') return true
+  if (pathname.startsWith('/_next')) return true
+  if (pathname.match(/\.[a-zA-Z0-9]{2,5}$/)) return true
+  return false
+}
+
+export default authMiddleware((req) => {
   const start = Date.now()
   const requestId = req.headers.get('x-request-id') ?? cryptoRandomId()
-  // Per-request CSP nonce. Strict CSP — no unsafe-inline (CLAUDE.md §44.2).
   const nonce = generateNonce()
   const csp = buildCsp(nonce)
-  // Forward the nonce to RSC via a request header so layouts/pages can read
-  // it through `headers()` and stamp <script> tags with nonce attributes.
   const requestHeaders = new Headers(req.headers)
   requestHeaders.set('x-csp-nonce', nonce)
   requestHeaders.set('x-request-id', requestId)
 
+  const pathname = req.nextUrl.pathname
+  const session = req.auth as { user?: { id: string } } | null
+
+  if (!session && !isPublicPath(pathname)) {
+    const signInUrl = new URL('/sign-in', req.nextUrl.origin)
+    signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search)
+    return NextResponse.redirect(signInUrl)
+  }
+
   const res = NextResponse.next({ request: { headers: requestHeaders } })
   res.headers.set('x-request-id', requestId)
   res.headers.set('Content-Security-Policy', csp)
-  const pathname = req.nextUrl.pathname
   if (!shouldSkipAccessLog(pathname)) {
     logger.info(
       {
@@ -43,17 +81,16 @@ export default async function middleware(req: NextRequest): Promise<NextResponse
         path: pathname,
         status: res.status,
         latency_ms: Date.now() - start,
-        actor_id: null,
+        actor_id: session?.user?.id ?? null,
         user_agent: req.headers.get('user-agent'),
       },
       'http_access',
     )
   }
   return res
-}
+}) as unknown as (req: NextRequest) => Promise<NextResponse>
 
 function cryptoRandomId(): string {
-  // Edge runtime — Web Crypto. 16 hex chars is enough for log correlation.
   const bytes = new Uint8Array(8)
   crypto.getRandomValues(bytes)
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')

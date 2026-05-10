@@ -5,7 +5,7 @@
 // Inngest pipeline persisted a freshly-signed test event to ProviderEvent.
 // Returns `{ exists, receivedAt }` for the given (provider, eventId).
 
-import { auth } from '@/lib/auth/stub'
+import { legacyAuth as auth } from '@/lib/auth/server'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { withSentry } from '@studymind/core/observability/sentry'

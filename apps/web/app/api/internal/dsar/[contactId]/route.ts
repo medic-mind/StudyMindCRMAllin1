@@ -8,7 +8,7 @@
 // The export is generated on demand and never stored server-side. The
 // operator's local download is the chain of custody.
 
-import { auth } from '@/lib/auth/stub'
+import { legacyAuth as auth } from '@/lib/auth/server'
 
 import { buildDsarExport } from '@studymind/core/compliance/dsar'
 import { withSentry } from '@studymind/core/observability/sentry'
