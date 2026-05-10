@@ -30,6 +30,14 @@ COPY . .
 # package .bin directories were never materialised). pnpm is fast on cache hit.
 RUN pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile
 RUN pnpm --filter @studymind/db exec prisma generate
+# Build-time-only placeholder keys. ClerkProvider initialises at module-load
+# time during static generation; without a key Next's build crashes before
+# runtime env vars from Railway get a chance. These are PUBLISHABLE / DUMMY
+# values — they have no effect at runtime because Railway env overrides them
+# when the container actually serves traffic.
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_d29ya2Jvb2staGVyYWxkLTk0LmNsZXJrLmFjY291bnRzLmRldiQ \
+    CLERK_SECRET_KEY=sk_test_BUILD_PLACEHOLDER \
+    SKIP_ENV_VALIDATION=1
 RUN pnpm build
 
 # ---- runner (web) ----
