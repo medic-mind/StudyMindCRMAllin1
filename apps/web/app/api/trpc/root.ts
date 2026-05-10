@@ -10,6 +10,7 @@ import { familyRouter } from './routers/family'
 import { financeRouter } from './routers/finance'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
+import { oauthRouter } from './routers/oauth'
 import { reportsRouter } from './routers/reports'
 import { safeguardingRouter } from './routers/safeguarding'
 
@@ -22,6 +23,7 @@ export const appRouter = router({
   finance: financeRouter,
   inbox: inboxRouter,
   interaction: interactionRouter,
+  oauth: oauthRouter,
   reports: reportsRouter,
   safeguarding: safeguardingRouter,
 })

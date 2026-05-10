@@ -207,6 +207,12 @@ model User {
   failedSignInAttempts Int       @default(0)
   lockedUntil          DateTime?
 
+  // ADR 0012: per-agent Gmail OAuth. Status is free text (see migration).
+  // gmailRefreshTokenCipherId references EncryptedField.id, not enforced as
+  // a foreign key — lifecycle is lock-stepped in the OAuth route handlers.
+  gmailConnectionStatus     String?
+  gmailRefreshTokenCipherId String?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?
@@ -1059,7 +1065,7 @@ model MandateIntent {
 // -----------------------------------------------------------------------------
 
 model TrengoToken {
-  /// Clerk user id (== User.id). One token per agent.
+  /// User.id. One Trengo token per agent. (Pre-ADR-0010 this was a Clerk id.)
   agentId         String   @id
   tokenCiphertext Bytes
   tokenIv         Bytes
@@ -1171,7 +1177,7 @@ model AsanaWebhook {
 }
 
 model GmailMailbox {
-  /// Clerk user id (== User.id). One mailbox watch per agent.
+  /// User.id. One mailbox watch per agent. (Pre-ADR-0010 this was a Clerk id.)
   agentId        String    @id
   address        String    @unique
   historyId      String?
@@ -1244,7 +1250,8 @@ model DriftSample {
 }
 
 model GmailToken {
-  /// Clerk user id (== User.id). One OAuth refresh token per agent.
+  /// User.id. Legacy refresh-token table; ADR 0012 migrated active rows to
+  /// EncryptedField via User.gmailRefreshTokenCipherId. Kept for fallback.
   agentId         String   @id
   tokenCiphertext Bytes
   tokenIv         Bytes

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { legacyAuth as auth } from '@/lib/auth/server'
+import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
 
 import { SignOutButton } from './sign-out-button'
 
@@ -51,7 +52,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <SignOutButton />
         </div>
       </aside>
-      <main className="flex-1 p-6">{children}</main>
+      <main className="flex-1">
+        <GmailReconnectBanner />
+        <div className="p-6">{children}</div>
+      </main>
     </div>
   )
 }

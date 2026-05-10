@@ -92,7 +92,7 @@ The CRM is internal but it is the daily workspace for the people speaking to fam
 ├── apps/
 │   └── web/                    # Next.js app — the only deployable web service
 │       ├── app/                # App Router pages and layouts
-│       │   ├── (auth)/         # Clerk sign in pages
+│       │   ├── (auth)/         # NextAuth v5 sign-in / sign-up / verify (ADR 0010)
 │       │   ├── (app)/          # Authenticated CRM shell
 │       │   │   ├── inbox/
 │       │   │   ├── contacts/
@@ -614,7 +614,7 @@ pnpm tunnel                     # ngrok forwards :3000, prints public URL
 
 Required local services: Postgres 15, Redis 7. Provided via `docker-compose.yml`. Run `docker compose up -d` before `pnpm dev`.
 
-**Local users.** `pnpm db:reset` also seeds Clerk dev users via the Clerk Backend API (see `prisma/seed.ts`). Seeded emails follow `<role>@dev.studymind` (e.g. `admin@dev.studymind`, `agent@dev.studymind`, `dsl@dev.studymind`). Passwords are documented in 1Password vault `StudyMind CRM Dev`.
+**Local users.** `pnpm db:reset` also seeds local NextAuth users (ADR 0010) directly into Postgres (see `prisma/seed.ts`). Seeded emails follow `<role>@dev.studymind` (e.g. `admin@dev.studymind`, `agent@dev.studymind`, `dsl@dev.studymind`). Passwords are documented in 1Password vault `StudyMind CRM Dev`.
 
 ### 22.1 Environment matrix
 
@@ -633,7 +633,7 @@ Required local services: Postgres 15, Redis 7. Provided via `docker-compose.yml`
 | Gmail | dev account | dev account | dev account | live |
 | OpenAI | shared dev key | shared dev key | shared staging key | live key with cost alerts |
 | Sentry / Axiom | local emit-only | preview project | staging project | production project |
-| Clerk | dev instance | dev instance | staging instance | production instance |
+| Auth | local Postgres (NextAuth v5) | per-PR Postgres | staging Postgres | production Postgres (ADR 0010) |
 
 PR previews are real environments — they exercise the full stack. They reset their database on every push.
 
@@ -995,7 +995,7 @@ When asked something that touches money, safeguarding, or external mutation:
 
 Day 1
 - [ ] Get added to GitHub `medic-mind/studymindcrmallin1`, Railway project, 1Password vault, Sentry, Axiom, PagerDuty, Slack channels (`#crm-eng`, `#crm-incidents`, `#crm-finops`, `#crm-alerts`).
-- [ ] Clone, install, run `pnpm dev` and `pnpm dev:worker`. Sign in via Clerk dev.
+- [ ] Clone, install, run `pnpm dev` and `pnpm dev:worker`. Sign in with the seeded NextAuth dev user (ADR 0010).
 - [ ] Read CLAUDE.md fully. Skim `docs/adr/`.
 
 Day 2
@@ -1147,9 +1147,9 @@ This section is the working threat model. It is not exhaustive; it is the list o
 ### 44.2 Controls
 
 - **Secrets.** Never in repo. Railway env vars mirror 1Password. Rotated on a schedule documented in `docs/runbooks/secret-rotation.md`. Per-agent OAuth and Trengo tokens are KMS-encrypted at rest.
-- **Auth.** Clerk MFA mandatory for all roles. Sessions max 12 hours; idle timeout 30 minutes. Device binding on for `admin`, `finance`, `dsl`.
+- **Auth.** Self-hosted NextAuth v5 + Postgres (ADR 0010). MFA mandatory for all roles. Sessions max 12 hours; idle timeout 30 minutes. Device binding on for `admin`, `finance`, `dsl`.
 - **Webhook forgery.** Signature verification on every webhook before any DB write. Timestamp window enforced where the provider gives one (Slack 5 min, Stripe tolerance default).
-- **CSRF.** tRPC mutations require the Clerk session cookie plus an `Origin` check. Webhooks are exempt and authenticated by signature instead.
+- **CSRF.** tRPC mutations require the NextAuth session cookie plus an `Origin` check. Webhooks are exempt and authenticated by signature instead.
 - **SSRF.** Outbound HTTP from worker uses an allowlist of provider domains. Anything else fails closed.
 - **Injection.** Prisma parameterised queries everywhere. No raw SQL outside migrations. Zod validates every external input.
 - **Rate limiting.** Per-user tRPC limits in Redis; per-IP limits at the edge for unauthenticated routes.
@@ -1219,7 +1219,7 @@ Backups exist; what matters is that we have rehearsed the restore. This section 
 - **Postgres production.** Railway PITR (continuous WAL, 7-day window) plus a nightly logical dump shipped to `s3://studymind-crm-backups-prod/postgres/`. Weekly dumps are retained for 12 months; daily for 30 days.
 - **S3 buckets.** Versioning on, MFA delete on for the production buckets. Cross-region replication to `eu-west-1`.
 - **KMS keys.** AWS-managed, multi-region for the production CMK so a regional outage does not lock the data.
-- **Clerk and Inngest.** Provider-managed; we keep export scripts in `scripts/dr/` to dump user lists and function manifests weekly to S3 so we can rebuild.
+- **Auth and Inngest.** Auth is self-hosted in Postgres (ADR 0010), so it falls under the Postgres backup story. Inngest is provider-managed; we keep export scripts in `scripts/dr/` to dump function manifests weekly to S3 so we can rebuild.
 - **Provider events.** `ProviderEvent` is the replay log of last resort. It is included in the Postgres backup; nothing else needs special handling for replay.
 
 ### 46.3 Restoration playbook (summary)

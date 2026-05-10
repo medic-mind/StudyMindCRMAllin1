@@ -110,6 +110,14 @@ export const EVENT_NAMES = [
   'auth.user_deactivated',
   'auth.user_reactivated',
   'auth.super_admin_seeded',
+
+  // OAuth (Gmail per-agent — ADR 0012)
+  'gmail.oauth_connected',
+  'gmail.oauth_disconnected',
+  'gmail.oauth_denied',
+  'gmail.oauth_scope_mismatch',
+  'gmail.oauth_invalid_state',
+  'gmail.oauth_needs_reconnect',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
