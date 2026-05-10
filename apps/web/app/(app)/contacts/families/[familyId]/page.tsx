@@ -112,7 +112,7 @@ export default async function FamilyDetailPage({
                     <Td>
                       <Link
                         href={`/contacts/${m.contactId}`}
-                        className="text-blue-700 underline"
+                        className="text-primary-700 hover:underline"
                       >
                         {m.name || 'Unnamed contact'}
                       </Link>

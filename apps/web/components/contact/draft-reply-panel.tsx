@@ -43,9 +43,9 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
   }
 
   return (
-    <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm">
+    <div className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-slate-900">Draft reply</h3>
+        <h3 className="font-semibold text-neutral-900">Draft reply</h3>
         <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
           AI-drafted — review before sending
         </span>
@@ -53,11 +53,11 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
 
       <div className="mt-3 grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-slate-700">Channel</span>
+          <span className="text-xs text-neutral-700">Channel</span>
           <select
             value={channel}
             onChange={(e) => setChannel(e.target.value as Channel)}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-neutral-300 bg-white px-2 py-1"
           >
             <option value="email">Email</option>
             <option value="whatsapp">WhatsApp</option>
@@ -66,12 +66,12 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-slate-700">Goal of reply</span>
+          <span className="text-xs text-neutral-700">Goal of reply</span>
           <input
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
             placeholder="e.g. confirm the trial slot for Tuesday 12 May"
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="rounded border border-neutral-300 bg-white px-2 py-1"
           />
         </label>
       </div>
@@ -81,12 +81,12 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
           type="button"
           onClick={handleGenerate}
           disabled={generate.isPending}
-          className="rounded bg-blue-600 px-3 py-1 text-white disabled:opacity-50"
+          className="rounded bg-primary-600 px-3 py-1 text-white hover:bg-primary-700 disabled:opacity-50"
         >
           {generate.isPending ? 'Drafting…' : 'Generate draft'}
         </button>
         {promptVersion && (
-          <span className="text-xs text-slate-500">prompt {promptVersion}</span>
+          <span className="text-xs text-neutral-500">prompt {promptVersion}</span>
         )}
       </div>
 
@@ -102,7 +102,7 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           rows={8}
-          className="mt-3 w-full rounded border border-slate-300 bg-white p-2 font-mono text-sm"
+          className="mt-3 w-full rounded border border-neutral-300 bg-white p-2 font-mono text-sm"
         />
       )}
     </div>

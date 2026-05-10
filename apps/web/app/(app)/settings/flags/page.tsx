@@ -80,8 +80,8 @@ export default async function FlagsSettingsPage() {
                   <span
                     className={
                       f.kind === 'operational'
-                        ? 'rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-800'
-                        : 'rounded bg-purple-50 px-2 py-0.5 text-xs text-purple-800'
+                        ? 'rounded bg-primary-50 px-2 py-0.5 text-xs text-primary-800'
+                        : 'rounded bg-violet-50 px-2 py-0.5 text-xs text-violet-800'
                     }
                   >
                     {f.kind}
