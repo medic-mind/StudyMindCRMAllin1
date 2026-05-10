@@ -62,12 +62,26 @@ export default authMiddleware((req) => {
   requestHeaders.set('x-request-id', requestId)
 
   const pathname = req.nextUrl.pathname
-  const session = req.auth as { user?: { id: string } } | null
+  const session = req.auth as
+    | { user?: { id: string; mustResetPassword?: boolean } }
+    | null
 
   if (!session && !isPublicPath(pathname)) {
     const signInUrl = new URL('/sign-in', req.nextUrl.origin)
     signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search)
     return NextResponse.redirect(signInUrl)
+  }
+
+  // Force-reset gate: a user holding mustResetPassword can only reach the
+  // change-password page and the sign-out path. ADR 0010, chunk 7.
+  if (
+    session?.user?.mustResetPassword &&
+    !isPublicPath(pathname) &&
+    pathname !== '/account/change-password' &&
+    pathname !== '/api/auth/signout' &&
+    !pathname.startsWith('/api/auth/')
+  ) {
+    return NextResponse.redirect(new URL('/account/change-password', req.nextUrl.origin))
   }
 
   const res = NextResponse.next({ request: { headers: requestHeaders } })

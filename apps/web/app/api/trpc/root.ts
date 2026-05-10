@@ -2,6 +2,7 @@
 
 import { router } from '@/lib/trpc/builders'
 
+import { accountRouter } from './routers/account'
 import { adminRouter } from './routers/admin'
 import { contactRouter } from './routers/contact'
 import { costRouter } from './routers/cost'
@@ -13,6 +14,7 @@ import { reportsRouter } from './routers/reports'
 import { safeguardingRouter } from './routers/safeguarding'
 
 export const appRouter = router({
+  account: accountRouter,
   admin: adminRouter,
   contact: contactRouter,
   cost: costRouter,
