@@ -33,11 +33,8 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studymind_e2e
-      # Format-valid dummy Clerk keys, mirrored from ci.yml so the build
-      # succeeds. Real sign-in needs a live Clerk dev instance — provision
-      # via E2E_USER_EMAIL / E2E_USER_PASSWORD secrets.
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_CLERK_PUBLISHABLE_KEY || 'pk_test_Y2xlcmsuZXhhbXBsZS5jb20k' }}
-      CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY || 'sk_test_dummy_dummy_dummy_dummy_dummy_dum' }}
+      # Auth.js v5 (ADR 0010): placeholder secret for build/CI runs.
+      AUTH_SECRET: ci-build-placeholder
       E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
       E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
 

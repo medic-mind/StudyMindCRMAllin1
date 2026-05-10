@@ -24,6 +24,41 @@ export interface RaiseConcernCtx {
   notifyDsl?: (input: NotifyDslInput) => Promise<void>
   /** Inngest sender — defaults to a no-op stub. Used to fire dsl/page. */
   sendEvent?: (input: { name: string; data: Record<string, unknown> }) => Promise<void>
+  /**
+   * Page on-call (PagerDuty) for `immediate` urgency. CLAUDE.md §42.1.
+   * Boundary-injected so packages/core stays free of integration deps.
+   */
+  pageOnCall?: (input: PageOnCallInput) => Promise<void>
+  /**
+   * Email the DPO with a redacted alert for `immediate` urgency. CLAUDE.md
+   * §42.1. Body must contain no plaintext from the concern.
+   */
+  emailDpo?: (input: EmailDpoInput) => Promise<void>
+  /** Slack `#crm-safeguarding-alerts` post. Boundary-injected. */
+  postSafeguardingAlert?: (input: SafeguardingAlertInput) => Promise<void>
+}
+
+export interface PageOnCallInput {
+  flagId: string
+  contactId: string
+  urgency: Urgency
+  /** Stable PagerDuty dedup key; same flagId collapses re-pages. */
+  dedupKey: string
+}
+
+export interface EmailDpoInput {
+  flagId: string
+  contactId: string
+  urgency: Urgency
+  /** Already redacted — no plaintext concern body. */
+  redactedSummary: string
+}
+
+export interface SafeguardingAlertInput {
+  flagId: string
+  contactId: string
+  urgency: Urgency
+  redactedSummary: string
 }
 
 export interface RaiseConcernInput {
@@ -185,6 +220,34 @@ export async function raiseConcern(
       name: 'dsl/page',
       data: { dslUserId, flagId, contactId: input.contactId },
     })
+
+    // Three-way fan-out for immediate concerns. CLAUDE.md §42.1.
+    // We do NOT include any plaintext from `input.body` in any of these —
+    // body lives encrypted in EncryptedField.
+    if (ctx.pageOnCall) {
+      await ctx.pageOnCall({
+        flagId,
+        contactId: input.contactId,
+        urgency: input.urgency,
+        dedupKey: `sg-imm:${flagId}`,
+      })
+    }
+    if (ctx.postSafeguardingAlert) {
+      await ctx.postSafeguardingAlert({
+        flagId,
+        contactId: input.contactId,
+        urgency: input.urgency,
+        redactedSummary,
+      })
+    }
+    if (ctx.emailDpo) {
+      await ctx.emailDpo({
+        flagId,
+        contactId: input.contactId,
+        urgency: input.urgency,
+        redactedSummary,
+      })
+    }
   }
 
   return { flagId }
