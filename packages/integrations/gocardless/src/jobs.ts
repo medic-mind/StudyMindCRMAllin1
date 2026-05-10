@@ -7,6 +7,7 @@ import { createId } from '@paralleldrive/cuid2'
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
   linkReplacedMandate,
+  recomputeAtRiskForFamily,
   resolveFamilyByGcMandate,
   revertGcPayment,
   syncGcMandate,
@@ -260,6 +261,16 @@ export const gocardlessEventReceived = inngest.createFunction(
         },
       })
     })
+
+    // 5b. Recompute at-risk for this family — late failures count as a
+    // failed Direct Debit signal. CLAUDE.md §6.4.
+    if (persisted.kind === 'payment') {
+      await step.run('recompute-at-risk', async () => {
+        await recomputeAtRiskForFamily(db, familyId, {
+          requestId: `gocardless:${eventId}:at-risk`,
+        })
+      })
+    }
 
     // 6. Mark the ProviderEvent processed.
     await step.run('mark-processed', async () => {

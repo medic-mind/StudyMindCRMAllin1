@@ -6,6 +6,7 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
+  recomputeAtRiskForFamily,
   resolveFamilyByStripeCustomer,
   syncStripeInvoice,
   syncStripeSubscription,
@@ -180,7 +181,16 @@ export const stripeEventReceived = inngest.createFunction(
       })
     })
 
-    // 5. Mark the ProviderEvent row processed.
+    // 5. Recompute at-risk derivation for this Family. CLAUDE.md §6.4.
+    if (persisted.familyId) {
+      await step.run('recompute-at-risk', async () => {
+        await recomputeAtRiskForFamily(db, persisted.familyId!, {
+          requestId: `stripe:${eventId}:at-risk`,
+        })
+      })
+    }
+
+    // 6. Mark the ProviderEvent row processed.
     await step.run('mark-processed', async () => {
       await db.providerEvent.update({
         where: { id: data.providerEventRowId },

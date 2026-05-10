@@ -17,6 +17,7 @@ import {
   type ChurnSignals,
 } from '@studymind/ai'
 import { writeAuditLogEntry } from '@studymind/audit'
+import { recomputeAtRiskForFamily } from '@studymind/core/finance'
 import { db } from '@studymind/db'
 
 import { inngest } from '../client'
@@ -143,6 +144,12 @@ export const aiScoreChurnRisk = inngest.createFunction(
         await db.family.update({
           where: { id: family.id },
           data: { churnScore: out.score },
+        })
+
+        // Recompute at-risk derivation now that a fresh churn score has
+        // landed. CLAUDE.md §6.4. Idempotent — only writes on transition.
+        await recomputeAtRiskForFamily(db, family.id, {
+          requestId: `churn:${family.id}:${now.toISOString().slice(0, 10)}`,
         })
 
         if (out.score < CHURN_TASK_THRESHOLD) {

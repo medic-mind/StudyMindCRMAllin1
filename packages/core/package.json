@@ -15,6 +15,7 @@
     "./auth/passwords": "./src/auth/passwords.ts",
     "./auth/lockout": "./src/auth/lockout.ts",
     "./auth/guards": "./src/auth/guards.ts",
+    "./auth/rate-limits": "./src/auth/rate-limits.ts",
     "./compliance/dsar": "./src/compliance/dsar.ts",
     "./events/registry": "./src/events/registry.ts",
     "./errors": "./src/errors.ts",

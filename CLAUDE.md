@@ -1103,6 +1103,15 @@ Referrals to a Local Authority are recorded as `safeguarding.la_referral` Intera
 
 ## 43. LA tender and Alternative Provision contract workflow
 
+**Status: DEPRECATED — see ADR 0011.** The LA tender + AP placement
+workflow described below is not part of the current product. The Prisma
+models (`Tender`, `LAContract`, `APPlacement`, `LAInvoice`,
+`TenderDraftRequest`, `LAProgressReport`) remain in `prisma/schema.prisma`
+as orphans for historical reference and to keep migrations forward-only;
+they have no consumers and no UI surface. Do not add new code that
+references them. The section content below is retained as historical
+context for the eventual revival of this workflow.
+
 Local Authority commissioned work is the high-stakes side of the business. Tenders, contracts, and AP placements have their own lifecycle that touches finance, safeguarding, and reporting differently from PAYG families.
 
 ### 43.1 Tender pipeline
