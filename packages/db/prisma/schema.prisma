@@ -230,8 +230,25 @@ model User {
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
   oauthStates             OAuthState[]
+  totpRecoveryCodes       TotpRecoveryCode[]
 
   @@index([email])
+}
+
+// Audit-A2: TOTP recovery codes. 10 codes generated at MFA enrolment time;
+// each one is single-use (`usedAt` is set when consumed). Codes are stored
+// as sha256 hashes — the plaintext is shown to the user once at setup and
+// never again.
+model TotpRecoveryCode {
+  id        String    @id
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
 }
 
 // ADR 0010: server-side session table. The cookie is JWT, but we keep a row
