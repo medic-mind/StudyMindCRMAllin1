@@ -8,7 +8,7 @@
 
 import { OAuth2Client } from 'google-auth-library'
 
-import type { GmailPushNotification, PubSubPushBody } from './types.js'
+import type { GmailPushNotification, PubSubPushBody } from './types'
 
 export const AUTH_HEADER = 'authorization' as const
 

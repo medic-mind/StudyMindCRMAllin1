@@ -7,7 +7,7 @@ import {
   statusSummarySchema,
   VERSION,
   type ContactContext,
-} from './status-summary.js'
+} from './status-summary'
 
 const baseContext: ContactContext = {
   firstName: 'Sam',

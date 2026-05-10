@@ -7,8 +7,8 @@ import {
   slackSummarySchema,
   type SlackSummary,
   type SlackSummaryPromptInput,
-} from '../../src/prompts/slack-summary.js'
-import { loadFixtures } from '../run.js'
+} from '../../src/prompts/slack-summary'
+import { loadFixtures } from '../run'
 
 const fixtures = loadFixtures<SlackSummaryPromptInput, SlackSummary>(__dirname)
 

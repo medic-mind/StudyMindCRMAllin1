@@ -11,12 +11,12 @@
 
 import { z } from 'zod'
 
-import { runDraft, type RunDraftInput } from '../../clients/draft.js'
-import { sanitiseUserContent } from '../../sanitise.js'
-import { HOUSE_STYLE_TENDER } from '../style/house.js'
-import { SAFEGUARDING_GUARDRAIL } from '../style/safeguarding.js'
-import { STATUTORY_STYLE } from '../style/statutory.js'
-import { VOICE } from '../style/voice.js'
+import { runDraft, type RunDraftInput } from '../../clients/draft'
+import { sanitiseUserContent } from '../../sanitise'
+import { HOUSE_STYLE_TENDER } from '../style/house'
+import { SAFEGUARDING_GUARDRAIL } from '../style/safeguarding'
+import { STATUTORY_STYLE } from '../style/statutory'
+import { VOICE } from '../style/voice'
 
 export const TENDER_DRAFT_VERSION = '2026-05-09.1'
 

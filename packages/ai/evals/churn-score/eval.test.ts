@@ -7,8 +7,8 @@ import {
   churnScoreSchema,
   type ChurnScoreOutput,
   type ChurnScorePromptInput,
-} from '../../src/prompts/churn-score.js'
-import { loadFixtures } from '../run.js'
+} from '../../src/prompts/churn-score'
+import { loadFixtures } from '../run'
 
 const fixtures = loadFixtures<ChurnScorePromptInput, ChurnScoreOutput>(__dirname)
 

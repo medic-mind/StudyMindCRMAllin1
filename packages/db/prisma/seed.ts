@@ -2,7 +2,7 @@
 // See CLAUDE.md Section 22 for the dev user contract.
 // This is a placeholder; real implementation lands in a follow-up PR.
 
-import { db } from '../src/index.js'
+import { db } from '../src/index'
 
 async function main(): Promise<void> {
   // eslint-disable-next-line no-console

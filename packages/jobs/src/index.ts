@@ -10,6 +10,7 @@ import { COST_SUMMARY_FUNCTIONS } from './cost-summary'
 import { LACONTRACT_FUNCTIONS } from './lacontract/deadline-watcher'
 import { AUDIT_LOG_ARCHIVE_FUNCTIONS } from './compliance/audit-log-archive'
 import { UEBA_FUNCTIONS } from './security/ueba'
+import { OBSERVABILITY_FUNCTIONS } from './observability'
 
 export { inngest } from './client'
 
@@ -24,6 +25,7 @@ export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[
   ...COST_SUMMARY_FUNCTIONS,
   ...AUDIT_LOG_ARCHIVE_FUNCTIONS,
   ...UEBA_FUNCTIONS,
+  ...OBSERVABILITY_FUNCTIONS,
 ]
 
 export interface RecurringJobSpec {
@@ -94,6 +96,17 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     cron: '0 9 * * 1',
     description:
       'Aggregate AI + storage costs from the last 7 days, persist a markdown report, post to #crm-finops',
+  },
+  // Slice 14 (CLAUDE.md §25.1, §17).
+  {
+    id: 'observability/slo-monitor',
+    cron: '*/5 * * * *',
+    description: 'Detect SLO violations from Axiom and page on-call when out of budget',
+  },
+  {
+    id: 'observability/cron-watchdog',
+    cron: '*/15 * * * *',
+    description: 'Detect missed recurring jobs via CronRun heartbeat and page on-call',
   },
 ]
 

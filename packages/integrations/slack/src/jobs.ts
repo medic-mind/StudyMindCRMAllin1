@@ -24,7 +24,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import type { SlackEventEnvelope } from './types.js'
+import type { SlackEventEnvelope } from './types'
 
 interface EventReceivedData {
   eventId: string
@@ -259,7 +259,7 @@ export const aiDriftTriageReminder = inngest.createFunction(
 
     const weekKey = new Date().toISOString().slice(0, 10)
     await step.run('post-alert', async () => {
-      const { postAlert } = await import('./outbound.js')
+      const { postAlert } = await import('./outbound')
       await postAlert({
         message: `Drift triage: ${untriaged} AI samples await review.`,
         idempotencyKey: `drift-triage:${weekKey}`,

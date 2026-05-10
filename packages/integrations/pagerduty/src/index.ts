@@ -3,4 +3,4 @@ export {
   PagerDutyApiError,
   type PagerDutyEventInput,
   type PagerDutySeverity,
-} from './client.js'
+} from './client'

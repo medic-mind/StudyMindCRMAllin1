@@ -8,7 +8,7 @@ import {
   churnScoreSchema,
   VERSION,
   type ChurnSignals,
-} from './churn-score.js'
+} from './churn-score'
 
 const sampleSignals: ChurnSignals = {
   daysSinceLastInteraction: 25,

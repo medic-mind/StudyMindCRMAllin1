@@ -13,11 +13,11 @@ import { BusinessError, logger } from '@studymind/core'
 import type { z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 
-import { type AiTaskCategory, checkBudget, recordUsage } from '../budget.js'
-import { sampleForDrift } from '../drift.js'
-import { assertContactNotRestricted } from './restricted-guard.js'
-import { getOpenAI } from './openai.js'
-import { estimateCostUsd } from './pricing.js'
+import { type AiTaskCategory, checkBudget, recordUsage } from '../budget'
+import { sampleForDrift } from '../drift'
+import { assertContactNotRestricted } from './restricted-guard'
+import { getOpenAI } from './openai'
+import { estimateCostUsd } from './pricing'
 
 export type StructuredModel = 'gpt-4o' | 'gpt-4o-mini'
 

@@ -6,8 +6,8 @@
 import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 
-import { createClient, type SlackClient } from './client.js'
-import { getAlertsChannelId } from './config.js'
+import { createClient, type SlackClient } from './client'
+import { getAlertsChannelId } from './config'
 
 export interface OutboundContext {
   actorId: string

@@ -10,7 +10,7 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
-import type { AsanaEventBatch } from './types.js'
+import type { AsanaEventBatch } from './types'
 
 export const SIGNATURE_HEADER = 'x-hook-signature' as const
 export const SECRET_HEADER = 'x-hook-secret' as const

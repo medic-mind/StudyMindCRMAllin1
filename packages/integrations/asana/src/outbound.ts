@@ -10,9 +10,9 @@ import { createId } from '@paralleldrive/cuid2'
 import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 
-import { createClient, type AsanaClient } from './client.js'
-import { isAllowedProject } from './config.js'
-import { CRM_CONTACT_CUSTOM_FIELD } from './types.js'
+import { createClient, type AsanaClient } from './client'
+import { isAllowedProject } from './config'
+import { CRM_CONTACT_CUSTOM_FIELD } from './types'
 
 export interface OutboundContext {
   actorId: string

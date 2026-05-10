@@ -1,1 +1,1 @@
-export { sendEmail, ResendApiError, type SendEmailInput } from './client.js'
+export { sendEmail, ResendApiError, type SendEmailInput } from './client'

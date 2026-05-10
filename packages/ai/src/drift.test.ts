@@ -6,7 +6,7 @@ import {
   sampleForDrift,
   setDriftSampleDb,
   setDriftSampleRate,
-} from './drift.js'
+} from './drift'
 
 afterEach(() => {
   setDriftSampleDb(null)

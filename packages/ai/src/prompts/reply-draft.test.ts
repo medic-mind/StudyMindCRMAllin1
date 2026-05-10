@@ -6,7 +6,7 @@ import {
   buildReplyDraftPrompt,
   replyDraftShape,
   VERSION,
-} from './reply-draft.js'
+} from './reply-draft'
 
 describe('buildReplyDraftPrompt', () => {
   it('stamps the version and includes channel guidance', () => {

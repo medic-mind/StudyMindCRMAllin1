@@ -19,7 +19,7 @@ import {
   type RawBooking,
   type RawBookingFamily,
   type RawBookingSession,
-} from './types.js'
+} from './types'
 
 export interface BookingClientOptions {
   apiToken?: string

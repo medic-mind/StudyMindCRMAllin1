@@ -3,14 +3,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { runStructured } from '../../src/clients/structured.js'
+import { runStructured } from '../../src/clients/structured'
 import {
   buildCallOutcomePrompt,
   callOutcomeSchema,
   type CallOutcome,
   type CallOutcomePromptInput,
-} from '../../src/prompts/call-outcome.js'
-import { isLiveEvalEnabled, loadFixtures } from '../run.js'
+} from '../../src/prompts/call-outcome'
+import { isLiveEvalEnabled, loadFixtures } from '../run'
 
 const fixtures = loadFixtures<CallOutcomePromptInput, CallOutcome>(__dirname)
 

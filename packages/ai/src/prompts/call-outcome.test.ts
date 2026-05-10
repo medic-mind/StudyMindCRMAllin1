@@ -6,7 +6,7 @@ import {
   buildCallOutcomePrompt,
   callOutcomeSchema,
   VERSION,
-} from './call-outcome.js'
+} from './call-outcome'
 
 describe('buildCallOutcomePrompt', () => {
   it('is deterministic for the same input and version', () => {

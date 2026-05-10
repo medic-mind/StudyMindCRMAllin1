@@ -1,8 +1,8 @@
 // Asana integration. See packages/integrations/asana/README.md.
 
-export * from './types.js'
-export * as client from './client.js'
-export * as webhook from './webhook.js'
-export * as jobs from './jobs.js'
-export * as outbound from './outbound.js'
-export * as config from './config.js'
+export * from './types'
+export * as client from './client'
+export * as webhook from './webhook'
+export * as jobs from './jobs'
+export * as outbound from './outbound'
+export * as config from './config'
