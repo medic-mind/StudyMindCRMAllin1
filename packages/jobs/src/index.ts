@@ -90,6 +90,13 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     description:
       'Aggregate AI + storage costs from the last 7 days, persist a markdown report, post to #crm-finops',
   },
+  // CLAUDE.md §42.2 — DSL acknowledgement SLA. Re-pages on breach and
+  // reassigns the flag to the current deputy DSL.
+  {
+    id: 'safeguarding/sla-escalator',
+    cron: '*/5 * * * *',
+    description: 'Detect SafeguardingFlag SLA breaches and escalate to the deputy DSL',
+  },
   // Slice 14 (CLAUDE.md §25.1, §17).
   {
     id: 'observability/slo-monitor',

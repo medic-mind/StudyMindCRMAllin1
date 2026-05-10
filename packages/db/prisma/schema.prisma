@@ -573,6 +573,14 @@ model SafeguardingFlag {
   dslUserId  String?
   raisedById String?
   closedAt   DateTime?
+  /// CLAUDE.md §42.2 — DSL acknowledgement / SLA tracking. `acknowledgedAt`
+  /// is set when the assigned DSL takes any triage action that moves the
+  /// flag out of `concern_logged`. Used by `safeguarding/sla-escalator`.
+  acknowledgedAt    DateTime?
+  /// SLA breach escalation: set once when the flag has been re-paged and
+  /// reassigned to the current deputy DSL. Idempotency guard.
+  escalatedAt       DateTime?
+  escalatedToUserId String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -585,6 +593,7 @@ model SafeguardingFlag {
   @@index([contactId])
   @@index([state])
   @@index([dslUserId])
+  @@index([escalatedAt])
 }
 
 model EncryptedField {
@@ -841,6 +850,9 @@ model Lead {
   phoneE164            String?
   name                 String?
   convertedToContactId String?
+  /// Conversion timestamp — when the lead became a Contact. Marketing leads
+  /// that did not convert age out after 12 months (CLAUDE.md §21).
+  convertedAt          DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -848,8 +860,14 @@ model Lead {
   updatedById String?
   deletedAt   DateTime?
 
+  /// CLAUDE.md §21 retention. Soft-delete sets `softDeletedAt`; the row is
+  /// hard-deleted after `pendingHardDeleteAt` elapses (default 30d grace).
+  softDeletedAt        DateTime?
+  pendingHardDeleteAt  DateTime?
+
   @@index([email])
   @@index([phoneE164])
+  @@index([pendingHardDeleteAt])
 }
 
 model Task {
