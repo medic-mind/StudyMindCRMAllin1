@@ -70,6 +70,27 @@ export const familyRouter = router({
     }),
 
     /**
+     * Most recent family.state_changed Interactions across the given Family
+     * ids. Used by the pipeline page side-panel.
+     */
+    recentTransitions: protectedProcedure
+      .input(z.object({ familyIds: z.array(z.string()).max(500), limit: z.number().min(1).max(50).default(5) }))
+      .query(async ({ ctx, input }) => {
+        if (input.familyIds.length === 0) return []
+        const rows = await ctx.db.interaction.findMany({
+          where: {
+            type: 'family_state_changed',
+            familyId: { in: input.familyIds },
+            deletedAt: null,
+          },
+          orderBy: { occurredAt: 'desc' },
+          take: input.limit,
+          select: { id: true, occurredAt: true, summary: true, familyId: true },
+        })
+        return rows
+      }),
+
+    /**
      * Explicit state transition. Writes a `family.state_changed` Interaction
      * (CLAUDE.md §6.4 — transitions are never silent) and audits.
      */
