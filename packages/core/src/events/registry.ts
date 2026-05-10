@@ -54,6 +54,7 @@ export const EVENT_NAMES = [
   'booking.delivered',
   'booking.cancelled',
   'charge.refunded',
+  'charge.payment_link_created',
   'finance.discrepancy_resolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
