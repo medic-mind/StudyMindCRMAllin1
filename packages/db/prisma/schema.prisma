@@ -1296,6 +1296,32 @@ model DriftSample {
   @@index([reviewed])
 }
 
+// Audit-B2 Chunk 5: outbound Gmail send idempotency. CLAUDE.md §14.
+// One row per outbound Gmail send. The unique key is (threadId, requestId)
+// — replaying the same tRPC mutation must not send twice.
+model OutboundEmailIntent {
+  id             String  @id
+  agentId        String
+  threadId       String
+  requestId      String
+  gmailMessageId String?
+  subject        String
+  toAddresses    String[] @default([])
+  ccAddresses    String[] @default([])
+  bccAddresses   String[] @default([])
+  /// pending | sent | failed
+  status         String  @default("pending")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@unique([threadId, requestId])
+  @@index([agentId])
+  @@index([gmailMessageId])
+}
+
 model GmailToken {
   /// User.id. Legacy refresh-token table; ADR 0012 migrated active rows to
   /// EncryptedField via User.gmailRefreshTokenCipherId. Kept for fallback.
