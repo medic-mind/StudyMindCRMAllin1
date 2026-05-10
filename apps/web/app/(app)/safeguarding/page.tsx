@@ -57,7 +57,7 @@ export default async function DslInboxPage() {
           {flags.map((f) => (
             <tr key={f.id} className="border-b border-neutral-100">
               <td className="py-2">
-                <Link href={`/contacts/${f.contactId}`} className="text-blue-700 hover:underline">
+                <Link href={`/contacts/${f.contactId}`} className="text-primary-700 hover:underline">
                   {f.contactName || f.contactId}
                 </Link>
               </td>

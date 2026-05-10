@@ -4,7 +4,11 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
+import { PageBody } from '@/components/shell/page-body'
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
+
+const BREADCRUMBS = [{ label: 'Account', href: '/account' }]
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -26,13 +30,15 @@ export default async function AccountPage() {
     redirect('/sign-in')
   }
   return (
-    <div className="max-w-2xl space-y-6">
-      <header>
-        <h1 className="text-xl font-semibold text-neutral-900">My account</h1>
-        <p className="text-sm text-neutral-600">Manage your StudyMind CRM sign-in.</p>
-      </header>
-
-      <section className="rounded-md border border-neutral-200 bg-white p-4">
+    <>
+      <PageHeader
+        title="My account"
+        subtitle="Manage your StudyMind CRM sign-in."
+        breadcrumbs={BREADCRUMBS}
+      />
+      <PageBody>
+        <div className="max-w-2xl space-y-6">
+      <section className="rounded-md border border-neutral-200 bg-white p-4 shadow-sm">
         <dl className="grid grid-cols-3 gap-2 text-sm">
           <dt className="text-neutral-500">Name</dt>
           <dd className="col-span-2 text-neutral-900">{me.name ?? '—'}</dd>
@@ -73,6 +79,8 @@ export default async function AccountPage() {
           {me.totpEnabledAt ? `Enabled (${fmt(me.totpEnabledAt)})` : 'Not enabled'}
         </p>
       </section>
-    </div>
+        </div>
+      </PageBody>
+    </>
   )
 }

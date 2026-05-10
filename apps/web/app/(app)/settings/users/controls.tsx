@@ -6,6 +6,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import {
   ROLES,
@@ -40,22 +41,42 @@ export function UserRoleControls({
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = () => {
+  const ok = (msg: string) => () => {
     setPending(null)
     setError(null)
+    toast.success(msg)
     router.refresh()
   }
   const onErr = (e: { message: string }) => {
     setPending(null)
     setError(e.message)
+    toast.error(e.message ?? 'Action failed')
   }
 
-  const assign = trpc.admin.users.assignRole.useMutation({ onSuccess: refresh, onError: onErr })
-  const revoke = trpc.admin.users.revokeRole.useMutation({ onSuccess: refresh, onError: onErr })
-  const resend = trpc.admin.users.resendInvite.useMutation({ onSuccess: refresh, onError: onErr })
-  const cancel = trpc.admin.users.cancelInvite.useMutation({ onSuccess: refresh, onError: onErr })
-  const deactivate = trpc.admin.users.deactivate.useMutation({ onSuccess: refresh, onError: onErr })
-  const reactivate = trpc.admin.users.reactivate.useMutation({ onSuccess: refresh, onError: onErr })
+  const assign = trpc.admin.users.assignRole.useMutation({
+    onSuccess: ok('Role granted'),
+    onError: onErr,
+  })
+  const revoke = trpc.admin.users.revokeRole.useMutation({
+    onSuccess: ok('Role revoked'),
+    onError: onErr,
+  })
+  const resend = trpc.admin.users.resendInvite.useMutation({
+    onSuccess: ok('Invite resent'),
+    onError: onErr,
+  })
+  const cancel = trpc.admin.users.cancelInvite.useMutation({
+    onSuccess: ok('Invite cancelled'),
+    onError: onErr,
+  })
+  const deactivate = trpc.admin.users.deactivate.useMutation({
+    onSuccess: ok('User deactivated'),
+    onError: onErr,
+  })
+  const reactivate = trpc.admin.users.reactivate.useMutation({
+    onSuccess: ok('User reactivated'),
+    onError: onErr,
+  })
 
   return (
     <div className="space-y-1">
@@ -189,9 +210,13 @@ export function InviteDialog({ actorRole }: { actorRole: Role }) {
       setEmail('')
       setName('')
       setRoles([])
+      toast.success('Invite sent')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not send invite')
+    },
   })
 
   if (!open) {

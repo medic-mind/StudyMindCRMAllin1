@@ -7,6 +7,8 @@ import { TRPCError } from '@trpc/server'
 import { DiscrepancyActions } from '@/components/finance/DiscrepancyActions'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -54,6 +56,25 @@ function groupByCategory(items: DiscrepancyItem[]): Map<string, DiscrepancyItem[
     groups.set(item.category, list)
   }
   return groups
+}
+
+const CATEGORY_TONE: Record<string, BadgeTone> = {
+  hours_mismatch: 'warn',
+  payment_unallocated: 'info',
+  late_failure: 'danger',
+  late_failure_pending_action: 'danger',
+  churned_with_active_subscription: 'danger',
+  ap_review_overdue: 'warn',
+  la_family_with_card_subscription: 'warn',
+  other: 'neutral',
+}
+
+const FAMILY_STATE_TONE: Record<string, BadgeTone> = {
+  lead: 'neutral',
+  trial: 'info',
+  active: 'success',
+  at_risk: 'warn',
+  churned: 'danger',
 }
 
 export default async function FinancePage() {
@@ -110,51 +131,63 @@ export default async function FinancePage() {
         }
       />
       <PageBody>
-      {items.length === 0 ? (
-        <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-700">
-          No open discrepancies. The nightly reconcile runs at 02:00 UTC and
-          will surface anything that needs attention here.
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {Array.from(groups.entries()).map(([category, group]) => (
-            <section key={category}>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
-                {CATEGORY_LABEL[category] ?? category}{' '}
-                <span className="ml-2 text-xs font-normal text-neutral-500">
-                  {group.length}
-                </span>
-              </h2>
-              <ul className="mt-3 divide-y divide-neutral-200 rounded-lg border border-neutral-200">
-                {group.map((d) => (
-                  <li key={d.id} className="flex flex-col gap-2 p-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-neutral-900">
-                          {d.familyName ?? d.familyId}
-                          <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">
-                            {d.familyState}
-                          </span>
+        {items.length === 0 ? (
+          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-sm">
+            <p className="text-sm font-medium text-emerald-700">
+              No open discrepancies — reconciliation is clean.
+            </p>
+            <p className="mt-1 text-sm text-neutral-500">
+              The nightly reconcile runs at 02:00 UTC; anything that needs a
+              human decision will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {Array.from(groups.entries()).map(([category, group]) => (
+              <section key={category}>
+                <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-neutral-700">
+                  {CATEGORY_LABEL[category] ?? category}
+                  <Badge tone={CATEGORY_TONE[category] ?? 'neutral'}>
+                    {group.length}
+                  </Badge>
+                </h2>
+                <ul className="mt-3 divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white shadow-sm">
+                  {group.map((d) => (
+                    <li key={d.id} className="flex flex-col gap-2 p-3">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-sm font-medium text-neutral-900">
+                            <span className="truncate">
+                              {d.familyName ?? d.familyId}
+                            </span>
+                            <Badge tone={FAMILY_STATE_TONE[d.familyState] ?? 'neutral'}>
+                              {d.familyState}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 text-sm text-neutral-700">
+                            {d.summary}
+                          </div>
                         </div>
-                        <div className="mt-1 text-sm text-neutral-700">{d.summary}</div>
+                        <time
+                          className="shrink-0 font-mono text-xs tabular-nums text-neutral-500"
+                          dateTime={d.createdAt.toISOString()}
+                        >
+                          {formatRelativeTime(d.createdAt)}
+                        </time>
                       </div>
-                      <div className="shrink-0 font-mono text-xs text-neutral-500 tabular-nums">
-                        {d.createdAt.toISOString().slice(0, 10)}
-                      </div>
-                    </div>
-                    <DiscrepancyActions
-                      discrepancyId={d.id}
-                      category={d.category}
-                      paymentId={readPaymentIdFromPayload(d.payload)}
-                      candidateBookingIds={readBookingIdsFromPayload(d.payload)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
+                      <DiscrepancyActions
+                        discrepancyId={d.id}
+                        category={d.category}
+                        paymentId={readPaymentIdFromPayload(d.payload)}
+                        candidateBookingIds={readBookingIdsFromPayload(d.payload)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
       </PageBody>
     </>
   )

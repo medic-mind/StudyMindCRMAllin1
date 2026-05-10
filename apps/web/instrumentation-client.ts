@@ -1,6 +1,9 @@
 // Sentry browser-side init. CLAUDE.md §25.
-// Loaded by Next.js automatically via instrumentation. Tracesample is
-// environment-driven so prod stays cheap and staging stays informative.
+//
+// Replaces sentry.client.config.ts (deprecated in newer @sentry/nextjs;
+// the file conventions now want instrumentation-client.ts so the same
+// module loader works under Turbopack). The contents are otherwise
+// unchanged.
 
 import * as Sentry from '@sentry/nextjs'
 

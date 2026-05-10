@@ -7,6 +7,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -28,16 +29,24 @@ export function EmailReplyPanel({ interactionId }: Props) {
       setBody(out.text)
       setDraftPromptVersion(out.promptVersion)
       setError(null)
+      toast.success('AI draft ready — edit before sending')
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not generate draft')
+    },
   })
 
   const reply = trpc.interaction.email.reply.useMutation({
     onSuccess: (out) => {
       setSentMessageId(out.gmailMessageId)
       setError(null)
+      toast.success('Reply sent')
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not send reply')
+    },
   })
 
   if (!open) {

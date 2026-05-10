@@ -54,7 +54,7 @@ export default async function ContactDetailPage({
             {contact.email && <span>{contact.email}</span>}
             {contact.phoneE164 && <span className="font-mono">{contact.phoneE164}</span>}
             {contact.family && (
-              <Link href={`/contacts?familyId=${contact.family.id}`} className="text-blue-700 hover:underline">
+              <Link href={`/contacts?familyId=${contact.family.id}`} className="text-primary-700 hover:underline">
                 Family: {contact.family.name ?? contact.family.id}
               </Link>
             )}

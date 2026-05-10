@@ -20,7 +20,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 const STATUS_TONE: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-900',
-  created: 'bg-blue-100 text-blue-900',
+  created: 'bg-primary-100 text-primary-900',
   completed: 'bg-green-100 text-green-900',
   expired: 'bg-neutral-100 text-neutral-700',
   cancelled: 'bg-red-100 text-red-900',
@@ -98,7 +98,7 @@ export default async function PaymentLinksPage() {
                 <div className="mt-1 text-sm text-neutral-900">
                   <Link
                     href={`/contacts/families/${it.familyId}`}
-                    className="text-blue-700 hover:underline"
+                    className="text-primary-700 hover:underline"
                   >
                     Family {it.familyId}
                   </Link>
@@ -107,7 +107,7 @@ export default async function PaymentLinksPage() {
                       {' · '}
                       <Link
                         href={`/contacts/${it.contactId}`}
-                        className="text-blue-700 hover:underline"
+                        className="text-primary-700 hover:underline"
                       >
                         Contact {it.contactId}
                       </Link>

@@ -7,6 +7,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -28,9 +29,13 @@ export function IntegrationTestButton({ provider }: { provider: Provider }) {
   const test = trpc.admin.integrations.test.useMutation({
     onSuccess: (out) => {
       setMessage(`OK · ${out.eventId}`)
+      toast.success(`${provider} test event accepted`)
       router.refresh()
     },
-    onError: (e) => setMessage(`Failed: ${e.message}`),
+    onError: (e) => {
+      setMessage(`Failed: ${e.message}`)
+      toast.error(e.message ?? `${provider} test failed`)
+    },
   })
   return (
     <div className="flex items-center gap-2">

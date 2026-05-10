@@ -77,13 +77,47 @@ export const taskRouter = router({
         contactId: true,
         dueAt: true,
         createdAt: true,
+        family: { select: { name: true } },
       },
     })
     const hasMore = rows.length > input.limit
     const sliced = hasMore ? rows.slice(0, input.limit) : rows
     const last = sliced[sliced.length - 1]
+
+    // Hydrate assignee email/name in a single round-trip.
+    const assigneeIds = Array.from(
+      new Set(sliced.map((r) => r.assigneeId).filter((x): x is string => !!x)),
+    )
+    const assignees =
+      assigneeIds.length > 0
+        ? await ctx.db.user.findMany({
+            where: { id: { in: assigneeIds } },
+            select: { id: true, email: true, name: true },
+          })
+        : []
+    const assigneeMap = new Map(assignees.map((a) => [a.id, a] as const))
+
+    const items = sliced.map((r) => ({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      status: r.status,
+      assigneeId: r.assigneeId,
+      familyId: r.familyId,
+      familyName: r.family?.name ?? null,
+      contactId: r.contactId,
+      dueAt: r.dueAt,
+      createdAt: r.createdAt,
+      assigneeEmail: r.assigneeId
+        ? (assigneeMap.get(r.assigneeId)?.email ?? null)
+        : null,
+      assigneeName: r.assigneeId
+        ? (assigneeMap.get(r.assigneeId)?.name ?? null)
+        : null,
+    }))
+
     return {
-      items: sliced,
+      items,
       nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
     }
   }),

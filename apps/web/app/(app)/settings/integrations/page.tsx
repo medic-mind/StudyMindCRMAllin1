@@ -3,12 +3,18 @@
 // CLAUDE.md §11 (Trengo), §13 (Asana), §14 (Gmail), §25 (observability).
 
 import { legacyAuth as auth } from '@/lib/auth/server'
-import Link from 'next/link'
 
+import { PageBody } from '@/components/shell/page-body'
+import { PageHeader } from '@/components/shell/page-header'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { IntegrationTestButton } from './IntegrationTestButton'
+
+const BREADCRUMBS = [
+  { label: 'Settings', href: '/settings' },
+  { label: 'Integrations', href: '/settings/integrations' },
+]
 
 export const dynamic = 'force-dynamic'
 
@@ -44,12 +50,14 @@ export default async function IntegrationsSettingsPage() {
   const role = (sessionClaims?.['role'] as string | undefined) ?? 'agent'
   if (role !== 'admin' && role !== 'ops_manager') {
     return (
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <p className="mt-2 text-sm text-neutral-600">
-          Restricted to administrators and ops managers.
-        </p>
-      </div>
+      <>
+        <PageHeader title="Integrations" breadcrumbs={BREADCRUMBS} />
+        <PageBody>
+          <p className="text-sm text-neutral-600">
+            Restricted to administrators and ops managers.
+          </p>
+        </PageBody>
+      </>
     )
   }
   const caller = await createServerCaller()
@@ -57,15 +65,10 @@ export default async function IntegrationsSettingsPage() {
   const isAdmin = role === 'admin'
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <Link href="/settings" className="text-sm text-neutral-600 underline">
-          Back to settings
-        </Link>
-      </div>
-
-      <h2 className="mt-6 text-sm font-semibold text-neutral-600 uppercase tracking-wide">
+    <>
+      <PageHeader title="Integrations" breadcrumbs={BREADCRUMBS} />
+      <PageBody>
+      <h2 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">
         Webhook receive
       </h2>
       <div className="mt-2 rounded-md border border-neutral-200 bg-white">
@@ -139,6 +142,7 @@ export default async function IntegrationsSettingsPage() {
       <div className="mt-2 rounded-md border border-neutral-200 bg-white p-4 text-sm">
         <p>{data.asana.webhooks} webhook(s) registered (project-scoped).</p>
       </div>
-    </div>
+      </PageBody>
+    </>
   )
 }
