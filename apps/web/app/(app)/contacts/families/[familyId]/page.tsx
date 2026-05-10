@@ -7,6 +7,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { ChangeBillingContactButton } from '@/components/contact/ChangeBillingContactButton'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -64,8 +65,18 @@ export default async function FamilyDetailPage({
         </div>
       </div>
 
-      <section className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+      <section className="flex flex-wrap gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
         <SendPaymentLinkButton familyId={data.id} />
+        <ChangeBillingContactButton
+          familyId={data.id}
+          members={data.members.map((m) => ({
+            contactId: m.contactId,
+            name: m.name,
+            kind: m.kind as string,
+            isMinor: m.isMinor,
+          }))}
+          currentBillingContactId={data.billingContact?.id ?? null}
+        />
       </section>
 
       <section>
