@@ -68,7 +68,15 @@ export default async function FinancePage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
+        <a
+          href="/finance/refunds"
+          className="text-sm text-neutral-700 hover:underline"
+        >
+          Refunds →
+        </a>
+      </div>
       <p className="mt-2 text-sm text-neutral-600">
         Open reconciliation discrepancies across active families. Nothing is
         ever auto-resolved — every item below needs a human decision.

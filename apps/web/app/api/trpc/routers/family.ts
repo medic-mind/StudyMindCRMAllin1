@@ -17,7 +17,100 @@ function newId(): string {
   return createId()
 }
 
+const FAMILY_STATES = ['lead', 'trial', 'active', 'at_risk', 'churned'] as const
+type FamilyState = (typeof FAMILY_STATES)[number]
+
+const PipelineListInput = z.object({
+  /** Optional: limit the result to a single stage. */
+  state: z.enum(FAMILY_STATES).optional(),
+  /** Cap per stage so the kanban view stays bounded. */
+  perStageLimit: z.number().min(1).max(200).default(100),
+})
+
+const PipelineTransitionInput = z.object({
+  familyId: z.string(),
+  toState: z.enum(FAMILY_STATES),
+  reason: z.string().trim().min(3).max(2000),
+})
+
 export const familyRouter = router({
+  pipeline: router({
+    /**
+     * Returns Families grouped by lifecycle state for the pipeline kanban.
+     * CLAUDE.md §6.4. View-model — never raw rows.
+     */
+    list: protectedProcedure.input(PipelineListInput).query(async ({ ctx, input }) => {
+      const states: readonly FamilyState[] = input.state ? [input.state] : FAMILY_STATES
+      const groups = await Promise.all(
+        states.map(async (state) => {
+          const rows = await ctx.db.family.findMany({
+            where: { state, deletedAt: null },
+            orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+            take: input.perStageLimit,
+            select: {
+              id: true,
+              name: true,
+              state: true,
+              billingParty: true,
+              churnScore: true,
+              updatedAt: true,
+            },
+          })
+          return [state, rows] as const
+        }),
+      )
+      return Object.fromEntries(groups) as Record<FamilyState, (typeof groups)[number][1]>
+    }),
+
+    /**
+     * Explicit state transition. Writes a `family.state_changed` Interaction
+     * (CLAUDE.md §6.4 — transitions are never silent) and audits.
+     */
+    transition: auditedProcedure
+      .input(PipelineTransitionInput)
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        const before = await ctx.db.family.findFirst({
+          where: { id: input.familyId, deletedAt: null },
+          select: { id: true, state: true },
+        })
+        if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (before.state === input.toState) {
+          throw new TRPCError({ code: 'CONFLICT', message: 'family already in target state' })
+        }
+        const updated = await ctx.db.$transaction(async (tx) => {
+          const next = await tx.family.update({
+            where: { id: input.familyId },
+            data: { state: input.toState, updatedById: user.id },
+          })
+          await tx.interaction.create({
+            data: {
+              id: newId(),
+              type: 'family_state_changed',
+              familyId: input.familyId,
+              occurredAt: new Date(),
+              summary: `State: ${before.state} → ${input.toState}`,
+              payload: {
+                previousState: before.state,
+                newState: input.toState,
+                reason: input.reason,
+              },
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+          return next
+        })
+        await ctx.audit({
+          action: 'family.state_changed',
+          target: { type: 'Family', id: updated.id },
+          before: { state: before.state },
+          after: { state: updated.state, reason: input.reason },
+        })
+        return { id: updated.id, state: updated.state }
+      }),
+  }),
+
   create: auditedProcedure
     .input(FamilyCreateInput)
     .mutation(async ({ ctx, input }) => {

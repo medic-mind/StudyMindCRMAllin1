@@ -13,6 +13,7 @@ import { interactionRouter } from './routers/interaction'
 import { oauthRouter } from './routers/oauth'
 import { reportsRouter } from './routers/reports'
 import { safeguardingRouter } from './routers/safeguarding'
+import { taskRouter } from './routers/task'
 
 export const appRouter = router({
   account: accountRouter,
@@ -26,6 +27,7 @@ export const appRouter = router({
   oauth: oauthRouter,
   reports: reportsRouter,
   safeguarding: safeguardingRouter,
+  task: taskRouter,
 })
 
 export type AppRouter = typeof appRouter
