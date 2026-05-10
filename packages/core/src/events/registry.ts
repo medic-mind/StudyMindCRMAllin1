@@ -124,6 +124,16 @@ export const EVENT_NAMES = [
   'gmail.oauth_scope_mismatch',
   'gmail.oauth_invalid_state',
   'gmail.oauth_needs_reconnect',
+
+  // Audit-B2: payment links, allocations, gmail outbound, trengo connect
+  'charge.payment_link_created',
+  'charge.payment_link_requested',
+  'finance.allocation_upserted',
+  'finance.allocation_deleted',
+  'gmail.email_sent',
+  'gmail.reply_requested',
+  'trengo.token_connected',
+  'trengo.token_connect_requested',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

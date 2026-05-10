@@ -255,6 +255,124 @@ export const interactionRouter = router({
         channel,
       }
     }),
+
+  // CLAUDE.md §14 — Gmail outbound reply. Resolves a seed `email_received`
+  // Interaction, computes the reply recipients, and goes through the Gmail
+  // outbound which is idempotent on (threadId, requestId).
+  email: router({
+    reply: auditedProcedure
+      .input(
+        z.object({
+          interactionId: z.string(),
+          body: z.string().trim().min(1).max(50_000),
+          /** When true, prepend the original message body as a quoted block. */
+          includeOriginal: z.boolean().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!['agent', 'ops_manager', 'admin', 'dsl', 'super_admin', 'finance'].includes(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send email' })
+        }
+
+        const seed = await ctx.db.interaction.findFirst({
+          where: { id: input.interactionId, deletedAt: null, type: 'email_received' },
+          select: {
+            id: true,
+            contactId: true,
+            familyId: true,
+            occurredAt: true,
+            summary: true,
+            payload: true,
+          },
+        })
+        if (!seed) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Inbound email Interaction not found.',
+          })
+        }
+        if (seed.contactId) {
+          await enforceRestrictedAccess(ctx, seed.contactId, 'email-reply')
+        }
+
+        const payload = (seed.payload ?? {}) as Record<string, unknown>
+        const threadId = typeof payload['threadId'] === 'string' ? payload['threadId'] : null
+        const subject =
+          typeof payload['subject'] === 'string' ? payload['subject'] : seed.summary ?? ''
+        const fromAddress =
+          typeof payload['from'] === 'string'
+            ? payload['from']
+            : typeof payload['fromAddress'] === 'string'
+              ? (payload['fromAddress'] as string)
+              : null
+        const toRaw = Array.isArray(payload['to']) ? (payload['to'] as unknown[]) : []
+        const ccRaw = Array.isArray(payload['cc']) ? (payload['cc'] as unknown[]) : []
+        const originalMessageId =
+          typeof payload['messageId'] === 'string' ? payload['messageId'] : undefined
+        const originalBody =
+          typeof payload['body'] === 'string' ? payload['body'] : ''
+
+        if (!threadId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'No Gmail threadId on the inbound Interaction; cannot reply.',
+          })
+        }
+
+        // Recipients: the from of the inbound becomes the To; original to/cc
+        // become the cc minus our own connected mailbox address.
+        const myMailbox = await ctx.db.gmailMailbox.findUnique({
+          where: { agentId: user.id },
+          select: { address: true },
+        })
+        const myAddress = myMailbox?.address?.toLowerCase() ?? null
+        const filterMine = (s: string) =>
+          myAddress ? s.trim().toLowerCase() !== myAddress : true
+
+        const replyTo = fromAddress ? [fromAddress] : []
+        const replyCc = [
+          ...toRaw.filter((x): x is string => typeof x === 'string'),
+          ...ccRaw.filter((x): x is string => typeof x === 'string'),
+        ].filter(filterMine)
+
+        if (replyTo.length === 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'No reply recipient could be derived from the inbound email.',
+          })
+        }
+
+        const composed = input.includeOriginal && originalBody
+          ? `${input.body}\n\n--- On ${seed.occurredAt.toISOString()} wrote: ---\n${originalBody}`
+          : input.body
+
+        // Lazy import keeps the Gmail SDK out of the unrelated tRPC bundle.
+        const { sendReply } = await import('@studymind/integration-gmail/outbound')
+        const result = await sendReply({
+          agentId: user.id,
+          threadId,
+          subject,
+          body: composed,
+          toAddresses: replyTo,
+          cc: replyCc.length > 0 ? replyCc : undefined,
+          requestId: ctx.requestId,
+          originalMessageId,
+        })
+
+        await ctx.audit({
+          action: 'gmail.reply_requested',
+          target: { type: 'OutboundEmailIntent', id: result.outboundEmailIntentId },
+          after: {
+            threadId,
+            gmailMessageId: result.gmailMessageId,
+            replayed: result.replayed,
+          },
+        })
+
+        return result
+      }),
+  }),
 })
 
 /**
@@ -297,6 +415,10 @@ function mapDbType(t: string): InteractionListItem['type'] {
     case 'call':
       return 'call_logged'
     case 'email':
+      return 'email_sent'
+    case 'email_received':
+      return 'email_received'
+    case 'email_sent':
       return 'email_sent'
     case 'family_state_changed':
       return 'family.state_changed'

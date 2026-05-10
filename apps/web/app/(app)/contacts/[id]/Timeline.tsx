@@ -4,6 +4,7 @@ import { useState } from 'react'
 
 import type { InteractionListItem } from '@studymind/core/interaction'
 
+import { EmailReplyPanel } from '@/components/contact/EmailReplyPanel'
 import { Button } from '@/components/ui/button'
 
 import { trpc } from '@/lib/trpc/client'
@@ -55,6 +56,12 @@ export function Timeline({ contactId, initialItems, initialNextCursor }: Props) 
               </time>
             </div>
             <div className="mt-1.5 text-sm text-neutral-900">{it.summary ?? '—'}</div>
+            {it.type === 'email_sent' /* received maps to email_sent in mapDbType */ ? null : null}
+            {it.type === 'email_received' && (
+              <div className="mt-2">
+                <EmailReplyPanel interactionId={it.id} />
+              </div>
+            )}
           </li>
         ))}
       </ol>

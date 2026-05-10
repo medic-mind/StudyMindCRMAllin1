@@ -6,6 +6,7 @@ export const InteractionType = z.enum([
   'note',
   'call_logged',
   'email_sent',
+  'email_received',
   'family.state_changed',
   'family.billing_contact_changed',
   'safeguarding.concern_raised',
