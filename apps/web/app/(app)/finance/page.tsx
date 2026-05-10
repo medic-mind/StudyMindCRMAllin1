@@ -70,12 +70,20 @@ export default async function FinancePage() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
-        <a
-          href="/finance/refunds"
-          className="text-sm text-neutral-700 hover:underline"
-        >
-          Refunds →
-        </a>
+        <div className="flex items-center gap-3 text-sm">
+          <a
+            href="/finance/payment-links"
+            className="text-neutral-700 hover:underline"
+          >
+            Payment links →
+          </a>
+          <a
+            href="/finance/refunds"
+            className="text-neutral-700 hover:underline"
+          >
+            Refunds →
+          </a>
+        </div>
       </div>
       <p className="mt-2 text-sm text-neutral-600">
         Open reconciliation discrepancies across active families. Nothing is

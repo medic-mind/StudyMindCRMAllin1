@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation'
 
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { RestrictedAccessBanner } from '@/components/safeguarding/RestrictedAccessBanner'
 
 import { AddNote } from './AddNote'
@@ -70,6 +71,12 @@ export default async function ContactDetailPage({
           </div>
         </div>
       </div>
+
+      {contact.family && (
+        <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+          <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
+        </div>
+      )}
 
       {contact.notes && (
         <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800">

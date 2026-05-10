@@ -7,6 +7,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -50,10 +51,22 @@ export default async function FamilyDetailPage({
             ) : null}
           </p>
         </div>
-        <Link href="/contacts" className="text-sm text-neutral-600 underline">
-          Back to contacts
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href={`/contacts/families/${data.id}/timeline`}
+            className="text-sm text-neutral-700 hover:underline"
+          >
+            Timeline →
+          </Link>
+          <Link href="/contacts" className="text-sm text-neutral-600 underline">
+            Back to contacts
+          </Link>
+        </div>
       </div>
+
+      <section className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+        <SendPaymentLinkButton familyId={data.id} />
+      </section>
 
       <section>
         <h2 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">

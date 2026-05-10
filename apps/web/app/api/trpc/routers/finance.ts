@@ -4,7 +4,11 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
-import { refundCharge, StripePaymentNotFoundError } from '@studymind/integration-stripe/outbound'
+import {
+  createPaymentLink,
+  refundCharge,
+  StripePaymentNotFoundError,
+} from '@studymind/integration-stripe/outbound'
 
 import {
   auditedProcedure,
@@ -16,9 +20,25 @@ import {
 
 const FINANCE_ROLES: ReadonlySet<SessionUser['role']> = new Set(['admin', 'finance'])
 
+// Per CLAUDE.md §20.1, charge.create_link is allowed for super_admin, admin,
+// ops_manager, agent, and finance. Read-only and dsl never create charges.
+const PAYMENT_LINK_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'super_admin',
+  'admin',
+  'ops_manager',
+  'agent',
+  'finance',
+])
+
 function assertFinanceRole(user: SessionUser): void {
   if (!FINANCE_ROLES.has(user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'finance role required' })
+  }
+}
+
+function assertPaymentLinkRole(user: SessionUser): void {
+  if (!PAYMENT_LINK_ROLES.has(user.role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'payment link role required' })
   }
 }
 
@@ -72,7 +92,113 @@ const RefundListInput = z.object({
   limit: z.number().min(1).max(100).default(25),
 })
 
+const PaymentLinkCreateInput = z.object({
+  familyId: z.string().min(1),
+  contactId: z.string().min(1).optional(),
+  amountMinor: z.number().int().positive().max(10_000_000),
+  currency: z
+    .string()
+    .trim()
+    .min(3)
+    .max(8)
+    .regex(/^[a-z]+$/i, 'currency must be a 3-letter ISO code')
+    .default('gbp'),
+  reason: z.string().trim().min(2).max(120),
+  productName: z.string().trim().min(2).max(120),
+})
+
+const PaymentLinkListInput = z.object({
+  familyId: z.string().optional(),
+  cursor: z.object({ id: z.string(), createdAt: z.date() }).nullish(),
+  limit: z.number().min(1).max(100).default(25),
+})
+
 export const financeRouter = router({
+  paymentLink: router({
+    create: auditedProcedure.input(PaymentLinkCreateInput).mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertPaymentLinkRole(user)
+
+      // Sanity: family must exist and not be soft-deleted.
+      const family = await ctx.db.family.findFirst({
+        where: { id: input.familyId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!family) throw new TRPCError({ code: 'NOT_FOUND', message: 'family not found' })
+
+      const result = await createPaymentLink(ctx.db, {
+        familyId: input.familyId,
+        contactId: input.contactId ?? null,
+        agentId: user.id,
+        amountMinor: input.amountMinor,
+        currency: input.currency.toLowerCase(),
+        reason: input.reason,
+        productName: input.productName,
+        requestId: ctx.requestId,
+      })
+
+      // createPaymentLink writes its own AuditLogEntry; satisfy the
+      // auditedProcedure middleware too (CLAUDE.md §27).
+      await ctx.audit({
+        action: 'charge.payment_link_requested',
+        target: { type: 'PaymentLinkIntent', id: result.paymentLinkIntentId },
+        after: {
+          familyId: input.familyId,
+          contactId: input.contactId ?? null,
+          amountMinor: input.amountMinor,
+          currency: input.currency.toLowerCase(),
+          reason: input.reason,
+        },
+      })
+
+      return result
+    }),
+
+    list: protectedProcedure.input(PaymentLinkListInput).query(async ({ ctx, input }) => {
+      assertPaymentLinkRole(requireUser(ctx))
+      const rows = await ctx.db.paymentLinkIntent.findMany({
+        where: {
+          ...(input.familyId ? { familyId: input.familyId } : {}),
+          ...(input.cursor
+            ? {
+                OR: [
+                  { createdAt: { lt: input.cursor.createdAt } },
+                  {
+                    AND: [
+                      { createdAt: input.cursor.createdAt },
+                      { id: { lt: input.cursor.id } },
+                    ],
+                  },
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: input.limit + 1,
+        select: {
+          id: true,
+          familyId: true,
+          contactId: true,
+          agentId: true,
+          amountMinor: true,
+          currency: true,
+          reason: true,
+          stripePaymentLinkId: true,
+          url: true,
+          status: true,
+          createdAt: true,
+        },
+      })
+      const hasMore = rows.length > input.limit
+      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      const last = sliced[sliced.length - 1]
+      return {
+        items: sliced,
+        nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
+      }
+    }),
+  }),
+
   refund: router({
     create: auditedProcedure.input(RefundCreateInput).mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)

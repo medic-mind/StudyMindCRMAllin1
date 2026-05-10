@@ -794,6 +794,32 @@ model Allocation {
   @@index([bookingId])
 }
 
+// Audit-B2: agent-initiated Stripe Payment Link. CLAUDE.md §8.
+// Persisted BEFORE the Stripe API call so the request is recoverable across
+// crashes; idempotencyKey on Stripe binds to PaymentLinkIntent.id.
+model PaymentLinkIntent {
+  id                  String  @id
+  familyId            String
+  contactId           String?
+  agentId             String
+  amountMinor         Int
+  currency            String  @default("gbp")
+  reason              String
+  stripePaymentLinkId String?
+  url                 String?
+  /// pending | created | completed | expired | cancelled
+  status              String  @default("pending")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([familyId])
+  @@index([agentId])
+  @@index([stripePaymentLinkId])
+}
+
 model RefundIntent {
   id             String             @id
   paymentId      String
