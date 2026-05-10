@@ -10,9 +10,11 @@ import { familyRouter } from './routers/family'
 import { financeRouter } from './routers/finance'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
+import { notificationsRouter } from './routers/notifications'
 import { oauthRouter } from './routers/oauth'
 import { reportsRouter } from './routers/reports'
 import { safeguardingRouter } from './routers/safeguarding'
+import { searchRouter } from './routers/search'
 import { taskRouter } from './routers/task'
 
 export const appRouter = router({
@@ -24,9 +26,11 @@ export const appRouter = router({
   finance: financeRouter,
   inbox: inboxRouter,
   interaction: interactionRouter,
+  notifications: notificationsRouter,
   oauth: oauthRouter,
   reports: reportsRouter,
   safeguarding: safeguardingRouter,
+  search: searchRouter,
   task: taskRouter,
 })
 

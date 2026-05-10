@@ -2,8 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Brand surface variables. Tailwind tokens (see packages/ui/tokens) are the
+ * single source of truth for individual palette steps. The variables below
+ * are *semantic* aliases — what a surface *means*, not what shade it is —
+ * so components can reference `bg-app` or `border-app` without baking a
+ * specific scale step into the JSX. CLAUDE.md §4.
+ */
 :root {
   color-scheme: light;
+
+  --color-app-bg: theme('colors.neutral.50');
+  --color-surface: theme('colors.neutral.0');
+  --color-surface-muted: theme('colors.neutral.100');
+  --color-border: theme('colors.neutral.200');
+  --color-border-strong: theme('colors.neutral.300');
+
+  --color-text: theme('colors.neutral.900');
+  --color-text-muted: theme('colors.neutral.600');
+  --color-text-subtle: theme('colors.neutral.500');
+
+  --color-brand: theme('colors.primary.600');
+  --color-brand-fg: theme('colors.neutral.0');
+  --color-brand-soft: theme('colors.primary.50');
+
+  --shell-topbar-height: 64px;
+  --shell-sidebar-width: 14rem; /* 224px */
 }
 
 html,
@@ -14,4 +38,33 @@ body {
 body {
   @apply bg-neutral-50 text-neutral-900 antialiased;
   font-family: theme('fontFamily.sans');
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/*
+ * Tabular numerals — opt-in utility for ledger columns, finance tables,
+ * and any vertical alignment of digits (CLAUDE.md §4, §29). Applied via
+ * `.tabular-nums` rather than globally so prose text keeps proportional
+ * digits.
+ */
+.tabular-nums {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+/* Visible focus rings everywhere — never strip the outline (CLAUDE.md §28). */
+:focus-visible {
+  outline: 2px solid theme('colors.primary.500');
+  outline-offset: 2px;
+}
+
+/* Honour reduced motion (CLAUDE.md §28). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
