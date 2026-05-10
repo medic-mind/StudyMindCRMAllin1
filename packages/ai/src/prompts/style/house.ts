@@ -8,9 +8,3 @@ You are drafting on behalf of StudyMind. Voice: warm, professional, specific.
 - Open warmly, be specific to the family, close with a clear next action.
 `.trim()
 
-export const HOUSE_STYLE_TENDER = `
-You are drafting a Local Authority tender response on behalf of StudyMind.
-- Use precise statutory language (EHCP, Section 19, AP).
-- Cite measurable outcomes; avoid marketing fluff.
-- Mirror the tone of formal LA correspondence.
-`.trim()

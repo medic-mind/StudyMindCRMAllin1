@@ -234,19 +234,6 @@ export const familyRouter = router({
         }),
       ])
 
-      const apPlacement = (f.apPlacement as Record<string, unknown> | null) ?? null
-      const apReviewDateStr =
-        apPlacement && typeof apPlacement['apReviewDate'] === 'string'
-          ? (apPlacement['apReviewDate'] as string)
-          : null
-      const reviewStatus =
-        apPlacement && typeof apPlacement['reviewStatus'] === 'string'
-          ? (apPlacement['reviewStatus'] as string)
-          : null
-      const apReviewDate = apReviewDateStr ? new Date(apReviewDateStr) : null
-      const apOverdue =
-        apReviewDate !== null && reviewStatus !== 'completed' && apReviewDate < new Date()
-
       return {
         id: f.id,
         name: f.name,
@@ -269,21 +256,6 @@ export const familyRouter = router({
           isMinor: m.contact.isMinor,
           kind: m.contact.kind,
         })),
-        ap: apPlacement
-          ? {
-              statutoryReason:
-                typeof apPlacement['statutoryReason'] === 'string'
-                  ? (apPlacement['statutoryReason'] as string)
-                  : null,
-              apStartDate:
-                typeof apPlacement['apStartDate'] === 'string'
-                  ? (apPlacement['apStartDate'] as string)
-                  : null,
-              apReviewDate: apReviewDateStr,
-              reviewStatus,
-              overdue: apOverdue,
-            }
-          : null,
         openDiscrepancies: discrepancies.map((d) => ({
           id: d.id,
           category: d.category as string,

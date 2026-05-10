@@ -7,7 +7,6 @@ import { RECONCILE_FUNCTIONS } from './reconcile'
 import { CHURN_SCORE_FUNCTIONS } from './ai/churn-score'
 import { STATUS_SUMMARY_FUNCTIONS } from './ai/status-summary'
 import { COST_SUMMARY_FUNCTIONS } from './cost-summary'
-import { LACONTRACT_FUNCTIONS } from './lacontract/deadline-watcher'
 import { AUDIT_LOG_ARCHIVE_FUNCTIONS } from './compliance/audit-log-archive'
 import { UEBA_FUNCTIONS } from './security/ueba'
 import { OBSERVABILITY_FUNCTIONS } from './observability'
@@ -21,7 +20,6 @@ export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[
   ...RECONCILE_FUNCTIONS,
   ...STATUS_SUMMARY_FUNCTIONS,
   ...CHURN_SCORE_FUNCTIONS,
-  ...LACONTRACT_FUNCTIONS,
   ...COST_SUMMARY_FUNCTIONS,
   ...AUDIT_LOG_ARCHIVE_FUNCTIONS,
   ...UEBA_FUNCTIONS,
@@ -85,11 +83,6 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     id: 'gocardless/reconcile-late-failures',
     cron: '0 */4 * * *',
     description: 'Walk recent confirmations and surface any new late failures',
-  },
-  {
-    id: 'lacontract/report-deadline-watcher',
-    cron: '0 7 * * *',
-    description: 'Surface LA progress-report deadlines within 5 working days; create tasks',
   },
   {
     id: 'cost/weekly-summary',

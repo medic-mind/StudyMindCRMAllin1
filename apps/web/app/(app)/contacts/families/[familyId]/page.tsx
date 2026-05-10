@@ -7,7 +7,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
-import { ApPlacementBanner } from '@/components/family/ap-placement-banner'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -55,17 +54,6 @@ export default async function FamilyDetailPage({
           Back to contacts
         </Link>
       </div>
-
-      {data.ap ? (
-        <ApPlacementBanner
-          familyId={data.id}
-          statutoryReason={data.ap.statutoryReason}
-          apStartDate={data.ap.apStartDate}
-          apReviewDate={data.ap.apReviewDate}
-          reviewStatus={data.ap.reviewStatus}
-          overdue={data.ap.overdue}
-        />
-      ) : null}
 
       <section>
         <h2 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">

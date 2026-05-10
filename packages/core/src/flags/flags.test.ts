@@ -13,7 +13,7 @@ import {
 } from './index'
 import { FLAGS } from './registry'
 
-const FLAG_RELEASE: FlagName = 'ai.tender_drafting_enabled' // default false
+const FLAG_RELEASE: FlagName = 'ai.draft_replies_enabled' // default false
 const FLAG_OPS: FlagName = 'gocardless.late_failure_reversal_enabled' // default true
 
 const ENV_KEY = (n: FlagName) => 'FLAG_' + n.toUpperCase().replace(/[^A-Z0-9]+/g, '_')

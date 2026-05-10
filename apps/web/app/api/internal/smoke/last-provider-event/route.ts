@@ -5,7 +5,7 @@
 // Inngest pipeline persisted a freshly-signed test event to ProviderEvent.
 // Returns `{ exists, receivedAt }` for the given (provider, eventId).
 
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth/stub'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { withSentry } from '@studymind/core/observability/sentry'
@@ -19,7 +19,7 @@ export const GET = withSentry(handleGet, { surface: 'smoke_provider_event' })
 
 async function handleGet(req: Request): Promise<Response> {
   // Two acceptable auth modes:
-  //   1. Clerk admin session (interactive ops use).
+  //   1. Admin session (interactive ops use).
   //   2. Bearer token equal to SMOKE_ADMIN_TOKEN (CI post-deploy smoke).
   // Both paths are audited.
   const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? null

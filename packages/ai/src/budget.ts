@@ -16,7 +16,6 @@ export type AiTaskCategory =
   | 'merge_suggestion'
   | 'status_summary'
   | 'reply_draft'
-  | 'tender_draft'
   | 'intent_classifier'
   | 'churn_score'
   | 'transcription'
@@ -37,7 +36,6 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   merge_suggestion: { daily: 2, monthly: 40 },
   status_summary: { daily: 8, monthly: 160 },
   reply_draft: { daily: 20, monthly: 400 },
-  tender_draft: { daily: 15, monthly: 300 },
   intent_classifier: { daily: 4, monthly: 80 },
   churn_score: { daily: 3, monthly: 60 },
   transcription: { daily: 10, monthly: 200 },

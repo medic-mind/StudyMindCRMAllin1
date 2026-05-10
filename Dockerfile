@@ -30,13 +30,12 @@ COPY . .
 # package .bin directories were never materialised). pnpm is fast on cache hit.
 RUN pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile
 RUN pnpm --filter @studymind/db exec prisma generate
-# Build-time-only placeholder keys. ClerkProvider initialises at module-load
-# time during static generation; without a key Next's build crashes before
-# runtime env vars from Railway get a chance. These are PUBLISHABLE / DUMMY
-# values — they have no effect at runtime because Railway env overrides them
-# when the container actually serves traffic.
-ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_d29ya2Jvb2staGVyYWxkLTk0LmNsZXJrLmFjY291bnRzLmRldiQ \
-    CLERK_SECRET_KEY=sk_test_BUILD_PLACEHOLDER \
+# Build-time-only placeholder. NextAuth (Auth.js v5) reads AUTH_SECRET at
+# import time when its `auth()` is initialised; without it the build can
+# crash before runtime env vars from Railway are applied. The value here
+# has no effect at runtime — Railway env overrides it when the container
+# actually serves traffic. ADR 0010 chunk 3.
+ENV AUTH_SECRET=build-placeholder-not-for-runtime \
     SKIP_ENV_VALIDATION=1
 RUN pnpm build
 

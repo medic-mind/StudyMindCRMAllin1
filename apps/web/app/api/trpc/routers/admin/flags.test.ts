@@ -57,17 +57,17 @@ describe('admin.flags.list', () => {
 
   it('marks stale release flags older than 30 days', async () => {
     const { ctx, featureFlags } = makeCtx('admin')
-    // Pick a release flag from registry — `ai.tender_drafting_enabled` is
+    // Pick a release flag from registry — `ai.draft_replies_enabled` is
     // declared as a release flag.
     featureFlags.push({
-      key: 'ai.tender_drafting_enabled',
+      key: 'ai.draft_replies_enabled',
       enabled: true,
       createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 60),
       updatedAt: new Date(),
     })
     const c = adminFlagsRouter.createCaller(ctx)
     const r = await c.list()
-    const stale = r.items.find((f) => f.name === 'ai.tender_drafting_enabled')
+    const stale = r.items.find((f) => f.name === 'ai.draft_replies_enabled')
     expect(stale?.stale).toBe(true)
     expect(stale?.source).toBe('db')
   })

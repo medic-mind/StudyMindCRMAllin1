@@ -38,13 +38,6 @@ export const FLAGS = {
     default: true,
     owner: 'dsl',
   },
-  'ai.tender_drafting_enabled': {
-    description: 'Enable AI-assisted LA tender drafting in the tenders surface.',
-    kind: 'release',
-    default: false,
-    owner: 'tech-lead',
-    firstShippedAt: '2026-05-09',
-  },
   'ai.draft_replies_enabled': {
     description: 'Show AI-drafted reply suggestions in the inbox composer.',
     kind: 'release',

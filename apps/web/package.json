@@ -11,7 +11,6 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
-    "@clerk/nextjs": "^6.5.1",
     "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/client": "^5.22.0",
     "@sentry/nextjs": "^10.52.0",

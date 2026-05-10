@@ -68,24 +68,6 @@ export const EVENT_NAMES = [
   'safeguarding.read_attempt',
   'safeguarding.break_glass',
 
-  // Tenders / LA
-  'tender.created',
-  'tender.state_changed',
-  'tender.draft_requested',
-  'tender.draft_signed_off',
-  'lacontract.created',
-  'lacontract.invoice_generated',
-  'lacontract.invoice_sent',
-  'lacontract.invoice_paid',
-  'lacontract.progress_report_drafted',
-  'lacontract.progress_report_signed',
-  'lacontract.progress_report_exported',
-  'ap_placement.created',
-  'ap_placement.review_overdue',
-  'ap_placement.review_completed',
-  'ap_placement.review_completed.acked',
-  'tutor.session_note_added',
-
   // AI
   'ai.draft_generated',
   'ai.classification_completed',
@@ -171,14 +153,6 @@ export const INTERACTION_TYPES = [
   'family_billing_contact_changed',
   'safeguarding_concern_raised',
   'safeguarding_la_referral',
-  'tender_state_changed',
-  'tender_draft_signed_off',
-  'lacontract_created',
-  'lacontract_invoice_generated',
-  'lacontract_invoice_sent',
-  'lacontract_invoice_paid',
-  'lacontract_progress_report_signed',
-  'tutor_session_note',
 ] as const
 
 export type InteractionType = (typeof INTERACTION_TYPES)[number]
