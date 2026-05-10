@@ -12,6 +12,9 @@ import {
   type TriageAction,
   type Urgency,
 } from '@studymind/core/safeguarding'
+import { triggerEvent as pagerDutyTrigger } from '@studymind/integration-pagerduty/client'
+import { sendEmail as resendSendEmail } from '@studymind/integration-resend/client'
+import { postAlert as slackPostAlert } from '@studymind/integration-slack/outbound'
 
 import {
   auditedProcedure,
@@ -101,7 +104,42 @@ export const safeguardingRouter = router({
         body: input.body,
         isInPlacement: input.isInPlacement,
       },
-      { actorId: user.id, requestId: ctx.requestId },
+      {
+        actorId: user.id,
+        requestId: ctx.requestId,
+        // Boundary-injected fan-out for `immediate` urgency. CLAUDE.md §42.1.
+        // Each callback is best-effort (returns `skipped` when not configured)
+        // and never includes plaintext concern body.
+        pageOnCall: async ({ flagId, contactId, urgency, dedupKey }) => {
+          await pagerDutyTrigger({
+            summary: `Safeguarding immediate concern (${flagId})`,
+            severity: 'critical',
+            dedupKey,
+            source: 'studymind-crm-safeguarding',
+            details: { flagId, contactId, urgency },
+          })
+        },
+        postSafeguardingAlert: async ({ flagId, urgency, redactedSummary }) => {
+          const channel = process.env['SLACK_SAFEGUARDING_CHANNEL_ID']
+          if (!channel) return
+          await slackPostAlert({
+            channelId: channel,
+            message: `[safeguarding ${urgency}] ${redactedSummary}`,
+            idempotencyKey: `sg-imm:${flagId}`,
+            ctx: { actorId: user.id, requestId: ctx.requestId },
+          })
+        },
+        emailDpo: async ({ flagId, urgency, redactedSummary }) => {
+          const dpoEmail = process.env['DPO_EMAIL_ADDRESS']
+          if (!dpoEmail) return
+          await resendSendEmail({
+            to: dpoEmail,
+            subject: `[StudyMind CRM] Immediate safeguarding concern raised (${flagId})`,
+            // Redacted summary only — never the encrypted body.
+            body: `Urgency: ${urgency}\nFlag: ${flagId}\n${redactedSummary}\n\nReview in CRM.`,
+          })
+        },
+      },
     )
     // raiseConcern writes its own audit row; record one more so the
     // auditedProcedure runtime check passes.
