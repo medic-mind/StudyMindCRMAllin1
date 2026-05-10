@@ -1,8 +1,7 @@
 // Cost report. Reads from the S3 archive when configured; falls back to
 // the live aggregator. CLAUDE.md §32.
 
-import Link from 'next/link'
-
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 export const dynamic = 'force-dynamic'
@@ -16,17 +15,19 @@ export default async function CostReportPage() {
       : null
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Cost</h1>
-        <Link href="/reports" className="text-sm text-neutral-600 underline">
-          Back to reports
-        </Link>
-      </div>
+    <>
+      <PageHeader
+        title="Cost reports"
+        subtitle="Weekly AI + storage summary."
+        breadcrumbs={[
+          { label: 'Reports', href: '/reports' },
+          { label: 'Cost', href: '/reports/cost' },
+        ]}
+      />
+      <div className="space-y-6">
       <p className="text-sm text-neutral-600">
-        Weekly AI + storage summary. Per CLAUDE.md §32, AI spend is estimated
-        from a 1% drift sample × 100; storage uses interaction counts as a
-        proxy until S3 inventory is wired.
+        Per CLAUDE.md §32, AI spend is estimated from a 1% drift sample × 100;
+        storage uses interaction counts as a proxy until S3 inventory is wired.
       </p>
 
       {archive.reports.length > 0 ? (
@@ -79,6 +80,7 @@ export default async function CostReportPage() {
           </p>
         </>
       )}
-    </div>
+      </div>
+    </>
   )
 }

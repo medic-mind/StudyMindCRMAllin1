@@ -3,6 +3,8 @@
 
 import Link from 'next/link'
 
+import { PageBody } from '@/components/shell/page-body'
+import { PageHeader } from '@/components/shell/page-header'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 
 import { createServerCaller } from '@/lib/trpc/server'
@@ -46,13 +48,10 @@ export default async function TasksPage({
   ]
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-        <NewTaskDialog />
-      </div>
-
-      <div className="mt-4 flex items-center gap-2 text-sm">
+    <>
+      <PageHeader title="Tasks" actions={<NewTaskDialog />} />
+      <PageBody>
+      <div className="flex items-center gap-2 text-sm">
         {tabs.map((t) => (
           <Link
             key={t.key}
@@ -143,6 +142,7 @@ export default async function TasksPage({
           </Table>
         )}
       </div>
-    </div>
+      </PageBody>
+    </>
   )
 }

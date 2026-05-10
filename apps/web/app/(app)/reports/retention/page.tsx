@@ -1,7 +1,6 @@
 // Retention report. RSC.
 
-import Link from 'next/link'
-
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { PeriodForm } from '../_components/period-form'
@@ -30,13 +29,15 @@ export default async function RetentionReportPage({
   const histMax = Math.max(1, ...data.churnScoreHistogram)
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Retention report</h1>
-        <Link href="/reports" className="text-sm text-neutral-600 underline">
-          Back to reports
-        </Link>
-      </div>
+    <>
+      <PageHeader
+        title="Retention reports"
+        breadcrumbs={[
+          { label: 'Reports', href: '/reports' },
+          { label: 'Retention', href: '/reports/retention' },
+        ]}
+      />
+      <div className="space-y-6">
       <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
       <section>
@@ -86,6 +87,7 @@ export default async function RetentionReportPage({
         </h2>
         <p className="mt-1 font-mono text-2xl">{data.churnEventsInPeriod}</p>
       </section>
-    </div>
+      </div>
+    </>
   )
 }

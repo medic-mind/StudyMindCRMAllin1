@@ -1,7 +1,6 @@
 // Finance report. RSC.
 
-import Link from 'next/link'
-
+import { PageHeader } from '@/components/shell/page-header'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -29,13 +28,15 @@ export default async function FinanceReportPage({
   })
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Finance report</h1>
-        <Link href="/reports" className="text-sm text-neutral-600 underline">
-          Back to reports
-        </Link>
-      </div>
+    <>
+      <PageHeader
+        title="Finance reports"
+        breadcrumbs={[
+          { label: 'Reports', href: '/reports' },
+          { label: 'Finance', href: '/reports/finance' },
+        ]}
+      />
+      <div className="space-y-6">
       <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
       <section>
@@ -101,6 +102,7 @@ export default async function FinanceReportPage({
             : `${Math.round(data.reconciliationLag.p90Sec)}s`}
         </p>
       </section>
-    </div>
+      </div>
+    </>
   )
 }

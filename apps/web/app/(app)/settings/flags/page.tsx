@@ -2,10 +2,15 @@
 // CLAUDE.md §31.
 
 import { legacyAuth as auth } from '@/lib/auth/server'
-import Link from 'next/link'
 
+import { PageHeader } from '@/components/shell/page-header'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
+
+const BREADCRUMBS = [
+  { label: 'Settings', href: '/settings' },
+  { label: 'Flags', href: '/settings/flags' },
+]
 
 import { FlagToggle } from './toggle'
 

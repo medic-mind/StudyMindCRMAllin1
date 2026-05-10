@@ -3,6 +3,7 @@
 
 import Link from 'next/link'
 
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { PipelineTransitionMenu } from './PipelineTransitionMenu'
@@ -29,15 +30,13 @@ export default async function PipelinePage() {
   })
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
-      <p className="mt-2 text-sm text-neutral-600">
-        Families grouped by lifecycle state. Transitions are explicit and
-        audited — open a family to change its state.
-      </p>
-
+    <>
+      <PageHeader
+        title="Pipeline"
+        subtitle="Family lifecycle stages. Transitions are explicit and audited — open a family to change its state."
+      />
       {recentTransitions.length > 0 ? (
-        <aside className="mt-4 rounded border border-neutral-200 bg-neutral-50 p-3 text-xs">
+        <aside className="rounded border border-neutral-200 bg-neutral-50 p-3 text-xs">
           <h2 className="font-semibold text-neutral-700">Recent transitions</h2>
           <ul className="mt-1 space-y-0.5">
             {recentTransitions.map((t) => (
@@ -60,7 +59,7 @@ export default async function PipelinePage() {
         </aside>
       ) : null}
 
-      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
+      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
         {STAGES.map(({ state, label }) => {
           const items = groups[state] ?? []
           return (
@@ -108,6 +107,6 @@ export default async function PipelinePage() {
           )
         })}
       </div>
-    </div>
+    </>
   )
 }

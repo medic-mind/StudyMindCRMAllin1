@@ -62,7 +62,10 @@ export function ResetForm({ token }: { token: string }) {
               callbackUrl: '/inbox',
             })
             if (r && !r.error) {
-              router.push(r.url ?? '/inbox')
+              // Use our own path, not r.url — NextAuth's url honours
+              // AUTH_URL/NEXTAUTH_URL which on a misconfigured Railway env
+              // points at http://localhost:3000.
+              router.push('/inbox')
               router.refresh()
               return
             }

@@ -3,6 +3,8 @@
 
 import Link from 'next/link'
 
+import { PageBody } from '@/components/shell/page-body'
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { TriageDialogTrigger } from './TriageDialogTrigger'
@@ -27,12 +29,13 @@ export default async function DslInboxPage() {
   const flags = await caller.safeguarding.list()
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Safeguarding inbox</h1>
-      <p className="mt-1 text-sm text-neutral-600">
-        DSL-only. Sorted by urgency then recency. CLAUDE.md §42.
-      </p>
-      <table className="mt-6 w-full text-left text-sm">
+    <>
+      <PageHeader
+        title="Safeguarding"
+        subtitle="Concerns awaiting triage. DSL-only. Sorted by urgency then recency."
+      />
+      <PageBody>
+      <table className="w-full text-left text-sm">
         <thead className="border-b border-neutral-200 text-xs uppercase tracking-wide text-neutral-600">
           <tr>
             <th className="py-2">Contact</th>
@@ -69,6 +72,7 @@ export default async function DslInboxPage() {
           ))}
         </tbody>
       </table>
-    </div>
+      </PageBody>
+    </>
   )
 }

@@ -1,12 +1,11 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
+import { TopBar } from '@/components/shell/top-bar'
 import { TrengoTokenBanner } from '@/components/shell/trengo-token-banner'
 
 import { SidebarNav, type NavItem } from './sidebar-nav'
-import { SignOutButton } from './sign-out-button'
 
 // Authenticated CRM shell is always rendered per-request — never prerender.
 // Without this, Next attempts to statically generate child pages at build
@@ -117,24 +116,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const nav = buildNav(role, totpEnabled)
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-56 flex-col border-r border-neutral-200 bg-white p-4">
-        <Link
-          href="/"
-          className="mb-6 text-sm font-semibold text-neutral-900 hover:underline"
+    <div className="flex min-h-screen flex-col bg-neutral-50">
+      <TopBar
+        user={{ email: me.email, name: me.name ?? null, role: me.role }}
+      />
+      <div className="flex flex-1">
+        <aside
+          className="flex flex-col border-r border-neutral-200 bg-white px-3 py-4"
+          style={{ width: 'var(--shell-sidebar-width)' }}
+          aria-label="Sidebar"
         >
-          StudyMind CRM
-        </Link>
-        <SidebarNav items={nav} />
-        <div className="mt-auto flex flex-col gap-1 border-t border-neutral-200 pt-4 text-sm">
-          <SignOutButton />
-        </div>
-      </aside>
-      <main className="flex-1">
-        <GmailReconnectBanner />
-        <TrengoTokenBanner />
-        <div className="p-6">{children}</div>
-      </main>
+          <SidebarNav items={nav} />
+        </aside>
+        <main id="main" className="flex-1">
+          <GmailReconnectBanner />
+          <TrengoTokenBanner />
+          <div className="px-6 py-6">{children}</div>
+        </main>
+      </div>
     </div>
   )
 }
