@@ -302,6 +302,78 @@ export async function requestPasswordReset(emailRaw: string): Promise<ActionResu
 }
 
 /* -------------------------------------------------------------------------- */
+/* accept invite (admin-issued)                                                 */
+/* -------------------------------------------------------------------------- */
+
+export interface AcceptInviteInput {
+  token: string
+  password: string
+}
+
+export type AcceptInviteResult =
+  | { ok: true; email: string }
+  | { ok: false; error: string }
+
+/**
+ * Accept an admin-issued invite. The invite token is an EmailVerificationToken
+ * row issued by `admin.users.invite`; the target User row is identified by
+ * `passwordHash IS NULL && emailVerifiedAt IS NULL`. On success we set the
+ * password, mark the email verified, and the caller can sign in.
+ */
+export async function acceptInvite(input: AcceptInviteInput): Promise<AcceptInviteResult> {
+  const { token, password } = input
+  if (!token) return { ok: false, error: 'Invite token is missing.' }
+
+  try {
+    assertStrongPassword(password)
+  } catch (e) {
+    if (e instanceof BusinessError) return { ok: false, error: e.message }
+    throw e
+  }
+
+  const tokenHash = hashToken(token)
+  const row = await db.emailVerificationToken.findUnique({ where: { tokenHash } })
+  if (!row || row.usedAt || row.expiresAt.getTime() < Date.now()) {
+    return { ok: false, error: 'This invite link is invalid or has expired.' }
+  }
+  const user = await db.user.findUnique({ where: { id: row.userId } })
+  if (!user) return { ok: false, error: 'This invite link is invalid or has expired.' }
+  if (user.passwordHash) {
+    return { ok: false, error: 'This invite has already been accepted.' }
+  }
+  if (user.deactivatedAt) {
+    return { ok: false, error: 'This account is no longer active.' }
+  }
+
+  const passwordHash = await hashPassword(password)
+  const now = new Date()
+  await db.$transaction([
+    db.emailVerificationToken.update({
+      where: { id: row.id },
+      data: { usedAt: now },
+    }),
+    db.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        emailVerifiedAt: now,
+        mustResetPassword: false,
+        failedSignInAttempts: 0,
+        lockedUntil: null,
+      },
+    }),
+  ])
+
+  await writeAuditLogEntry(db, {
+    actorId: user.id,
+    action: 'auth.user_invite_accepted',
+    target: { type: 'User', id: user.id },
+  })
+
+  return { ok: true, email: user.email }
+}
+
+/* -------------------------------------------------------------------------- */
 /* reset password                                                              */
 /* -------------------------------------------------------------------------- */
 
