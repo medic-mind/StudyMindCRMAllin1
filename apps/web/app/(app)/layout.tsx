@@ -1,10 +1,11 @@
-import { auth } from '@clerk/nextjs/server'
-import { redirect } from 'next/navigation'
 import Link from 'next/link'
+
+import { auth } from '@/lib/auth/stub'
 
 // Authenticated CRM shell is always rendered per-request — never prerender.
 // Without this, Next attempts to statically generate child pages at build
-// time and Clerk fails because no publishableKey exists in the build env.
+// time and the auth stub would throw `AUTH_PIVOT_PENDING` during static
+// generation. Real auth gating returns in chunk 5 of ADR 0010.
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
@@ -19,10 +20,9 @@ const NAV = [
 ] as const
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  // Stub: real session check returns in chunk 5 of ADR 0010.
   const { userId } = await auth()
-  if (!userId) {
-    redirect('/sign-in')
-  }
+  void userId
 
   return (
     <div className="flex min-h-screen">

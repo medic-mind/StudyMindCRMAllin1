@@ -2,7 +2,7 @@
 // Read-only view of webhook receive recency and connected-mailbox health.
 // CLAUDE.md §11 (Trengo), §13 (Asana), §14 (Gmail), §25 (observability).
 
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth/stub'
 import Link from 'next/link'
 
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'

@@ -1,7 +1,7 @@
 // Settings → Feature flags. RSC, admin | ops_manager.
 // CLAUDE.md §31.
 
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth/stub'
 import Link from 'next/link'
 
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'

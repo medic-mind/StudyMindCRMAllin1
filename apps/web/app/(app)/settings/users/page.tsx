@@ -1,7 +1,7 @@
 // Settings → Users + Roles. RSC, admin-only.
 // CLAUDE.md §20 (RBAC), §27 (audit context).
 
-import { auth } from '@clerk/nextjs/server'
+import { auth } from '@/lib/auth/stub'
 import Link from 'next/link'
 
 import { Button } from '@/components/ui/button'
@@ -69,7 +69,7 @@ export default async function UsersSettingsPage({
       <div className="mt-6 rounded-md border border-neutral-200 bg-white">
         {data.items.length === 0 ? (
           <div className="p-6 text-sm text-neutral-600">
-            No users found — start by inviting someone via Clerk.
+            No users found — invite a colleague to get started.
           </div>
         ) : (
           <Table>
