@@ -8,7 +8,16 @@
 import Link from 'next/link'
 import { TRPCError } from '@trpc/server'
 
+import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Badge } from '@/components/ui/badge'
+import {
+  MailIcon,
+  MessageSquareIcon,
+  PhoneIcon,
+  SmartphoneIcon,
+} from '@/components/ui/icon'
+import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { InboxRowActions } from './InboxRowActions'
@@ -18,6 +27,21 @@ const CHANNEL_LABEL: Record<string, string> = {
   sms: 'SMS',
   email: 'Email',
   web_chat: 'Web chat',
+}
+
+function ChannelIcon({ channel }: { channel: string | null | undefined }) {
+  switch (channel) {
+    case 'email':
+      return <MailIcon size={14} className="text-primary-700" />
+    case 'sms':
+      return <SmartphoneIcon size={14} className="text-emerald-700" />
+    case 'whatsapp':
+      return <MessageSquareIcon size={14} className="text-emerald-700" />
+    case 'web_chat':
+      return <MessageSquareIcon size={14} className="text-primary-700" />
+    default:
+      return <PhoneIcon size={14} className="text-neutral-500" />
+  }
 }
 
 export default async function InboxPage() {
@@ -39,12 +63,16 @@ export default async function InboxPage() {
     return (
       <>
         <PageHeader title="Inbox" subtitle="Unassigned conversations" />
-        <p className="text-sm text-neutral-600">
-          You need an agent, ops, DSL, or admin role to view the inbox.
-        </p>
+        <PageBody>
+          <p className="text-sm text-neutral-600">
+            You need an agent, ops, DSL, or admin role to view the inbox.
+          </p>
+        </PageBody>
       </>
     )
   }
+
+  const now = new Date()
 
   return (
     <>
@@ -52,59 +80,69 @@ export default async function InboxPage() {
         title="Inbox"
         subtitle="Recent inbound messages across all channels. Click a row to open the related Contact and reply."
       />
-      {items.length === 0 ? (
-        <div className="mt-8 rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-700">
-          No inbound messages yet. New WhatsApp, SMS, email, and web-chat
-          messages will appear here as they land.
-        </div>
-      ) : (
-        <ul className="mt-6 divide-y divide-neutral-200 rounded-lg border border-neutral-200">
-          {items.map((item) => {
-            const href = item.contactId
-              ? `/contacts/${item.contactId}`
-              : '/inbox'
-            const channelLabel =
-              item.channel && CHANNEL_LABEL[item.channel]
-                ? CHANNEL_LABEL[item.channel]
-                : (item.channel ?? 'Message')
-            return (
-              <li key={item.id} className="p-3 transition hover:bg-neutral-50">
-                <div className="flex items-start justify-between gap-4">
-                  <Link href={href} className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-medium text-neutral-700">
-                        {channelLabel}
-                      </span>
-                      <span className="font-medium text-neutral-900">
-                        {item.summary ?? 'Inbound message'}
-                      </span>
-                      {!item.contactId ? (
-                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">
-                          Unassigned
+      <PageBody>
+        {items.length === 0 ? (
+          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-sm">
+            <p className="text-sm font-medium text-neutral-700">
+              No inbound messages yet.
+            </p>
+            <p className="mt-1 text-sm text-neutral-500">
+              New WhatsApp, SMS, email, and web-chat messages will appear here
+              as they land.
+            </p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white shadow-sm">
+            {items.map((item) => {
+              const href = item.contactId ? `/contacts/${item.contactId}` : '/inbox'
+              const channelLabel =
+                item.channel && CHANNEL_LABEL[item.channel]
+                  ? CHANNEL_LABEL[item.channel]
+                  : (item.channel ?? 'Message')
+              return (
+                <li key={item.id} className="p-3 transition hover:bg-neutral-50">
+                  <div className="flex items-start justify-between gap-4">
+                    <Link href={href} className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100"
+                          aria-hidden
+                        >
+                          <ChannelIcon channel={item.channel} />
                         </span>
+                        <Badge tone="neutral">{channelLabel}</Badge>
+                        <span className="truncate font-medium text-neutral-900">
+                          {item.summary ?? 'Inbound message'}
+                        </span>
+                        {!item.contactId ? (
+                          <Badge tone="warn">Unassigned</Badge>
+                        ) : null}
+                      </div>
+                      {item.preview ? (
+                        <p className="mt-1 truncate pl-8 text-sm text-neutral-700">
+                          {item.preview}
+                        </p>
                       ) : null}
-                    </div>
-                    {item.preview ? (
-                      <p className="mt-1 truncate text-sm text-neutral-700">
-                        {item.preview}
-                      </p>
-                    ) : null}
-                  </Link>
-                  <div className="shrink-0 font-mono text-xs text-neutral-500 tabular-nums">
-                    {item.occurredAt.toISOString().slice(0, 16).replace('T', ' ')}
+                    </Link>
+                    <time
+                      className="shrink-0 font-mono text-xs tabular-nums text-neutral-500"
+                      dateTime={item.occurredAt.toISOString()}
+                    >
+                      {formatRelativeTime(item.occurredAt, now)}
+                    </time>
                   </div>
-                </div>
-                <div className="mt-2">
-                  <InboxRowActions
-                    interactionId={item.id}
-                    contactId={item.contactId}
-                  />
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      )}
+                  <div className="mt-2 pl-8">
+                    <InboxRowActions
+                      interactionId={item.id}
+                      contactId={item.contactId}
+                    />
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </PageBody>
     </>
   )
 }
