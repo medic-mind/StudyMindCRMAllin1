@@ -7,3 +7,11 @@ export * from './sync-stripe'
 export * from './sync-gocardless'
 export * from './booking-rules'
 export * from './reconcile'
+export {
+  deriveAtRisk,
+  recomputeAtRiskForFamily,
+  type AtRiskFamilyInput,
+  type AtRiskSignals,
+  type DeriveAtRiskResult,
+  type RecomputeContext,
+} from './at-risk'
