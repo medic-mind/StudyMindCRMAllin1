@@ -201,6 +201,12 @@ model User {
   mustResetPassword    Boolean   @default(false)
   mfaSecretCipherId    String?
   mfaEnabled           Boolean   @default(false)
+  // Audit-A2 / ADR 0010: TOTP MFA. The encrypted secret lives in
+  // EncryptedField (KMS envelope; ownerType='User'). totpEnabledAt is the
+  // single source of truth for "MFA on" — the middleware enrolment gate
+  // and the credentials authorize callback both read it.
+  totpSecretCipherId   String?
+  totpEnabledAt        DateTime?
   lastSignInAt         DateTime?
   lastSignInIp         String?
   lastSignInUa         String?
@@ -470,6 +476,11 @@ model Interaction {
   updatedById String?
   deletedAt   DateTime?
 
+  /// CLAUDE.md §21 retention. Soft-delete sets `softDeletedAt`; the row is
+  /// then hard-deleted after `pendingHardDeleteAt` elapses (default 30d).
+  softDeletedAt        DateTime?
+  pendingHardDeleteAt  DateTime?
+
   contact    Contact?    @relation("ContactInteractions", fields: [contactId], references: [id])
   family     Family?     @relation("FamilyInteractions", fields: [familyId], references: [id])
   tender     Tender?     @relation("TenderInteractions", fields: [tenderId], references: [id])
@@ -480,6 +491,7 @@ model Interaction {
   @@index([tenderId, occurredAt])
   @@index([laContractId, occurredAt])
   @@index([type, occurredAt])
+  @@index([pendingHardDeleteAt])
 }
 
 // -----------------------------------------------------------------------------
