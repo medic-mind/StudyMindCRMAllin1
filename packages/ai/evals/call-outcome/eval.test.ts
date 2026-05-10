@@ -8,8 +8,8 @@ import {
   callOutcomeSchema,
   type CallOutcome,
   type CallOutcomePromptInput,
-} from '../../src/prompts/call-outcome.js'
-import { loadFixtures } from '../run.js'
+} from '../../src/prompts/call-outcome'
+import { loadFixtures } from '../run'
 
 const fixtures = loadFixtures<CallOutcomePromptInput, CallOutcome>(__dirname)
 

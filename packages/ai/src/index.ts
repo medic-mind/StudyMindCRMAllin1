@@ -6,14 +6,14 @@
 // log/audit shape baked into the clients.
 
 // Sanitisation — call BEFORE feeding any user content into a prompt.
-export { redactPII, sanitiseUserContent, type RedactPIIOptions } from './sanitise.js'
+export { redactPII, sanitiseUserContent, type RedactPIIOptions } from './sanitise'
 
 // Restricted-contact guard. The web app injects a db client at boot so
 // AI clients can refuse prompts that reference a restricted_access contact.
 export {
   setRestrictedGuardDb,
   type RestrictedGuardDb,
-} from './clients/restricted-guard.js'
+} from './clients/restricted-guard'
 
 // Drift sampling — 1% of production AI calls land in DriftSample for
 // weekly reviewer triage. Web app injects the db at boot.
@@ -23,7 +23,7 @@ export {
   setDriftSampleRate,
   type DriftSampleDb,
   type SampleForDriftInput,
-} from './drift.js'
+} from './drift'
 
 // Budget guardrail.
 export {
@@ -33,26 +33,26 @@ export {
   type BudgetCheckResult,
   type BudgetLimit,
   type BudgetMode,
-} from './budget.js'
+} from './budget'
 
 // Clients — the only sanctioned way to call OpenAI.
 export {
   runStructured,
   type RunStructuredInput,
   type StructuredModel,
-} from './clients/structured.js'
+} from './clients/structured'
 export {
   defaultDraftShape,
   runDraft,
   type DraftModel,
   type RunDraftInput,
   type RunDraftResult,
-} from './clients/draft.js'
+} from './clients/draft'
 export {
   transcribeAudio,
   type TranscribeAudioInput,
   type TranscribeAudioResult,
-} from './clients/transcribe.js'
+} from './clients/transcribe'
 
 // Prompt builders. Each task ships a typed builder + a schema + a VERSION.
 export {
@@ -61,14 +61,14 @@ export {
   VERSION as CALL_OUTCOME_PROMPT_VERSION,
   type CallOutcome,
   type CallOutcomePromptInput,
-} from './prompts/call-outcome.js'
+} from './prompts/call-outcome'
 export {
   buildSlackSummaryPrompt,
   slackSummarySchema,
   VERSION as SLACK_SUMMARY_PROMPT_VERSION,
   type SlackSummary,
   type SlackSummaryPromptInput,
-} from './prompts/slack-summary.js'
+} from './prompts/slack-summary'
 export {
   buildMergeCandidatesPrompt,
   mergeCandidateSchema,
@@ -77,7 +77,7 @@ export {
   type ContactSummaryForMerge,
   type MergeCandidate,
   type MergeCandidatesPromptInput,
-} from './prompts/merge-candidates.js'
+} from './prompts/merge-candidates'
 export {
   buildChurnScorePrompt,
   CHURN_TASK_THRESHOLD,
@@ -86,7 +86,7 @@ export {
   type ChurnScoreOutput,
   type ChurnScorePromptInput,
   type ChurnSignals,
-} from './prompts/churn-score.js'
+} from './prompts/churn-score'
 export {
   buildReplyDraftPrompt,
   replyDraftShape,
@@ -94,7 +94,7 @@ export {
   type InteractionListItem,
   type ReplyChannel,
   type ReplyDraftPromptInput,
-} from './prompts/reply-draft.js'
+} from './prompts/reply-draft'
 export {
   buildStatusSummaryPrompt,
   statusSummarySchema,
@@ -102,4 +102,4 @@ export {
   type ContactContext,
   type StatusSummary,
   type StatusSummaryPromptInput,
-} from './prompts/status-summary.js'
+} from './prompts/status-summary'

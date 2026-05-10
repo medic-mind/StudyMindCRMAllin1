@@ -4,7 +4,7 @@
 
 import { z } from 'zod'
 
-import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding.js'
+import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding'
 
 export const VERSION = '2026-05-09.1'
 

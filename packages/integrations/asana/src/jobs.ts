@@ -12,9 +12,9 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { createClient } from './client.js'
-import { isAllowedProject } from './config.js'
-import { CRM_CONTACT_CUSTOM_FIELD, type AsanaTaskResource } from './types.js'
+import { createClient } from './client'
+import { isAllowedProject } from './config'
+import { CRM_CONTACT_CUSTOM_FIELD, type AsanaTaskResource } from './types'
 
 interface EventReceivedData {
   eventId: string

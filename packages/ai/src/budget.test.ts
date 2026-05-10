@@ -7,7 +7,7 @@ import {
   BUDGETS,
   checkBudget,
   recordUsage,
-} from './budget.js'
+} from './budget'
 
 beforeEach(() => {
   __resetBudgetForTests()

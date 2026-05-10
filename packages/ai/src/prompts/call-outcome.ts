@@ -6,8 +6,8 @@
 
 import { z } from 'zod'
 
-import { sanitiseUserContent } from '../sanitise.js'
-import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding.js'
+import { sanitiseUserContent } from '../sanitise'
+import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding'
 
 export const VERSION = '2026-05-04.1'
 

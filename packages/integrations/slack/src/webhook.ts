@@ -5,7 +5,7 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
-import type { SlackInbound } from './types.js'
+import type { SlackInbound } from './types'
 
 export const SIGNATURE_HEADER = 'x-slack-signature' as const
 export const TIMESTAMP_HEADER = 'x-slack-request-timestamp' as const

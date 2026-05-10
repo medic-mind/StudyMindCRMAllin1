@@ -4,7 +4,7 @@ import {
   buildProgressReportPrompt,
   PROGRESS_REPORT_VERSION,
   progressReportShape,
-} from './progress-report.js'
+} from './progress-report'
 
 describe('buildProgressReportPrompt', () => {
   it('stamps the version and includes attendance percentage', () => {

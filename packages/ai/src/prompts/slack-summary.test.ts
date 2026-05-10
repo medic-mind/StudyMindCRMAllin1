@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { buildSlackSummaryPrompt, slackSummarySchema, VERSION } from './slack-summary.js'
+import { buildSlackSummaryPrompt, slackSummarySchema, VERSION } from './slack-summary'
 
 describe('buildSlackSummaryPrompt', () => {
   it('is deterministic for the same input and stamps the version', () => {

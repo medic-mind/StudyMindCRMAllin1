@@ -7,10 +7,10 @@
 
 import { z } from 'zod'
 
-import { sanitiseUserContent } from '../sanitise.js'
-import { HOUSE_STYLE_REPLY } from './style/house.js'
-import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding.js'
-import { VOICE } from './style/voice.js'
+import { sanitiseUserContent } from '../sanitise'
+import { HOUSE_STYLE_REPLY } from './style/house'
+import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding'
+import { VOICE } from './style/voice'
 
 export const VERSION = '2026-05-09.1'
 

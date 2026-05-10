@@ -20,8 +20,8 @@ import {
   getHeader,
   parseAddresses,
   type GmailMessage,
-} from './client.js'
-import { putAttachment } from './s3.js'
+} from './client'
+import { putAttachment } from './s3'
 
 interface HistoryChangedData {
   eventId: string

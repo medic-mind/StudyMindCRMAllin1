@@ -7,7 +7,7 @@ import {
   buildTenderDraftPrompt,
   TENDER_DRAFT_VERSION,
   tenderDraftShape,
-} from './draft.js'
+} from './draft'
 
 describe('buildTenderDraftPrompt', () => {
   it('stamps the prompt version', () => {

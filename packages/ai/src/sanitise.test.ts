@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { redactPII, sanitiseUserContent } from './sanitise.js'
+import { redactPII, sanitiseUserContent } from './sanitise'
 
 describe('sanitiseUserContent', () => {
   it('strips ChatML role markers', () => {

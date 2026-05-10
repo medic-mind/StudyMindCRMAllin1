@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { colors, radius, spacing, typography } from '../index.js'
+import { colors, radius, spacing, typography } from '../index'
 
 function shallowKeys(obj: Record<string, unknown>): string[] {
   return Object.keys(obj).sort()

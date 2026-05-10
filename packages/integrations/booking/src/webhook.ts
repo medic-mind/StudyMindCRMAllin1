@@ -1,7 +1,7 @@
 // Booking site webhook signature verification + payload normalisation.
 // See CLAUDE.md Section 7.1.
 
-import type { BookingEventEnvelope } from './types.js'
+import type { BookingEventEnvelope } from './types'
 
 export const SIGNATURE_HEADER = 'x-booking-signature' as const
 

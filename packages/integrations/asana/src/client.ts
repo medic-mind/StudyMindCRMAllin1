@@ -4,7 +4,7 @@
 
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
 
-import type { AsanaTaskResource } from './types.js'
+import type { AsanaTaskResource } from './types'
 
 export const ASANA_API_BASE = 'https://app.asana.com/api/1.0' as const
 

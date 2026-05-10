@@ -6,8 +6,8 @@
 
 import { BusinessError, logger } from '@studymind/core'
 
-import { checkBudget, recordUsage } from '../budget.js'
-import { getOpenAI } from './openai.js'
+import { checkBudget, recordUsage } from '../budget'
+import { getOpenAI } from './openai'
 
 export interface TranscribeAudioInput {
   /**

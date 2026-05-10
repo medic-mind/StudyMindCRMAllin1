@@ -7,8 +7,8 @@ import {
   mergeCandidateSchema,
   type MergeCandidate,
   type MergeCandidatesPromptInput,
-} from '../../src/prompts/merge-candidates.js'
-import { loadFixtures } from '../run.js'
+} from '../../src/prompts/merge-candidates'
+import { loadFixtures } from '../run'
 
 const fixtures = loadFixtures<MergeCandidatesPromptInput, MergeCandidate>(__dirname)
 

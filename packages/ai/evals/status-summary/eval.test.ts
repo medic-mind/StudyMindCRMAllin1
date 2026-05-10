@@ -7,8 +7,8 @@ import {
   statusSummarySchema,
   type StatusSummary,
   type StatusSummaryPromptInput,
-} from '../../src/prompts/status-summary.js'
-import { loadFixtures } from '../run.js'
+} from '../../src/prompts/status-summary'
+import { loadFixtures } from '../run'
 
 const fixtures = loadFixtures<StatusSummaryPromptInput, StatusSummary>(__dirname)
 
