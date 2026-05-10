@@ -35,7 +35,8 @@ const PUBLIC_PATH_PREFIXES = [
 ]
 
 function isPublicPath(pathname: string): boolean {
-  if (pathname === '/') return true
+  // The root '/' is NOT public — unauthenticated visitors must be redirected
+  // to /sign-in so they don't see the (app) shell.
   if (
     PUBLIC_PATH_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
   ) {
