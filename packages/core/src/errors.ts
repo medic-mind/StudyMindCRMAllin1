@@ -18,6 +18,7 @@ export type BusinessErrorCode =
   | 'INVALID_CREDENTIALS'
   | 'EMAIL_NOT_VERIFIED'
   | 'TOKEN_EXPIRED_OR_USED'
+  | 'LAST_SUPER_ADMIN'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

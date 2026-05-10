@@ -11,6 +11,7 @@ Update in the same PR as a role change.
 
 - **Product owner:** `<TBD — fill before deploy>`
 - **Tech lead:** `<TBD — fill before deploy>`
+- **Initial super_admin (seeded):** Aashir (`aashir@studymind.co.uk`) — bootstrapped via `pnpm seed:super-admin`. See `docs/runbooks/seed-super-admin.md`.
 
 ## Compliance
 
@@ -30,7 +31,7 @@ Update in the same PR as a role change.
 - **Stripe account owner:** `<TBD — fill before deploy>`
 - **GoCardless account owner:** `<TBD — fill before deploy>`
 - **AWS account owner:** `<TBD — fill before deploy>`
-- **Clerk workspace owner:** `<TBD — fill before deploy>`
+- ~~**Clerk workspace owner:**~~ Auth is now self-hosted (ADR 0010). The role no longer applies.
 - **Railway project owner:** `<TBD — fill before deploy>`
 
 ## Escalation

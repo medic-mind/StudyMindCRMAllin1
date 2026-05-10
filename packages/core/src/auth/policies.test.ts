@@ -6,6 +6,7 @@ import {
   ROLES,
   canGrantRole,
   canOverrideRestrictedDsl,
+  canRevokeRole,
   roleCan,
   type Role,
 } from './policies'
@@ -59,6 +60,32 @@ describe('canGrantRole', () => {
     for (const actor of lowerRoles) {
       for (const target of ROLES) {
         expect(canGrantRole(actor, target)).toBe(false)
+      }
+    }
+  })
+})
+
+describe('canRevokeRole', () => {
+  const lowerRoles: Role[] = ['ops_manager', 'agent', 'finance', 'dsl', 'read_only']
+
+  it('super_admin can revoke any role', () => {
+    for (const r of ROLES) {
+      expect(canRevokeRole('super_admin', r)).toBe(true)
+    }
+  })
+
+  it('admin can revoke every role except admin and super_admin', () => {
+    expect(canRevokeRole('admin', 'admin')).toBe(false)
+    expect(canRevokeRole('admin', 'super_admin')).toBe(false)
+    for (const r of lowerRoles) {
+      expect(canRevokeRole('admin', r)).toBe(true)
+    }
+  })
+
+  it('non-admin roles cannot revoke any role', () => {
+    for (const actor of lowerRoles) {
+      for (const target of ROLES) {
+        expect(canRevokeRole(actor, target)).toBe(false)
       }
     }
   })

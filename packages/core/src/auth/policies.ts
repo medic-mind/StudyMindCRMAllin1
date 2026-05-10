@@ -179,6 +179,21 @@ export function canGrantRole(actorRole: Role, targetRole: Role): boolean {
 }
 
 /**
+ * Whether `actorRole` is allowed to revoke `targetRole`.
+ *
+ * Symmetric with `canGrantRole`: if you cannot grant a role you cannot
+ * unilaterally revoke it either. CLAUDE.md §20, ADR 0009.
+ *
+ * Note: per-row constraints (cannot revoke own role, cannot leave
+ * zero super_admins) are layered on top by the caller via
+ * `assertNotLastSuperAdmin` and self-demotion guards in the tRPC
+ * procedure.
+ */
+export function canRevokeRole(actorRole: Role, targetRole: Role): boolean {
+  return canGrantRole(actorRole, targetRole)
+}
+
+/**
  * Whether the role can override DSL assignment on a `restricted_access`
  * SafeguardingFlag in genuine emergency. CLAUDE.md §21.1, §41.3, ADR 0009.
  *
