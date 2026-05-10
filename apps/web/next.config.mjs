@@ -38,6 +38,56 @@ const nextConfig = {
   experimental: {
     typedRoutes: false,
   },
+  // Keep OpenTelemetry's SDK out of webpack's bundling pass. It pulls in
+  // protobufjs which uses dynamic require() and triggers a "Critical
+  // dependency" warning when bundled — leaving it as a server external
+  // means Node loads it directly at runtime, no warning. This only
+  // applies to server runtime (Node), not Edge.
+  serverExternalPackages: [
+    '@opentelemetry/sdk-node',
+    '@opentelemetry/auto-instrumentations-node',
+    '@opentelemetry/exporter-logs-otlp-grpc',
+    '@opentelemetry/otlp-transformer',
+    'protobufjs',
+  ],
+  // Server-only packages we don't want webpack to bundle. The OpenTelemetry
+  // SDK declares optional peers we don't install (exporter-jaeger,
+  // winston-transport) and pulls in protobufjs which uses dynamic require()
+  // — both produce noisy warnings. Marking them as commonjs externals tells
+  // webpack to leave the import as a runtime require() so Node loads them
+  // directly. The OTel SDK only runs server-side; nothing client-bound
+  // imports it. CLAUDE.md §25 (observability infrastructure).
+  webpack: (config, { isServer }) => {
+    const externals = [
+      '@opentelemetry/exporter-jaeger',
+      '@opentelemetry/winston-transport',
+    ]
+    // On the server we additionally externalise the OTel SDK + protobufjs
+    // tree so the "Critical dependency" warning from protobufjs's dynamic
+    // require disappears. We never run any of this in the browser.
+    if (isServer) {
+      externals.push(
+        '@opentelemetry/sdk-node',
+        '@opentelemetry/auto-instrumentations-node',
+        '@opentelemetry/exporter-logs-otlp-grpc',
+        '@opentelemetry/exporter-trace-otlp-grpc',
+        '@opentelemetry/exporter-metrics-otlp-grpc',
+        '@opentelemetry/otlp-transformer',
+        'protobufjs',
+        '@protobufjs/inquire',
+      )
+    }
+    const externalMap = {}
+    for (const e of externals) externalMap[e] = `commonjs ${e}`
+    if (Array.isArray(config.externals)) {
+      config.externals.push(externalMap)
+    } else if (typeof config.externals === 'object' && config.externals) {
+      Object.assign(config.externals, externalMap)
+    } else {
+      config.externals = externalMap
+    }
+    return config
+  },
   async headers() {
     return [
       {
