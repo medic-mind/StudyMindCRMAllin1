@@ -10,6 +10,8 @@ import { TRPCError } from '@trpc/server'
 
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { InboxRowActions } from './InboxRowActions'
+
 const CHANNEL_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
   sms: 'SMS',
@@ -67,12 +69,9 @@ export default async function InboxPage() {
                 ? CHANNEL_LABEL[item.channel]
                 : (item.channel ?? 'Message')
             return (
-              <li key={item.id}>
-                <Link
-                  href={href}
-                  className="flex items-start justify-between gap-4 p-3 transition hover:bg-neutral-50"
-                >
-                  <div className="min-w-0">
+              <li key={item.id} className="p-3 transition hover:bg-neutral-50">
+                <div className="flex items-start justify-between gap-4">
+                  <Link href={href} className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm">
                       <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs font-medium text-neutral-700">
                         {channelLabel}
@@ -91,11 +90,17 @@ export default async function InboxPage() {
                         {item.preview}
                       </p>
                     ) : null}
-                  </div>
+                  </Link>
                   <div className="shrink-0 font-mono text-xs text-neutral-500 tabular-nums">
                     {item.occurredAt.toISOString().slice(0, 16).replace('T', ' ')}
                   </div>
-                </Link>
+                </div>
+                <div className="mt-2">
+                  <InboxRowActions
+                    interactionId={item.id}
+                    contactId={item.contactId}
+                  />
+                </div>
               </li>
             )
           })}
