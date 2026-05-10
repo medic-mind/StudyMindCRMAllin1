@@ -1,7 +1,7 @@
 // Settings → Users + Roles. RSC, admin-only.
 // CLAUDE.md §20 (RBAC), §27 (audit context).
 
-import { auth } from '@/lib/auth/stub'
+import { legacyAuth as auth } from '@/lib/auth/server'
 import Link from 'next/link'
 
 import { Button } from '@/components/ui/button'

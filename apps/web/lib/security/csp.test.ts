@@ -24,10 +24,16 @@ describe('CSP builder', () => {
     expect(buildCsp('n')).toContain("'strict-dynamic'")
   })
 
-  it('allows Clerk and Sentry hosts', () => {
+  it('allows Sentry hosts and Google for OAuth form-action', () => {
     const csp = buildCsp('n')
-    expect(csp).toContain('https://*.clerk.com')
     expect(csp).toContain('https://*.sentry.io')
+    expect(csp).toContain('https://accounts.google.com')
+  })
+
+  it('no longer references Clerk hosts', () => {
+    const csp = buildCsp('n')
+    expect(csp).not.toContain('clerk.com')
+    expect(csp).not.toContain('clerk.accounts.dev')
   })
 
   it('generateNonce produces unique high-entropy values', () => {

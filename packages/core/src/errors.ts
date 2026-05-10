@@ -13,6 +13,11 @@ export type BusinessErrorCode =
   | 'CONTACT_MERGE_RESTRICTED_DSL_CONFLICT'
   | 'OUTBOUND_HOST_BLOCKED'
   | 'AUTH_PIVOT_PENDING'
+  | 'PASSWORD_TOO_WEAK'
+  | 'ACCOUNT_LOCKED'
+  | 'INVALID_CREDENTIALS'
+  | 'EMAIL_NOT_VERIFIED'
+  | 'TOKEN_EXPIRED_OR_USED'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

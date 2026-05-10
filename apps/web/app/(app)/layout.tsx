@@ -1,6 +1,6 @@
 import Link from 'next/link'
 
-import { auth } from '@/lib/auth/stub'
+import { legacyAuth as auth } from '@/lib/auth/server'
 
 // Authenticated CRM shell is always rendered per-request — never prerender.
 // Without this, Next attempts to statically generate child pages at build

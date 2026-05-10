@@ -1,11 +1,12 @@
 // tRPC fetch handler for the App Router.
 //
-// ADR 0010 chunk 3: Clerk has been excised. Until chunks 5-7 wire in
-// Auth.js v5, every request comes through with `user: null`. Procedures
-// that require an authenticated caller throw `UNAUTHORIZED`.
+// ADR 0010 chunk 5: NextAuth v5 wired in. Every request resolves the
+// current session through `legacyAuth()`; procedures that require an
+// authenticated caller throw `UNAUTHORIZED` when there is none.
 
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch'
 
+import { legacyAuth } from '@/lib/auth/server'
 import { trpcContextFactory } from '@/lib/trpc/context'
 
 import { appRouter } from '../root'
@@ -13,16 +14,12 @@ import { appRouter } from '../root'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-async function nullAuth() {
-  return { userId: null, sessionClaims: null }
-}
-
 const handler = (req: Request) =>
   fetchRequestHandler({
     endpoint: '/api/trpc',
     req,
     router: appRouter,
-    createContext: () => trpcContextFactory(nullAuth, req),
+    createContext: () => trpcContextFactory(legacyAuth, req),
   })
 
 export { handler as GET, handler as POST }

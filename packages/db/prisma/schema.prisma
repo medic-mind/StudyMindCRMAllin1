@@ -181,6 +181,8 @@ model User {
   id          String  @id
   // Slice 14: clerkUserId is now optional so seeded super-admins can exist
   // pre-signup. The Clerk webhook reconciles on first sign-up.
+  // ADR 0010: Clerk has been excised; this column is retained for the
+  // Slice 14 migration history but is no longer written to.
   clerkUserId String? @unique
   email       String  @unique
   name        String?
@@ -190,15 +192,97 @@ model User {
   deactivatedAt       DateTime?
   deactivationReason  String?
 
+  // ADR 0010: self-hosted auth columns. Password hash is bcrypt cost 12.
+  // mfaSecretCipherId references EncryptedField.id but is not enforced as a
+  // foreign key — keeping the migration simple, and the EncryptedField row
+  // is created/dropped in lock-step with mfaEnabled.
+  passwordHash         String?
+  emailVerifiedAt      DateTime?
+  mustResetPassword    Boolean   @default(false)
+  mfaSecretCipherId    String?
+  mfaEnabled           Boolean   @default(false)
+  lastSignInAt         DateTime?
+  lastSignInIp         String?
+  lastSignInUa         String?
+  failedSignInAttempts Int       @default(0)
+  lockedUntil          DateTime?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
   deletedAt   DateTime?
 
-  roleAssignments RoleAssignment[]
+  roleAssignments         RoleAssignment[]
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  oauthStates             OAuthState[]
 
   @@index([email])
+}
+
+// ADR 0010: server-side session table. The cookie is JWT, but we keep a row
+// per active session so we can list and revoke ("sign out other sessions").
+// The token in the cookie is hashed (sha256) before storage; we never store
+// the plaintext token.
+model Session {
+  id               String   @id
+  userId           String
+  sessionTokenHash String   @unique
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  ipAddress        String?
+  userAgent        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Single-use, time-bound email verification token. The plaintext is emailed;
+// only the sha256 hash is stored.
+model EmailVerificationToken {
+  id        String    @id
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Single-use, time-bound password reset token. Same hashing rule as above.
+model PasswordResetToken {
+  id        String    @id
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// CSRF-style nonce for OAuth flows (Gmail today; Google Calendar later).
+// The state parameter is unique and time-bound. Bound to the user that
+// initiated the flow so a cross-account replay is rejected. ADR 0012.
+model OAuthState {
+  id        String   @id
+  userId    String
+  provider  String
+  state     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, provider])
 }
 
 model UserInvite {

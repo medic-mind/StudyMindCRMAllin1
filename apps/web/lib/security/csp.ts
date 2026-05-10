@@ -3,23 +3,24 @@
 // No `unsafe-inline`, no `unsafe-eval`. Inline first-party scripts must
 // read the per-request nonce via `headers()` and emit it on the script tag.
 // Allowances are explicit and audited:
-//   - Clerk hosted UI (script, frame, image, connect).
 //   - Sentry (script, connect for the replay endpoint).
 //   - Axiom HTTP ingest (connect).
+//   - accounts.google.com (form-action target for the outbound Gmail OAuth
+//     consent flow that lands in chunk 11 of ADR 0010).
 
 export function buildCsp(nonce: string): string {
   const directives = [
     `default-src 'self'`,
     `base-uri 'self'`,
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://*.clerk.accounts.dev https://*.clerk.com https://*.sentry.io`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://*.sentry.io`,
     `style-src 'self' 'nonce-${nonce}'`,
-    `img-src 'self' data: blob: https://*.clerk.com https://img.clerk.com`,
+    `img-src 'self' data: blob:`,
     `font-src 'self' data:`,
-    `connect-src 'self' https://*.clerk.accounts.dev https://*.clerk.com https://*.sentry.io https://*.ingest.sentry.io https://api.axiom.co`,
-    `frame-src 'self' https://*.clerk.accounts.dev https://*.clerk.com`,
+    `connect-src 'self' https://*.sentry.io https://*.ingest.sentry.io https://api.axiom.co`,
+    `frame-src 'self'`,
     `object-src 'none'`,
     `frame-ancestors 'none'`,
-    `form-action 'self'`,
+    `form-action 'self' https://accounts.google.com`,
     `upgrade-insecure-requests`,
   ]
   return directives.join('; ')
