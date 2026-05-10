@@ -8,6 +8,8 @@ import Link from 'next/link'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { IntegrationTestButton } from './IntegrationTestButton'
+
 export const dynamic = 'force-dynamic'
 
 function timeAgo(d: Date | null): string {
@@ -52,6 +54,7 @@ export default async function IntegrationsSettingsPage() {
   }
   const caller = await createServerCaller()
   const data = await caller.admin.integrations.status()
+  const isAdmin = role === 'admin'
 
   return (
     <div>
@@ -73,6 +76,7 @@ export default async function IntegrationsSettingsPage() {
               <Th>Last event</Th>
               <Th>Type</Th>
               <Th>Event id</Th>
+              {isAdmin ? <Th>Actions</Th> : null}
             </Tr>
           </Thead>
           <Tbody>
@@ -91,6 +95,11 @@ export default async function IntegrationsSettingsPage() {
                   <Td className="font-mono text-xs text-neutral-500">
                     {p.lastEventId ?? '—'}
                   </Td>
+                  {isAdmin ? (
+                    <Td>
+                      <IntegrationTestButton provider={p.provider as never} />
+                    </Td>
+                  ) : null}
                 </Tr>
               )
             })}
