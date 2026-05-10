@@ -1,6 +1,7 @@
 // Finance router. See CLAUDE.md §27 (tRPC conventions), §20 (RBAC),
 // §6.3 (reconciliation triangle), §3 (never auto-resolve).
 
+import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -284,6 +285,164 @@ export const financeRouter = router({
         nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
       }
     }),
+  }),
+
+  allocation: router({
+    /**
+     * Manual override of payment-to-booking allocations. CLAUDE.md §6.3, §9.
+     *
+     * Replaces the active allocation set for a Payment with the provided
+     * lines. Server-side asserts:
+     *   sum(activeAllocations) <= Payment.amountMinor (CLAUDE.md §41.2).
+     * Existing active rows that are not in `allocations` are soft-deleted;
+     * (paymentId, bookingId) pairs are upserted (active rows updated in
+     * place); brand-new pairs are created.
+     */
+    upsert: auditedProcedure
+      .input(
+        z.object({
+          paymentId: z.string().min(1),
+          allocations: z
+            .array(
+              z.object({
+                bookingId: z.string().min(1),
+                amountMinor: z.number().int().positive().max(10_000_000),
+                reason: z.string().trim().min(2).max(500),
+              }),
+            )
+            .min(0)
+            .max(50),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+
+        const payment = await ctx.db.payment.findUnique({
+          where: { id: input.paymentId },
+          select: { id: true, amountMinor: true, familyId: true },
+        })
+        if (!payment) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'payment not found' })
+        }
+
+        // §41.2 invariant: sum of active allocations cannot exceed Payment.
+        const total = input.allocations.reduce((s, a) => s + a.amountMinor, 0)
+        if (total > payment.amountMinor) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `Allocations (${total}p) exceed Payment amount (${payment.amountMinor}p).`,
+          })
+        }
+
+        const before = await ctx.db.allocation.findMany({
+          where: { paymentId: input.paymentId, deletedAt: null },
+          select: { id: true, bookingId: true, amountMinor: true, reason: true },
+        })
+
+        const incomingByBooking = new Map(input.allocations.map((a) => [a.bookingId, a]))
+
+        const result = await ctx.db.$transaction(async (tx) => {
+          // Soft-delete rows whose bookingId is no longer in the incoming set.
+          const toRetire = before.filter((b) => !incomingByBooking.has(b.bookingId))
+          for (const row of toRetire) {
+            await tx.allocation.update({
+              where: { id: row.id },
+              data: { deletedAt: new Date(), updatedById: user.id },
+            })
+          }
+
+          // Upsert each incoming row (active key is `(paymentId, bookingId)`
+          // partial unique on deletedAt IS NULL).
+          for (const a of input.allocations) {
+            const existing = before.find((b) => b.bookingId === a.bookingId)
+            if (existing) {
+              await tx.allocation.update({
+                where: { id: existing.id },
+                data: {
+                  amountMinor: a.amountMinor,
+                  reason: a.reason,
+                  updatedById: user.id,
+                },
+              })
+            } else {
+              await tx.allocation.create({
+                data: {
+                  id: createId(),
+                  paymentId: input.paymentId,
+                  bookingId: a.bookingId,
+                  amountMinor: a.amountMinor,
+                  reason: a.reason,
+                  createdById: user.id,
+                  updatedById: user.id,
+                },
+              })
+            }
+          }
+
+          return tx.allocation.findMany({
+            where: { paymentId: input.paymentId, deletedAt: null },
+            select: { id: true, bookingId: true, amountMinor: true, reason: true },
+          })
+        })
+
+        await ctx.audit({
+          action: 'finance.allocation_upserted',
+          target: { type: 'Payment', id: payment.id },
+          before: { allocations: before },
+          after: { allocations: result },
+        })
+        return { items: result }
+      }),
+
+    list: protectedProcedure
+      .input(z.object({ paymentId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const rows = await ctx.db.allocation.findMany({
+          where: { paymentId: input.paymentId, deletedAt: null },
+          select: {
+            id: true,
+            bookingId: true,
+            amountMinor: true,
+            reason: true,
+            createdAt: true,
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        })
+        return { items: rows }
+      }),
+
+    delete: auditedProcedure
+      .input(z.object({ allocationId: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        const before = await ctx.db.allocation.findUnique({
+          where: { id: input.allocationId },
+          select: {
+            id: true,
+            paymentId: true,
+            bookingId: true,
+            amountMinor: true,
+            deletedAt: true,
+          },
+        })
+        if (!before || before.deletedAt) {
+          throw new TRPCError({ code: 'NOT_FOUND' })
+        }
+        const updated = await ctx.db.allocation.update({
+          where: { id: before.id },
+          data: { deletedAt: new Date(), updatedById: user.id },
+        })
+        await ctx.audit({
+          action: 'finance.allocation_deleted',
+          target: { type: 'Payment', id: before.paymentId },
+          before,
+          after: { id: updated.id, deletedAt: updated.deletedAt },
+        })
+        return { id: updated.id }
+      }),
   }),
 
   discrepancy: router({

@@ -777,15 +777,22 @@ model Payment {
 }
 
 model Allocation {
-  id          String @id
+  id          String  @id
   paymentId   String
   bookingId   String
   amountMinor Int
+  /// Manual override rationale (CLAUDE.md §6.3, §9). Auto-allocations leave
+  /// this null; agent-driven overrides require a short reason captured at
+  /// upsert time and surfaced in the audit row.
+  reason      String?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
+  /// Soft-delete only — historical allocations stay queryable. Hard-delete
+  /// happens via the retention engine (CLAUDE.md §21).
+  deletedAt   DateTime?
 
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
