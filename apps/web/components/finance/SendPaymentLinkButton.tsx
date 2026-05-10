@@ -5,6 +5,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -37,8 +38,12 @@ export function SendPaymentLinkButton({ familyId, contactId }: Props) {
     onSuccess: (out) => {
       setResult({ url: out.url, id: out.paymentLinkIntentId })
       setError(null)
+      toast.success('Payment link created')
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not create payment link')
+    },
   })
 
   function handleSubmit(e: React.FormEvent) {

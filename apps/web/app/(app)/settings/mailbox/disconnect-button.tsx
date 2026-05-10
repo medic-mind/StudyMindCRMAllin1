@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
 
@@ -10,9 +11,13 @@ export function DisconnectGmailButton(): React.ReactNode {
   const [error, setError] = useState<string | null>(null)
   const disconnect = trpc.oauth.gmail.disconnect.useMutation({
     onSuccess: () => {
+      toast.success('Mailbox disconnected')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not disconnect mailbox')
+    },
   })
 
   return (

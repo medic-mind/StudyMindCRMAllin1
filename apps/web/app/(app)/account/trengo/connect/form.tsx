@@ -4,6 +4,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -19,9 +20,13 @@ export function TrengoConnectForm() {
       setSuccess({ expiresAt: out.expiresAt, email: out.trengoEmail })
       setError(null)
       setToken('')
+      toast.success('Trengo connected')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not connect Trengo')
+    },
   })
 
   function handleSubmit(e: React.FormEvent) {

@@ -8,6 +8,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
 
@@ -25,8 +26,12 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
       setDraft(out.text)
       setPromptVersion(out.promptVersion)
       setError(null)
+      toast.success('AI draft ready')
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not generate draft')
+    },
   })
 
   const handleGenerate = () => {

@@ -5,6 +5,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -33,9 +34,13 @@ export function NewTaskDialog({ contactId, familyId }: Props) {
       setAssigneeId('')
       setDueAt('')
       setError(null)
+      toast.success('Task created')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not create task')
+    },
   })
 
   if (!open) {

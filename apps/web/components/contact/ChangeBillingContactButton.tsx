@@ -7,6 +7,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -51,9 +52,13 @@ export function ChangeBillingContactButton({
     onSuccess: () => {
       setSuccess(true)
       setError(null)
+      toast.success('Billing contact changed — finance must re-issue mandates')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not change billing contact')
+    },
   })
 
   function handleSubmit(e: React.FormEvent) {

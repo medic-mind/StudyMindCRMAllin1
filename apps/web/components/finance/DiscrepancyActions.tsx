@@ -7,6 +7,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -46,17 +47,25 @@ export function DiscrepancyActions({
     onSuccess: () => {
       setMode('idle')
       setRationale('')
+      toast.success('Discrepancy resolved')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not resolve discrepancy')
+    },
   })
 
   const upsertAlloc = trpc.finance.allocation.upsert.useMutation({
     onSuccess: () => {
+      toast.success('Allocations saved')
       // After allocation, mark the discrepancy resolved with the same rationale.
       resolve.mutate({ id: discrepancyId, rationale: rationale || 'Manually allocated.' })
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not save allocations')
+    },
   })
 
   function handleResolve(e: React.FormEvent) {

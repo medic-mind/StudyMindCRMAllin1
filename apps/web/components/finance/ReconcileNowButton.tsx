@@ -5,6 +5,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -14,12 +15,15 @@ export function ReconcileNowButton({ familyId }: { familyId: string }) {
   const [message, setMessage] = useState<string | null>(null)
   const reconcile = trpc.family.reconcile.useMutation({
     onSuccess: (out) => {
-      setMessage(
-        `Reconciled. ${out.created} new discrepanc${out.created === 1 ? 'y' : 'ies'} of ${out.discrepancies} total.`,
-      )
+      const summary = `Reconciled. ${out.created} new discrepanc${out.created === 1 ? 'y' : 'ies'} of ${out.discrepancies} total.`
+      setMessage(summary)
+      toast.success(summary)
       router.refresh()
     },
-    onError: (e) => setMessage(`Failed: ${e.message}`),
+    onError: (e) => {
+      setMessage(`Failed: ${e.message}`)
+      toast.error(e.message ?? 'Reconciliation failed')
+    },
   })
 
   return (

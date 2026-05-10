@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -14,11 +15,13 @@ export function FlagToggle({ name, enabled }: { name: string; enabled: boolean }
   const m = trpc.admin.flags.setFlag.useMutation({
     onSuccess: () => {
       setPending(false)
+      toast.success(`${name} turned ${enabled ? 'off' : 'on'}`)
       router.refresh()
     },
     onError: (e) => {
       setPending(false)
       setError(e.message)
+      toast.error(e.message ?? 'Could not toggle flag')
     },
   })
 

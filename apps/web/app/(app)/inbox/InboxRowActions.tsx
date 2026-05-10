@@ -4,6 +4,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -21,16 +22,24 @@ export function InboxRowActions({ interactionId, contactId }: Props) {
   const assign = trpc.inbox.assign.useMutation({
     onSuccess: () => {
       setDone('Assigned to you')
+      toast.success('Assigned to you')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not assign')
+    },
   })
   const snooze = trpc.inbox.snooze.useMutation({
     onSuccess: () => {
       setDone('Snoozed 1h')
+      toast.success('Snoozed for 1 hour')
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not snooze')
+    },
   })
 
   return (

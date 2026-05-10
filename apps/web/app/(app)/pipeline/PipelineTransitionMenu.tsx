@@ -6,6 +6,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
@@ -31,13 +32,17 @@ export function PipelineTransitionMenu({ familyId, currentState }: Props) {
   const [reason, setReason] = useState('')
   const [error, setError] = useState<string | null>(null)
   const transition = trpc.family.pipeline.transition.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       setTarget(null)
       setReason('')
       setError(null)
+      toast.success(`Family moved to ${vars.toState.replace('_', ' ')}`)
       router.refresh()
     },
-    onError: (e) => setError(e.message),
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not move family')
+    },
   })
 
   if (target) {
