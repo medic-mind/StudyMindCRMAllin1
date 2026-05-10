@@ -2,6 +2,12 @@ import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 
+// Authenticated CRM shell is always rendered per-request — never prerender.
+// Without this, Next attempts to statically generate child pages at build
+// time and Clerk fails because no publishableKey exists in the build env.
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 const NAV = [
   { href: '/inbox', label: 'Inbox' },
   { href: '/contacts', label: 'Contacts' },
