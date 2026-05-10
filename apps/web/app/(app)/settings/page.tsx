@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 
+import { PageHeader } from '@/components/shell/page-header'
+
 const links: Array<{ href: string; title: string; description: string; roles: string }> = [
   {
     href: '/settings/users',
@@ -32,9 +34,9 @@ const links: Array<{ href: string; title: string; description: string; roles: st
 
 export default function SettingsPage() {
   return (
-    <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+    <>
+      <PageHeader title="Settings" />
+      <div className="grid gap-3 sm:grid-cols-2">
         {links.map((l) => (
           <Link
             key={l.href}
@@ -49,6 +51,6 @@ export default function SettingsPage() {
           </Link>
         ))}
       </div>
-    </div>
+    </>
   )
 }

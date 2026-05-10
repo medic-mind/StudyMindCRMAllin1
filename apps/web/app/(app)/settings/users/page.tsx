@@ -4,8 +4,7 @@
 // surface in their own section. Action buttons are filtered by what the
 // caller can grant or revoke.
 
-import Link from 'next/link'
-
+import { PageHeader } from '@/components/shell/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
@@ -31,12 +30,18 @@ export default async function UsersSettingsPage({
   const role = me?.role ?? 'agent'
   if (role !== 'admin' && role !== 'super_admin') {
     return (
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Users &amp; roles</h1>
-        <p className="mt-2 text-sm text-neutral-600">
+      <>
+        <PageHeader
+          title="Users settings"
+          breadcrumbs={[
+            { label: 'Settings', href: '/settings' },
+            { label: 'Users', href: '/settings/users' },
+          ]}
+        />
+        <p className="text-sm text-neutral-600">
           Restricted to administrators.
         </p>
-      </div>
+      </>
     )
   }
 
@@ -59,17 +64,18 @@ export default async function UsersSettingsPage({
       : null
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Users &amp; roles</h1>
-        <Link href="/settings" className="text-sm text-neutral-600 underline">
-          Back to settings
-        </Link>
-      </div>
+    <>
+      <PageHeader
+        title="Users settings"
+        breadcrumbs={[
+          { label: 'Settings', href: '/settings' },
+          { label: 'Users', href: '/settings/users' },
+        ]}
+      />
 
       {lastSuperAdminWarning && (
         <div
-          className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
           role="alert"
         >
           {lastSuperAdminWarning}
@@ -180,7 +186,7 @@ export default async function UsersSettingsPage({
           </Table>
         )}
       </div>
-    </div>
+    </>
   )
 }
 

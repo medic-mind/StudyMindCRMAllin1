@@ -5,6 +5,8 @@
 import { TRPCError } from '@trpc/server'
 
 import { DiscrepancyActions } from '@/components/finance/DiscrepancyActions'
+import { PageBody } from '@/components/shell/page-body'
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -71,48 +73,50 @@ export default async function FinancePage() {
 
   if (forbidden) {
     return (
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
-        <p className="mt-2 text-sm text-neutral-600">
-          You need the finance or admin role to view reconciliation discrepancies.
-        </p>
-      </div>
+      <>
+        <PageHeader title="Finance" />
+        <PageBody>
+          <p className="text-sm text-neutral-600">
+            You need the finance or admin role to view reconciliation
+            discrepancies.
+          </p>
+        </PageBody>
+      </>
     )
   }
 
   const groups = groupByCategory(items)
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
-        <div className="flex items-center gap-3 text-sm">
-          <a
-            href="/finance/payment-links"
-            className="text-neutral-700 hover:underline"
-          >
-            Payment links →
-          </a>
-          <a
-            href="/finance/refunds"
-            className="text-neutral-700 hover:underline"
-          >
-            Refunds →
-          </a>
-        </div>
-      </div>
-      <p className="mt-2 text-sm text-neutral-600">
-        Open reconciliation discrepancies across active families. Nothing is
-        ever auto-resolved — every item below needs a human decision.
-      </p>
-
+    <>
+      <PageHeader
+        title="Finance"
+        subtitle="Open reconciliation discrepancies across active families. Nothing is ever auto-resolved — every item below needs a human decision."
+        actions={
+          <div className="flex items-center gap-3 text-sm">
+            <a
+              href="/finance/payment-links"
+              className="text-neutral-700 hover:text-neutral-900 hover:underline"
+            >
+              Payment links →
+            </a>
+            <a
+              href="/finance/refunds"
+              className="text-neutral-700 hover:text-neutral-900 hover:underline"
+            >
+              Refunds →
+            </a>
+          </div>
+        }
+      />
+      <PageBody>
       {items.length === 0 ? (
-        <div className="mt-8 rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-700">
+        <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-700">
           No open discrepancies. The nightly reconcile runs at 02:00 UTC and
           will surface anything that needs attention here.
         </div>
       ) : (
-        <div className="mt-8 space-y-8">
+        <div className="space-y-8">
           {Array.from(groups.entries()).map(([category, group]) => (
             <section key={category}>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
@@ -151,6 +155,7 @@ export default async function FinancePage() {
           ))}
         </div>
       )}
-    </div>
+      </PageBody>
+    </>
   )
 }

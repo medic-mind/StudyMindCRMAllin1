@@ -3,6 +3,7 @@
 
 import Link from 'next/link'
 
+import { PageHeader } from '@/components/shell/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
@@ -33,15 +34,16 @@ export default async function ContactsPage({
   })
 
   return (
-    <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Contacts</h1>
-        <Link href="/contacts/new">
-          <Button>New contact</Button>
-        </Link>
-      </div>
-
-      <form className="mt-4 flex gap-2" method="GET">
+    <>
+      <PageHeader
+        title="Contacts"
+        actions={
+          <Link href="/contacts/new">
+            <Button>New contact</Button>
+          </Link>
+        }
+      />
+      <form className="flex gap-2" method="GET">
         <Input
           type="search"
           name="q"
@@ -109,6 +111,6 @@ export default async function ContactsPage({
           </Link>
         </div>
       )}
-    </div>
+    </>
   )
 }

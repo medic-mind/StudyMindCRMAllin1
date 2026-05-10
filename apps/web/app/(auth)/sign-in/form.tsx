@@ -76,7 +76,10 @@ export function SignInForm({
         setError(ERROR_COPY[res.error] ?? 'Invalid email or password.')
         return
       }
-      router.push(res.url ?? callbackUrl)
+      // Do NOT trust res.url — NextAuth builds it from AUTH_URL/NEXTAUTH_URL
+      // which on a misconfigured Railway env points at http://localhost:3000.
+      // Always navigate to our own callbackUrl (a path, not an origin).
+      router.push(callbackUrl)
       router.refresh()
     } finally {
       setBusy(false)

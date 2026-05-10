@@ -60,7 +60,9 @@ export function AcceptInviteForm({ token, email }: { token: string; email: strin
             callbackUrl: '/inbox',
           })
           if (r && !r.error) {
-            router.push(r.url ?? '/inbox')
+            // Use our own path — NextAuth's url honours AUTH_URL which on
+            // a misconfigured env points at localhost.
+            router.push('/inbox')
             router.refresh()
             return
           }

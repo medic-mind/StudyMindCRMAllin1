@@ -8,6 +8,7 @@
 import Link from 'next/link'
 import { TRPCError } from '@trpc/server'
 
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { InboxRowActions } from './InboxRowActions'
@@ -36,23 +37,21 @@ export default async function InboxPage() {
 
   if (forbidden) {
     return (
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
-        <p className="mt-2 text-sm text-neutral-600">
+      <>
+        <PageHeader title="Inbox" subtitle="Unassigned conversations" />
+        <p className="text-sm text-neutral-600">
           You need an agent, ops, DSL, or admin role to view the inbox.
         </p>
-      </div>
+      </>
     )
   }
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
-      <p className="mt-2 text-sm text-neutral-600">
-        Recent inbound messages across all channels. Click a row to open the
-        related Contact and reply.
-      </p>
-
+    <>
+      <PageHeader
+        title="Inbox"
+        subtitle="Recent inbound messages across all channels. Click a row to open the related Contact and reply."
+      />
       {items.length === 0 ? (
         <div className="mt-8 rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-700">
           No inbound messages yet. New WhatsApp, SMS, email, and web-chat
@@ -106,6 +105,6 @@ export default async function InboxPage() {
           })}
         </ul>
       )}
-    </div>
+    </>
   )
 }

@@ -1,7 +1,6 @@
 // Operations report. RSC.
 
-import Link from 'next/link'
-
+import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { PeriodForm } from '../_components/period-form'
@@ -30,13 +29,15 @@ export default async function OperationsReportPage({
   const pct = (n: number) => `${Math.round(n * 1000) / 10}%`
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Operations report</h1>
-        <Link href="/reports" className="text-sm text-neutral-600 underline">
-          Back to reports
-        </Link>
-      </div>
+    <>
+      <PageHeader
+        title="Operations reports"
+        breadcrumbs={[
+          { label: 'Reports', href: '/reports' },
+          { label: 'Operations', href: '/reports/operations' },
+        ]}
+      />
+      <div className="space-y-6">
       <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
       <section className="grid gap-4 sm:grid-cols-3">
@@ -63,7 +64,8 @@ export default async function OperationsReportPage({
           <li>cancelled: {data.sessionsByState.cancelled}</li>
         </ul>
       </section>
-    </div>
+      </div>
+    </>
   )
 }
 

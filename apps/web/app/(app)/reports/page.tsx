@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 
+import { PageHeader } from '@/components/shell/page-header'
+
 const reports = [
   {
     href: '/reports/finance',
@@ -28,9 +30,9 @@ const reports = [
 
 export default function ReportsPage() {
   return (
-    <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+    <>
+      <PageHeader title="Reports" />
+      <div className="grid gap-3 sm:grid-cols-2">
         {reports.map((r) => (
           <Link
             key={r.href}
@@ -42,6 +44,6 @@ export default function ReportsPage() {
           </Link>
         ))}
       </div>
-    </div>
+    </>
   )
 }
