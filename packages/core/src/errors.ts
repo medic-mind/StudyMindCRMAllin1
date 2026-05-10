@@ -19,6 +19,7 @@ export type BusinessErrorCode =
   | 'EMAIL_NOT_VERIFIED'
   | 'TOKEN_EXPIRED_OR_USED'
   | 'LAST_SUPER_ADMIN'
+  | 'SETUP_ALREADY_COMPLETED'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {
