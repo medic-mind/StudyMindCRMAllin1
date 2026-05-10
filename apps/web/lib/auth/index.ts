@@ -10,6 +10,7 @@
 // INVALID_CREDENTIALS code on every authentication failure to avoid
 // account-enumeration leaks.
 
+import { createId } from '@paralleldrive/cuid2'
 import { PrismaAdapter } from '@auth/prisma-adapter'
 import NextAuth, { CredentialsSignin } from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
@@ -17,7 +18,7 @@ import { z } from 'zod'
 
 import { BusinessError } from '@studymind/core/errors'
 import { assertNotLocked, recordFailedAttempt, recordSuccessfulSignIn } from '@studymind/core/auth/lockout'
-import { verifyPassword } from '@studymind/core/auth/passwords'
+import { generateToken, hashToken, verifyPassword } from '@studymind/core/auth/passwords'
 import { db } from '@studymind/db'
 
 import type { UserRole } from '@/lib/trpc/builders'
@@ -119,11 +120,28 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
         const ua = headers?.get('user-agent') ?? null
         await recordSuccessfulSignIn(user, db, { ip, ua })
 
+        // Issue a Session row so the user can list and revoke their active
+        // sessions. ADR 0010, chunk 7. The JWT carries the session id (`sid`);
+        // the jwt callback below clears the token if the row is deleted.
+        const rawSessionToken = generateToken()
+        const sessionId = createId()
+        await db.session.create({
+          data: {
+            id: sessionId,
+            userId: user.id,
+            sessionTokenHash: hashToken(rawSessionToken),
+            expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
+            ipAddress: ip,
+            userAgent: ua,
+          },
+        })
+
         return {
           id: user.id,
           email: user.email,
           name: user.name ?? null,
           mustResetPassword: user.mustResetPassword,
+          sessionId,
         }
       },
     }),
@@ -135,12 +153,35 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
         token.uid = user.id as string
         token.email = user.email ?? token.email
         token.mustResetPassword = (user as { mustResetPassword?: boolean }).mustResetPassword ?? false
+        token.sid = (user as { sessionId?: string }).sessionId
         token.roles = await loadRoles(user.id as string)
         token.rolesLoadedAt = Date.now()
       } else if (trigger === 'update' || shouldRefreshRoles(token)) {
         if (typeof token.uid === 'string') {
           token.roles = await loadRoles(token.uid)
           token.rolesLoadedAt = Date.now()
+          // Refresh mustResetPassword from the database so the change-password
+          // flow takes effect on the next request without a forced re-sign-in.
+          const fresh = await db.user.findUnique({
+            where: { id: token.uid },
+            select: { mustResetPassword: true },
+          })
+          if (fresh) token.mustResetPassword = fresh.mustResetPassword
+        }
+      }
+      // Server-side revocation: if the session id baked into the JWT no
+      // longer exists, clear the token so the request is treated as
+      // unauthenticated. Edge middleware does not run this callback (it
+      // reads the JWT directly), but every node-runtime call (tRPC, server
+      // components via auth()) does. CLAUDE.md §44.2.
+      if (typeof token.sid === 'string') {
+        const exists = await db.session.findUnique({
+          where: { id: token.sid },
+          select: { id: true },
+        })
+        if (!exists) {
+          token.uid = undefined
+          token.sid = undefined
         }
       }
       return token
@@ -153,6 +194,7 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
         session.user.roles = roles
         session.user.role = pickPrimaryRole(roles)
         session.user.mustResetPassword = Boolean(token.mustResetPassword)
+        if (typeof token.sid === 'string') session.user.sessionId = token.sid
       }
       return session
     },

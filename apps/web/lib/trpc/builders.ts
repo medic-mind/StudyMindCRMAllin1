@@ -27,6 +27,8 @@ export interface SessionUser {
   email: string
   role: UserRole
   mustResetPassword?: boolean
+  /** The Session row id (when one exists for this cookie). ADR 0010 chunk 7. */
+  sessionId?: string
 }
 
 export type AuditCallInput = Omit<WriteAuditLogEntryInput, 'actorId' | 'requestId'>
@@ -186,6 +188,14 @@ export const protectedProcedureBypassMustReset = publicProcedure
   .use(enforceUserAndRateLimitMiddleware)
 
 export const auditedProcedure = protectedProcedure.use(auditMiddleware)
+
+/**
+ * Audited variant that skips the mustResetPassword gate. Use this for the
+ * change-password mutation: the user must be allowed to call it while the
+ * flag is set, and we still want the audit-call enforcement.
+ */
+export const auditedProcedureBypassMustReset =
+  protectedProcedureBypassMustReset.use(auditMiddleware)
 
 /**
  * Narrows ctx.user from `SessionUser | null` to `SessionUser`. Use inside

@@ -1,8 +1,7 @@
 // Smoke: an unauthenticated visitor is redirected to sign-in,
-// can complete the Clerk form using a seeded dev user, and lands in
-// the authenticated app shell. Also runs an axe-core a11y scan on the
-// authenticated shell, excluding the third-party Clerk iframe (CLAUDE.md
-// §28: we exclude provider iframes from our own a11y budget).
+// can complete the self-hosted form using a seeded dev user, and lands
+// in the authenticated app shell. Runs an axe-core a11y scan on the
+// authenticated shell. ADR 0010, CLAUDE.md §28.
 
 import AxeBuilder from '@axe-core/playwright'
 
@@ -22,10 +21,8 @@ test.describe('sign-in smoke', () => {
     await expect(signedInPage.getByText('StudyMind CRM').first()).toBeVisible()
     await expect(signedInPage.getByRole('heading', { name: /contacts/i })).toBeVisible()
 
-    // CLAUDE.md §28: zero axe violations on critical pages. We exclude
-    // `iframe` because Clerk renders its own UI in one and we do not own
-    // its DOM.
-    const results = await new AxeBuilder({ page: signedInPage }).exclude('iframe').analyze()
+    // CLAUDE.md §28: zero axe violations on critical pages.
+    const results = await new AxeBuilder({ page: signedInPage }).analyze()
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([])
   })
 })

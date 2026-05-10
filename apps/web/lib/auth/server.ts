@@ -16,6 +16,7 @@ export interface CurrentUser {
   role: UserRole
   roles: UserRole[]
   mustResetPassword: boolean
+  sessionId?: string
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
@@ -28,6 +29,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     role: session.user.role,
     roles: session.user.roles,
     mustResetPassword: session.user.mustResetPassword,
+    sessionId: session.user.sessionId,
   }
 }
 
@@ -44,6 +46,7 @@ export async function legacyAuth(): Promise<{
     role?: UserRole
     roles?: UserRole[]
     mustResetPassword?: boolean
+    sessionId?: string
   } | null
 }> {
   const u = await getCurrentUser()
@@ -55,6 +58,7 @@ export async function legacyAuth(): Promise<{
       role: u.role,
       roles: u.roles,
       mustResetPassword: u.mustResetPassword,
+      sessionId: u.sessionId,
     },
   }
 }

@@ -93,6 +93,14 @@ export const EVENT_NAMES = [
   'auth.signin_failed',
   'auth.signin_succeeded',
   'auth.account_locked',
+  'auth.signup_started',
+  'auth.email_verified',
+  'auth.email_verification_resent',
+  'auth.password_reset_requested',
+  'auth.password_reset_completed',
+  'auth.password_changed',
+  'auth.session_revoked',
+  'auth.sessions_revoked_all_others',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

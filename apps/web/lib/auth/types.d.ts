@@ -14,18 +14,22 @@ declare module 'next-auth' {
       role: UserRole
       roles: UserRole[]
       mustResetPassword: boolean
+      /** The Session row id this cookie maps to. Used by the sessions UI. */
+      sessionId?: string
     }
   }
 
   interface User {
     id?: string
     mustResetPassword?: boolean
+    sessionId?: string
   }
 }
 
 declare module 'next-auth/jwt' {
   interface JWT {
     uid?: string
+    sid?: string
     roles?: UserRole[]
     rolesLoadedAt?: number
     mustResetPassword?: boolean

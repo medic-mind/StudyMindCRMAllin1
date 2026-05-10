@@ -2,6 +2,8 @@ import Link from 'next/link'
 
 import { legacyAuth as auth } from '@/lib/auth/server'
 
+import { SignOutButton } from './sign-out-button'
+
 // Authenticated CRM shell is always rendered per-request — never prerender.
 // Without this, Next attempts to statically generate child pages at build
 // time and the auth stub would throw `AUTH_PIVOT_PENDING` during static
@@ -26,7 +28,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen">
-      <aside className="w-56 border-r border-neutral-200 bg-white p-4">
+      <aside className="flex w-56 flex-col border-r border-neutral-200 bg-white p-4">
         <div className="mb-6 text-sm font-semibold text-neutral-900">StudyMind CRM</div>
         <nav className="flex flex-col gap-1 text-sm">
           {NAV.map((item) => (
@@ -39,6 +41,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </Link>
           ))}
         </nav>
+        <div className="mt-auto flex flex-col gap-1 border-t border-neutral-200 pt-4 text-sm">
+          <Link
+            href="/account"
+            className="rounded px-2 py-1.5 text-neutral-700 hover:bg-neutral-100"
+          >
+            Account
+          </Link>
+          <SignOutButton />
+        </div>
       </aside>
       <main className="flex-1 p-6">{children}</main>
     </div>

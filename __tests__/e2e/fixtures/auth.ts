@@ -1,13 +1,14 @@
 // Playwright fixture for an authenticated browser session.
 //
-// We sign in through the Clerk-hosted sign-in form using a seeded dev user
-// (CLAUDE.md §22 — `<role>@dev.studymind`). Required env:
+// ADR 0010: signs in via the self-hosted credentials form (NextAuth v5).
+// Required env:
 //   - E2E_USER_EMAIL     (default: agent@dev.studymind)
 //   - E2E_USER_PASSWORD  (no default; must be supplied via CI secret or
 //                         1Password vault "StudyMind CRM Dev")
 //
-// We avoid Clerk's internal testing tokens here so the test exercises the
-// real sign-in surface. Sign-up is out of scope for the smoke flow.
+// TODO(chunk-10): the seed script does not yet create the Aashir
+// super-admin user with a known password. Until then, set the env above
+// to a seeded test user that exists in the local dev DB.
 
 import { test as base, expect, type Page } from '@playwright/test'
 
@@ -28,12 +29,9 @@ export const test = base.extend<AuthFixtures>({
     }
 
     await page.goto('/sign-in')
-
-    // Clerk's <SignIn /> renders an email field, then a password step.
     await page.getByLabel(/email/i).fill(email)
-    await page.getByRole('button', { name: /continue|next|sign in/i }).first().click()
     await page.getByLabel(/password/i).fill(password)
-    await page.getByRole('button', { name: /continue|sign in/i }).first().click()
+    await page.getByRole('button', { name: /sign in/i }).click()
 
     // Land on the authenticated shell — Contacts is a safe default.
     await page.waitForURL((url) => !url.pathname.startsWith('/sign-in'), { timeout: 30_000 })

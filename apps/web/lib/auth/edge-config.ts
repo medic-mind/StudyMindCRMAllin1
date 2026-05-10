@@ -35,4 +35,16 @@ export const authEdgeConfig: NextAuthConfig = {
     verifyRequest: '/verify-email-sent',
     error: '/auth/error',
   },
+  callbacks: {
+    // Mirror the node-side session callback so middleware sees mustResetPassword
+    // and can force-redirect to /account/change-password. We do not call out
+    // to the database from the edge — every value here comes from the JWT.
+    session({ session, token }) {
+      if (token && session.user) {
+        if (typeof token.uid === 'string') session.user.id = token.uid
+        session.user.mustResetPassword = Boolean(token.mustResetPassword)
+      }
+      return session
+    },
+  },
 }

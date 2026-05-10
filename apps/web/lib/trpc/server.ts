@@ -19,7 +19,13 @@ export async function createServerCaller() {
   const requestId = createId()
   const me = await getCurrentUser()
   const user: SessionUser | null = me
-    ? { id: me.id, email: me.email, role: me.role }
+    ? {
+        id: me.id,
+        email: me.email,
+        role: me.role,
+        mustResetPassword: me.mustResetPassword,
+        sessionId: me.sessionId,
+      }
     : null
   const ctx: TrpcContext = {
     user,
