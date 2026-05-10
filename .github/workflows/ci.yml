@@ -33,6 +33,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Policy matrix drift check
+        run: pnpm policy:check
+
       - name: Test
         run: pnpm test
 

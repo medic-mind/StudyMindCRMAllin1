@@ -27,6 +27,7 @@
     "db:reset": "pnpm --filter @studymind/db exec prisma migrate reset --force",
     "db:studio": "pnpm --filter @studymind/db exec prisma studio",
     "db:generate": "pnpm --filter @studymind/db exec prisma generate",
+    "policy:check": "tsx tools/scripts/check-policy-matrix.ts",
     "dr": "tsx scripts/dr/run-dr.ts",
     "dr:stripe": "tsx scripts/dr/reconnect-stripe.ts",
     "dr:gocardless": "tsx scripts/dr/reconnect-gocardless.ts",
