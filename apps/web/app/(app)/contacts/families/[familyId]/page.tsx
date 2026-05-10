@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { ChangeBillingContactButton } from '@/components/contact/ChangeBillingContactButton'
+import { ReconcileNowButton } from '@/components/finance/ReconcileNowButton'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -65,7 +66,7 @@ export default async function FamilyDetailPage({
         </div>
       </div>
 
-      <section className="flex flex-wrap gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+      <section className="flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
         <SendPaymentLinkButton familyId={data.id} />
         <ChangeBillingContactButton
           familyId={data.id}
@@ -77,6 +78,13 @@ export default async function FamilyDetailPage({
           }))}
           currentBillingContactId={data.billingContact?.id ?? null}
         />
+        <Link
+          href={`/finance/refunds/new?familyId=${data.id}`}
+          className="inline-flex items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200 h-8"
+        >
+          Issue refund
+        </Link>
+        <ReconcileNowButton familyId={data.id} />
       </section>
 
       <section>
@@ -121,8 +129,19 @@ export default async function FamilyDetailPage({
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">
-          Open reconciliation discrepancies
+        <h2 className="flex items-center justify-between text-sm font-semibold text-neutral-600 uppercase tracking-wide">
+          <span>
+            Open reconciliation discrepancies
+            <span className="ml-2 rounded bg-neutral-200 px-1.5 py-0.5 text-xs tabular-nums normal-case text-neutral-700">
+              {data.openDiscrepancies.length}
+            </span>
+          </span>
+          <Link
+            href={`/finance?familyId=${data.id}`}
+            className="text-xs font-normal normal-case text-neutral-600 hover:underline"
+          >
+            View on finance →
+          </Link>
         </h2>
         <div className="mt-2 rounded-md border border-neutral-200 bg-white">
           {data.openDiscrepancies.length === 0 ? (

@@ -7,6 +7,9 @@ import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { NewTaskDialog } from './NewTaskDialog'
+import { ReassignTaskButton } from './ReassignTaskButton'
+
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
   in_progress: 'In progress',
@@ -44,7 +47,10 @@ export default async function TasksPage({
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
+        <NewTaskDialog />
+      </div>
 
       <div className="mt-4 flex items-center gap-2 text-sm">
         {tabs.map((t) => (
@@ -93,6 +99,7 @@ export default async function TasksPage({
                 <Th>Status</Th>
                 <Th>Due</Th>
                 <Th>Family</Th>
+                <Th>Actions</Th>
               </Tr>
             </Thead>
             <Tbody>
@@ -123,6 +130,12 @@ export default async function TasksPage({
                     ) : (
                       <span className="text-sm text-neutral-400">—</span>
                     )}
+                  </Td>
+                  <Td>
+                    <ReassignTaskButton
+                      taskId={t.id}
+                      currentAssigneeId={t.assigneeId}
+                    />
                   </Td>
                 </Tr>
               ))}

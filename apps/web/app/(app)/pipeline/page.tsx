@@ -5,6 +5,8 @@ import Link from 'next/link'
 
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { PipelineTransitionMenu } from './PipelineTransitionMenu'
+
 const STAGES = [
   { state: 'lead', label: 'Lead' },
   { state: 'trial', label: 'Trial' },
@@ -17,6 +19,15 @@ export default async function PipelinePage() {
   const caller = await createServerCaller()
   const groups = await caller.family.pipeline.list({ perStageLimit: 50 })
 
+  // Pull the most recent state-change interactions across visible families.
+  const visibleFamilyIds = STAGES.flatMap(({ state }) =>
+    (groups[state] ?? []).map((f) => f.id),
+  )
+  const recentTransitions = await caller.family.pipeline.recentTransitions({
+    familyIds: visibleFamilyIds,
+    limit: 5,
+  })
+
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
@@ -24,6 +35,30 @@ export default async function PipelinePage() {
         Families grouped by lifecycle state. Transitions are explicit and
         audited — open a family to change its state.
       </p>
+
+      {recentTransitions.length > 0 ? (
+        <aside className="mt-4 rounded border border-neutral-200 bg-neutral-50 p-3 text-xs">
+          <h2 className="font-semibold text-neutral-700">Recent transitions</h2>
+          <ul className="mt-1 space-y-0.5">
+            {recentTransitions.map((t) => (
+              <li key={t.id} className="flex justify-between gap-2 text-neutral-600">
+                <Link
+                  href={`/contacts/families/${t.familyId}`}
+                  className="font-mono hover:underline"
+                >
+                  {t.summary ?? 'state changed'}
+                </Link>
+                <time dateTime={t.occurredAt.toString()} className="tabular-nums">
+                  {new Date(t.occurredAt).toLocaleString('en-GB', {
+                    dateStyle: 'short',
+                    timeStyle: 'short',
+                  })}
+                </time>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      ) : null}
 
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
         {STAGES.map(({ state, label }) => {
@@ -61,6 +96,10 @@ export default async function PipelinePage() {
                           </span>
                         ) : null}
                       </div>
+                      <PipelineTransitionMenu
+                        familyId={f.id}
+                        currentState={state}
+                      />
                     </li>
                   ))}
                 </ul>

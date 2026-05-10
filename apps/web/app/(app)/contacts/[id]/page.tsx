@@ -72,11 +72,35 @@ export default async function ContactDetailPage({
         </div>
       </div>
 
-      {contact.family && (
-        <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+      <div className="mt-4 flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+        {contact.family && (
           <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
-        </div>
-      )}
+        )}
+        <Link
+          href={`/finance/refunds/new?contactId=${contact.id}`}
+          className="inline-flex items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200 h-8"
+        >
+          Issue refund
+        </Link>
+        <Link
+          href={`/contacts/${contact.id}/safeguarding`}
+          className="inline-flex items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200 h-8"
+        >
+          Raise safeguarding concern
+        </Link>
+        {contact.family ? (
+          <Link
+            href={`/contacts/families/${contact.family.id}`}
+            className="inline-flex items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200 h-8"
+          >
+            Open family
+          </Link>
+        ) : (
+          <span className="text-xs text-neutral-500">
+            No family linked. Use Contacts list bulk actions to create one.
+          </span>
+        )}
+      </div>
 
       {contact.notes && (
         <div className="mt-4 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-800">

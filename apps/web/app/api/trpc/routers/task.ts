@@ -5,6 +5,8 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { createId } from '@paralleldrive/cuid2'
+
 import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
 
 const TASK_STATUSES = ['open', 'in_progress', 'blocked', 'done', 'cancelled'] as const
@@ -30,6 +32,15 @@ const UpdateInput = z.object({
 const CloseInput = z.object({
   id: z.string(),
   status: z.enum(['done', 'cancelled']).default('done'),
+})
+
+const CreateInput = z.object({
+  title: z.string().trim().min(1).max(280),
+  description: z.string().trim().max(4000).optional(),
+  assigneeId: z.string().min(1),
+  dueAt: z.date().optional(),
+  contactId: z.string().min(1).optional(),
+  familyId: z.string().min(1).optional(),
 })
 
 export const taskRouter = router({
@@ -103,6 +114,82 @@ export const taskRouter = router({
       after,
     })
     return { id: after.id }
+  }),
+
+  /**
+   * Lightweight user picker for task assignment. Any authenticated staff role
+   * may list active users to choose an assignee. Returns id/email/name only;
+   * roles and sensitive fields stay in the admin router.
+   */
+  assignableUsers: protectedProcedure
+    .input(z.object({ q: z.string().trim().min(1).max(80).optional() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.user.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          ...(input.q
+            ? {
+                OR: [
+                  { email: { contains: input.q, mode: 'insensitive' as const } },
+                  { name: { contains: input.q, mode: 'insensitive' as const } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: { email: 'asc' },
+        take: 50,
+        select: { id: true, email: true, name: true },
+      })
+      return rows
+    }),
+
+  create: auditedProcedure.input(CreateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    // Validate referenced rows exist and aren't soft-deleted.
+    if (input.contactId) {
+      const c = await ctx.db.contact.findFirst({
+        where: { id: input.contactId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!c) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+    }
+    if (input.familyId) {
+      const f = await ctx.db.family.findFirst({
+        where: { id: input.familyId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!f) throw new TRPCError({ code: 'NOT_FOUND', message: 'Family not found' })
+    }
+    const assignee = await ctx.db.user.findFirst({
+      where: { id: input.assigneeId, deletedAt: null, isActive: true },
+      select: { id: true },
+    })
+    if (!assignee) throw new TRPCError({ code: 'NOT_FOUND', message: 'Assignee not found' })
+
+    const id = createId()
+    const created = await ctx.db.task.create({
+      data: {
+        id,
+        title: input.title,
+        description: input.description ?? null,
+        status: 'open',
+        assigneeId: assignee.id,
+        contactId: input.contactId ?? null,
+        familyId: input.familyId ?? null,
+        dueAt: input.dueAt ?? null,
+        createdById: user.id,
+        updatedById: user.id,
+        lastWrittenBy: 'crm',
+        lastWrittenAt: new Date(),
+      },
+    })
+    await ctx.audit({
+      action: 'task.created',
+      target: { type: 'Task', id: created.id },
+      after: created,
+    })
+    return { id: created.id }
   }),
 
   close: auditedProcedure.input(CloseInput).mutation(async ({ ctx, input }) => {

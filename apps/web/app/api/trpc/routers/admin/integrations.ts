@@ -1,9 +1,12 @@
 // Admin → Integrations status. Read-only summary for Settings dashboard.
 // CLAUDE.md §11, §13, §14, §17.
 
+import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
+import { z } from 'zod'
 
 import {
+  auditedProcedure,
   protectedProcedure,
   requireUser,
   router,
@@ -79,4 +82,37 @@ export const adminIntegrationsRouter = router({
       },
     }
   }),
+
+  /**
+   * Synthetic ping that proves the ProviderEvent persistence path is
+   * healthy end-to-end. Admin-only and audited. Does NOT call the live
+   * provider API or forge a signature — instead it inserts a sentinel
+   * ProviderEvent row of type `test.synthetic` so the dashboard's
+   * "last received" timestamp updates and the row appears in audit logs.
+   */
+  test: auditedProcedure
+    .input(z.object({ provider: z.enum(PROVIDERS) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (user.role !== 'admin' && user.role !== 'super_admin') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
+      }
+      const eventId = `synthetic-${createId()}`
+      const row = await ctx.db.providerEvent.create({
+        data: {
+          id: createId(),
+          provider: input.provider,
+          eventId,
+          type: 'test.synthetic',
+          raw: { source: 'admin.integrations.test', actorId: user.id } as object,
+          receivedAt: new Date(),
+        },
+      })
+      await ctx.audit({
+        action: 'admin.integration_tested',
+        target: { type: 'ProviderEvent', id: row.id },
+        after: { provider: input.provider, eventId },
+      })
+      return { provider: input.provider, eventId }
+    }),
 })

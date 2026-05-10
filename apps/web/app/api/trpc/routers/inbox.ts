@@ -6,7 +6,13 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
-import { protectedProcedure, requireUser, router, type UserRole } from '@/lib/trpc/builders'
+import {
+  auditedProcedure,
+  protectedProcedure,
+  requireUser,
+  router,
+  type UserRole,
+} from '@/lib/trpc/builders'
 
 const ALLOWED_ROLES: ReadonlySet<UserRole> = new Set(['agent', 'ops_manager', 'admin', 'dsl'])
 
@@ -99,5 +105,72 @@ export const inboxRouter = router({
       const last = sliced[sliced.length - 1]
       const nextCursor = hasMore && last ? { id: last.id, occurredAt: last.occurredAt } : null
       return { items, nextCursor }
+    }),
+
+  /**
+   * Assign an inbound message to a user (typically the caller via "Assign to
+   * me"). Stored in the Interaction payload as `inboxAssigneeId`. Audited.
+   */
+  assign: auditedProcedure
+    .input(z.object({ interactionId: z.string(), assigneeId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!ALLOWED_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      const row = await ctx.db.interaction.findFirst({
+        where: { id: input.interactionId, deletedAt: null },
+        select: { id: true, payload: true },
+      })
+      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+      const payload = (row.payload as Record<string, unknown> | null) ?? {}
+      const next = { ...payload, inboxAssigneeId: input.assigneeId }
+      await ctx.db.interaction.update({
+        where: { id: row.id },
+        data: { payload: next, updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'inbox.message_assigned',
+        target: { type: 'Interaction', id: row.id },
+        before: { inboxAssigneeId: payload['inboxAssigneeId'] ?? null },
+        after: { inboxAssigneeId: input.assigneeId },
+      })
+      return { id: row.id }
+    }),
+
+  /**
+   * Snooze an inbound message for a duration. Stored as `inboxSnoozedUntil`
+   * on the Interaction payload. List queries can later filter on this.
+   */
+  snooze: auditedProcedure
+    .input(
+      z.object({
+        interactionId: z.string(),
+        minutes: z.number().int().min(5).max(60 * 24 * 7),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!ALLOWED_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      const row = await ctx.db.interaction.findFirst({
+        where: { id: input.interactionId, deletedAt: null },
+        select: { id: true, payload: true },
+      })
+      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+      const until = new Date(Date.now() + input.minutes * 60 * 1000)
+      const payload = (row.payload as Record<string, unknown> | null) ?? {}
+      const next = { ...payload, inboxSnoozedUntil: until.toISOString() }
+      await ctx.db.interaction.update({
+        where: { id: row.id },
+        data: { payload: next, updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'inbox.message_snoozed',
+        target: { type: 'Interaction', id: row.id },
+        after: { inboxSnoozedUntil: until.toISOString() },
+      })
+      return { id: row.id, snoozedUntil: until.toISOString() }
     }),
 })

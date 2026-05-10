@@ -10,8 +10,15 @@ import {
   FamilySetBillingContactInput,
   assertBillingContactNotStudent,
 } from '@studymind/core/family'
+import { reconcileFamily } from '@studymind/core/finance'
 
-import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
+import {
+  auditedProcedure,
+  protectedProcedure,
+  requireUser,
+  router,
+  type UserRole,
+} from '@/lib/trpc/builders'
 
 function newId(): string {
   return createId()
@@ -61,6 +68,27 @@ export const familyRouter = router({
       )
       return Object.fromEntries(groups) as Record<FamilyState, (typeof groups)[number][1]>
     }),
+
+    /**
+     * Most recent family.state_changed Interactions across the given Family
+     * ids. Used by the pipeline page side-panel.
+     */
+    recentTransitions: protectedProcedure
+      .input(z.object({ familyIds: z.array(z.string()).max(500), limit: z.number().min(1).max(50).default(5) }))
+      .query(async ({ ctx, input }) => {
+        if (input.familyIds.length === 0) return []
+        const rows = await ctx.db.interaction.findMany({
+          where: {
+            type: 'family_state_changed',
+            familyId: { in: input.familyIds },
+            deletedAt: null,
+          },
+          orderBy: { occurredAt: 'desc' },
+          take: input.limit,
+          select: { id: true, occurredAt: true, summary: true, familyId: true },
+        })
+        return rows
+      }),
 
     /**
      * Explicit state transition. Writes a `family.state_changed` Interaction
@@ -252,6 +280,62 @@ export const familyRouter = router({
         after: { billingContactId: updated.billingContactId, reason: input.reason },
       })
       return { id: updated.id }
+    }),
+
+  /**
+   * Manual reconcile of a single Family. CLAUDE.md §6.3, §17. Mirrors the
+   * idempotent upsert in the nightly job. Role-gated to finance | admin |
+   * super_admin | ops_manager — anyone reviewing a family's books can re-run
+   * the engine on demand. Audited.
+   */
+  reconcile: auditedProcedure
+    .input(z.object({ familyId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const allowed: ReadonlySet<UserRole> = new Set([
+        'finance',
+        'admin',
+        'super_admin',
+        'ops_manager',
+      ])
+      if (!allowed.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot reconcile' })
+      }
+      const family = await ctx.db.family.findFirst({
+        where: { id: input.familyId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!family) throw new TRPCError({ code: 'NOT_FOUND' })
+      const { discrepancies } = await reconcileFamily(ctx.db, family.id)
+      let created = 0
+      for (const d of discrepancies) {
+        const existing = await ctx.db.reconciliationDiscrepancy.findFirst({
+          where: {
+            familyId: d.familyId,
+            category: d.category,
+            contextHash: d.contextHash,
+          },
+          select: { id: true },
+        })
+        if (existing) continue
+        await ctx.db.reconciliationDiscrepancy.create({
+          data: {
+            id: newId(),
+            familyId: d.familyId,
+            category: d.category,
+            summary: d.summary,
+            payload: d.payload as object,
+            contextHash: d.contextHash,
+          },
+        })
+        created += 1
+      }
+      await ctx.audit({
+        action: 'finance.family_reconciled',
+        target: { type: 'Family', id: family.id },
+        after: { discrepancies: discrepancies.length, created },
+      })
+      return { discrepancies: discrepancies.length, created }
     }),
 
   get: protectedProcedure
