@@ -131,10 +131,17 @@ export const EVENT_NAMES = [
   'charge.payment_link_requested',
   'finance.allocation_upserted',
   'finance.allocation_deleted',
+  'finance.family_reconciled',
   'gmail.email_sent',
   'gmail.reply_requested',
   'trengo.token_connected',
   'trengo.token_connect_requested',
+
+  // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
+  'task.assigned',
+  'inbox.message_assigned',
+  'inbox.message_snoozed',
+  'admin.integration_tested',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
