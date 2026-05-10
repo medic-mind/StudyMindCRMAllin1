@@ -1,9 +1,12 @@
 // Shared error UI for App Router segments. CLAUDE.md §26 — never expose
-// raw error messages; always include a request_id for support.
+// raw error messages to family-facing surfaces. This is staff-only chrome
+// inside the (app) shell, so we surface the error name + first line of
+// the message in a collapsed details element. Stack traces are still kept
+// out of the DOM (Sentry has them).
 
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 
@@ -15,6 +18,8 @@ export interface SegmentErrorProps {
 }
 
 export function SegmentError({ error, reset, title = 'Something went wrong' }: SegmentErrorProps) {
+  const [showDetails, setShowDetails] = useState(false)
+
   useEffect(() => {
     // Surface to Sentry where available; never console.error in prod paths.
     const sentry = (globalThis as unknown as {
@@ -23,8 +28,10 @@ export function SegmentError({ error, reset, title = 'Something went wrong' }: S
     sentry?.captureException(error)
   }, [error])
 
-  // The digest is the only error identifier we surface. Never the message.
   const requestId = error.digest ?? 'unavailable'
+  const errorName = error.name || 'Error'
+  // Take the first line of the message only — keep multi-line stacks out of the DOM.
+  const errorMessage = (error.message ?? '').split('\n')[0].slice(0, 300)
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-6">
@@ -36,6 +43,21 @@ export function SegmentError({ error, reset, title = 'Something went wrong' }: S
       <div className="mt-3 font-mono text-xs text-red-900/80">
         request_id: {requestId}
       </div>
+      {errorMessage ? (
+        <details
+          className="mt-3"
+          open={showDetails}
+          onToggle={(e) => setShowDetails((e.target as HTMLDetailsElement).open)}
+        >
+          <summary className="cursor-pointer text-xs text-red-900/80 hover:text-red-900">
+            {showDetails ? 'Hide' : 'Show'} technical details
+          </summary>
+          <div className="mt-2 rounded bg-red-100 p-3 font-mono text-xs text-red-900">
+            <div className="font-semibold">{errorName}</div>
+            <div className="mt-1 break-words">{errorMessage}</div>
+          </div>
+        </details>
+      ) : null}
       <div className="mt-4">
         <Button onClick={() => reset()} variant="secondary" size="sm">
           Retry
