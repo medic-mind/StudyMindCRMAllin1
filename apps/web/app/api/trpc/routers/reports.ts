@@ -28,6 +28,40 @@ const PeriodInput = z.object({
   to: z.coerce.date(),
 })
 
+/**
+ * Buckets the period [from, to] into ISO weeks (Mon-Sun). Returns the start
+ * of each week as a Date in ascending order. Used to build the x-axis for
+ * the chart endpoints.
+ */
+function isoWeekStarts(from: Date, to: Date): Date[] {
+  const starts: Date[] = []
+  const cursor = new Date(from)
+  // Snap to Monday 00:00 UTC.
+  cursor.setUTCHours(0, 0, 0, 0)
+  const day = cursor.getUTCDay() // 0=Sun..6=Sat
+  const offset = day === 0 ? -6 : 1 - day
+  cursor.setUTCDate(cursor.getUTCDate() + offset)
+  while (cursor <= to) {
+    starts.push(new Date(cursor))
+    cursor.setUTCDate(cursor.getUTCDate() + 7)
+  }
+  return starts
+}
+
+function weekIndex(d: Date, weekStarts: Date[]): number {
+  for (let i = weekStarts.length - 1; i >= 0; i--) {
+    const ws = weekStarts[i]
+    if (ws && d >= ws) return i
+  }
+  return 0
+}
+
+function weekLabel(d: Date): string {
+  const m = d.getUTCMonth() + 1
+  const day = d.getUTCDate()
+  return `${m}/${day}`
+}
+
 export const reportsRouter = router({
   finance: router({
     summary: protectedProcedure
@@ -97,6 +131,41 @@ export const reportsRouter = router({
         const p50 = lagsSec[Math.floor(lagsSec.length * 0.5)] ?? null
         const p90 = lagsSec[Math.floor(lagsSec.length * 0.9)] ?? null
 
+        // Weekly timeseries: money in / reverted / unallocated by week.
+        // We bucket the *same* payments[] used above; reconciliation only
+        // counts a payment as allocated once it has at least one
+        // Allocation row, so we mirror that here.
+        const weekStarts = isoWeekStarts(input.from, input.to)
+        const moneyInByWeek = new Array(weekStarts.length).fill(0) as number[]
+        const revertedByWeek = new Array(weekStarts.length).fill(0) as number[]
+        const unallocatedByWeek = new Array(weekStarts.length).fill(0) as number[]
+        const paymentsWithAlloc = await ctx.db.payment.findMany({
+          where: {
+            receivedAt: { gte: input.from, lte: input.to },
+            deletedAt: null,
+          },
+          select: {
+            amountMinor: true,
+            receivedAt: true,
+            reverted: true,
+            allocations: { select: { id: true }, take: 1 },
+          },
+          take: 5000,
+        })
+        for (const p of paymentsWithAlloc) {
+          const i = weekIndex(p.receivedAt, weekStarts)
+          if (p.reverted) {
+            revertedByWeek[i] = (revertedByWeek[i] ?? 0) + p.amountMinor
+            continue
+          }
+          if (p.allocations.length === 0) {
+            unallocatedByWeek[i] = (unallocatedByWeek[i] ?? 0) + p.amountMinor
+          } else {
+            moneyInByWeek[i] = (moneyInByWeek[i] ?? 0) + p.amountMinor
+          }
+        }
+        const weekLabels = weekStarts.map(weekLabel)
+
         return {
           period: { from: input.from, to: input.to },
           openDiscrepancies: openDiscrepancies.map((d) => ({
@@ -110,6 +179,12 @@ export const reportsRouter = router({
             p50Sec: p50,
             p90Sec: p90,
             sampleSize: lagsSec.length,
+          },
+          weekly: {
+            labels: weekLabels,
+            moneyInMinor: moneyInByWeek,
+            revertedMinor: revertedByWeek,
+            unallocatedMinor: unallocatedByWeek,
           },
         }
       }),
@@ -130,9 +205,20 @@ export const reportsRouter = router({
             state: true,
             scheduledHours: true,
             deliveredHours: true,
+            scheduledAt: true,
           },
           take: 5000,
         })
+
+        const weekStarts = isoWeekStarts(input.from, input.to)
+        const deliveredHoursByWeek = new Array(weekStarts.length).fill(0) as number[]
+        const deliveredSessionsByWeek = new Array(weekStarts.length).fill(0) as number[]
+        for (const s of sessions) {
+          if (s.state !== 'delivered') continue
+          const i = weekIndex(s.scheduledAt, weekStarts)
+          deliveredHoursByWeek[i] = (deliveredHoursByWeek[i] ?? 0) + s.deliveredHours
+          deliveredSessionsByWeek[i] = (deliveredSessionsByWeek[i] ?? 0) + 1
+        }
 
         const totals = {
           scheduled: 0,
@@ -178,6 +264,11 @@ export const reportsRouter = router({
           scheduledHours,
           deliveredHours,
           missedSessionRate: missedRate,
+          weekly: {
+            labels: weekStarts.map(weekLabel),
+            deliveredHours: deliveredHoursByWeek,
+            deliveredSessions: deliveredSessionsByWeek,
+          },
         }
       }),
   }),
