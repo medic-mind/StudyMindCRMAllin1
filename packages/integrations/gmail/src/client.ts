@@ -1,13 +1,15 @@
-// Per-agent Gmail client. CLAUDE.md §14.
+// Per-agent Gmail client. CLAUDE.md §14, ADR 0012.
 //
-// Each agent connects their own Gmail via OAuth. Refresh tokens are
-// KMS-encrypted in `GmailToken` and decrypted just-in-time here. Granular
+// Each agent connects their own Gmail via OAuth. Refresh tokens live as
+// `EncryptedField` rows pointed at by `User.gmailRefreshTokenCipherId`
+// (ADR 0012). For older rows that landed in the legacy `GmailToken` table
+// before the ADR, we still fall back so the migration is a no-op. Granular
 // scopes only — gmail.readonly, gmail.modify, gmail.send. The returned
 // client is request-scoped and MUST NOT be cached across users.
 
 import { google, type gmail_v1 } from 'googleapis'
 
-import { decryptField } from '@studymind/core/safeguarding'
+import { decryptFieldById, decryptField } from '@studymind/core/safeguarding'
 import { db } from '@studymind/db'
 
 export interface GmailMessageRef {
@@ -84,34 +86,49 @@ export async function createClientForAgent(
 
   let refreshToken = opts.refreshToken
   if (!refreshToken) {
-    const row = await db.gmailToken.findUnique({
-      where: { agentId: opts.agentId },
-      select: {
-        tokenCiphertext: true,
-        tokenIv: true,
-        dekCiphertext: true,
-        aad: true,
-        keyVersion: true,
-        deletedAt: true,
-      },
+    // ADR 0012: prefer the EncryptedField pointer on User.
+    const user = await db.user.findUnique({
+      where: { id: opts.agentId },
+      select: { gmailRefreshTokenCipherId: true },
     })
-    if (!row || row.deletedAt) {
-      throw new Error(`No Gmail token registered for agent ${opts.agentId}`)
-    }
-    refreshToken = await decryptField(
-      {
-        ciphertext: row.tokenCiphertext,
-        iv: row.tokenIv,
-        dekCiphertext: row.dekCiphertext,
-        aad: row.aad,
-        keyVersion: row.keyVersion,
-      },
-      {
+    if (user?.gmailRefreshTokenCipherId) {
+      refreshToken = await decryptFieldById(db, {
+        encryptedFieldId: user.gmailRefreshTokenCipherId,
         actorId: opts.agentId,
         purpose: opts.purpose ?? 'gmail.sync',
         ...(opts.requestId ? { requestId: opts.requestId } : {}),
-      },
-    )
+      })
+    } else {
+      // Legacy fallback for any pre-ADR-0012 rows still living in GmailToken.
+      const row = await db.gmailToken.findUnique({
+        where: { agentId: opts.agentId },
+        select: {
+          tokenCiphertext: true,
+          tokenIv: true,
+          dekCiphertext: true,
+          aad: true,
+          keyVersion: true,
+          deletedAt: true,
+        },
+      })
+      if (!row || row.deletedAt) {
+        throw new Error(`No Gmail token registered for agent ${opts.agentId}`)
+      }
+      refreshToken = await decryptField(
+        {
+          ciphertext: row.tokenCiphertext,
+          iv: row.tokenIv,
+          dekCiphertext: row.dekCiphertext,
+          aad: row.aad,
+          keyVersion: row.keyVersion,
+        },
+        {
+          actorId: opts.agentId,
+          purpose: opts.purpose ?? 'gmail.sync',
+          ...(opts.requestId ? { requestId: opts.requestId } : {}),
+        },
+      )
+    }
   }
 
   const oauth2 = new google.auth.OAuth2(
@@ -236,6 +253,121 @@ export function getHeader(headers: GmailHeader[], name: string): string | null {
   const lower = name.toLowerCase()
   const found = headers.find((h) => h.name.toLowerCase() === lower)
   return found?.value ?? null
+}
+
+// -----------------------------------------------------------------------------
+// Per-user watch lifecycle helpers (ADR 0012).
+//
+// These wrap the GmailClient methods so the OAuth callback and disconnect
+// mutation can operate on a userId without each call site re-deriving the
+// client. They also persist the resulting historyId/expiry into GmailMailbox.
+// -----------------------------------------------------------------------------
+
+/** Topic name from env or fallback used in dev. */
+function getPubSubTopic(): string {
+  return (
+    process.env['GMAIL_PUBSUB_TOPIC'] ?? 'projects/studymind/topics/gmail-watch'
+  )
+}
+
+export interface SetupWatchForUserOptions {
+  /** Address discovered during the OAuth handshake. */
+  address: string
+  /** Override the gmail SDK constructor (tests). */
+  factory?: () => gmail_v1.Gmail
+}
+
+/**
+ * Start (or restart) the Pub/Sub watch for a user's mailbox and persist the
+ * resulting historyId/expiry. Idempotent — re-calling refreshes the watch.
+ */
+export async function setupWatchForUser(
+  userId: string,
+  opts: SetupWatchForUserOptions,
+): Promise<GmailWatchResult> {
+  const factory = opts.factory
+  const client = await createClientForAgent(
+    factory
+      ? { agentId: userId, factory }
+      : { agentId: userId, purpose: 'gmail.oauth_connect' },
+  )
+  const topicName = getPubSubTopic()
+  const result = await client.setupWatch({ topicName })
+  await db.gmailMailbox.upsert({
+    where: { agentId: userId },
+    create: {
+      agentId: userId,
+      address: opts.address,
+      topicName,
+      historyId: result.historyId,
+      watchExpiresAt: new Date(result.expirationMs),
+    },
+    update: {
+      address: opts.address,
+      topicName,
+      historyId: result.historyId,
+      watchExpiresAt: new Date(result.expirationMs),
+      deletedAt: null,
+    },
+  })
+  return result
+}
+
+/**
+ * Stop the Pub/Sub watch for a user and tombstone their mailbox row. Best
+ * effort: a Google-side failure is logged but does not throw, because the
+ * user is on a disconnect path and we still want to clear our state.
+ */
+export async function stopWatchForUser(
+  userId: string,
+  opts: { factory?: () => gmail_v1.Gmail } = {},
+): Promise<void> {
+  try {
+    const client = await createClientForAgent(
+      opts.factory
+        ? { agentId: userId, factory: opts.factory }
+        : { agentId: userId, purpose: 'gmail.oauth_disconnect' },
+    )
+    await client.stopWatch()
+  } catch {
+    // Token may already be revoked; swallow and proceed.
+  }
+  await db.gmailMailbox.updateMany({
+    where: { agentId: userId, deletedAt: null },
+    data: { deletedAt: new Date(), watchExpiresAt: null },
+  })
+}
+
+/**
+ * Flip the connection status to `needs_reconnect`. Called by background jobs
+ * when Google returns `invalid_grant` on a refresh attempt.
+ */
+export async function markNeedsReconnect(userId: string): Promise<void> {
+  await db.user.update({
+    where: { id: userId },
+    data: { gmailConnectionStatus: 'needs_reconnect' },
+  })
+  await db.gmailMailbox.updateMany({
+    where: { agentId: userId, deletedAt: null },
+    data: { watchExpiresAt: null },
+  })
+}
+
+/**
+ * True if the error from googleapis is an `invalid_grant` token-refresh
+ * failure — i.e. the refresh token has been revoked or expired and the user
+ * must reconnect. Detection is best-effort across googleapis versions.
+ */
+export function isInvalidGrantError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as Record<string, unknown>
+  const code = (e['code'] ?? e['status']) as string | number | undefined
+  const msg = String(e['message'] ?? '')
+  const data = (e['response'] as { data?: { error?: string } } | undefined)?.data
+  if (data?.error === 'invalid_grant') return true
+  if (typeof msg === 'string' && msg.toLowerCase().includes('invalid_grant')) return true
+  if (code === 400 && msg.toLowerCase().includes('invalid_grant')) return true
+  return false
 }
 
 export function parseAddresses(value: string | null): string[] {

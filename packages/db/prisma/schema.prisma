@@ -207,6 +207,12 @@ model User {
   failedSignInAttempts Int       @default(0)
   lockedUntil          DateTime?
 
+  // ADR 0012: per-agent Gmail OAuth. Status is free text (see migration).
+  // gmailRefreshTokenCipherId references EncryptedField.id, not enforced as
+  // a foreign key — lifecycle is lock-stepped in the OAuth route handlers.
+  gmailConnectionStatus     String?
+  gmailRefreshTokenCipherId String?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?

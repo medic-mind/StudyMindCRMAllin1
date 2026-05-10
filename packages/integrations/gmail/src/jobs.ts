@@ -17,6 +17,8 @@ import { inngest } from '@studymind/jobs'
 
 import {
   createClientForAgent,
+  isInvalidGrantError,
+  markNeedsReconnect,
   getHeader,
   parseAddresses,
   type GmailMessage,
@@ -55,14 +57,38 @@ export const gmailHistoryChanged = inngest.createFunction(
     }
 
     const startHistoryId = mailbox.historyId ?? historyId
-    const result = await step.run('list-history', async () => {
-      const client = await createClientForAgent({
-        agentId: mailbox.agentId,
-        purpose: 'gmail.sync',
-        requestId: eventId,
+    let result
+    try {
+      result = await step.run('list-history', async () => {
+        const client = await createClientForAgent({
+          agentId: mailbox.agentId,
+          purpose: 'gmail.sync',
+          requestId: eventId,
+        })
+        return client.listHistorySince(startHistoryId)
       })
-      return client.listHistorySince(startHistoryId)
-    })
+    } catch (err) {
+      if (isInvalidGrantError(err)) {
+        logger.warn(
+          { eventId, agentId: mailbox.agentId, requestId: eventId },
+          'gmail refresh token rejected (invalid_grant) — marking needs_reconnect',
+        )
+        await step.run('mark-needs-reconnect', async () =>
+          markNeedsReconnect(mailbox.agentId),
+        )
+        await step.run('audit-needs-reconnect', async () =>
+          writeAuditLogEntry(db, {
+            actorId: null,
+            action: 'gmail.oauth_needs_reconnect',
+            target: { type: 'User', id: mailbox.agentId },
+            requestId: eventId,
+          }),
+        )
+        await step.run('mark-processed', async () => markProcessed(providerEventRowId))
+        return { skipped: true, reason: 'needs_reconnect' as const }
+      }
+      throw err
+    }
 
     for (const added of result.added) {
       // Per-message step lets a single bad message land in DLQ rather than
@@ -271,18 +297,37 @@ export const gmailRefreshWatch = inngest.createFunction(
         continue
       }
       await step.run(`renew-${mb.agentId}`, async () => {
-        const client = await createClientForAgent({
-          agentId: mb.agentId,
-          purpose: 'gmail.refresh-watch',
-        })
-        const result = await client.setupWatch({ topicName: mb.topicName as string })
-        await db.gmailMailbox.update({
-          where: { agentId: mb.agentId },
-          data: {
-            historyId: result.historyId,
-            watchExpiresAt: new Date(result.expirationMs),
-          },
-        })
+        try {
+          const client = await createClientForAgent({
+            agentId: mb.agentId,
+            purpose: 'gmail.refresh-watch',
+          })
+          const result = await client.setupWatch({
+            topicName: mb.topicName as string,
+          })
+          await db.gmailMailbox.update({
+            where: { agentId: mb.agentId },
+            data: {
+              historyId: result.historyId,
+              watchExpiresAt: new Date(result.expirationMs),
+            },
+          })
+        } catch (err) {
+          if (isInvalidGrantError(err)) {
+            logger.warn(
+              { agentId: mb.agentId },
+              'gmail refresh-watch invalid_grant — marking needs_reconnect',
+            )
+            await markNeedsReconnect(mb.agentId)
+            await writeAuditLogEntry(db, {
+              actorId: null,
+              action: 'gmail.oauth_needs_reconnect',
+              target: { type: 'User', id: mb.agentId },
+            })
+            return
+          }
+          throw err
+        }
       })
     }
 

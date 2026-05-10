@@ -21,7 +21,7 @@ import { getKmsClient, getKmsKeyId, KEY_VERSION } from './kms'
 export type DbWriter = PrismaClient | Prisma.TransactionClient
 
 export interface EncryptFieldInput {
-  ownerType: 'Contact' | 'SafeguardingFlag' | 'Interaction' | 'TrengoToken'
+  ownerType: 'Contact' | 'SafeguardingFlag' | 'Interaction' | 'TrengoToken' | 'User'
   ownerId: string
   fieldName: string
   plaintext: string

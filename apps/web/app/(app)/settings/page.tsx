@@ -16,6 +16,12 @@ const links: Array<{ href: string; title: string; description: string; roles: st
     roles: 'admin · ops_manager',
   },
   {
+    href: '/settings/mailbox',
+    title: 'Mailbox',
+    description: 'Connect or disconnect your Gmail mailbox (per-agent).',
+    roles: 'all',
+  },
+  {
     href: '/settings/integrations',
     title: 'Integrations status',
     description:
