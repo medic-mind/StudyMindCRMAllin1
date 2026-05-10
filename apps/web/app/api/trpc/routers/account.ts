@@ -352,4 +352,45 @@ export const accountRouter = router({
       return { ok: true as const, count: result.count }
     }),
   }),
+
+  // Trengo per-agent token connect/reconnect. CLAUDE.md §11.
+  // Tokens rotate every 90 days; each agent's outbound goes through their
+  // own token so attribution is preserved. Validation calls Trengo `/me`
+  // before persisting; an invalid token never lands in the DB.
+  trengo: router({
+    connect: auditedProcedure
+      .input(z.object({ token: z.string().trim().min(8).max(2000) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        // Lazy import: keeps the Trengo connect helper out of the tRPC bundle
+        // unless this procedure is actually invoked.
+        const { connectTrengoToken, TrengoTokenInvalidError } = await import(
+          '@studymind/integration-trengo/connect'
+        )
+        try {
+          const result = await connectTrengoToken({
+            agentId: user.id,
+            token: input.token,
+            requestId: ctx.requestId,
+          })
+          await ctx.audit({
+            action: 'trengo.token_connect_requested',
+            target: { type: 'User', id: user.id },
+            after: { expiresAt: result.expiresAt.toISOString() },
+          })
+          return {
+            expiresAt: result.expiresAt,
+            trengoEmail: result.trengoEmail ?? null,
+          }
+        } catch (err) {
+          if (err instanceof TrengoTokenInvalidError) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Trengo rejected the token. Generate a fresh one and try again.',
+            })
+          }
+          throw err
+        }
+      }),
+  }),
 })

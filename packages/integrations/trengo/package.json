@@ -10,6 +10,7 @@
     "./webhook": "./src/webhook.ts",
     "./jobs": "./src/jobs.ts",
     "./outbound": "./src/outbound.ts",
+    "./connect": "./src/connect.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {
