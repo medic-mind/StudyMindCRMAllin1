@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./cost-summary": "./src/cost-summary.ts",
     "./compliance/audit-log-archive": "./src/compliance/audit-log-archive.ts",
+    "./compliance/enforce-retention": "./src/compliance/enforce-retention.ts",
     "./security/ueba": "./src/security/ueba.ts"
   },
   "scripts": {
