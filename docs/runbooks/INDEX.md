@@ -10,6 +10,7 @@ Operational playbooks for StudyMind CRM. Every PagerDuty alert links to one of t
 - [secret-rotation.md](secret-rotation.md) — Cadence and procedure for every secret. What to do if one leaks.
 - [disaster-recovery.md](disaster-recovery.md) — The script for CLAUDE.md §46. RPO/RTO, the 9-step playbook, incident channel checklist.
 - [seed-super-admin.md](seed-super-admin.md) — Bootstrap the initial `super_admin` user (Aashir by default). Password path vs link path, idempotency, last-super_admin guard.
+- [on-call.md](on-call.md) — Rotation, start-of-shift checks, dashboards to watch, and the page-response sequence (CLAUDE.md §33, §40).
 
 ## Referenced by CLAUDE.md but not yet written
 
