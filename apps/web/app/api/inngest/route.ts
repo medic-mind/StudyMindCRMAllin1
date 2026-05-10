@@ -5,8 +5,9 @@
 // functions live in `packages/integrations/<svc>/jobs.ts` and are pulled in
 // here so a single endpoint registers everything Inngest can dispatch.
 //
-// Auth: this endpoint is public to Clerk (see middleware) and authenticated
-// by the INNGEST_SIGNING_KEY signature header that the framework verifies.
+// Auth: this endpoint is public to the NextAuth middleware (ADR 0010) and
+// authenticated by the INNGEST_SIGNING_KEY signature header that the
+// framework verifies.
 
 import { serve } from 'inngest/next'
 
