@@ -34,6 +34,7 @@ interface NavItemDef extends NavItem {
 
 function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
   const items: NavItemDef[] = [
+    { href: '/', label: 'Dashboard' },
     { href: '/inbox', label: 'Inbox' },
     { href: '/contacts', label: 'Contacts' },
     { href: '/pipeline', label: 'Pipeline' },

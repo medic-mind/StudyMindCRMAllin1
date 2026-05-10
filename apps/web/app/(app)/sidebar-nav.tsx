@@ -15,6 +15,7 @@ import {
   BarChartIcon,
   CoinsIcon,
   GitBranchIcon,
+  HomeIcon,
   InboxIcon,
   ListTodoIcon,
   SettingsIcon,
@@ -41,6 +42,7 @@ interface Props {
 type IconComp = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>
 
 const ICONS: Record<string, IconComp> = {
+  '/': HomeIcon,
   '/inbox': InboxIcon,
   '/contacts': UsersIcon,
   '/pipeline': GitBranchIcon,
