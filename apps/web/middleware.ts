@@ -64,7 +64,15 @@ export default authMiddleware((req) => {
 
   const pathname = req.nextUrl.pathname
   const session = req.auth as
-    | { user?: { id: string; mustResetPassword?: boolean } }
+    | {
+        user?: {
+          id: string
+          mustResetPassword?: boolean
+          totpEnabledAt?: string | null
+          roles?: string[]
+          role?: string
+        }
+      }
     | null
 
   if (!session && !isPublicPath(pathname)) {
@@ -83,6 +91,24 @@ export default authMiddleware((req) => {
     !pathname.startsWith('/api/auth/')
   ) {
     return NextResponse.redirect(new URL('/account/change-password', req.nextUrl.origin))
+  }
+
+  // Mandatory MFA enrolment gate: privileged roles cannot do anything until
+  // they have set up TOTP. CLAUDE.md §20. Exempt the setup page itself, the
+  // change-password page (the only other thing they may need to do first),
+  // sign-out, the auth API, and the healthcheck.
+  if (
+    session?.user &&
+    !session.user.totpEnabledAt &&
+    isPrivilegedRole(session.user.roles, session.user.role) &&
+    !isPublicPath(pathname) &&
+    pathname !== '/account/setup-2fa' &&
+    pathname !== '/account/change-password' &&
+    pathname !== '/api/auth/signout' &&
+    !pathname.startsWith('/api/auth/') &&
+    pathname !== '/api/health'
+  ) {
+    return NextResponse.redirect(new URL('/account/setup-2fa', req.nextUrl.origin))
   }
 
   const res = NextResponse.next({ request: { headers: requestHeaders } })
@@ -104,6 +130,17 @@ export default authMiddleware((req) => {
   }
   return res
 }) as unknown as (req: NextRequest) => Promise<NextResponse>
+
+const PRIVILEGED_ROLES = new Set(['super_admin', 'admin', 'finance', 'dsl'])
+
+function isPrivilegedRole(
+  roles: string[] | undefined,
+  primary: string | undefined,
+): boolean {
+  if (Array.isArray(roles) && roles.some((r) => PRIVILEGED_ROLES.has(r))) return true
+  if (primary && PRIVILEGED_ROLES.has(primary)) return true
+  return false
+}
 
 function cryptoRandomId(): string {
   const bytes = new Uint8Array(8)

@@ -56,7 +56,22 @@ export default async function AccountPage() {
               Active sessions
             </Link>
           </li>
+          <li>
+            {me.totpEnabledAt ? (
+              <Link href="/account/disable-2fa" className="text-neutral-900 hover:underline">
+                Disable two-factor authentication
+              </Link>
+            ) : (
+              <Link href="/account/setup-2fa" className="text-neutral-900 hover:underline">
+                Set up two-factor authentication
+              </Link>
+            )}
+          </li>
         </ul>
+        <p className="text-xs text-neutral-500">
+          Two-factor:{' '}
+          {me.totpEnabledAt ? `Enabled (${fmt(me.totpEnabledAt)})` : 'Not enabled'}
+        </p>
       </section>
     </div>
   )

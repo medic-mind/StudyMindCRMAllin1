@@ -16,6 +16,8 @@ export interface CurrentUser {
   role: UserRole
   roles: UserRole[]
   mustResetPassword: boolean
+  /** ISO string when MFA was last enabled, or null. CLAUDE.md §20. */
+  totpEnabledAt: string | null
   sessionId?: string
 }
 
@@ -29,6 +31,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     role: session.user.role,
     roles: session.user.roles,
     mustResetPassword: session.user.mustResetPassword,
+    totpEnabledAt: session.user.totpEnabledAt ?? null,
     sessionId: session.user.sessionId,
   }
 }
