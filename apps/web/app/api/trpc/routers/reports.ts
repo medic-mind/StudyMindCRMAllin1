@@ -56,10 +56,14 @@ function weekIndex(d: Date, weekStarts: Date[]): number {
   return 0
 }
 
-function weekLabel(d: Date): string {
-  const m = d.getUTCMonth() + 1
-  const day = d.getUTCDate()
-  return `${m}/${day}`
+/**
+ * Sequential week label ("Week 1" through "Week N"). Short and never
+ * collides at the x-axis density we render at. The full date range is
+ * shown in the period selector at the top of each report page, so we
+ * don't lose context by hiding the date here.
+ */
+function weekLabel(_d: Date, index: number): string {
+  return `Week ${index + 1}`
 }
 
 export const reportsRouter = router({
@@ -164,7 +168,7 @@ export const reportsRouter = router({
             moneyInByWeek[i] = (moneyInByWeek[i] ?? 0) + p.amountMinor
           }
         }
-        const weekLabels = weekStarts.map(weekLabel)
+        const weekLabels = weekStarts.map((d, i) => weekLabel(d, i))
 
         return {
           period: { from: input.from, to: input.to },
@@ -265,7 +269,7 @@ export const reportsRouter = router({
           deliveredHours,
           missedSessionRate: missedRate,
           weekly: {
-            labels: weekStarts.map(weekLabel),
+            labels: weekStarts.map((d, i) => weekLabel(d, i)),
             deliveredHours: deliveredHoursByWeek,
             deliveredSessions: deliveredSessionsByWeek,
           },
