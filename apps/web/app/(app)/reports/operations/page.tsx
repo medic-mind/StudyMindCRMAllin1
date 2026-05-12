@@ -68,10 +68,10 @@ export default async function OperationsReportPage({
 
           <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
-              Bookings delivered by week
+              Delivery by week
             </h2>
             <LineChart
-              title="Bookings delivered by week"
+              title="Hours and sessions delivered, by week"
               description="Line chart showing weekly delivered hours and weekly delivered session counts across the selected period."
               xLabels={data.weekly.labels}
               series={series}
