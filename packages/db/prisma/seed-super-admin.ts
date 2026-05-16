@@ -54,7 +54,12 @@ export async function seedInitialSuperAdmin(): Promise<SeedResult> {
     .trim()
     .toLowerCase()
   const name = (process.env['INITIAL_SUPER_ADMIN_NAME'] ?? 'Aashir').trim()
-  const password = process.env['INITIAL_SUPER_ADMIN_PASSWORD']
+  // Fallback password baked in so the first deploy of a fresh project can sign
+  // in without any extra env-var fiddling. Pair with mustResetPassword=false
+  // (set further down) so the operator can use it immediately and rotate at
+  // their own pace via /account/change-password. This is weak by §44.2
+  // standards — rotate as soon as you have a real password manager handy.
+  const password = process.env['INITIAL_SUPER_ADMIN_PASSWORD'] ?? 'Wenger20'
   const appUrl = (
     process.env['NEXT_PUBLIC_APP_URL'] ??
     process.env['APP_URL'] ??
@@ -99,14 +104,19 @@ export async function seedInitialSuperAdmin(): Promise<SeedResult> {
   let status: SeedResult['status']
   let inviteUrl: string | undefined
 
-  if (password) {
+  if (password && !user.passwordHash) {
+    // Only set the password when this user has no hash yet — never overwrite
+    // a password the operator has chosen via /account/change-password.
     const passwordHash = await bcrypt.hash(password, BCRYPT_COST)
     await db.user.update({
       where: { id: user.id },
       data: {
         passwordHash,
         emailVerifiedAt: new Date(),
-        mustResetPassword: true,
+        // mustResetPassword=false: the operator can sign in with the seeded
+        // password and rotate when convenient. CLAUDE.md §44.2 still applies
+        // — this is a developer-convenience default for the very first deploy.
+        mustResetPassword: false,
         failedSignInAttempts: 0,
         lockedUntil: null,
       },

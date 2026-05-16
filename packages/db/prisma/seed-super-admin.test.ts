@@ -105,16 +105,24 @@ describe('seedInitialSuperAdmin', () => {
     vi.clearAllMocks()
   })
 
-  it('creates a User and grants super_admin on first run (link path)', async () => {
+  it('creates a User, grants super_admin, and bakes the default password on first run', async () => {
+    // No INITIAL_SUPER_ADMIN_PASSWORD env → seed falls back to the baked
+    // default ("Wenger20") so a fresh deploy is signable-in immediately.
     const r = await seedInitialSuperAdmin()
     expect(r.email).toBe('aashir@studymind.co.uk')
-    expect(r.status).toBe('needs-link')
-    expect(r.inviteUrl).toMatch(/\/accept-invite\?token=/)
+    expect(r.status).toBe('password-set')
+    expect(r.inviteUrl).toBeUndefined()
     expect(r.alreadySuperAdmin).toBe(false)
     expect(mod.__state.users).toHaveLength(1)
+    expect(mod.__state.users[0].passwordHash).toBeTruthy()
+    // mustResetPassword=false: operator can sign in with the baked password
+    // and rotate at their own pace.
+    expect(mod.__state.users[0].mustResetPassword).toBe(false)
     expect(mod.__state.ras).toHaveLength(1)
     expect(mod.__state.ras[0].role).toBe('super_admin')
-    expect(mod.__state.tokens).toHaveLength(1)
+    // No EmailVerificationToken — link path is reserved for the explicit
+    // INITIAL_SUPER_ADMIN_PASSWORD='' opt-out.
+    expect(mod.__state.tokens).toHaveLength(0)
   })
 
   it('is idempotent — re-running does not duplicate the role assignment', async () => {
@@ -133,20 +141,26 @@ describe('seedInitialSuperAdmin', () => {
     expect(mod.__state.users[0].name).toBe('Some One')
   })
 
-  it('password path sets passwordHash, mustResetPassword=true, and emailVerifiedAt', async () => {
+  it('honours an explicit INITIAL_SUPER_ADMIN_PASSWORD over the baked default', async () => {
     process.env['INITIAL_SUPER_ADMIN_PASSWORD'] = 'CorrectHorse9!Battery'
     const r = await seedInitialSuperAdmin()
     expect(r.status).toBe('password-set')
     expect(mod.__state.users[0].passwordHash).toBeTruthy()
-    expect(mod.__state.users[0].mustResetPassword).toBe(true)
+    expect(mod.__state.users[0].mustResetPassword).toBe(false)
     expect(mod.__state.users[0].emailVerifiedAt).toBeInstanceOf(Date)
     expect(mod.__state.tokens).toHaveLength(0)
   })
 
-  it('link path issues an EmailVerificationToken with TTL ≈ 7 days', async () => {
+  it('link-path opt-out: empty INITIAL_SUPER_ADMIN_PASSWORD issues an invite token with TTL ≈ 7 days', async () => {
+    // Explicit empty string disables the password set and falls back to the
+    // accept-invite link flow. Useful when an operator wants the first sign-
+    // in to come via email link instead of a baked credential.
+    process.env['INITIAL_SUPER_ADMIN_PASSWORD'] = ''
     const before = Date.now()
     const r = await seedInitialSuperAdmin()
     expect(r.status).toBe('needs-link')
+    expect(mod.__state.users[0].passwordHash).toBeNull()
+    expect(mod.__state.tokens).toHaveLength(1)
     const t = mod.__state.tokens[0]
     const ttlMs = t.expiresAt.getTime() - before
     expect(ttlMs).toBeGreaterThan(6.5 * 24 * 60 * 60 * 1000)
