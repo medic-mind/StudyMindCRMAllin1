@@ -111,7 +111,6 @@ export const EVENT_NAMES = [
   'auth.user_deactivated',
   'auth.user_reactivated',
   'auth.super_admin_seeded',
-  'auth.super_admin_claimed',
   // Audit-A2 / CLAUDE.md §20: TOTP MFA lifecycle and authn events.
   'auth.totp_setup_started',
   'auth.totp_enabled',
