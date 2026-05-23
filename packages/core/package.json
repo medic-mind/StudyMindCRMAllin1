@@ -23,6 +23,7 @@
     "./flags/admin": "./src/flags/admin.ts",
     "./flags/registry": "./src/flags/registry.ts",
     "./logger": "./src/logger/index.ts",
+    "./logger/edge": "./src/logger/edge.ts",
     "./observability/audit-archive-s3": "./src/observability/audit-archive-s3.ts",
     "./observability/axiom-query": "./src/observability/axiom-query.ts",
     "./observability/cost-reports-s3": "./src/observability/cost-reports-s3.ts",

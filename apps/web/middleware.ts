@@ -12,7 +12,7 @@ import NextAuth from 'next-auth'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-import { logger } from '@studymind/core/logger'
+import { logger } from '@studymind/core/logger/edge'
 
 import { authEdgeConfig } from '@/lib/auth/edge-config'
 import { buildCsp, generateNonce } from '@/lib/security/csp'
