@@ -18,20 +18,9 @@
         "buildCommand": "pnpm build --filter=web"
       },
       "deploy": {
-        "startCommand": "pnpm --filter @studymind/db prisma migrate deploy && pnpm seed:super-admin || true && pnpm --filter web start",
+        "startCommand": "pnpm --filter @studymind/db prisma migrate deploy && (pnpm seed:super-admin || true) && pnpm --filter web exec next start --hostname 0.0.0.0 --port ${PORT:-3000}",
         "healthcheckPath": "/api/health",
-        "healthcheckTimeout": 30
-      }
-    },
-    {
-      "name": "worker",
-      "build": {
-        "builder": "DOCKERFILE",
-        "dockerfilePath": "Dockerfile",
-        "buildCommand": "pnpm build --filter=@studymind/jobs"
-      },
-      "deploy": {
-        "startCommand": "pnpm --filter @studymind/jobs start"
+        "healthcheckTimeout": 180
       }
     }
   ]
