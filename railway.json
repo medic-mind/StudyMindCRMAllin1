@@ -18,9 +18,9 @@
         "buildCommand": "pnpm build --filter=web"
       },
       "deploy": {
-        "startCommand": "pnpm --filter @studymind/db prisma migrate deploy && (pnpm seed:super-admin || true) && pnpm --filter web exec next start --hostname 0.0.0.0 --port ${PORT:-3000}",
+        "startCommand": "sh scripts/deploy/start-web.sh",
         "healthcheckPath": "/api/health",
-        "healthcheckTimeout": 180
+        "healthcheckTimeout": 300
       }
     }
   ]
