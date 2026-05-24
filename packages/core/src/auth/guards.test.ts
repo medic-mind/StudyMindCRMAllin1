@@ -1,34 +1,34 @@
-// Tests for the role-mutation guards. CLAUDE.md §20, ADR 0009.
+// Tests for the role-mutation guards. CLAUDE.md §20, ADR 0014.
 
 import { describe, expect, it, vi } from 'vitest'
 
 import { BusinessError } from '../errors'
-import { assertNotLastSuperAdmin, type RoleAssignmentCounter } from './guards'
+import { assertNotLastCeo, type RoleAssignmentCounter } from './guards'
 
-function makeDb(otherSuperAdmins: number): RoleAssignmentCounter {
+function makeDb(otherCeos: number): RoleAssignmentCounter & {
+  roleAssignment: { count: ReturnType<typeof vi.fn> }
+} {
   return {
     roleAssignment: {
-      count: vi.fn().mockResolvedValue(otherSuperAdmins),
+      count: vi.fn().mockResolvedValue(otherCeos),
     },
   }
 }
 
-describe('assertNotLastSuperAdmin', () => {
-  it('passes when other super_admins exist', async () => {
+describe('assertNotLastCeo', () => {
+  it('passes when other ceos exist', async () => {
     const db = makeDb(2)
-    await expect(assertNotLastSuperAdmin(db, 'u_1')).resolves.toBeUndefined()
+    await expect(assertNotLastCeo(db, 'u_1')).resolves.toBeUndefined()
     expect(db.roleAssignment.count).toHaveBeenCalledWith({
-      where: { role: 'super_admin', userId: { not: 'u_1' } },
+      where: { role: { in: ['ceo', 'super_admin'] }, userId: { not: 'u_1' } },
     })
   })
 
-  it('throws LAST_SUPER_ADMIN when no other super_admins remain', async () => {
+  it('throws LAST_CEO when no other ceos remain', async () => {
     const db = makeDb(0)
-    await expect(assertNotLastSuperAdmin(db, 'u_1')).rejects.toBeInstanceOf(
-      BusinessError,
-    )
-    await expect(assertNotLastSuperAdmin(db, 'u_1')).rejects.toMatchObject({
-      code: 'LAST_SUPER_ADMIN',
+    await expect(assertNotLastCeo(db, 'u_1')).rejects.toBeInstanceOf(BusinessError)
+    await expect(assertNotLastCeo(db, 'u_1')).rejects.toMatchObject({
+      code: 'LAST_CEO',
     })
   })
 })
