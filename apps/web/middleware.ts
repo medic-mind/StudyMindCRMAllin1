@@ -94,10 +94,14 @@ export default authMiddleware((req) => {
   }
 
   // Mandatory MFA enrolment gate: privileged roles cannot do anything until
-  // they have set up TOTP. CLAUDE.md §20. Exempt the setup page itself, the
-  // change-password page (the only other thing they may need to do first),
-  // sign-out, the auth API, and the healthcheck.
+  // they have set up TOTP. CLAUDE.md §20 mandates this for production, but
+  // we gate it behind MANDATORY_MFA_ENABLED so a fresh deploy can sign in
+  // and explore without being forced through 2FA setup first. Flip the env
+  // var to 'true' once you're ready to enforce. Exempts the setup page
+  // itself, the change-password page, sign-out, the auth API, and the
+  // healthcheck.
   if (
+    process.env['MANDATORY_MFA_ENABLED'] === 'true' &&
     session?.user &&
     !session.user.totpEnabledAt &&
     isPrivilegedRole(session.user.roles, session.user.role) &&
