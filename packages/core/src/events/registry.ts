@@ -59,14 +59,10 @@ export const EVENT_NAMES = [
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
 
-  // Safeguarding
-  'safeguarding.flag',
-  'safeguarding.concern_raised',
-  'safeguarding.la_referral',
-  'safeguarding.restricted',
+  // Envelope encryption (originally safeguarding; ADR 0013 retains these
+  // for Gmail OAuth refresh-token storage and any future crypto-shred field).
   'safeguarding.field_encrypted',
   'safeguarding.field_decrypted',
-  'safeguarding.read_attempt',
   'safeguarding.break_glass',
 
   // AI

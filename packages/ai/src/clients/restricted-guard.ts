@@ -1,46 +1,23 @@
-// Restricted-contact guard for AI clients. CLAUDE.md §42.3.
+// Restricted-contact guard.
 //
-// Any AI call that mentions a restricted contact must abort BEFORE the
-// prompt is sent — restricted contacts are removed from prompt inputs.
-// Callers pass a `contactId` and a `db` resolver. The default resolver is
-// no-op (no contactId → no check). Tests inject a fake db.
-
-import { BusinessError } from '@studymind/core'
+// In the safeguarding workflow this function blocked AI calls against any
+// Contact with an active `restricted_access` flag. The safeguarding
+// workflow was removed in ADR 0013, so the guard is now a no-op. We keep
+// the function (and the optional db injection seam) so that AI client call
+// sites do not churn and so a future reinstatement of the workflow has an
+// obvious place to plug back in.
 
 export interface RestrictedGuardDb {
-  safeguardingFlag: {
-    findFirst: (args: {
-      where: { contactId: string; deletedAt: null; state: 'restricted_access' }
-      select: { id: true }
-    }) => Promise<{ id: string } | null>
-  }
+  // Intentionally empty: no consumers in v1. Retained for API stability.
+  [k: string]: unknown
 }
 
-let cachedDb: RestrictedGuardDb | null = null
-
-/**
- * Inject the db client used by the guard. The web app calls this once at
- * boot. Tests use it directly. Without injection the guard is a no-op
- * (which is safe: callers that pass `contactId` opt into the check).
- */
-export function setRestrictedGuardDb(db: RestrictedGuardDb | null): void {
-  cachedDb = db
+export function setRestrictedGuardDb(_db: RestrictedGuardDb | null): void {
+  // no-op
 }
 
 export async function assertContactNotRestricted(
-  contactId: string | undefined,
+  _contactId: string | null | undefined,
 ): Promise<void> {
-  if (!contactId) return
-  if (!cachedDb) return
-  const flag = await cachedDb.safeguardingFlag.findFirst({
-    where: { contactId, deletedAt: null, state: 'restricted_access' },
-    select: { id: true },
-  })
-  if (flag) {
-    throw new BusinessError(
-      'CONTACT_RESTRICTED',
-      'Contact is restricted_access; AI prompts may not reference this contact.',
-      { contactId },
-    )
-  }
+  return
 }

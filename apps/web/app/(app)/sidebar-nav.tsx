@@ -19,7 +19,6 @@ import {
   InboxIcon,
   ListTodoIcon,
   SettingsIcon,
-  ShieldAlertIcon,
   UserCircleIcon,
   UsersIcon,
 } from '@/components/ui/icon'
@@ -48,7 +47,6 @@ const ICONS: Record<string, IconComp> = {
   '/pipeline': GitBranchIcon,
   '/tasks': ListTodoIcon,
   '/finance': CoinsIcon,
-  '/safeguarding': ShieldAlertIcon,
   '/reports': BarChartIcon,
   '/settings': SettingsIcon,
   '/account': UserCircleIcon,

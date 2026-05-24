@@ -31,7 +31,7 @@ export default async function Setup2faPage() {
         </h1>
         <p className="text-sm text-neutral-600">
           Two-factor adds a six-digit code from your phone to every sign-in. It
-          is required for admin, finance, and safeguarding staff.
+          is required for admin and finance staff.
         </p>
       </header>
       <Setup2faFlow />

@@ -8,14 +8,7 @@ import {
   protectedProcedure,
   requireUser,
   router,
-  type SessionUser,
 } from '@/lib/trpc/builders'
-
-const DSL_SAFEGUARDING_ROLES: ReadonlySet<SessionUser['role']> = new Set([
-  'super_admin',
-  'admin',
-  'dsl',
-])
 
 interface KpiValue {
   value: number
@@ -46,8 +39,6 @@ function targetHref(targetType: string, targetId: string): string | null {
       return `/contacts/${targetId}`
     case 'Family':
       return `/contacts/families/${targetId}`
-    case 'SafeguardingFlag':
-      return `/safeguarding`
     case 'ReconciliationDiscrepancy':
       return `/finance`
     case 'Task':
@@ -105,42 +96,23 @@ export const dashboardRouter = router({
         },
       })
 
-      // KPI 4: Safeguarding flags open (DSL/admin) OR AI cost MTD (others)
-      let fourthTile: KpiValue
-      if (DSL_SAFEGUARDING_ROLES.has(user.role)) {
-        const openFlags = await ctx.db.safeguardingFlag.count({
-          where: { closedAt: null, deletedAt: null },
-        })
-        fourthTile = {
-          value: openFlags,
-          delta: null,
-          label: 'Safeguarding flags open',
-        }
-      } else {
-        // AI cost MTD — DriftSample is a 1% sample of production AI calls;
-        // multiply by 100 to estimate true spend (same multiplier the
-        // weekly cost-summary job uses). Round to whole dollars for the tile.
-        const samples = await ctx.db.driftSample.aggregate({
-          where: { sampledAt: { gte: monthStart } },
-          _sum: { costUsd: true },
-        })
-        const sampledUsd = samples._sum.costUsd ?? 0
-        const totalUsd = Math.round(sampledUsd * 100)
-        fourthTile = {
-          value: totalUsd,
-          delta: null,
-          label: 'AI spend this month ($)',
-        }
+      // KPI 4: AI spend MTD. DriftSample is a 1% sample of production AI
+      // calls; multiply by 100 to estimate true spend (same multiplier the
+      // weekly cost-summary job uses). Round to whole dollars for the tile.
+      const samples = await ctx.db.driftSample.aggregate({
+        where: { sampledAt: { gte: monthStart } },
+        _sum: { costUsd: true },
+      })
+      const sampledUsd = samples._sum.costUsd ?? 0
+      const totalUsd = Math.round(sampledUsd * 100)
+      const fourthTile: KpiValue = {
+        value: totalUsd,
+        delta: null,
+        label: 'AI spend this month ($)',
       }
 
-      // Recent activity: latest 10 audit log entries the caller is allowed
-      // to see. Read-only viewers see contact-level events; safeguarding
-      // events are visible only to DSL/admin.
-      const seeSafeguarding = DSL_SAFEGUARDING_ROLES.has(user.role)
+      // Recent activity: latest 10 audit log entries.
       const auditRows = await ctx.db.auditLogEntry.findMany({
-        where: seeSafeguarding
-          ? {}
-          : { NOT: { action: { startsWith: 'safeguarding.' } } },
         orderBy: { occurredAt: 'desc' },
         take: 10,
         select: {

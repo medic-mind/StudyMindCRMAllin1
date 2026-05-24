@@ -15,7 +15,7 @@ interface Props {
   initialNextCursor: { id: string; occurredAt: Date } | null
 }
 
-type FilterKey = 'all' | 'payment' | 'message' | 'call' | 'note' | 'safeguarding'
+type FilterKey = 'all' | 'payment' | 'message' | 'call' | 'note'
 
 const FILTERS: { key: FilterKey; label: string; matches: (t: string) => boolean }[] = [
   { key: 'all', label: 'All', matches: () => true },
@@ -23,7 +23,6 @@ const FILTERS: { key: FilterKey; label: string; matches: (t: string) => boolean 
   { key: 'message', label: 'Messages', matches: (t) => t.startsWith('message') || t.startsWith('email') || t.startsWith('ticket') },
   { key: 'call', label: 'Calls', matches: (t) => t.startsWith('call') },
   { key: 'note', label: 'Notes', matches: (t) => t === 'note' },
-  { key: 'safeguarding', label: 'Safeguarding', matches: (t) => t.startsWith('safeguarding') },
 ]
 
 export function FamilyTimeline({ familyId, initialItems, initialNextCursor }: Props) {

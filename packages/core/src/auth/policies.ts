@@ -1,5 +1,6 @@
 // RBAC policy registry. Source of truth for the matrix in CLAUDE.md Section 20.1.
 // See ADR 0009 for the super_admin addition.
+// See ADR 0013 for the removal of safeguarding actions.
 
 export const ROLES = [
   'super_admin',
@@ -23,8 +24,6 @@ export const ACTIONS = [
   'charge.create_link',
   'charge.refund',
   'subscription.cancel',
-  'safeguarding.flag',
-  'safeguarding.read_notes',
   'dsar.export',
   'audit.read',
   'settings.write',
@@ -41,10 +40,7 @@ export const ACTIONS = [
 export type Action = (typeof ACTIONS)[number]
 
 // Whether a role is granted an action by default.
-// Attribute checks (e.g. assigned DSL only) are layered on top in domain code.
-// Actions that require a per-row attribute check on top of the role grant.
-// `safeguarding.read_notes` is gated on the caller being the assigned DSL of
-// the SafeguardingFlag, and every read writes an AuditLogEntry. CLAUDE.md §20.1.
+// Attribute checks (e.g. minor-DOB) are layered on top in domain code.
 export const ATTRIBUTE_GATED_ACTIONS: Readonly<Record<Action, boolean>> = {
   'contact.read': false,
   'contact.read_minor': true,
@@ -55,8 +51,6 @@ export const ATTRIBUTE_GATED_ACTIONS: Readonly<Record<Action, boolean>> = {
   'charge.create_link': false,
   'charge.refund': false,
   'subscription.cancel': false,
-  'safeguarding.flag': false,
-  'safeguarding.read_notes': true,
   'dsar.export': false,
   'audit.read': false,
   'settings.write': false,
@@ -79,8 +73,6 @@ export const AUDIT_REQUIRED_ACTIONS: Readonly<Record<Action, boolean>> = {
   'charge.create_link': true,
   'charge.refund': true,
   'subscription.cancel': true,
-  'safeguarding.flag': true,
-  'safeguarding.read_notes': true,
   'dsar.export': true,
   'audit.read': false,
   'settings.write': true,
@@ -103,8 +95,6 @@ const ADMIN_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'charge.create_link',
   'charge.refund',
   'subscription.cancel',
-  'safeguarding.flag',
-  'safeguarding.read_notes',
   'dsar.export',
   'audit.read',
   'settings.write',
@@ -123,7 +113,6 @@ export const ROLE_GRANTS: Readonly<Record<Role, ReadonlySet<Action>>> = {
     'interaction.create',
     'charge.create_link',
     'subscription.cancel',
-    'safeguarding.flag',
     'audit.read',
   ]),
   agent: new Set<Action>([
@@ -132,7 +121,6 @@ export const ROLE_GRANTS: Readonly<Record<Role, ReadonlySet<Action>>> = {
     'contact.write',
     'interaction.create',
     'charge.create_link',
-    'safeguarding.flag',
   ]),
   finance: new Set<Action>([
     'contact.read',
@@ -143,12 +131,13 @@ export const ROLE_GRANTS: Readonly<Record<Role, ReadonlySet<Action>>> = {
     'subscription.cancel',
     'audit.read',
   ]),
+  // dsl retained as an enum value (forward-only schema, CLAUDE.md §19) but
+  // safeguarding actions are gone (ADR 0013). dsl now collapses to a
+  // read-only Contact role until the slice-2 rename to Manager.
   dsl: new Set<Action>([
     'contact.read',
     'contact.read_minor',
     'interaction.create',
-    'safeguarding.flag',
-    'safeguarding.read_notes',
     'audit.read',
   ]),
   read_only: new Set<Action>(['contact.read']),
@@ -183,24 +172,7 @@ export function canGrantRole(actorRole: Role, targetRole: Role): boolean {
  *
  * Symmetric with `canGrantRole`: if you cannot grant a role you cannot
  * unilaterally revoke it either. CLAUDE.md §20, ADR 0009.
- *
- * Note: per-row constraints (cannot revoke own role, cannot leave
- * zero super_admins) are layered on top by the caller via
- * `assertNotLastSuperAdmin` and self-demotion guards in the tRPC
- * procedure.
  */
 export function canRevokeRole(actorRole: Role, targetRole: Role): boolean {
   return canGrantRole(actorRole, targetRole)
-}
-
-/**
- * Whether the role can override DSL assignment on a `restricted_access`
- * SafeguardingFlag in genuine emergency. CLAUDE.md §21.1, §41.3, ADR 0009.
- *
- * Day-to-day DSL work stays in the DSL team; this is a break-glass capability
- * reserved for the founder-level role and admins. Every override writes an
- * AuditLogEntry and pings the on-call DSL via Slack (Section 21.1).
- */
-export function canOverrideRestrictedDsl(actorRole: Role): boolean {
-  return actorRole === 'super_admin' || actorRole === 'admin'
 }

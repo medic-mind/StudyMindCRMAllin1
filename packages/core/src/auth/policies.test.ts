@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest'
 import {
   ROLES,
   canGrantRole,
-  canOverrideRestrictedDsl,
   canRevokeRole,
   roleCan,
   type Role,
@@ -91,14 +90,3 @@ describe('canRevokeRole', () => {
   })
 })
 
-describe('canOverrideRestrictedDsl', () => {
-  it('only super_admin and admin can override', () => {
-    expect(canOverrideRestrictedDsl('super_admin')).toBe(true)
-    expect(canOverrideRestrictedDsl('admin')).toBe(true)
-    expect(canOverrideRestrictedDsl('dsl')).toBe(false)
-    expect(canOverrideRestrictedDsl('ops_manager')).toBe(false)
-    expect(canOverrideRestrictedDsl('agent')).toBe(false)
-    expect(canOverrideRestrictedDsl('finance')).toBe(false)
-    expect(canOverrideRestrictedDsl('read_only')).toBe(false)
-  })
-})

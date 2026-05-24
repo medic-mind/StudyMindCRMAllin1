@@ -383,27 +383,12 @@ export const interactionRouter = router({
  * When called without a familyId (or when the caller is admin) returns [].
  */
 async function getRestrictedContactIdsToHide(
-  ctx: Parameters<typeof enforceRestrictedAccess>[0],
-  familyId: string | undefined,
+  _ctx: Parameters<typeof enforceRestrictedAccess>[0],
+  _familyId: string | undefined,
 ): Promise<string[]> {
-  if (!familyId) return []
-  const user = ctx.user
-  if (!user || user.role === 'admin') return []
-  const flags = await ctx.db.safeguardingFlag.findMany({
-    where: {
-      deletedAt: null,
-      state: 'restricted_access',
-      contact: { familyMembers: { some: { familyId } } },
-    },
-    select: { contactId: true, dslUserId: true },
-  })
-  if (flags.length === 0) return []
-  const hide: string[] = []
-  for (const f of flags) {
-    const isAssigned = user.role === 'dsl' && f.dslUserId === user.id
-    if (!isAssigned) hide.push(f.contactId)
-  }
-  return hide
+  // Safeguarding restricted-access enforcement was removed in ADR 0013.
+  // Helper retained as a no-op extension point.
+  return []
 }
 
 // Map the Prisma enum (uses underscores) to our domain enum (uses dots where

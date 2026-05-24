@@ -18,7 +18,6 @@ import {
   CheckCircleIcon,
   CoinsIcon,
   ListTodoIcon,
-  ShieldAlertIcon,
   UsersIcon,
 } from '@/components/ui/icon'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -32,9 +31,6 @@ export default async function DashboardPage() {
 
   const trpc = await createServerCaller()
   const data = await trpc.dashboard.summary({})
-
-  const showSafeguardingTile =
-    me.role === 'admin' || me.role === 'super_admin' || me.role === 'dsl'
 
   return (
     <>
@@ -86,15 +82,9 @@ export default async function DashboardPage() {
             <KpiTile
               label={data.kpis.fourth.label}
               value={data.kpis.fourth.value}
-              tone={showSafeguardingTile ? 'danger' : 'neutral'}
-              icon={
-                showSafeguardingTile ? (
-                  <ShieldAlertIcon size={18} />
-                ) : (
-                  <CoinsIcon size={18} />
-                )
-              }
-              hint={showSafeguardingTile ? 'DSL queue' : 'Drift sample × 100'}
+              tone="neutral"
+              icon={<CoinsIcon size={18} />}
+              hint="Drift sample × 100"
             />
           </div>
 

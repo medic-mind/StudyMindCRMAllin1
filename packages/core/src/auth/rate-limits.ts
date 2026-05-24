@@ -35,9 +35,6 @@ export const RATE_LIMITS: Readonly<Record<string, RateLimit>> = {
   'admin.user.deactivate': SENSITIVE_WRITE_LIMIT,
   'admin.secrets.rotate': SENSITIVE_WRITE_LIMIT,
   'compliance.dsar.export': SENSITIVE_WRITE_LIMIT,
-  'safeguarding.flag.create': SENSITIVE_WRITE_LIMIT,
-  'safeguarding.flag.update': SENSITIVE_WRITE_LIMIT,
-  'safeguarding.notes.read': SENSITIVE_WRITE_LIMIT,
 
   // Standard writes
   'contact.create': DEFAULT_WRITE_LIMIT,
