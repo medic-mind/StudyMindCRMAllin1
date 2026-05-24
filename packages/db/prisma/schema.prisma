@@ -1202,6 +1202,58 @@ model OutboundEmailIntent {
   @@index([gmailMessageId])
 }
 
+// -----------------------------------------------------------------------------
+// Comprehensive customer view + 90-day historic backfill (ADR 0017).
+// One row per (provider, agentId) initial-connect backfill so the UI can
+// surface progress, and so an idempotent re-run is safe to attempt.
+// -----------------------------------------------------------------------------
+
+enum BackfillProvider {
+  gmail
+  aircall
+  trengo
+  slack
+}
+
+enum BackfillJobStatus {
+  pending
+  running
+  completed
+  failed
+  cancelled
+}
+
+model BackfillJob {
+  id              String            @id
+  provider        BackfillProvider
+  /// Null for shared-token providers (Aircall, Slack). For per-agent
+  /// providers (Gmail, Trengo) this is the User.id whose token drives the
+  /// backfill.
+  agentId         String?
+  windowFrom      DateTime
+  windowTo        DateTime
+  status          BackfillJobStatus @default(pending)
+  /// Optional grand-total (set by the worker once it has a count from the
+  /// provider — `null` while we are still discovering pages).
+  totalCount      Int?
+  processedCount  Int               @default(0)
+  matchedCount    Int               @default(0)
+  skippedCount    Int               @default(0)
+  /// Provider-side cursor for resumability across step retries.
+  lastEventId     String?
+  error           String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([provider, agentId, status])
+  @@index([status, createdAt])
+}
+
 model GmailToken {
   /// User.id. Legacy refresh-token table; ADR 0012 migrated active rows to
   /// EncryptedField via User.gmailRefreshTokenCipherId. Kept for fallback.

@@ -509,8 +509,12 @@ async function attachTranscriptToCall(input: AttachTranscriptInput): Promise<voi
   })
 }
 
+// ADR 0017: 90-day historic backfill on first-connect.
+import { BACKFILL_FUNCTIONS as AIRCALL_BACKFILL_FUNCTIONS } from './backfill'
+
 export const FUNCTIONS = [
   aircallEventReceived,
   aircallTranscribeFallback,
   aircallRecoverDisabledWebhook,
+  ...AIRCALL_BACKFILL_FUNCTIONS,
 ] as const

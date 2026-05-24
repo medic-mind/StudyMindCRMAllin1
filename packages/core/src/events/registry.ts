@@ -145,6 +145,13 @@ export const EVENT_NAMES = [
   'inbox.message_assigned',
   'inbox.message_snoozed',
   'admin.integration_tested',
+
+  // ADR 0017: comprehensive customer view + historic backfill.
+  'backfill.started',
+  'backfill.completed',
+  'backfill.failed',
+  'backfill.cancelled',
+  'interaction.recording_streamed',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
@@ -180,6 +187,14 @@ export const INNGEST_EVENT_NAMES = [
   'ai/churn-score.requested',
   'ai/status-summary.requested',
   'compliance/retention.enforce.requested',
+  // ADR 0017: historic-data backfill. One bus event per provider; the worker
+  // for that provider listens on its own name so we keep concurrency caps
+  // isolated per integration.
+  'backfill/requested',
+  'backfill/gmail.requested',
+  'backfill/aircall.requested',
+  'backfill/trengo.requested',
+  'backfill/slack.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]

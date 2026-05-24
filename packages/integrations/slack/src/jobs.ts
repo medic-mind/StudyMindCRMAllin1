@@ -271,4 +271,11 @@ export const aiDriftTriageReminder = inngest.createFunction(
   },
 )
 
-export const FUNCTIONS = [slackEventReceived, aiDriftTriageReminder] as const
+// ADR 0017: 90-day historic backfill on first-connect.
+import { BACKFILL_FUNCTIONS as SLACK_BACKFILL_FUNCTIONS } from './backfill'
+
+export const FUNCTIONS = [
+  slackEventReceived,
+  aiDriftTriageReminder,
+  ...SLACK_BACKFILL_FUNCTIONS,
+] as const

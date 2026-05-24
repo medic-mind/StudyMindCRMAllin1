@@ -378,6 +378,24 @@ export const accountRouter = router({
             target: { type: 'User', id: user.id },
             after: { expiresAt: result.expiresAt.toISOString() },
           })
+          // ADR 0017: one-shot 90-day historic backfill on first connect.
+          // Idempotent + best-effort — never break the connect flow.
+          try {
+            const { startBackfill, BackfillAlreadyRunningError } = await import(
+              '@studymind/core/backfill'
+            )
+            const { inngest } = await import('@studymind/jobs')
+            await startBackfill(ctx.db, inngest, {
+              provider: 'trengo',
+              agentId: user.id,
+              windowDays: 90,
+              ctx: { actorId: user.id, requestId: ctx.requestId },
+            }).catch((e: unknown) => {
+              if (!(e instanceof BackfillAlreadyRunningError)) throw e
+            })
+          } catch {
+            // backfill scheduling is non-fatal to the connect.
+          }
           return {
             expiresAt: result.expiresAt,
             trengoEmail: result.trengoEmail ?? null,

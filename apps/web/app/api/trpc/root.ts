@@ -5,6 +5,20 @@ import { router } from '@/lib/trpc/builders'
 import { accountRouter } from './routers/account'
 import { adminRouter } from './routers/admin'
 import { contactRouter } from './routers/contact'
+import { contactChannelsRouter } from './routers/contact-channels'
+
+// `contact.channels.*` namespace lives in its own file (ADR 0017) to keep
+// the contact router focused on CRUD. We merge it under `contact` at the
+// root so callers use `trpc.contact.channels.emailThreads`.
+const contactWithChannels = router({
+  list: contactRouter.list,
+  get: contactRouter.get,
+  create: contactRouter.create,
+  update: contactRouter.update,
+  mergeSuggestions: contactRouter.mergeSuggestions,
+  merge: contactRouter.merge,
+  channels: contactChannelsRouter,
+})
 import { costRouter } from './routers/cost'
 import { dashboardRouter } from './routers/dashboard'
 import { familyRouter } from './routers/family'
@@ -21,7 +35,7 @@ import { taskRouter } from './routers/task'
 export const appRouter = router({
   account: accountRouter,
   admin: adminRouter,
-  contact: contactRouter,
+  contact: contactWithChannels,
   cost: costRouter,
   dashboard: dashboardRouter,
   family: familyRouter,

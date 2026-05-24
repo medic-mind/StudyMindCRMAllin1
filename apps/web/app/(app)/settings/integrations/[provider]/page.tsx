@@ -19,6 +19,11 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { IntegrationTestButton } from '../IntegrationTestButton'
 
+import { BackfillButton } from './BackfillButton'
+
+const BACKFILL_PROVIDERS = new Set(['gmail', 'aircall', 'trengo', 'slack'])
+const SHARED_TOKEN_BACKFILL = new Set(['aircall', 'slack'])
+
 const VIEW_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
 const TEST_ROLES = new Set(['ceo', 'senior_manager'])
 
@@ -107,6 +112,17 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
 
   const pill = statusPill(detail.status)
   const canTest = TEST_ROLES.has(me.role)
+
+  // ADR 0017: backfill history for the four backfillable providers.
+  const isBackfillable = BACKFILL_PROVIDERS.has(provider)
+  const backfillRuns = isBackfillable
+    ? await caller.admin.backfill.list({
+        provider: provider as 'gmail' | 'aircall' | 'trengo' | 'slack',
+        limit: 10,
+      })
+    : []
+  const showBackfillButton =
+    SHARED_TOKEN_BACKFILL.has(provider) && TEST_ROLES.has(me.role)
 
   return (
     <>
@@ -336,6 +352,72 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   </Tbody>
                 </Table>
               </div>
+            </section>
+          ) : null}
+
+          {isBackfillable ? (
+            <section>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
+                  Backfill history
+                </h2>
+                {showBackfillButton ? (
+                  <BackfillButton provider={provider as 'aircall' | 'slack'} />
+                ) : null}
+              </div>
+              <p className="mt-1 text-xs text-neutral-500">
+                {SHARED_TOKEN_BACKFILL.has(provider)
+                  ? 'Pulls the last 90 days of history and creates retroactive timeline entries for matched contacts.'
+                  : 'A 90-day historic import runs automatically the first time an agent connects.'}
+              </p>
+              {backfillRuns.length === 0 ? (
+                <p className="mt-3 rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-600 shadow-sm">
+                  No backfill has run for {detail.label} yet.
+                </p>
+              ) : (
+                <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+                  <Table>
+                    <Thead>
+                      <Tr>
+                        <Th>Started</Th>
+                        <Th>Status</Th>
+                        <Th>Processed</Th>
+                        <Th>Matched</Th>
+                        <Th>Skipped</Th>
+                      </Tr>
+                    </Thead>
+                    <Tbody>
+                      {backfillRuns.map((b) => (
+                        <Tr key={b.id}>
+                          <Td className="font-mono text-xs tabular-nums">
+                            {formatDateTime(b.startedAt ?? b.createdAt)}
+                          </Td>
+                          <Td>
+                            {b.status === 'completed' ? (
+                              <Badge tone="success">completed</Badge>
+                            ) : b.status === 'failed' ? (
+                              <Badge tone="danger">failed</Badge>
+                            ) : b.status === 'running' ? (
+                              <Badge tone="warn">running</Badge>
+                            ) : (
+                              <Badge tone="neutral">{b.status}</Badge>
+                            )}
+                          </Td>
+                          <Td className="font-mono text-xs tabular-nums">
+                            {b.processedCount}
+                          </Td>
+                          <Td className="font-mono text-xs tabular-nums">
+                            {b.matchedCount}
+                          </Td>
+                          <Td className="font-mono text-xs tabular-nums">
+                            {b.skippedCount}
+                          </Td>
+                        </Tr>
+                      ))}
+                    </Tbody>
+                  </Table>
+                </div>
+              )}
             </section>
           ) : null}
         </div>

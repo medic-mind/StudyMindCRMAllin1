@@ -342,4 +342,11 @@ async function markProcessed(providerEventRowId: string): Promise<void> {
   })
 }
 
-export const FUNCTIONS = [gmailHistoryChanged, gmailRefreshWatch] as const
+// ADR 0017: 90-day historic backfill on first-connect.
+import { BACKFILL_FUNCTIONS as GMAIL_BACKFILL_FUNCTIONS } from './backfill'
+
+export const FUNCTIONS = [
+  gmailHistoryChanged,
+  gmailRefreshWatch,
+  ...GMAIL_BACKFILL_FUNCTIONS,
+] as const
