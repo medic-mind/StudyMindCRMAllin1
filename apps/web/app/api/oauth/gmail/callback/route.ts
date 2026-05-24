@@ -7,9 +7,11 @@
 import { NextResponse } from 'next/server'
 
 import { writeAuditLogEntry } from '@studymind/audit'
+import { startBackfill, BackfillAlreadyRunningError } from '@studymind/core/backfill'
 import { encryptField } from '@studymind/core/safeguarding'
 import { setupWatchForUser } from '@studymind/integration-gmail/client'
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
+import { inngest } from '@studymind/jobs'
 import { db } from '@/lib/db'
 
 import { getCurrentUser } from '@/lib/auth/server'
@@ -178,6 +180,23 @@ export async function GET(req: Request): Promise<Response> {
     target: { type: 'User', id: me.id },
     after: { address, watchOk, encryptedFieldId: cipher.id },
   })
+
+  // ADR 0017: kick off a one-shot 90-day historic backfill on first connect.
+  // Best-effort — a failure here must not break the OAuth redirect, and a
+  // second connect attempt is idempotent (BackfillAlreadyRunningError).
+  try {
+    await startBackfill(db, inngest, {
+      provider: 'gmail',
+      agentId: me.id,
+      windowDays: 90,
+      ctx: { actorId: me.id, requestId: `gmail-oauth:${me.id}` },
+    })
+  } catch (err) {
+    if (!(err instanceof BackfillAlreadyRunningError)) {
+      // Swallow — surfaced via the absence of a BackfillJob; the admin can
+      // re-trigger from the integrations page.
+    }
+  }
 
   const redir = new URL('/settings/mailbox', req.url)
   redir.searchParams.set('connected', '1')

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 
 import { getCurrentUser } from '@/lib/auth/server'
+import { BackfillProgressBanner } from '@/components/shell/backfill-progress-banner'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
 import { TopBar } from '@/components/shell/top-bar'
 import { TrengoTokenBanner } from '@/components/shell/trengo-token-banner'
@@ -143,6 +144,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <main id="main" className="flex-1">
           <GmailReconnectBanner />
           <TrengoTokenBanner />
+          <BackfillProgressBanner />
           <div className="px-6 py-6">{children}</div>
         </main>
       </div>
