@@ -1,4 +1,13 @@
-// Admin → Integrations status. Read-only summary for Settings dashboard.
+// Admin → Integrations status + detail. Read-only summary for Settings
+// dashboard plus a per-provider detail surface that surfaces required env
+// vars (presence only — never the value), recent ProviderEvent rows, recent
+// CronRun rows for the provider's refresh job(s), and per-agent connection
+// state where applicable (Gmail, Trengo).
+//
+// Role gating (ADR 0014):
+//   - status / detail: ceo | senior_manager | manager (read-only)
+//   - test:            ceo | senior_manager (writes a synthetic event)
+//
 // CLAUDE.md §11, §13, §14, §17.
 
 import { createId } from '@paralleldrive/cuid2'
@@ -13,8 +22,13 @@ import {
   type SessionUser,
 } from '@/lib/trpc/builders'
 
-// Integrations dashboard is admin-tier (ADR 0014).
 const READ_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+])
+
+const TEST_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
 ])
@@ -30,6 +44,248 @@ const PROVIDERS = [
   'booking',
   'lead',
 ] as const
+
+export type Provider = (typeof PROVIDERS)[number]
+
+interface ProviderConfig {
+  /** Human-readable label for the UI. */
+  label: string
+  /** One-line description used on the index grid card. */
+  description: string
+  /** Environment variables that must be set for the integration to work. */
+  envVars: ReadonlyArray<string>
+  /** Inngest function ids for refresh / housekeeping jobs (CronRun.functionId). */
+  cronFunctionIds: ReadonlyArray<string>
+  /** Per-agent token model name (`gmail` / `trengo` only) or null. */
+  perAgentTokens: 'gmail' | 'trengo' | null
+  /** Runbook path for secret rotation / connection setup. */
+  runbook: string
+  /** Ordered setup checklist for not_configured providers. */
+  setupSteps: ReadonlyArray<{ title: string; body: string }>
+  /** Link to the provider's own dashboard for webhooks / API keys. */
+  providerDashboardUrl: string | null
+}
+
+// Catalog of every integration the CRM speaks to. Update this when a new
+// provider is wired in — the index page reads from PROVIDERS and the detail
+// page reads from PROVIDER_CONFIG. Keeping both in this one file makes the
+// "add an integration" change a single-PR diff.
+const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
+  stripe: {
+    label: 'Stripe',
+    description:
+      'Subscriptions, one-off charges, refunds, payment links. CLAUDE.md §8.',
+    envVars: ['STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET'],
+    cronFunctionIds: [],
+    perAgentTokens: null,
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Create the webhook endpoint',
+        body: 'In the Stripe dashboard → Developers → Webhooks → Add endpoint, point at https://<your-host>/api/webhooks/stripe and subscribe to invoice.*, customer.subscription.*, charge.*, checkout.session.completed.',
+      },
+      {
+        title: 'Copy the signing secret',
+        body: 'Copy the whsec_ value into STRIPE_WEBHOOK_SECRET in Railway.',
+      },
+      {
+        title: 'Add the API keys',
+        body: 'Settings → Developers → API keys. Paste the secret key into STRIPE_SECRET_KEY and the publishable key into STRIPE_PUBLISHABLE_KEY.',
+      },
+    ],
+    providerDashboardUrl: 'https://dashboard.stripe.com/webhooks',
+  },
+  gocardless: {
+    label: 'GoCardless',
+    description: 'Bacs Direct Debit, late-failure reversals. CLAUDE.md §9.',
+    envVars: [
+      'GOCARDLESS_ACCESS_TOKEN',
+      'GOCARDLESS_WEBHOOK_SECRET',
+      'GOCARDLESS_ENVIRONMENT',
+    ],
+    cronFunctionIds: ['gocardless/reconcile-late-failures'],
+    perAgentTokens: null,
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Generate an access token',
+        body: 'GoCardless dashboard → Developers → Access tokens. Use a sandbox token in non-prod environments.',
+      },
+      {
+        title: 'Register the webhook',
+        body: 'Developers → Webhook endpoints → Add. URL is https://<your-host>/api/webhooks/gocardless. Set the secret into GOCARDLESS_WEBHOOK_SECRET.',
+      },
+    ],
+    providerDashboardUrl: 'https://manage.gocardless.com/developers/webhook-endpoints',
+  },
+  aircall: {
+    label: 'Aircall',
+    description: 'Inbound/outbound calls, voicemail, AI Assist transcripts. CLAUDE.md §10.',
+    envVars: ['AIRCALL_API_ID', 'AIRCALL_API_TOKEN', 'AIRCALL_WEBHOOK_TOKEN'],
+    cronFunctionIds: ['aircall/recover-disabled-webhook'],
+    perAgentTokens: null,
+    runbook: '/docs/runbooks/aircall-webhook-disabled.md',
+    setupSteps: [
+      {
+        title: 'Create an API integration',
+        body: 'Aircall dashboard → Integrations & API → API Keys → Add. Save the ID and token into AIRCALL_API_ID / AIRCALL_API_TOKEN.',
+      },
+      {
+        title: 'Subscribe to webhook events',
+        body: 'Integrations → Webhooks. Point at https://<your-host>/api/webhooks/aircall and subscribe to call.created, call.ringing_on_agent, call.answered, call.hungup, call.ended, call.voicemail_left, call.tagged, call.commented.',
+      },
+    ],
+    providerDashboardUrl: 'https://dashboard.aircall.io',
+  },
+  trengo: {
+    label: 'Trengo',
+    description: 'WhatsApp, SMS, email, web chat. Per-agent tokens. CLAUDE.md §11.',
+    envVars: ['TRENGO_API_BASE_URL', 'TRENGO_WEBHOOK_SECRET'],
+    cronFunctionIds: [],
+    perAgentTokens: 'trengo',
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Each agent connects their own token',
+        body: 'Outbound messages preserve agent identity, so every agent must create a personal Trengo API token from Settings → API and paste it into Account → Trengo inside the CRM. Tokens rotate every 90 days; the CRM banners 14 days before expiry.',
+      },
+      {
+        title: 'Register the inbound webhook',
+        body: 'Trengo Settings → Webhooks → Add. URL is https://<your-host>/api/webhooks/trengo. Save the secret into TRENGO_WEBHOOK_SECRET.',
+      },
+    ],
+    providerDashboardUrl: 'https://app.trengo.com/admin/api',
+  },
+  slack: {
+    label: 'Slack',
+    description: 'Channel summaries (one-way today). CLAUDE.md §12.',
+    envVars: ['SLACK_SIGNING_SECRET', 'SLACK_BOT_TOKEN'],
+    cronFunctionIds: [],
+    perAgentTokens: null,
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Create the Slack app',
+        body: 'api.slack.com/apps → Create New App. Add Bot Token Scopes channels:history and chat:write. Install to workspace and copy the bot token into SLACK_BOT_TOKEN.',
+      },
+      {
+        title: 'Subscribe to events',
+        body: 'Event Subscriptions → Request URL is https://<your-host>/api/webhooks/slack. Subscribe message.channels. Copy the signing secret into SLACK_SIGNING_SECRET.',
+      },
+    ],
+    providerDashboardUrl: 'https://api.slack.com/apps',
+  },
+  asana: {
+    label: 'Asana',
+    description: 'Project-scoped task sync. CLAUDE.md §13.',
+    envVars: ['ASANA_PERSONAL_ACCESS_TOKEN', 'ASANA_WEBHOOK_SECRET'],
+    cronFunctionIds: [],
+    perAgentTokens: null,
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Create a Personal Access Token',
+        body: 'Asana → My Settings → Apps → Manage Developer Apps → + New access token. Paste into ASANA_PERSONAL_ACCESS_TOKEN.',
+      },
+      {
+        title: 'Register the project webhook',
+        body: 'Webhooks register programmatically against the project allowlist in packages/integrations/asana/config.ts. The handshake echoes X-Hook-Secret automatically on first registration.',
+      },
+    ],
+    providerDashboardUrl: 'https://app.asana.com/0/my-apps',
+  },
+  gmail: {
+    label: 'Gmail',
+    description: 'Per-agent OAuth + Pub/Sub watch. CLAUDE.md §14.',
+    envVars: [
+      'GOOGLE_OAUTH_CLIENT_ID',
+      'GOOGLE_OAUTH_CLIENT_SECRET',
+      'GMAIL_PUBSUB_TOPIC',
+      'NEXT_PUBLIC_APP_URL',
+    ],
+    cronFunctionIds: ['gmail/refresh-watch'],
+    perAgentTokens: 'gmail',
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Create the OAuth client',
+        body: 'Google Cloud Console → APIs & Services → Credentials → + Create Credentials → OAuth client ID. Authorised redirect URI is https://<your-host>/api/oauth/gmail/callback. Save the client id and secret into GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET.',
+      },
+      {
+        title: 'Create the Pub/Sub topic',
+        body: 'gcloud pubsub topics create gmail-watch; gcloud pubsub subscriptions create gmail-watch-sub --topic gmail-watch --push-endpoint=https://<your-host>/api/webhooks/gmail. Save the topic name into GMAIL_PUBSUB_TOPIC.',
+      },
+      {
+        title: 'Each agent connects their mailbox',
+        body: 'Account → Mailbox in the CRM. Watches expire after 7 days and are renewed every 6 days by the gmail/refresh-watch cron.',
+      },
+    ],
+    providerDashboardUrl: 'https://console.cloud.google.com/apis/credentials',
+  },
+  booking: {
+    label: 'Booking site',
+    description: 'Pull-based sync from booking.studymind.co.uk. CLAUDE.md §15.',
+    envVars: ['BOOKING_API_BASE_URL', 'BOOKING_API_TOKEN'],
+    cronFunctionIds: ['booking/sync-active-families', 'booking/sync-inactive-families'],
+    perAgentTokens: null,
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Request a service-account token',
+        body: 'Ask the booking-site team for a service-account API token with read access to families, bookings, and sessions. Paste into BOOKING_API_TOKEN.',
+      },
+      {
+        title: 'Confirm the base URL',
+        body: 'The default is https://booking.studymind.co.uk/api. Override BOOKING_API_BASE_URL only when pointing at staging.',
+      },
+    ],
+    providerDashboardUrl: null,
+  },
+  lead: {
+    label: 'Zapier lead webhook',
+    description: 'Partner integrations and lead capture only. CLAUDE.md §16.',
+    envVars: ['ZAPIER_LEAD_BEARER_TOKEN'],
+    cronFunctionIds: [],
+    perAgentTokens: null,
+    runbook: '/docs/runbooks/secret-rotation.md',
+    setupSteps: [
+      {
+        title: 'Generate a bearer token',
+        body: 'openssl rand -hex 32. Mirror it into 1Password and Railway as ZAPIER_LEAD_BEARER_TOKEN; rotate quarterly.',
+      },
+      {
+        title: 'Configure the Zap',
+        body: 'Webhooks by Zapier → POST. URL is https://<your-host>/api/webhooks/lead. Header Authorization: Bearer <token>. Body shape documented in docs/api/lead-webhook.md.',
+      },
+    ],
+    providerDashboardUrl: 'https://zapier.com/app/zaps',
+  },
+}
+
+type ConnectionStatus = 'connected' | 'needs_attention' | 'not_configured'
+
+function deriveConnectionStatus(args: {
+  envVarsAllSet: boolean
+  lastReceivedAt: Date | null
+  perAgentConnectedCount: number | null
+  perAgentExpiredCount: number | null
+}): ConnectionStatus {
+  if (!args.envVarsAllSet) return 'not_configured'
+  if (args.perAgentExpiredCount !== null && args.perAgentExpiredCount > 0) {
+    return 'needs_attention'
+  }
+  if (
+    args.perAgentConnectedCount !== null &&
+    args.perAgentConnectedCount === 0
+  ) {
+    // Provider is configured but no agent has connected yet (Gmail/Trengo).
+    return 'needs_attention'
+  }
+  // For webhook-only providers, "no event received in 30 days" is not by
+  // itself an error (sandbox accounts, quiet integrations). The dashboard
+  // surfaces recency separately; the status stays `connected` once env is set.
+  return 'connected'
+}
 
 export const adminIntegrationsRouter = router({
   status: protectedProcedure.query(async ({ ctx }) => {
@@ -68,9 +324,14 @@ export const adminIntegrationsRouter = router({
     return {
       providers: lastEvents.map((p) => ({
         provider: p.provider,
+        label: PROVIDER_CONFIG[p.provider].label,
+        description: PROVIDER_CONFIG[p.provider].description,
         lastReceivedAt: p.last?.receivedAt ?? null,
         lastEventType: p.last?.type ?? null,
         lastEventId: p.last?.eventId ?? null,
+        envVarsAllSet: PROVIDER_CONFIG[p.provider].envVars.every(
+          (name) => Boolean(process.env[name]),
+        ),
       })),
       gmail: {
         connectedAgents: gmailMailboxes.length,
@@ -88,17 +349,150 @@ export const adminIntegrationsRouter = router({
   }),
 
   /**
+   * Per-provider detail. Returns env-var presence (never values), the most
+   * recent ProviderEvent rows, the most recent CronRun rows for the
+   * provider's refresh jobs, and per-agent connection state where the
+   * provider has per-agent tokens (Gmail, Trengo). Read-only and gated to
+   * ceo | senior_manager | manager.
+   */
+  detail: protectedProcedure
+    .input(z.object({ provider: z.enum(PROVIDERS) }))
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!READ_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+
+      const cfg = PROVIDER_CONFIG[input.provider]
+      const envVars = cfg.envVars.map((name) => ({
+        name,
+        isSet: Boolean(process.env[name]),
+      }))
+      const envVarsAllSet = envVars.every((v) => v.isSet)
+
+      // Last few received events for this provider.
+      const recentEvents = await ctx.db.providerEvent.findMany({
+        where: { provider: input.provider },
+        orderBy: { receivedAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          eventId: true,
+          type: true,
+          receivedAt: true,
+        },
+      })
+
+      // Last cron runs for the provider's refresh / housekeeping jobs.
+      const recentCronRuns = cfg.cronFunctionIds.length
+        ? await ctx.db.cronRun.findMany({
+            where: { functionId: { in: [...cfg.cronFunctionIds] } },
+            orderBy: { finishedAt: 'desc' },
+            take: 10,
+            select: {
+              id: true,
+              functionId: true,
+              success: true,
+              durationMs: true,
+              finishedAt: true,
+              errorCode: true,
+            },
+          })
+        : []
+
+      // Per-agent connection state (Gmail / Trengo). For other providers
+      // this is null and the UI omits the section.
+      let perAgent: Array<{
+        agentId: string
+        label: string
+        expiresAt: Date | null
+        expired: boolean
+        expiringSoon: boolean
+      }> | null = null
+      const oneDayMs = 1000 * 60 * 60 * 24
+      const nowMs = Date.now()
+      if (cfg.perAgentTokens === 'gmail') {
+        const rows = await ctx.db.gmailMailbox.findMany({
+          where: { deletedAt: null },
+          select: { agentId: true, address: true, watchExpiresAt: true },
+          orderBy: { watchExpiresAt: 'asc' },
+          take: 50,
+        })
+        perAgent = rows.map((r) => {
+          const expiresMs = r.watchExpiresAt?.getTime() ?? null
+          return {
+            agentId: r.agentId,
+            label: r.address,
+            expiresAt: r.watchExpiresAt,
+            expired: expiresMs !== null && expiresMs <= nowMs,
+            expiringSoon:
+              expiresMs !== null && expiresMs > nowMs && expiresMs - nowMs < oneDayMs,
+          }
+        })
+      } else if (cfg.perAgentTokens === 'trengo') {
+        const rows = await ctx.db.trengoToken.findMany({
+          where: { deletedAt: null },
+          select: { agentId: true, expiresAt: true },
+          orderBy: { expiresAt: 'asc' },
+          take: 50,
+        })
+        // Resolve email labels for the agent ids.
+        const users = await ctx.db.user.findMany({
+          where: { id: { in: rows.map((r) => r.agentId) } },
+          select: { id: true, email: true },
+        })
+        const emailById = new Map(users.map((u) => [u.id, u.email]))
+        perAgent = rows.map((r) => {
+          const expiresMs = r.expiresAt.getTime()
+          return {
+            agentId: r.agentId,
+            label: emailById.get(r.agentId) ?? r.agentId,
+            expiresAt: r.expiresAt,
+            expired: expiresMs <= nowMs,
+            expiringSoon:
+              expiresMs > nowMs && expiresMs - nowMs < 14 * oneDayMs,
+          }
+        })
+      }
+
+      const expiredCount = perAgent?.filter((a) => a.expired).length ?? null
+
+      const status = deriveConnectionStatus({
+        envVarsAllSet,
+        lastReceivedAt: recentEvents[0]?.receivedAt ?? null,
+        perAgentConnectedCount: perAgent?.length ?? null,
+        perAgentExpiredCount: expiredCount,
+      })
+
+      return {
+        provider: input.provider,
+        label: cfg.label,
+        description: cfg.description,
+        status,
+        envVars,
+        envVarsAllSet,
+        runbook: cfg.runbook,
+        providerDashboardUrl: cfg.providerDashboardUrl,
+        recentEvents,
+        recentCronRuns,
+        perAgent,
+        setupSteps: cfg.setupSteps,
+      }
+    }),
+
+  /**
    * Synthetic ping that proves the ProviderEvent persistence path is
-   * healthy end-to-end. Admin-only and audited. Does NOT call the live
-   * provider API or forge a signature — instead it inserts a sentinel
-   * ProviderEvent row of type `test.synthetic` so the dashboard's
-   * "last received" timestamp updates and the row appears in audit logs.
+   * healthy end-to-end. CEO / Senior Manager only and audited. Does NOT
+   * call the live provider API or forge a signature — instead it inserts
+   * a sentinel ProviderEvent row of type `test.synthetic` so the
+   * dashboard's "last received" timestamp updates and the row appears in
+   * audit logs.
    */
   test: auditedProcedure
     .input(z.object({ provider: z.enum(PROVIDERS) }))
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      if (user.role !== 'ceo' && user.role !== 'senior_manager') {
+      if (!TEST_ROLES.has(user.role)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
       }
       const eventId = `synthetic-${createId()}`

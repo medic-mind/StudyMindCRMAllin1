@@ -74,8 +74,11 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
     {
       href: '/settings',
       label: 'Settings',
-      // Settings is admin-tier: CEO and Senior Manager only (ADR 0014).
-      visibleTo: ['ceo', 'senior_manager'],
+      // Settings is admin-tier. CEO and Senior Manager get the full panel;
+      // Manager can read Integrations only (each child page enforces its own
+      // role gate so Users / Flags / Mailbox stay locked to CEO/SM).
+      // ADR 0014.
+      visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/settings/users', label: 'Users' },
         { href: '/settings/flags', label: 'Flags' },

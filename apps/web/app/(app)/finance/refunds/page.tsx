@@ -59,7 +59,7 @@ export default async function RefundsPage({ searchParams }: { searchParams: Prom
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Refunds</h1>
         <p className="mt-2 text-sm text-neutral-600">
-          You need the finance or admin role to view refunds.
+          You need the Manager, Senior Manager, or CEO role to view refunds.
         </p>
       </div>
     )

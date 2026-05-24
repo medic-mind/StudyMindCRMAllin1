@@ -14,7 +14,6 @@ export const Family = z.object({
   state: FamilyState,
   billingParty: BillingParty,
   billingContactId: z.string().nullable(),
-  laContractId: z.string().nullable(),
   createdAt: z.date(),
   updatedAt: z.date(),
   deletedAt: z.date().nullable(),
