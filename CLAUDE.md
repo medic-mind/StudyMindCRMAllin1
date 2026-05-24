@@ -183,6 +183,8 @@ Every email, call, message, note, task, payment, booking, and AI insight is an *
 
 Single polymorphic `Interaction` table with a `type` enum and a typed `payload` JSONB column, validated by Zod schemas per type. Trade-off documented in `docs/adr/0003-interaction-shape.md`.
 
+**Channel-specific view-models (ADR 0017).** The comprehensive customer view does not render the raw polymorphic list — it reshapes Interactions per channel in `apps/web/lib/view-models/contact-channels.ts` (email threads grouped by `payload.gmailThreadId`, calls with outcome + recording, Slack mentions, Trengo conversations grouped by `payload.ticketId` with the WhatsApp 24h deadline, tasks, notes), exposed via the `contact.channels.*` tRPC namespace. Partial indexes on `Interaction(contactId, type, occurredAt DESC)` and the two JSONB grouping keys keep these reads cheap. The flat timeline remains as a fallback section.
+
 ### 6.3 The reconciliation triangle
 
 ```
@@ -433,6 +435,8 @@ Every async unit of work is an Inngest function. Conventions:
 | `ai/regenerate-status-summaries` | every 30 min for changed contacts | Refresh the 2 sentence "Current Status" header |
 | `aircall/recover-disabled-webhook` | hourly | Re-enable Aircall webhook if it was disabled by failures |
 | `gocardless/reconcile-late-failures` | every 4 hours | Walk recent confirmations and surface any new late failures |
+
+**Event-triggered backfill workers (ADR 0017).** Not recurring — fired once on first-connect (Gmail/Trengo) or by an admin button (Aircall/Slack). `gmail/backfill.requested`, `aircall/backfill.requested`, `trengo/backfill.requested`, `slack/backfill.requested` each pull the last 90 days of history and write retroactive Interactions for matched Contacts. Idempotent on the provider's native id; concurrency-capped (Slack 3 as it is AI-heavy, others 2). One summary audit row per job — never per imported message.
 
 ### 17.2 Failure semantics
 
@@ -985,6 +989,8 @@ When asked something that touches money, safeguarding, or external mutation:
 | Change how a Stripe webhook is handled | `packages/integrations/stripe/events/` and `packages/integrations/stripe/jobs.ts` |
 | Add a field to Contact | `prisma/schema.prisma`, then `packages/core/contact/types.ts` |
 | Change the timeline display | `apps/web/components/timeline/` |
+| Change a per-channel customer view | `apps/web/lib/view-models/contact-channels.ts` (ADR 0017) |
+| Start a backfill | `packages/core/src/backfill/index.ts` (workers in `packages/integrations/<svc>/backfill.ts`) |
 | Tweak an AI prompt | `packages/ai/prompts/<task>.ts` |
 | Add a new background job | `packages/jobs/` |
 | Change reconciliation logic | `packages/core/finance/reconcile.ts` |
