@@ -511,9 +511,19 @@ OpenAI for everything AI today. Models per task:
 
 ## 20. Auth, RBAC, and access control
 
-**Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and (optional) TOTP MFA (mandatory for `super_admin`, `admin`, `finance`, `dsl`). No third-party identity processor — see ADR 0010.
+**Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and (optional) TOTP MFA (mandatory for `ceo`, `senior_manager`, `manager`). No third-party identity processor — see ADR 0010.
 
-**Roles.** `super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`. `super_admin` sits above `admin`: it inherits every `admin` action plus the exclusive ability to grant or revoke `admin` and `super_admin`, rotate org-wide secrets, and write tenant config. See ADR 0009. The `dsl` role is a retained enum value with no remaining safeguarding grants (ADR 0013); it collapses to a read-only Contact role and will be mapped to `Manager` in the slice-2 role rename (ADR 0014).
+**Roles.** Five canonical sales-CRM roles (ADR 0014), with friendly UI labels via `formatRoleLabel`:
+
+| Canonical enum value | UI label | Scope |
+|---|---|---|
+| `ceo` | CEO | Only role that can grant or revoke `ceo` / `senior_manager`. Rotates org-wide secrets, writes tenant config. |
+| `senior_manager` | Senior Manager | Everything below CEO; manages all lower roles, runs Settings, DSAR exports. |
+| `manager` | Manager | Sales + finance ops: refunds, payment links, allocations, reconciliation. Invites Sales Executives and Virtual Assistants. |
+| `sales_executive` | Sales Executive | Full CRUD on Contacts, Families, Tasks, Interactions. Sends payment links. CANNOT issue refunds (route to Manager+). |
+| `virtual_assistant` | Virtual Assistant | Reads everything; writes notes; drafts replies. Cannot send messages, issue refunds, or change billing. |
+
+Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`) remain in the Postgres `UserRole` enum per CLAUDE.md §19 forward-only rule. They are bulk-mapped to canonical roles by `20260524120100_migrate_sales_roles` (`super_admin→ceo`, `admin→senior_manager`, `ops_manager/finance/dsl→manager`, `agent→sales_executive`, `read_only→virtual_assistant`). `pickPrimaryRole` in `packages/core/auth/policies.ts` normalises any straggler legacy assignment at read time, so the system remains correct if an unmigrated row appears.
 
 **Permission model.** RBAC with attribute checks on top.
 - Roles grant action lists (e.g. `finance` can `charge.refund`).
@@ -525,28 +535,29 @@ OpenAI for everything AI today. Models per task:
 
 ### 20.1 Permission matrix (high level)
 
-| Action | super_admin | admin | ops_manager | agent | finance | dsl | read_only |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `contact.read` (non-minor) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `contact.read` (minor) | ✓ | ✓ | ✓ | ✓ (audited) | ✓ (audited) | ✓ (audited) | — |
-| `contact.write` | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| `family.merge` | ✓ | ✓ | ✓ | — | — | — | — |
-| `interaction.create` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| `interaction.delete` | ✓ | ✓ | — | — | — | — | — |
-| `charge.create_link` | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| `charge.refund` | ✓ | ✓ | — | — | ✓ | — | — |
-| `subscription.cancel` | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| `dsar.export` | ✓ | ✓ | — | — | — | — | — |
-| `audit.read` | ✓ | ✓ | ✓ | — | ✓ | ✓ (own) | — |
-| `settings.write` | ✓ | ✓ | — | — | — | — | — |
-| `user.invite` | ✓ | ✓ | — | — | — | — | — |
-| `user.role.grant_admin` | ✓ | — | — | — | — | — | — |
-| `user.role.grant_super_admin` | ✓ | — | — | — | — | — | — |
-| `user.role.revoke_admin` | ✓ | — | — | — | — | — | — |
-| `secrets.rotate` | ✓ | — | — | — | — | — | — |
-| `tenant.config.write` | ✓ | — | — | — | — | — | — |
+| Action | ceo | senior_manager | manager | sales_executive | virtual_assistant |
+|---|:-:|:-:|:-:|:-:|:-:|
+| `contact.read` (non-minor) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `contact.read` (minor) | ✓ (audited) | ✓ (audited) | ✓ (audited) | ✓ (audited) | — |
+| `contact.write` | ✓ | ✓ | ✓ | ✓ | — |
+| `family.merge` | ✓ | ✓ | ✓ | — | — |
+| `interaction.create` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `interaction.delete` | ✓ | ✓ | — | — | — |
+| `charge.create_link` | ✓ | ✓ | ✓ | ✓ | — |
+| `charge.refund` | ✓ | ✓ | ✓ | — | — |
+| `subscription.cancel` | ✓ | ✓ | ✓ | — | — |
+| `dsar.export` | ✓ | ✓ | — | — | — |
+| `audit.read` | ✓ | ✓ | ✓ | — | — |
+| `settings.write` | ✓ | ✓ | — | — | — |
+| `user.invite` | ✓ | ✓ | ✓ | — | — |
+| `user.deactivate` | ✓ | ✓ | — | — | — |
+| `user.role.grant_senior_manager` | ✓ | — | — | — | — |
+| `user.role.grant_ceo` | ✓ | — | — | — | — |
+| `user.role.revoke_senior_manager` | ✓ | ✓ | — | — | — |
+| `secrets.rotate` | ✓ | — | — | — | — |
+| `tenant.config.write` | ✓ | — | — | — | — |
 
-The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch.
+The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch (`pnpm policy:check`).
 
 ---
 
@@ -612,7 +623,7 @@ pnpm tunnel                     # ngrok forwards :3000, prints public URL
 
 Required local services: Postgres 15, Redis 7. Provided via `docker-compose.yml`. Run `docker compose up -d` before `pnpm dev`.
 
-**Local users.** `pnpm db:reset` also seeds local NextAuth users (ADR 0010) directly into Postgres (see `prisma/seed.ts`). Seeded emails follow `<role>@dev.studymind` (e.g. `admin@dev.studymind`, `agent@dev.studymind`, `dsl@dev.studymind`). Passwords are documented in 1Password vault `StudyMind CRM Dev`.
+**Local users.** `pnpm db:reset` seeds the production CEO row via `prisma/seed-super-admin.ts` (ADR 0014). The dev seed file may add additional canonical-role users (e.g. `ceo@dev.studymind`, `manager@dev.studymind`, `sales@dev.studymind`). Passwords are documented in 1Password vault `StudyMind CRM Dev`.
 
 ### 22.1 Environment matrix
 
@@ -1031,7 +1042,8 @@ CLAUDE.md is part of the codebase. Treat it like code.
 
 - Product owner: see `OWNERS.md`.
 - Tech lead: see `OWNERS.md`.
-- Escalation for safeguarding or GDPR questions: DSL and DPO listed in `OWNERS.md`. Do not guess on these. Ask.
+- CEO: see `OWNERS.md`.
+- Escalation for GDPR questions: DPO listed in `OWNERS.md`. Do not guess on these. Ask.
 
 ---
 
