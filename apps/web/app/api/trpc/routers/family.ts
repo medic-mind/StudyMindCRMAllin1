@@ -34,12 +34,6 @@ const PipelineListInput = z.object({
   perStageLimit: z.number().min(1).max(200).default(100),
 })
 
-const PipelineTransitionInput = z.object({
-  familyId: z.string(),
-  toState: z.enum(FAMILY_STATES),
-  reason: z.string().trim().min(3).max(2000),
-})
-
 export const familyRouter = router({
   pipeline: router({
     /**
@@ -58,6 +52,7 @@ export const familyRouter = router({
               id: true,
               name: true,
               state: true,
+              stageId: true,
               billingParty: true,
               churnScore: true,
               updatedAt: true,
@@ -90,53 +85,10 @@ export const familyRouter = router({
         return rows
       }),
 
-    /**
-     * Explicit state transition. Writes a `family.state_changed` Interaction
-     * (CLAUDE.md §6.4 — transitions are never silent) and audits.
-     */
-    transition: auditedProcedure
-      .input(PipelineTransitionInput)
-      .mutation(async ({ ctx, input }) => {
-        const user = requireUser(ctx)
-        const before = await ctx.db.family.findFirst({
-          where: { id: input.familyId, deletedAt: null },
-          select: { id: true, state: true },
-        })
-        if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-        if (before.state === input.toState) {
-          throw new TRPCError({ code: 'CONFLICT', message: 'family already in target state' })
-        }
-        const updated = await ctx.db.$transaction(async (tx) => {
-          const next = await tx.family.update({
-            where: { id: input.familyId },
-            data: { state: input.toState, updatedById: user.id },
-          })
-          await tx.interaction.create({
-            data: {
-              id: newId(),
-              type: 'family_state_changed',
-              familyId: input.familyId,
-              occurredAt: new Date(),
-              summary: `State: ${before.state} → ${input.toState}`,
-              payload: {
-                previousState: before.state,
-                newState: input.toState,
-                reason: input.reason,
-              },
-              createdById: user.id,
-              updatedById: user.id,
-            },
-          })
-          return next
-        })
-        await ctx.audit({
-          action: 'family.state_changed',
-          target: { type: 'Family', id: updated.id },
-          before: { state: before.state },
-          after: { state: updated.state, reason: input.reason },
-        })
-        return { id: updated.id, state: updated.state }
-      }),
+    // ADR 0015: the enum-based `transition` mutation has been replaced by
+    // `pipeline.family.move`. The list and recentTransitions queries remain
+    // because the at-risk derivation and reports still surface the legacy
+    // family_state_changed interactions written by the at-risk job.
   }),
 
   create: auditedProcedure
@@ -144,12 +96,22 @@ export const familyRouter = router({
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       const id = newId()
+      // ADR 0015: assign the new family to the first non-closed, lowest-
+      // position stage by default. If no active stages exist yet, leave
+      // stageId null — the family will surface in the "Unassigned" tray
+      // on the pipeline kanban.
+      const defaultStage = await ctx.db.pipelineStage.findFirst({
+        where: { archivedAt: null, isClosed: false },
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true },
+      })
       const family = await ctx.db.family.create({
         data: {
           id,
           name: input.name ?? null,
           billingParty: input.billingParty,
           billingContactId: input.billingContactId ?? null,
+          stageId: defaultStage?.id ?? null,
           createdById: user.id,
           updatedById: user.id,
         },
@@ -381,6 +343,11 @@ export const familyRouter = router({
           billingContact: {
             select: { id: true, firstName: true, lastName: true, email: true },
           },
+          // ADR 0015: surface the dynamic pipeline stage on the family
+          // detail header instead of the legacy `state` enum.
+          stage: {
+            select: { id: true, name: true, color: true, isClosed: true },
+          },
         },
       })
       if (!f) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -414,6 +381,14 @@ export const familyRouter = router({
         id: f.id,
         name: f.name,
         state: f.state,
+        stage: f.stage
+          ? {
+              id: f.stage.id,
+              name: f.stage.name,
+              color: f.stage.color,
+              isClosed: f.stage.isClosed,
+            }
+          : null,
         billingParty: f.billingParty,
         churnScore: f.churnScore,
         billingContact: f.billingContact

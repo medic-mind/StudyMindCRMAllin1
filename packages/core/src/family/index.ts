@@ -5,3 +5,4 @@ export const FAMILY_DOMAIN = 'family' as const
 
 export * from './types'
 export * from './rules'
+export * from './pipeline'

@@ -19,6 +19,13 @@ export const EVENT_NAMES = [
   'family.state_changed',
   'family.billing_contact_changed',
   'family.contact_linked',
+  // ADR 0015: dynamic pipeline. Stage CRUD + per-family move.
+  'family.pipeline_moved',
+  'pipeline.stage.created',
+  'pipeline.stage.updated',
+  'pipeline.stage.reordered',
+  'pipeline.stage.archived',
+  'pipeline.stage.restored',
 
   // Interactions
   'interaction.created',
@@ -197,6 +204,7 @@ export const INTERACTION_TYPES = [
   'system',
   'slack_summary',
   'family_state_changed',
+  'family_pipeline_moved',
   'family_billing_contact_changed',
   'safeguarding_concern_raised',
   'safeguarding_la_referral',

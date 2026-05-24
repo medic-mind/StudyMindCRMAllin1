@@ -41,6 +41,7 @@ const CLAUDE_MD = resolve(REPO_ROOT, 'CLAUDE.md')
 // Mapping from doc-label (left column in CLAUDE.md) to the canonical Action key.
 // The doc carries a friendlier wording for a couple of rows — those mappings live
 // here. A doc row whose label is not mapped is treated as a literal Action key.
+// Updated for ADR 0014 (sales-CRM role rename).
 const DOC_LABEL_TO_ACTION: Record<string, Action | { action: Action; suffix?: string }> = {
   'contact.read (non-minor)': 'contact.read',
   'contact.read (minor)': 'contact.read_minor',
@@ -51,15 +52,14 @@ const DOC_LABEL_TO_ACTION: Record<string, Action | { action: Action; suffix?: st
   'charge.create_link': 'charge.create_link',
   'charge.refund': 'charge.refund',
   'subscription.cancel': 'subscription.cancel',
-  'safeguarding.flag': 'safeguarding.flag',
-  'safeguarding.read_notes': 'safeguarding.read_notes',
   'dsar.export': 'dsar.export',
   'audit.read': 'audit.read',
   'settings.write': 'settings.write',
   'user.invite': 'user.invite',
-  'user.role.grant_admin': 'user.role.grant_admin',
-  'user.role.grant_super_admin': 'user.role.grant_super_admin',
-  'user.role.revoke_admin': 'user.role.revoke_admin',
+  'user.deactivate': 'user.deactivate',
+  'user.role.grant_senior_manager': 'user.role.grant_senior_manager',
+  'user.role.grant_ceo': 'user.role.grant_ceo',
+  'user.role.revoke_senior_manager': 'user.role.revoke_senior_manager',
   'secrets.rotate': 'secrets.rotate',
   'tenant.config.write': 'tenant.config.write',
 }
@@ -91,8 +91,8 @@ function extractDocMatrix(md: string): Map<string, Map<Role, 'granted' | 'denied
   for (let i = 0; i < lines.length; i += 1) {
     if (
       lines[i].startsWith('| Action ') &&
-      lines[i].includes('super_admin') &&
-      lines[i].includes('read_only')
+      lines[i].includes('ceo') &&
+      lines[i].includes('virtual_assistant')
     ) {
       start = i
       break
