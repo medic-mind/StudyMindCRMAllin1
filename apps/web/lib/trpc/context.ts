@@ -18,7 +18,7 @@ export async function trpcContextFactory(
 ): Promise<TrpcContext> {
   const { userId, sessionClaims } = await authFn()
   const email = (sessionClaims?.['email'] as string | undefined) ?? ''
-  const role = (sessionClaims?.['role'] as SessionUser['role'] | undefined) ?? 'agent'
+  const role = (sessionClaims?.['role'] as SessionUser['role'] | undefined) ?? 'virtual_assistant'
   const mustResetPassword = Boolean(sessionClaims?.['mustResetPassword'])
   const sessionId = sessionClaims?.['sessionId'] as string | undefined
   // Prefer the active OTel trace id so the request can be correlated across

@@ -39,14 +39,14 @@ function makeCtx(role: SessionUser['role']) {
 }
 
 describe('admin.flags.list', () => {
-  it('rejects non admin/ops_manager', async () => {
-    const { ctx } = makeCtx('agent')
+  it('rejects non admin-tier', async () => {
+    const { ctx } = makeCtx('sales_executive')
     const c = adminFlagsRouter.createCaller(ctx)
     await expect(c.list()).rejects.toMatchObject({ code: 'FORBIDDEN' })
   })
 
   it('returns one row per registered flag with default source', async () => {
-    const { ctx } = makeCtx('admin')
+    const { ctx } = makeCtx('senior_manager')
     const c = adminFlagsRouter.createCaller(ctx)
     const r = await c.list()
     expect(r.items.length).toBeGreaterThan(0)
@@ -56,7 +56,7 @@ describe('admin.flags.list', () => {
   })
 
   it('marks stale release flags older than 30 days', async () => {
-    const { ctx, featureFlags } = makeCtx('admin')
+    const { ctx, featureFlags } = makeCtx('senior_manager')
     // Pick a release flag from registry — `ai.draft_replies_enabled` is
     // declared as a release flag.
     featureFlags.push({
@@ -73,7 +73,7 @@ describe('admin.flags.list', () => {
   })
 
   it('env override takes precedence over db', async () => {
-    const { ctx, featureFlags } = makeCtx('ops_manager')
+    const { ctx, featureFlags } = makeCtx('senior_manager')
     featureFlags.push({
       key: 'finance.dunning_paused',
       enabled: false,

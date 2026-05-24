@@ -1,4 +1,4 @@
-// Admin → Users router. CLAUDE.md §20 (RBAC), §27 (audit context), ADR 0009, ADR 0010.
+// Admin → Users router. CLAUDE.md §20 (RBAC), §27 (audit context), ADR 0014, ADR 0010.
 //
 // Manages user identity for the self-hosted auth flow:
 //   - list / get with status (active | invited | deactivated | locked)
@@ -7,7 +7,8 @@
 //   - deactivate / reactivate
 //
 // Every mutation is audited. The actor's primary role drives the role-grant
-// matrix (admin cannot grant admin or super_admin; only super_admin can).
+// matrix (only `ceo` can grant `ceo` or `senior_manager`; a `senior_manager`
+// can grant `manager`, `sales_executive`, `virtual_assistant`). ADR 0014.
 
 import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
@@ -16,10 +17,11 @@ import { z } from 'zod'
 import {
   canGrantRole,
   canRevokeRole,
+  normaliseRole,
   ROLES,
   type Role,
 } from '@studymind/core/auth/policies'
-import { assertNotLastSuperAdmin } from '@studymind/core/auth/guards'
+import { assertNotLastCeo } from '@studymind/core/auth/guards'
 import { generateToken, hashToken } from '@studymind/core/auth/passwords'
 import { BusinessError } from '@studymind/core/errors'
 import { logger } from '@studymind/core/logger'
@@ -45,8 +47,11 @@ function appUrl(): string {
   ).replace(/\/$/, '')
 }
 
+// User-management surfaces are gated to the two highest-privilege canonical
+// roles. ADR 0014 — a Manager invites Sales Executives and VAs via this same
+// router, so they pass `assertAdminish` too.
 function assertAdminish(user: SessionUser): void {
-  if (user.role !== 'admin' && user.role !== 'super_admin') {
+  if (user.role !== 'ceo' && user.role !== 'senior_manager') {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
   }
 }
@@ -116,7 +121,13 @@ export const adminUsersRouter = router({
         isActive: u.isActive,
         lastSignInAt: u.lastSignInAt,
         status: deriveStatus(u),
-        roles: u.roleAssignments.map((r) => ({ id: r.id, role: r.role as Role })),
+        roles: u.roleAssignments.map((r) => ({
+          id: r.id,
+          // Normalise legacy values so the UI always sees canonical roles
+          // (ADR 0014). Falls back to virtual_assistant for unrecognised
+          // strings — should not happen in practice.
+          role: normaliseRole(r.role) ?? ('virtual_assistant' as Role),
+        })),
       }))
       return {
         items,
@@ -164,7 +175,13 @@ export const adminUsersRouter = router({
         failedSignInAttempts: u.failedSignInAttempts,
         sessionCount: u.sessions.length,
         status: deriveStatus(u),
-        roles: u.roleAssignments.map((r) => ({ id: r.id, role: r.role as Role })),
+        roles: u.roleAssignments.map((r) => ({
+          id: r.id,
+          // Normalise legacy values so the UI always sees canonical roles
+          // (ADR 0014). Falls back to virtual_assistant for unrecognised
+          // strings — should not happen in practice.
+          role: normaliseRole(r.role) ?? ('virtual_assistant' as Role),
+        })),
       }
     }),
 
@@ -424,25 +441,26 @@ export const adminUsersRouter = router({
           message: `cannot revoke role: ${input.role}`,
         })
       }
-      // Self-demotion locked for elevated roles.
+      // Self-demotion locked for elevated roles (ADR 0014).
       if (
         actor.id === input.userId &&
-        (input.role === 'admin' || input.role === 'super_admin')
+        (input.role === 'ceo' || input.role === 'senior_manager')
       ) {
         throw new TRPCError({
           code: 'CONFLICT',
-          message: 'Cannot revoke your own admin or super_admin role.',
+          message: 'Cannot revoke your own ceo or senior_manager role.',
         })
       }
-      // Last super_admin guard.
-      if (input.role === 'super_admin') {
+      // Last ceo guard. The guard counts both `ceo` and legacy `super_admin`
+      // rows so a partially-migrated database remains correct.
+      if (input.role === 'ceo') {
         try {
-          await assertNotLastSuperAdmin(ctx.db, input.userId)
+          await assertNotLastCeo(ctx.db, input.userId)
         } catch (e) {
-          if (e instanceof BusinessError && e.code === 'LAST_SUPER_ADMIN') {
+          if (e instanceof BusinessError && e.code === 'LAST_CEO') {
             throw new TRPCError({
               code: 'CONFLICT',
-              message: 'cannot revoke the last super_admin',
+              message: 'cannot revoke the last ceo',
             })
           }
           throw e
@@ -480,7 +498,6 @@ export const adminUsersRouter = router({
       z.object({
         userId: z.string().min(1),
         reason: z.string().trim().min(1),
-        reassignToUserId: z.string().min(1).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -505,9 +522,12 @@ export const adminUsersRouter = router({
         return { ok: true, alreadyDeactivated: true }
       }
 
-      // If the actor cannot revoke any of the target's roles, refuse.
+      // If the actor cannot revoke any of the target's canonical roles,
+      // refuse. Legacy values are normalised before the check so a row that
+      // has not been bulk-migrated still gates correctly. ADR 0014.
       for (const ra of user.roleAssignments) {
-        if (!canRevokeRole(actor.role, ra.role as Role)) {
+        const canonical = normaliseRole(ra.role) ?? ('virtual_assistant' as Role)
+        if (!canRevokeRole(actor.role, canonical)) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: `cannot deactivate user with role: ${ra.role}`,
@@ -515,57 +535,23 @@ export const adminUsersRouter = router({
         }
       }
 
-      // Last super_admin guard if the target is a super_admin.
-      if (user.roleAssignments.some((r) => r.role === 'super_admin')) {
+      // Last ceo guard. Covers both canonical and legacy `super_admin`.
+      if (
+        user.roleAssignments.some(
+          (r) => r.role === 'ceo' || r.role === 'super_admin',
+        )
+      ) {
         try {
-          await assertNotLastSuperAdmin(ctx.db, user.id)
+          await assertNotLastCeo(ctx.db, user.id)
         } catch (e) {
-          if (e instanceof BusinessError && e.code === 'LAST_SUPER_ADMIN') {
+          if (e instanceof BusinessError && e.code === 'LAST_CEO') {
             throw new TRPCError({
               code: 'CONFLICT',
-              message: 'cannot deactivate the last super_admin',
+              message: 'cannot deactivate the last ceo',
             })
           }
           throw e
         }
-      }
-
-      // If user is the assigned DSL on any active SafeguardingFlag, require
-      // a reassign target.
-      const activeDslFlags = await ctx.db.safeguardingFlag.findMany({
-        where: {
-          dslUserId: user.id,
-          deletedAt: null,
-          closedAt: null,
-        },
-        select: { id: true },
-      })
-      if (activeDslFlags.length > 0 && !input.reassignToUserId) {
-        throw new TRPCError({
-          code: 'CONFLICT',
-          message: 'User is assigned DSL on active flags; reassignToUserId required.',
-        })
-      }
-      if (activeDslFlags.length > 0 && input.reassignToUserId) {
-        const replacement = await ctx.db.user.findFirst({
-          where: {
-            id: input.reassignToUserId,
-            deletedAt: null,
-            deactivatedAt: null,
-            roleAssignments: { some: { role: 'dsl' } },
-          },
-          select: { id: true },
-        })
-        if (!replacement) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'reassignToUserId must be an active DSL user.',
-          })
-        }
-        await ctx.db.safeguardingFlag.updateMany({
-          where: { id: { in: activeDslFlags.map((f) => f.id) } },
-          data: { dslUserId: input.reassignToUserId, updatedById: actor.id },
-        })
       }
 
       const now = new Date()
@@ -584,10 +570,7 @@ export const adminUsersRouter = router({
       await ctx.audit({
         action: 'auth.user_deactivated',
         target: { type: 'User', id: user.id },
-        after: {
-          reason: input.reason,
-          reassignedFlags: activeDslFlags.length,
-        },
+        after: { reason: input.reason },
       })
       return { ok: true, alreadyDeactivated: false }
     }),

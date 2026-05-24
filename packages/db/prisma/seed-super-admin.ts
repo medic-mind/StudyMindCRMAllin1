@@ -1,7 +1,8 @@
-// Super-admin seed — kept deliberately simple.
+// CEO seed — kept deliberately simple. (Filename retained for migration
+// stability; the role granted is `ceo` per ADR 0014.)
 //
-// Rule: every deploy, the super-admin row gets the password from env and
-// the password is ALWAYS overwritten. Operator owns the SUPER_ADMIN_PASSWORD
+// Rule: every deploy, the CEO row gets the password from env and the
+// password is ALWAYS overwritten. Operator owns the SUPER_ADMIN_PASSWORD
 // env var; there is no idempotency guard to fight, no force-reseed flag,
 // no email-link branch, no mustResetPassword gate.
 //
@@ -12,6 +13,11 @@
 //   SUPER_ADMIN_EMAIL    default 'aashir@studymind.co.uk'
 //   SUPER_ADMIN_NAME     default 'Aashir'
 //   SUPER_ADMIN_PASSWORD default 'Wenger20'
+//
+// The seed is idempotent across the role rename: if a legacy `super_admin`
+// RoleAssignment exists for the user it is CONVERTED to `ceo` in place
+// rather than creating a duplicate row (the @@unique([userId, role])
+// constraint would refuse a duplicate anyway, and we never want both).
 //
 // This script intentionally does not import @studymind/audit or @studymind/core
 // to avoid a workspace dependency cycle (both depend on @studymind/db).
@@ -69,15 +75,29 @@ export async function seedInitialSuperAdmin(): Promise<SeedResult> {
     },
   })
 
-  await db.roleAssignment.upsert({
+  // Convert any legacy super_admin row in place so the user does not end up
+  // with both `super_admin` and `ceo` (the @@unique([userId, role])
+  // constraint would refuse the second insert and the bulk migration in
+  // 20260524120100_migrate_sales_roles would race with this script).
+  const legacy = await db.roleAssignment.findUnique({
     where: { userId_role: { userId: user.id, role: 'super_admin' } },
-    update: {},
-    create: {
-      id: createId(),
-      userId: user.id,
-      role: 'super_admin',
-    },
   })
+  if (legacy) {
+    await db.roleAssignment.update({
+      where: { id: legacy.id },
+      data: { role: 'ceo' },
+    })
+  } else {
+    await db.roleAssignment.upsert({
+      where: { userId_role: { userId: user.id, role: 'ceo' } },
+      update: {},
+      create: {
+        id: createId(),
+        userId: user.id,
+        role: 'ceo',
+      },
+    })
+  }
 
   return { userId: user.id, email: EMAIL, alreadyExisted: existing !== null }
 }
@@ -92,7 +112,7 @@ if (isMain()) {
     .then(async (r) => {
       /* eslint-disable no-console */
       console.log('---')
-      console.log('super_admin seeded')
+      console.log('ceo seeded')
       console.log(`  email:    ${r.email}`)
       console.log(`  user id:  ${r.userId}`)
       console.log(`  existed:  ${r.alreadyExisted ? 'yes (password overwritten)' : 'no (created)'}`)
@@ -104,7 +124,7 @@ if (isMain()) {
     })
     .catch(async (e: unknown) => {
       /* eslint-disable-next-line no-console */
-      console.error('super_admin seed failed:', e)
+      console.error('ceo seed failed:', e)
       await db.$disconnect()
       process.exit(1)
     })

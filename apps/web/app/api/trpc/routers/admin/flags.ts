@@ -17,7 +17,11 @@ import {
   type SessionUser,
 } from '@/lib/trpc/builders'
 
-const READ_ROLES: ReadonlySet<SessionUser['role']> = new Set(['admin', 'ops_manager'])
+// Feature flags are admin-tier (ADR 0014).
+const READ_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'ceo',
+  'senior_manager',
+])
 
 function envKey(name: FlagName): string {
   return 'FLAG_' + name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')

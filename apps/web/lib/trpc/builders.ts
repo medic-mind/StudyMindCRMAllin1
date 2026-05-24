@@ -13,14 +13,16 @@ import { writeAuditLogEntry, type WriteAuditLogEntryInput } from '@studymind/aud
 
 import { rateLimit } from './rate-limit'
 
+// Canonical role names (ADR 0014). Legacy enum values still exist in the
+// Postgres UserRole enum and may appear in RoleAssignment rows; they are
+// normalised to a canonical Role by pickPrimaryRole before reaching here, so
+// `SessionUser['role']` is always one of these five values.
 export type UserRole =
-  | 'super_admin'
-  | 'admin'
-  | 'ops_manager'
-  | 'agent'
-  | 'finance'
-  | 'dsl'
-  | 'read_only'
+  | 'ceo'
+  | 'senior_manager'
+  | 'manager'
+  | 'sales_executive'
+  | 'virtual_assistant'
 
 export interface SessionUser {
   id: string

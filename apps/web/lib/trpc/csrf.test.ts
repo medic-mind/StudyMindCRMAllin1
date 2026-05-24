@@ -38,7 +38,7 @@ function makeCtx(opts: {
   const userId = opts.userId ?? 'user_test'
   return {
     user: userId
-      ? { id: userId, email: 'agent@dev.studymind', role: 'agent' }
+      ? { id: userId, email: 'sales@dev.studymind', role: 'sales_executive' }
       : null,
     requestId,
     db: dbStub,

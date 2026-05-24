@@ -284,19 +284,18 @@ export const familyRouter = router({
 
   /**
    * Manual reconcile of a single Family. CLAUDE.md §6.3, §17. Mirrors the
-   * idempotent upsert in the nightly job. Role-gated to finance | admin |
-   * super_admin | ops_manager — anyone reviewing a family's books can re-run
-   * the engine on demand. Audited.
+   * idempotent upsert in the nightly job. Role-gated to ceo, senior_manager,
+   * and manager — anyone reviewing a family's books can re-run the engine on
+   * demand. Audited. ADR 0014.
    */
   reconcile: auditedProcedure
     .input(z.object({ familyId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       const allowed: ReadonlySet<UserRole> = new Set([
-        'finance',
-        'admin',
-        'super_admin',
-        'ops_manager',
+        'ceo',
+        'senior_manager',
+        'manager',
       ])
       if (!allowed.has(user.role)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot reconcile' })

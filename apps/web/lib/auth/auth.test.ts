@@ -174,11 +174,18 @@ describe('authorize (Credentials provider)', () => {
 })
 
 describe('pickPrimaryRole', () => {
-  it('picks the highest-priority role', async () => {
+  it('picks the highest-priority canonical role and normalises legacy aliases', async () => {
     const { pickPrimaryRole } = await import('./pick-primary-role')
-    expect(pickPrimaryRole(['agent', 'admin'])).toBe('admin')
-    expect(pickPrimaryRole(['read_only', 'finance'])).toBe('finance')
-    expect(pickPrimaryRole(['super_admin', 'admin'])).toBe('super_admin')
-    expect(pickPrimaryRole([])).toBe('read_only')
+    // Canonical only.
+    expect(pickPrimaryRole(['sales_executive', 'manager'])).toBe('manager')
+    expect(pickPrimaryRole(['virtual_assistant', 'senior_manager'])).toBe(
+      'senior_manager',
+    )
+    // Mixed canonical + legacy.
+    expect(pickPrimaryRole(['agent', 'admin'])).toBe('senior_manager')
+    expect(pickPrimaryRole(['read_only', 'finance'])).toBe('manager')
+    expect(pickPrimaryRole(['super_admin', 'admin'])).toBe('ceo')
+    // Defaults to virtual_assistant on empty.
+    expect(pickPrimaryRole([])).toBe('virtual_assistant')
   })
 })

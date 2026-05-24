@@ -1,7 +1,9 @@
 // Inbox router. CLAUDE.md §11 (inbound messages), §20 (RBAC), §27 (cursor
 // pagination).
 // Lists the most recent inbound message Interactions across all unassigned
-// conversations. Role-gated: agent | ops_manager | admin | dsl.
+// conversations. Read-mostly route — visible to every authenticated role
+// (ADR 0014). Virtual Assistants triage inbound by reading; they cannot send
+// replies (that gate lives in the outbound interaction routers).
 
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
@@ -14,7 +16,13 @@ import {
   type UserRole,
 } from '@/lib/trpc/builders'
 
-const ALLOWED_ROLES: ReadonlySet<UserRole> = new Set(['agent', 'ops_manager', 'admin', 'dsl'])
+const ALLOWED_ROLES: ReadonlySet<UserRole> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 const InboxListInput = z.object({
   cursor: z

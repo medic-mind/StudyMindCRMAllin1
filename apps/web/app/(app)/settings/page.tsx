@@ -9,13 +9,13 @@ const links: Array<{ href: string; title: string; description: string; roles: st
     href: '/settings/users',
     title: 'Users & roles',
     description: 'List users, assign and revoke roles. Audited.',
-    roles: 'admin',
+    roles: 'CEO · Senior Manager',
   },
   {
     href: '/settings/flags',
     title: 'Feature flags',
     description: 'Effective values, env overrides, stale release flags.',
-    roles: 'admin · ops_manager',
+    roles: 'CEO · Senior Manager',
   },
   {
     href: '/settings/mailbox',
@@ -28,7 +28,7 @@ const links: Array<{ href: string; title: string; description: string; roles: st
     title: 'Integrations status',
     description:
       'Webhook receive recency, Gmail watch expiry, Asana webhook health.',
-    roles: 'admin · ops_manager',
+    roles: 'CEO · Senior Manager',
   },
 ]
 

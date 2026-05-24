@@ -111,7 +111,7 @@ function makeCtx(opts: {
   const sessionUser: SessionUser = {
     id: 'u_1',
     email: 'me@studymind.dev',
-    role: 'agent',
+    role: 'sales_executive',
     mustResetPassword: false,
     sessionId: 'sess_1',
   }

@@ -1,6 +1,7 @@
-// Tests for the simplified super-admin seed. The seed is intentionally
+// Tests for the simplified ceo seed (ADR 0014). The seed is intentionally
 // simple: always upsert, always set the password from env, always ensure
-// the super_admin role. No idempotency dance, no email-link flow.
+// the ceo role. No idempotency dance, no email-link flow. A legacy
+// `super_admin` row on the same user is converted to `ceo` in place.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -47,6 +48,28 @@ vi.mock('../src/index', () => {
       },
     },
     roleAssignment: {
+      findUnique: ({
+        where,
+      }: {
+        where: { userId_role: { userId: string; role: string } }
+      }) =>
+        Promise.resolve(
+          state.ras.find(
+            (r) =>
+              r.userId === where.userId_role.userId && r.role === where.userId_role.role,
+          ) ?? null,
+        ),
+      update: ({
+        where,
+        data,
+      }: {
+        where: { id: string }
+        data: Partial<RA>
+      }) => {
+        const row = state.ras.find((r) => r.id === where.id)
+        if (row) Object.assign(row, data)
+        return Promise.resolve(row)
+      },
       upsert: ({
         where,
         create,
@@ -73,12 +96,12 @@ vi.mock('../src/index', () => {
   return { db }
 })
 
-describe('seedInitialSuperAdmin (simplified)', () => {
+describe('seedInitialSuperAdmin (simplified, ADR 0014 ceo)', () => {
   type MockDb = {
     __reset: () => void
     __state: {
       users: Array<{ id: string; passwordHash: string }>
-      ras: unknown[]
+      ras: Array<{ id: string; userId: string; role: string }>
     }
   }
   let mod: { db: MockDb }
@@ -98,13 +121,29 @@ describe('seedInitialSuperAdmin (simplified)', () => {
     delete process.env['SUPER_ADMIN_PASSWORD']
   })
 
-  it('creates the super_admin row with default email when env unset', async () => {
+  it('creates the ceo row with default email when env unset', async () => {
     const { seedInitialSuperAdmin } = await import('./seed-super-admin')
     const r = await seedInitialSuperAdmin()
     expect(r.email).toBe('aashir@studymind.co.uk')
     expect(r.alreadyExisted).toBe(false)
     expect(mod.db.__state.users).toHaveLength(1)
     expect(mod.db.__state.ras).toHaveLength(1)
+    expect(mod.db.__state.ras[0]?.role).toBe('ceo')
+  })
+
+  it('converts a legacy super_admin assignment to ceo in place', async () => {
+    const { seedInitialSuperAdmin } = await import('./seed-super-admin')
+    // Pre-seed a legacy row for the default email's user. The seed will
+    // create the user, find the legacy RA, and convert it.
+    await seedInitialSuperAdmin()
+    const userId = mod.db.__state.users[0]!.id
+    mod.db.__state.ras[0] = { id: 'ra_legacy', userId, role: 'super_admin' }
+    vi.resetModules()
+    const { seedInitialSuperAdmin: seedAgain } = await import('./seed-super-admin')
+    await seedAgain()
+    expect(mod.db.__state.ras).toHaveLength(1)
+    expect(mod.db.__state.ras[0]?.role).toBe('ceo')
+    expect(mod.db.__state.ras[0]?.id).toBe('ra_legacy')
   })
 
   it('overwrites the existing password on re-run (no idempotency guard)', async () => {

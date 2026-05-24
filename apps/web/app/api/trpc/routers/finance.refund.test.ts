@@ -47,7 +47,7 @@ interface FakeIntent {
   payment: FakePayment
 }
 
-function makeCtx(role: UserRole = 'finance', payments: FakePayment[] = []): {
+function makeCtx(role: UserRole = 'manager', payments: FakePayment[] = []): {
   ctx: TrpcContext
   intents: FakeIntent[]
   audit: ReturnType<typeof vi.fn>
@@ -148,7 +148,7 @@ describe('finance.refund.create', () => {
       amountMinor: 5000,
       externalId: 'ch_abc',
     }
-    const { ctx, intents, audit } = makeCtx('finance', [payment])
+    const { ctx, intents, audit } = makeCtx('manager', [payment])
     const caller = financeRouter.createCaller(ctx)
 
     const result = await caller.refund.create({
@@ -174,7 +174,7 @@ describe('finance.refund.create', () => {
       amountMinor: 5000,
       externalId: 'ch_abc',
     }
-    const { ctx } = makeCtx('finance', [payment])
+    const { ctx } = makeCtx('manager', [payment])
     const caller = financeRouter.createCaller(ctx)
 
     const first = await caller.refund.create({ chargeId: 'ch_abc', reasonCode: 'duplicate' })
@@ -185,7 +185,7 @@ describe('finance.refund.create', () => {
   })
 
   it('rejects callers without finance/admin role', async () => {
-    const { ctx } = makeCtx('agent', [])
+    const { ctx } = makeCtx('sales_executive', [])
     const caller = financeRouter.createCaller(ctx)
 
     await expect(
@@ -194,7 +194,7 @@ describe('finance.refund.create', () => {
   })
 
   it('returns NOT_FOUND for an unknown charge', async () => {
-    const { ctx } = makeCtx('finance', [])
+    const { ctx } = makeCtx('manager', [])
     const caller = financeRouter.createCaller(ctx)
 
     await expect(
@@ -211,7 +211,7 @@ describe('finance.refund.list', () => {
       amountMinor: 5000,
       externalId: 'ch_abc',
     }
-    const { ctx } = makeCtx('finance', [payment])
+    const { ctx } = makeCtx('manager', [payment])
     const caller = financeRouter.createCaller(ctx)
     await caller.refund.create({ chargeId: 'ch_abc', reasonCode: 'duplicate' })
 
@@ -225,7 +225,7 @@ describe('finance.refund.list', () => {
   })
 
   it('rejects non-finance callers', async () => {
-    const { ctx } = makeCtx('agent', [])
+    const { ctx } = makeCtx('sales_executive', [])
     const caller = financeRouter.createCaller(ctx)
     await expect(caller.refund.list({ limit: 10 })).rejects.toMatchObject({ code: 'FORBIDDEN' })
   })

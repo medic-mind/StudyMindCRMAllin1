@@ -13,7 +13,11 @@ import {
   type SessionUser,
 } from '@/lib/trpc/builders'
 
-const READ_ROLES: ReadonlySet<SessionUser['role']> = new Set(['admin', 'ops_manager'])
+// Integrations dashboard is admin-tier (ADR 0014).
+const READ_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'ceo',
+  'senior_manager',
+])
 
 const PROVIDERS = [
   'stripe',
@@ -94,7 +98,7 @@ export const adminIntegrationsRouter = router({
     .input(z.object({ provider: z.enum(PROVIDERS) }))
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      if (user.role !== 'admin' && user.role !== 'super_admin') {
+      if (user.role !== 'ceo' && user.role !== 'senior_manager') {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
       }
       const eventId = `synthetic-${createId()}`

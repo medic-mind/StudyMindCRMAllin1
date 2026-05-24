@@ -138,7 +138,7 @@ async function makeCtx(opts: {
   const user: SessionUser = {
     id: userId,
     email: 'me@example.com',
-    role: 'agent',
+    role: 'sales_executive',
     mustResetPassword: opts.mustResetPassword ?? false,
     sessionId: opts.sessionId ?? 'sess_current',
   }

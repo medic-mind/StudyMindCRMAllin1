@@ -1,4 +1,4 @@
-// Settings → Users + Roles. RSC, admin/super_admin only. CLAUDE.md §20.
+// Settings → Users + Roles. RSC, ceo / senior_manager only. CLAUDE.md §20, ADR 0014.
 //
 // Lists users with their roles, last sign-in, and status. Pending invites
 // surface in their own section. Action buttons are filtered by what the
@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
+
+import { formatRoleLabel } from '@/lib/format/role-label'
 
 import { InviteDialog, UserRoleControls } from './controls'
 
@@ -27,8 +29,8 @@ export default async function UsersSettingsPage({
 }) {
   const sp = await searchParams
   const me = await getCurrentUser()
-  const role = me?.role ?? 'agent'
-  if (role !== 'admin' && role !== 'super_admin') {
+  const role = me?.role ?? 'virtual_assistant'
+  if (role !== 'ceo' && role !== 'senior_manager') {
     return (
       <>
         <PageHeader
@@ -55,12 +57,14 @@ export default async function UsersSettingsPage({
   const pending = data.items.filter((u) => u.status === 'invited')
   const active = data.items.filter((u) => u.status !== 'invited')
 
-  const superAdmins = data.items.filter((u) =>
-    u.roles.some((r) => r.role === 'super_admin'),
-  )
-  const lastSuperAdminWarning =
-    role === 'super_admin' && superAdmins.length === 1
-      ? 'You are the only super_admin. Add another before stepping down.'
+  // A CEO is allowed to step down only once another CEO exists. Surface a
+  // friendly warning if they are the only one. The router normalises legacy
+  // role values to canonical before returning, so a check on `'ceo'` covers
+  // both freshly-migrated and legacy rows.
+  const ceos = data.items.filter((u) => u.roles.some((r) => r.role === 'ceo'))
+  const lastCeoWarning =
+    role === 'ceo' && ceos.length <= 1
+      ? 'You are the only CEO. Add another before stepping down.'
       : null
 
   return (
@@ -73,12 +77,12 @@ export default async function UsersSettingsPage({
         ]}
       />
 
-      {lastSuperAdminWarning && (
+      {lastCeoWarning && (
         <div
           className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
           role="alert"
         >
-          {lastSuperAdminWarning}
+          {lastCeoWarning}
         </div>
       )}
 
@@ -199,7 +203,7 @@ function RoleChips({ roles }: { roles: string[] }) {
           key={r}
           className="inline-block rounded bg-neutral-100 px-2 py-0.5 text-xs"
         >
-          {r}
+          {formatRoleLabel(r)}
         </span>
       ))}
     </span>

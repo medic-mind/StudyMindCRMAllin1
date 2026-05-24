@@ -14,14 +14,13 @@ import { SidebarNav, type NavItem } from './sidebar-nav'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+// Canonical sales-CRM roles (ADR 0014).
 type Role =
-  | 'super_admin'
-  | 'admin'
-  | 'ops_manager'
-  | 'agent'
-  | 'finance'
-  | 'dsl'
-  | 'read_only'
+  | 'ceo'
+  | 'senior_manager'
+  | 'manager'
+  | 'sales_executive'
+  | 'virtual_assistant'
 
 interface NavItemDef extends NavItem {
   /**
@@ -42,7 +41,10 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
     {
       href: '/finance',
       label: 'Finance',
-      visibleTo: ['admin', 'super_admin', 'ops_manager', 'finance', 'agent'],
+      // Sales Executives do not see the Finance dashboard — they can create
+      // payment links from the contact detail UI but never see refund/
+      // allocation tooling. CEO, Senior Manager, Manager only (ADR 0014).
+      visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/finance', label: 'Discrepancies' },
         { href: '/finance/refunds', label: 'Refunds' },
@@ -62,7 +64,8 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
     {
       href: '/settings',
       label: 'Settings',
-      visibleTo: ['admin', 'super_admin', 'ops_manager'],
+      // Settings is admin-tier: CEO and Senior Manager only (ADR 0014).
+      visibleTo: ['ceo', 'senior_manager'],
       children: [
         { href: '/settings/users', label: 'Users' },
         { href: '/settings/flags', label: 'Flags' },
