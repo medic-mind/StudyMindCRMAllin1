@@ -12,6 +12,7 @@
     "./finance": "./src/finance/index.ts",
     "./interaction": "./src/interaction/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
+    "./backfill": "./src/backfill/index.ts",
     "./auth/policies": "./src/auth/policies.ts",
     "./auth/passwords": "./src/auth/passwords.ts",
     "./auth/lockout": "./src/auth/lockout.ts",
