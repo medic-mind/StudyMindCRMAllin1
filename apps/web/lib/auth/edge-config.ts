@@ -12,6 +12,8 @@ const isProd = process.env.NODE_ENV === 'production'
 const sessionCookieName = isProd ? '__Secure-studymind.session' : 'studymind.session'
 
 export const authEdgeConfig: NextAuthConfig = {
+  // Same trustHost as the node-side config — see lib/auth/index.ts.
+  trustHost: true,
   session: {
     strategy: 'jwt',
     maxAge: 12 * 60 * 60,

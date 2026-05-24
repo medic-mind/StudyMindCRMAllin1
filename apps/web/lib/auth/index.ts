@@ -51,6 +51,13 @@ const sessionCookieName = isProd ? '__Secure-studymind.session' : 'studymind.ses
 
 export const { auth, handlers, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(db),
+  // Trust the X-Forwarded-* headers from Railway's edge proxy so NextAuth
+  // constructs callback URLs from the public domain (https://crm.studymind.co.uk)
+  // instead of the container's internal bind (https://0.0.0.0:8080). Without
+  // this, sign-in fails with error=Configuration and the error redirect lands
+  // on 0.0.0.0:8080. Equivalent to AUTH_TRUST_HOST=true env, set here in code
+  // so it works regardless of env config.
+  trustHost: true,
   session: {
     strategy: 'jwt',
     maxAge: 12 * 60 * 60,
