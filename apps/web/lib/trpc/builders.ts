@@ -213,46 +213,21 @@ export function requireUser(ctx: TrpcContext): SessionUser {
 }
 
 /**
- * Enforce the restricted-access policy for safeguarding (CLAUDE.md §42.3).
+ * Restricted-access enforcement is a no-op in v1.
  *
- * If the contact has any active SafeguardingFlag at `restricted_access`, only
- * the assigned DSL or an admin may proceed. Every successful read writes a
- * `safeguarding.read_attempt` audit row carrying the caller's stated purpose.
+ * The safeguarding workflow that drove this gate was removed in ADR 0013;
+ * the function is retained as a stable extension point so that callers
+ * across protected procedures keep compiling without churn, and so that a
+ * future reinstatement of the safeguarding workflow has an obvious seam.
  *
- * Throws TRPCError on violation. No-op when the contact is not restricted.
+ * Parameters are accepted but ignored.
  */
 export async function enforceRestrictedAccess(
-  ctx: TrpcContext,
-  contactId: string,
-  purpose: string,
+  _ctx: TrpcContext,
+  _contactId: string,
+  _purpose: string,
 ): Promise<void> {
-  const flags = await ctx.db.safeguardingFlag.findMany({
-    where: { contactId, deletedAt: null, state: 'restricted_access' },
-    select: { id: true, dslUserId: true },
-  })
-  if (flags.length === 0) return
-  const user = ctx.user
-  if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' })
-  const isAssignedDsl =
-    user.role === 'dsl' && flags.some((f) => f.dslUserId === user.id)
-  if (user.role !== 'admin' && !isAssignedDsl) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Contact is restricted; assigned DSL or admin only.',
-    })
-  }
-  if (!purpose || purpose.trim().length === 0) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'A non-empty purpose is required to read a restricted contact.',
-    })
-  }
-  await ctx.audit({
-    action: 'safeguarding.read_attempt',
-    target: { type: 'Contact', id: contactId },
-    purpose,
-    after: { flagIds: flags.map((f) => f.id) },
-  })
+  return
 }
 
 /** Build the audit recorder for a request. */

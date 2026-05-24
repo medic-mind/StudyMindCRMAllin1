@@ -50,11 +50,6 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       ],
     },
     {
-      href: '/safeguarding',
-      label: 'Safeguarding',
-      visibleTo: ['dsl', 'super_admin', 'admin'],
-    },
-    {
       href: '/reports',
       label: 'Reports',
       children: [

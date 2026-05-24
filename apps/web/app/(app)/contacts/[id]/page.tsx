@@ -7,7 +7,6 @@ import { notFound } from 'next/navigation'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
-import { RestrictedAccessBanner } from '@/components/safeguarding/RestrictedAccessBanner'
 
 import { AddNote } from './AddNote'
 import { Timeline } from './Timeline'
@@ -26,19 +25,6 @@ export default async function ContactDetailPage({
     notFound()
   }
   if (!contact) notFound()
-
-  // CLAUDE.md §42.3: restricted contacts hide their timeline from non-DSL.
-  // contact.get already enforces; if we got here as non-DSL the contact is
-  // not restricted. We still render the banner when isRestricted so DSLs
-  // see the cue.
-  if (contact.isRestricted) {
-    return (
-      <div className="max-w-3xl">
-        <h1 className="text-2xl font-semibold tracking-tight">{contact.displayName}</h1>
-        <RestrictedAccessBanner />
-      </div>
-    )
-  }
 
   const timeline = await caller.interaction.list({ contactId: id, limit: 25 })
 
@@ -63,11 +49,6 @@ export default async function ContactDetailPage({
                 Minor
               </span>
             )}
-            {contact.hasSafeguardingFlag && (
-              <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-900">
-                Safeguarding flag
-              </span>
-            )}
           </div>
         </div>
       </div>
@@ -81,12 +62,6 @@ export default async function ContactDetailPage({
           className="inline-flex items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200 h-8"
         >
           Issue refund
-        </Link>
-        <Link
-          href={`/contacts/${contact.id}/safeguarding`}
-          className="inline-flex items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200 h-8"
-        >
-          Raise safeguarding concern
         </Link>
         {contact.family ? (
           <Link

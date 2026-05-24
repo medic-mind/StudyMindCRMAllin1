@@ -6,26 +6,22 @@
 // posts and PagerDuty pages.
 //
 // Detections (fixed, deliberate, narrow):
-//   1. safeguarding read spikes — z-score > 2 vs an actor's 12-week mean
-//   2. off-hours DSAR exports — between 22:00–06:00 actor local time
-//   3. refund clusters — > 3 refunds by the same actor in any 24h window
-//   4. failed sign-in bursts — > 5 failed sign-ins from one IP in 1 hour
+//   1. off-hours DSAR exports — between 22:00–06:00 actor local time
+//   2. refund clusters — > 3 refunds by the same actor in any 24h window
+//   3. failed sign-in bursts — > 5 failed sign-ins from one IP in 1 hour
 //
 // All thresholds are constants in this file. Tuning is a code change so
 // it goes through review.
+//
+// The safeguarding-read-spike detector was removed in ADR 0013 alongside
+// the rest of the safeguarding workflow.
 
-export const SAFEGUARDING_READ_Z_THRESHOLD = 2
 export const REFUND_CLUSTER_THRESHOLD = 3
 export const REFUND_CLUSTER_WINDOW_MS = 24 * 60 * 60 * 1000
 export const SIGNIN_BURST_THRESHOLD = 5
 export const SIGNIN_BURST_WINDOW_MS = 60 * 60 * 1000
 
 export type UebaSeverity = 'high' | 'medium' | 'low'
-
-export interface SafeguardingReadEvent {
-  actorId: string
-  occurredAt: Date
-}
 
 export interface DsarExportEvent {
   actorId: string
@@ -46,23 +42,18 @@ export interface FailedSignInEvent {
 }
 
 export interface UebaInput {
-  /** Safeguarding reads in the prior 7 days. */
-  safeguardingReads: ReadonlyArray<SafeguardingReadEvent>
   /** DSAR exports in the prior 7 days. */
   dsarExports: ReadonlyArray<DsarExportEvent>
   /** Refunds in the prior 7 days. */
   refunds: ReadonlyArray<RefundEvent>
   /** Failed sign-ins in the prior 7 days. */
   failedSignIns: ReadonlyArray<FailedSignInEvent>
-  /** Per-actor weekly safeguarding-read counts over the prior 12 weeks. */
-  safeguardingReadBaseline: Record<string, number[]>
   /** End of the analysis window (typically `now`). */
   windowEnd: Date
 }
 
 export interface UebaFinding {
   category:
-    | 'safeguarding_read_spike'
     | 'off_hours_dsar'
     | 'refund_cluster'
     | 'signin_burst'
@@ -76,18 +67,6 @@ export interface UebaFinding {
 export interface UebaFindings {
   windowEnd: Date
   findings: UebaFinding[]
-}
-
-function mean(xs: ReadonlyArray<number>): number {
-  if (xs.length === 0) return 0
-  return xs.reduce((a, b) => a + b, 0) / xs.length
-}
-
-function stddev(xs: ReadonlyArray<number>): number {
-  if (xs.length <= 1) return 0
-  const m = mean(xs)
-  const variance = xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1)
-  return Math.sqrt(variance)
 }
 
 /**
@@ -107,33 +86,6 @@ export function hourInTimezone(d: Date, tz: string): number {
 
 function isOffHours(hour: number): boolean {
   return hour >= 22 || hour < 6
-}
-
-function detectSafeguardingSpikes(input: UebaInput): UebaFinding[] {
-  // Group reads by actor for the window.
-  const byActor = new Map<string, number>()
-  for (const r of input.safeguardingReads) {
-    byActor.set(r.actorId, (byActor.get(r.actorId) ?? 0) + 1)
-  }
-  const findings: UebaFinding[] = []
-  for (const [actorId, count] of byActor) {
-    const baseline = input.safeguardingReadBaseline[actorId] ?? []
-    if (baseline.length < 4) continue // not enough history to baseline
-    const m = mean(baseline)
-    const s = stddev(baseline)
-    if (s === 0) continue // constant baseline; skip rather than divide-by-zero
-    const z = (count - m) / s
-    if (z > SAFEGUARDING_READ_Z_THRESHOLD) {
-      findings.push({
-        category: 'safeguarding_read_spike',
-        severity: 'high',
-        summary: `Safeguarding read spike for actor ${actorId} (z=${z.toFixed(2)})`,
-        details: { actorId, count, baselineMean: m, baselineStdDev: s, zScore: z },
-        dedupKey: `ueba:safeguarding_spike:${actorId}:${input.windowEnd.toISOString().slice(0, 10)}`,
-      })
-    }
-  }
-  return findings
 }
 
 function detectOffHoursDsar(input: UebaInput): UebaFinding[] {
@@ -252,7 +204,6 @@ export function analyseUeba(input: UebaInput): UebaFindings {
   return {
     windowEnd: input.windowEnd,
     findings: [
-      ...detectSafeguardingSpikes(input),
       ...detectOffHoursDsar(input),
       ...detectRefundClusters(input),
       ...detectSignInBursts(input),

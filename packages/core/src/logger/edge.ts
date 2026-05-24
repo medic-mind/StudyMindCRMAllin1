@@ -27,7 +27,6 @@ function emit(level: 'debug' | 'info' | 'warn' | 'error', fields: LogFields | un
     ...(fields ?? {}),
   }
   if (msg !== undefined) payload['msg'] = msg
-  // eslint-disable-next-line no-console
   console.log(JSON.stringify(payload))
 }
 

@@ -211,7 +211,7 @@ Discrepancies become `ReconciliationDiscrepancy` rows on the finance dashboard. 
 
 **Booking state (booking site mirror).** `tentative | confirmed | delivered | no_show | cancelled`. Hours only count toward delivery on `delivered`. `no_show` and `cancelled` have separate finance treatment defined in `packages/core/finance/booking-rules.ts`.
 
-**Safeguarding flag.** `none | concern_logged | restricted_access`. A flag at `restricted_access` hides the contact's notes from everyone except the assigned DSL plus admins, and forces an audit prompt on every read.
+**Safeguarding flag.** _DEPRECATED — see ADR 0013._ The `SafeguardingFlag` table is retained as an orphan; no v1 code path reads or transitions it.
 
 ---
 
@@ -513,7 +513,7 @@ OpenAI for everything AI today. Models per task:
 
 **Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and (optional) TOTP MFA (mandatory for `super_admin`, `admin`, `finance`, `dsl`). No third-party identity processor — see ADR 0010.
 
-**Roles.** `super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`. `super_admin` sits above `admin`: it inherits every `admin` action plus the exclusive ability to grant or revoke `admin` and `super_admin`, rotate org-wide secrets, and write tenant config. See ADR 0009.
+**Roles.** `super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`. `super_admin` sits above `admin`: it inherits every `admin` action plus the exclusive ability to grant or revoke `admin` and `super_admin`, rotate org-wide secrets, and write tenant config. See ADR 0009. The `dsl` role is a retained enum value with no remaining safeguarding grants (ADR 0013); it collapses to a read-only Contact role and will be mapped to `Manager` in the slice-2 role rename (ADR 0014).
 
 **Permission model.** RBAC with attribute checks on top.
 - Roles grant action lists (e.g. `finance` can `charge.refund`).
@@ -536,8 +536,6 @@ OpenAI for everything AI today. Models per task:
 | `charge.create_link` | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | `charge.refund` | ✓ | ✓ | — | — | ✓ | — | — |
 | `subscription.cancel` | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| `safeguarding.flag` | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
-| `safeguarding.read_notes` | ✓ (audited) | ✓ (audited) | — | — | — | ✓ (assigned only, audited) | — |
 | `dsar.export` | ✓ | ✓ | — | — | — | — | — |
 | `audit.read` | ✓ | ✓ | ✓ | — | ✓ | ✓ (own) | — |
 | `settings.write` | ✓ | ✓ | — | — | — | — | — |
@@ -557,7 +555,7 @@ The canonical version of this table is generated from `packages/core/auth/polici
 This is not optional. Treat every line as a hard requirement.
 
 - **Data minimisation.** If a webhook payload includes a field we do not use, drop it before persisting to normalised tables. Raw payload still goes to `ProviderEvent` for replay; normalised tables only get used fields.
-- **Field level encryption.** Safeguarding notes, EHCP extracts, medical notes, and date of birth where the contact is a minor under 13. Envelope encryption with AWS KMS. Decryption requires both `dsl` role and an audit reason captured at read time.
+- **Field level encryption.** Sensitive at-rest data — Gmail OAuth refresh tokens, Trengo per-agent tokens, and any future field needing crypto-shred on erasure. Envelope encryption with AWS KMS. Decryption requires the caller to supply an audited purpose captured at read time. Originally built for safeguarding notes; the safeguarding workflow itself was removed in ADR 0013, but the primitives are general-purpose and retained.
 - **Retention.**
   - Call recordings: 90 days default, configurable per LA contract.
   - Call transcripts: 12 months.
@@ -1059,15 +1057,18 @@ Invariants are facts about our data that must always hold. They are testable, na
 
 ### 41.3 Safeguarding invariants
 
-- A `SafeguardingFlag` at `restricted_access` requires a named DSL assignee. No assignee, no save.
-- Decryption of an `EncryptedField` requires a non-empty `purpose` string in the audit entry. Empty strings fail the AAD check by design.
-- A `Contact` cannot be hard-deleted while any `SafeguardingFlag` is active. Soft delete then DSL review is the only path.
+_DEPRECATED — see ADR 0013._ The safeguarding workflow was removed; the
+`SafeguardingFlag` table remains as an orphan with no active invariants.
 
 Property-based tests live alongside each invariant. CI runs the full suite on every PR; the seed data is regenerated to attempt to violate each invariant deliberately.
 
 ---
 
 ## 42. Safeguarding workflow and DSL escalation
+
+**Status: DEPRECATED — see ADR 0013.** The safeguarding workflow described
+below is not part of the v1 sales CRM. Section content retained as
+historical context for any future reinstatement.
 
 Safeguarding is the part of the product where speed and discretion both matter. The workflow below is the contract between agents, DSLs, and the system. It is enforced in code, not by training.
 

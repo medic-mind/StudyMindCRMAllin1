@@ -11,58 +11,11 @@ import {
 } from './ueba'
 
 const baseInput: UebaInput = {
-  safeguardingReads: [],
   dsarExports: [],
   refunds: [],
   failedSignIns: [],
-  safeguardingReadBaseline: {},
   windowEnd: new Date('2026-05-11T04:00:00Z'),
 }
-
-describe('analyseUeba — safeguarding read spikes', () => {
-  it('flags an actor whose weekly count z-score exceeds 2', () => {
-    const reads = Array.from({ length: 50 }, (_, i) => ({
-      actorId: 'u-spike',
-      occurredAt: new Date(`2026-05-0${(i % 7) + 1}T10:00:00Z`),
-    }))
-    const r = analyseUeba({
-      ...baseInput,
-      safeguardingReads: reads,
-      safeguardingReadBaseline: {
-        // 12 weeks averaging ~5/week, low variance → 50 is a clear spike.
-        'u-spike': [4, 5, 6, 5, 4, 5, 6, 5, 4, 5, 6, 5],
-      },
-    })
-    expect(r.findings).toHaveLength(1)
-    expect(r.findings[0]!.category).toBe('safeguarding_read_spike')
-    expect(r.findings[0]!.severity).toBe('high')
-    expect((r.findings[0]!.details as { zScore: number }).zScore).toBeGreaterThan(2)
-  })
-
-  it('ignores actors with insufficient baseline history', () => {
-    const r = analyseUeba({
-      ...baseInput,
-      safeguardingReads: Array.from({ length: 100 }, () => ({
-        actorId: 'u-new',
-        occurredAt: new Date('2026-05-05T10:00:00Z'),
-      })),
-      safeguardingReadBaseline: { 'u-new': [3] }, // < 4 weeks
-    })
-    expect(r.findings).toHaveLength(0)
-  })
-
-  it('does not flag normal weekly volume', () => {
-    const r = analyseUeba({
-      ...baseInput,
-      safeguardingReads: Array.from({ length: 5 }, (_, i) => ({
-        actorId: 'u-normal',
-        occurredAt: new Date(`2026-05-0${i + 1}T10:00:00Z`),
-      })),
-      safeguardingReadBaseline: { 'u-normal': [4, 5, 6, 5, 4, 5, 6, 5] },
-    })
-    expect(r.findings).toHaveLength(0)
-  })
-})
 
 describe('analyseUeba — off-hours DSAR', () => {
   it('flags a DSAR export at 23:30 UTC by default actor tz', () => {
