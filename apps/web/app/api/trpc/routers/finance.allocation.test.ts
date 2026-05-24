@@ -22,7 +22,7 @@ interface FakeAllocation {
 }
 
 function makeCtx(
-  role: UserRole = 'finance',
+  role: UserRole = 'manager',
   payment: { id: string; amountMinor: number; familyId: string } | null = null,
   initial: FakeAllocation[] = [],
 ): {
@@ -99,7 +99,7 @@ beforeEach(() => {
 
 describe('finance.allocation.upsert', () => {
   it('rejects allocations whose sum exceeds the Payment amount', async () => {
-    const { ctx } = makeCtx('finance', { id: 'pay_1', amountMinor: 5000, familyId: 'fam_1' })
+    const { ctx } = makeCtx('manager', { id: 'pay_1', amountMinor: 5000, familyId: 'fam_1' })
     const caller = financeRouter.createCaller(ctx)
 
     await expect(
@@ -114,7 +114,7 @@ describe('finance.allocation.upsert', () => {
   })
 
   it('creates new active rows and audits', async () => {
-    const { ctx, rows, audit } = makeCtx('finance', {
+    const { ctx, rows, audit } = makeCtx('manager', {
       id: 'pay_1',
       amountMinor: 10000,
       familyId: 'fam_1',
@@ -146,7 +146,7 @@ describe('finance.allocation.upsert', () => {
       deletedAt: null,
       createdAt: new Date('2026-05-09T10:00:00Z'),
     }
-    const { ctx, rows } = makeCtx('finance', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, [initial])
+    const { ctx, rows } = makeCtx('manager', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, [initial])
     const caller = financeRouter.createCaller(ctx)
 
     await caller.allocation.upsert({
@@ -180,7 +180,7 @@ describe('finance.allocation.upsert', () => {
         createdAt: new Date('2026-05-09T10:01:00Z'),
       },
     ]
-    const { ctx, rows } = makeCtx('finance', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, initial)
+    const { ctx, rows } = makeCtx('manager', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, initial)
     const caller = financeRouter.createCaller(ctx)
 
     await caller.allocation.upsert({
@@ -193,7 +193,7 @@ describe('finance.allocation.upsert', () => {
   })
 
   it('forbids non-finance roles', async () => {
-    const { ctx } = makeCtx('agent', { id: 'pay_1', amountMinor: 5000, familyId: 'fam_1' })
+    const { ctx } = makeCtx('sales_executive', { id: 'pay_1', amountMinor: 5000, familyId: 'fam_1' })
     const caller = financeRouter.createCaller(ctx)
 
     await expect(
@@ -216,7 +216,7 @@ describe('finance.allocation.delete', () => {
       deletedAt: null,
       createdAt: new Date('2026-05-09T10:00:00Z'),
     }
-    const { ctx, rows, audit } = makeCtx('finance', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, [initial])
+    const { ctx, rows, audit } = makeCtx('manager', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, [initial])
     const caller = financeRouter.createCaller(ctx)
 
     await caller.allocation.delete({ allocationId: 'a_1' })
@@ -236,7 +236,7 @@ describe('finance.allocation.delete', () => {
       deletedAt: new Date('2026-05-09T10:00:00Z'),
       createdAt: new Date('2026-05-09T10:00:00Z'),
     }
-    const { ctx } = makeCtx('finance', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, [initial])
+    const { ctx } = makeCtx('manager', { id: 'pay_1', amountMinor: 10000, familyId: 'fam_1' }, [initial])
     const caller = financeRouter.createCaller(ctx)
     await expect(
       caller.allocation.delete({ allocationId: 'a_1' }),

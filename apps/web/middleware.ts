@@ -135,7 +135,23 @@ export default authMiddleware((req) => {
   return res
 }) as unknown as (req: NextRequest) => Promise<NextResponse>
 
-const PRIVILEGED_ROLES = new Set(['super_admin', 'admin', 'finance', 'dsl'])
+// Roles required to set up MFA before they can use the CRM. Per ADR 0014
+// (canonical names) plus the legacy aliases retained in the Postgres enum so
+// a row that has not yet been migrated still triggers the gate. The three
+// privileged canonical roles are CEO, Senior Manager, and Manager — the
+// people who can move money or manage other users.
+const PRIVILEGED_ROLES = new Set([
+  // canonical (ADR 0014)
+  'ceo',
+  'senior_manager',
+  'manager',
+  // legacy aliases (CLAUDE.md §19 forward-only)
+  'super_admin',
+  'admin',
+  'ops_manager',
+  'finance',
+  'dsl',
+])
 
 function isPrivilegedRole(
   roles: string[] | undefined,

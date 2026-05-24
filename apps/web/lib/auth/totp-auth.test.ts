@@ -306,7 +306,17 @@ describe('mandatory MFA enrolment gate (middleware logic)', () => {
   }): boolean {
     if (!args.user) return false
     if (args.user.totpEnabledAt) return false
-    const PRIVILEGED = new Set(['super_admin', 'admin', 'finance', 'dsl'])
+    // Mirror the canonical + legacy set in apps/web/middleware.ts (ADR 0014).
+    const PRIVILEGED = new Set([
+      'ceo',
+      'senior_manager',
+      'manager',
+      'super_admin',
+      'admin',
+      'ops_manager',
+      'finance',
+      'dsl',
+    ])
     const isPriv =
       (args.user.roles ?? []).some((r) => PRIVILEGED.has(r)) ||
       (args.user.role ? PRIVILEGED.has(args.user.role) : false)
@@ -318,29 +328,29 @@ describe('mandatory MFA enrolment gate (middleware logic)', () => {
     return true
   }
 
-  it('redirects an admin without TOTP to /account/setup-2fa', () => {
+  it('redirects a senior_manager without TOTP to /account/setup-2fa', () => {
     expect(
       shouldRedirectToSetup({
         pathname: '/inbox',
-        user: { totpEnabledAt: null, roles: ['admin'] },
+        user: { totpEnabledAt: null, roles: ['senior_manager'] },
       }),
     ).toBe(true)
   })
 
-  it('does not redirect an agent (non-privileged) without TOTP', () => {
+  it('does not redirect a sales_executive (non-privileged) without TOTP', () => {
     expect(
       shouldRedirectToSetup({
         pathname: '/inbox',
-        user: { totpEnabledAt: null, roles: ['agent'] },
+        user: { totpEnabledAt: null, roles: ['sales_executive'] },
       }),
     ).toBe(false)
   })
 
-  it('does not redirect a finance user that has TOTP enabled', () => {
+  it('does not redirect a manager that has TOTP enabled', () => {
     expect(
       shouldRedirectToSetup({
         pathname: '/inbox',
-        user: { totpEnabledAt: '2026-01-01T00:00:00Z', roles: ['finance'] },
+        user: { totpEnabledAt: '2026-01-01T00:00:00Z', roles: ['manager'] },
       }),
     ).toBe(false)
   })
@@ -349,7 +359,7 @@ describe('mandatory MFA enrolment gate (middleware logic)', () => {
     expect(
       shouldRedirectToSetup({
         pathname: '/account/setup-2fa',
-        user: { totpEnabledAt: null, roles: ['dsl'] },
+        user: { totpEnabledAt: null, roles: ['manager'] },
       }),
     ).toBe(false)
   })
@@ -358,14 +368,23 @@ describe('mandatory MFA enrolment gate (middleware logic)', () => {
     expect(
       shouldRedirectToSetup({
         pathname: '/api/auth/signout',
-        user: { totpEnabledAt: null, roles: ['admin'] },
+        user: { totpEnabledAt: null, roles: ['senior_manager'] },
       }),
     ).toBe(false)
     expect(
       shouldRedirectToSetup({
         pathname: '/api/health',
-        user: { totpEnabledAt: null, roles: ['admin'] },
+        user: { totpEnabledAt: null, roles: ['senior_manager'] },
       }),
     ).toBe(false)
+  })
+
+  it('redirects a legacy admin role JWT without TOTP (back-compat)', () => {
+    expect(
+      shouldRedirectToSetup({
+        pathname: '/inbox',
+        user: { totpEnabledAt: null, roles: ['admin'] },
+      }),
+    ).toBe(true)
   })
 })

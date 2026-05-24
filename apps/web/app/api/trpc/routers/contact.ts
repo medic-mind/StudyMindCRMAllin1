@@ -181,7 +181,10 @@ export const contactRouter = router({
       .input(z.object({ contactId: z.string() }))
       .query(async ({ ctx, input }) => {
         const user = requireUser(ctx)
-        if (!['admin', 'ops_manager', 'agent'].includes(user.role)) {
+        // Read of AI merge candidates: any role above virtual_assistant
+        // (ADR 0014). VAs can read contacts but should not see merge
+        // suggestions — that's an operational decision, not a read.
+        if (!['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)) {
           throw new TRPCError({ code: 'FORBIDDEN' })
         }
         return findMergeCandidates(ctx.db, input.contactId)
@@ -194,7 +197,8 @@ export const contactRouter = router({
       .input(z.object({ survivorId: z.string(), loserId: z.string() }))
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
-        if (!['admin', 'ops_manager'].includes(user.role)) {
+        // family.merge restricted to ceo, senior_manager, manager (ADR 0014).
+        if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
           throw new TRPCError({ code: 'FORBIDDEN' })
         }
         const result = await mergeContacts(ctx.db, {

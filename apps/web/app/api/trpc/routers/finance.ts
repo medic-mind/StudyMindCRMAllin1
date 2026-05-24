@@ -19,16 +19,22 @@ import {
   type SessionUser,
 } from '@/lib/trpc/builders'
 
-const FINANCE_ROLES: ReadonlySet<SessionUser['role']> = new Set(['admin', 'finance'])
+// Refunds + allocation review + reconciliation are restricted to roles that
+// can move money. ADR 0014 — ceo, senior_manager, manager. Sales Executive
+// can create payment links (below) but never issues refunds.
+const FINANCE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+])
 
-// Per CLAUDE.md §20.1, charge.create_link is allowed for super_admin, admin,
-// ops_manager, agent, and finance. Read-only and dsl never create charges.
+// charge.create_link is allowed for everyone above virtual_assistant.
+// ADR 0014 / CLAUDE.md §20.1.
 const PAYMENT_LINK_ROLES: ReadonlySet<SessionUser['role']> = new Set([
-  'super_admin',
-  'admin',
-  'ops_manager',
-  'agent',
-  'finance',
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
 ])
 
 function assertFinanceRole(user: SessionUser): void {

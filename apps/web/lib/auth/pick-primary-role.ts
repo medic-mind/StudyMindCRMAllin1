@@ -1,21 +1,16 @@
-// Single-role picker for legacy ctx.user.role consumers. Highest-privilege
-// role in the user's RoleAssignment list wins. Many call sites still gate on
-// `user.role === 'admin'`; once they have all migrated to roles[] this helper
-// can be deleted (ADR 0010).
+// Single-role picker for ctx.user.role consumers. Highest-privilege canonical
+// role in the user's RoleAssignment list wins. Legacy role names (super_admin,
+// admin, ops_manager, agent, finance, dsl, read_only) are mapped to their
+// canonical successors per ADR 0014. Defaults to virtual_assistant on empty
+// input.
+//
+// Implementation lives in @studymind/core; this re-export keeps the existing
+// import path (`@/lib/auth/pick-primary-role`) working unchanged.
+
+import { pickPrimaryRole as corePickPrimaryRole, type Role } from '@studymind/core/auth/policies'
 
 import type { UserRole } from '@/lib/trpc/builders'
 
-const ROLE_PRIORITY: UserRole[] = [
-  'super_admin',
-  'admin',
-  'finance',
-  'dsl',
-  'ops_manager',
-  'agent',
-  'read_only',
-]
-
-export function pickPrimaryRole(roles: UserRole[]): UserRole {
-  for (const r of ROLE_PRIORITY) if (roles.includes(r)) return r
-  return 'read_only'
+export function pickPrimaryRole(roles: readonly string[]): UserRole {
+  return corePickPrimaryRole(roles) as Role & UserRole
 }

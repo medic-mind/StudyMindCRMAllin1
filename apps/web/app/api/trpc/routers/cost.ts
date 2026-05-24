@@ -27,10 +27,11 @@ import {
   type SessionUser,
 } from '@/lib/trpc/builders'
 
+// Cost dashboard is finance-tier (ADR 0014).
 const READ_ROLES: ReadonlySet<SessionUser['role']> = new Set([
-  'admin',
-  'ops_manager',
-  'finance',
+  'ceo',
+  'senior_manager',
+  'manager',
 ])
 
 export const costRouter = router({

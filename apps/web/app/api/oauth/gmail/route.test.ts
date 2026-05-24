@@ -150,7 +150,7 @@ describe('GET /api/oauth/gmail/connect', () => {
   })
 
   it('persists state and redirects to Google with correct params', async () => {
-    getCurrentUserMock.mockResolvedValueOnce({ id: 'u_1', email: 'me@x', role: 'agent', roles: ['agent'], mustResetPassword: false })
+    getCurrentUserMock.mockResolvedValueOnce({ id: 'u_1', email: 'me@x', role: 'sales_executive', roles: ['sales_executive'], mustResetPassword: false })
     const res = await connectGET(new Request('https://crm.test/api/oauth/gmail/connect'))
     expect(res.status).toBe(302)
     const loc = res.headers.get('location')!
@@ -174,7 +174,7 @@ describe('GET /api/oauth/gmail/callback', () => {
   }
 
   function authedUser() {
-    getCurrentUserMock.mockResolvedValue({ id: 'u_1', email: 'me@x', role: 'agent', roles: ['agent'], mustResetPassword: false })
+    getCurrentUserMock.mockResolvedValue({ id: 'u_1', email: 'me@x', role: 'sales_executive', roles: ['sales_executive'], mustResetPassword: false })
   }
 
   function seedState(state: string, opts: { provider?: string; expiresInMs?: number; userId?: string } = {}) {

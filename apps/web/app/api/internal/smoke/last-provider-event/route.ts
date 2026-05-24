@@ -31,8 +31,17 @@ async function handleGet(req: Request): Promise<Response> {
   } else {
     const session = await auth()
     if (!session.userId) return new Response('unauthorised', { status: 401 })
-    const role = (session.sessionClaims?.['role'] as string | undefined) ?? 'agent'
-    if (role !== 'admin') return new Response('forbidden', { status: 403 })
+    // Admin-tier smoke endpoint (ADR 0014). Legacy admin / super_admin JWTs
+    // remain honoured until session rollover.
+    const role = (session.sessionClaims?.['role'] as string | undefined) ?? 'virtual_assistant'
+    if (
+      role !== 'ceo' &&
+      role !== 'senior_manager' &&
+      role !== 'admin' &&
+      role !== 'super_admin'
+    ) {
+      return new Response('forbidden', { status: 403 })
+    }
     userId = session.userId
   }
 

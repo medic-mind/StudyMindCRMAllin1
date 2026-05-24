@@ -1,5 +1,5 @@
 // Reports router. Read-only summaries for the Reports surface.
-// CLAUDE.md §27. Role-gated: admin | ops_manager | finance.
+// CLAUDE.md §27. Role-gated: ceo | senior_manager | manager (ADR 0014).
 
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
@@ -12,9 +12,9 @@ import {
 } from '@/lib/trpc/builders'
 
 const REPORT_ROLES: ReadonlySet<SessionUser['role']> = new Set([
-  'admin',
-  'ops_manager',
-  'finance',
+  'ceo',
+  'senior_manager',
+  'manager',
 ])
 
 function assertReports(user: SessionUser): void {

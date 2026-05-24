@@ -9,6 +9,7 @@ import { signOut } from 'next-auth/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { ChevronDownIcon, LogOutIcon, UserCircleIcon } from '@/components/ui/icon'
+import { formatRoleLabel } from '@/lib/format/role-label'
 
 interface Props {
   email: string
@@ -25,16 +26,6 @@ function initialsOf(email: string, name: string | null): string {
     if (out) return out
   }
   return email.slice(0, 2).toUpperCase()
-}
-
-const ROLE_LABEL: Record<string, string> = {
-  super_admin: 'Super admin',
-  admin: 'Admin',
-  ops_manager: 'Ops manager',
-  agent: 'Agent',
-  finance: 'Finance',
-  dsl: 'DSL',
-  read_only: 'Read only',
 }
 
 export function UserMenu({ email, name, role }: Props) {
@@ -98,7 +89,7 @@ export function UserMenu({ email, name, role }: Props) {
             </p>
             <p className="truncate text-xs text-neutral-500">{email}</p>
             <span className="mt-2 inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-700">
-              {ROLE_LABEL[role] ?? role}
+              {formatRoleLabel(role)}
             </span>
           </div>
           <ul className="py-1 text-sm">

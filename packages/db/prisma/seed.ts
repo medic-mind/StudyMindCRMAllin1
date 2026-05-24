@@ -8,7 +8,7 @@ async function main(): Promise<void> {
   const result = await seedInitialSuperAdmin()
   /* eslint-disable-next-line no-console */
   console.log(
-    `seed: super_admin ${result.email} ` +
+    `seed: ceo ${result.email} ` +
       (result.alreadyExisted ? '(password overwritten)' : '(created)'),
   )
 }

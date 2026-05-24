@@ -54,7 +54,7 @@ export const authEdgeConfig: NextAuthConfig = {
         if (Array.isArray(token.roles)) {
           session.user.roles = token.roles as typeof session.user.roles
           session.user.role =
-            (token.roles[0] as typeof session.user.role) ?? 'read_only'
+            (token.roles[0] as typeof session.user.role) ?? 'virtual_assistant'
         }
       }
       return session

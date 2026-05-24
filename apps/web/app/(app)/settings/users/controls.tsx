@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { formatRoleLabel } from '@/lib/format/role-label'
 import { trpc } from '@/lib/trpc/client'
 
 type UserStatus = 'active' | 'invited' | 'deactivated' | 'locked'
@@ -85,8 +86,8 @@ export function UserRoleControls({
           const has = currentRoles.includes(role)
           const canAct = has ? canRevokeRole(actorRole, role) : canGrantRole(actorRole, role)
           if (!canAct) return null
-          // Self-demotion guard mirrors the server.
-          if (isSelf && has && (role === 'admin' || role === 'super_admin')) return null
+          // Self-demotion guard mirrors the server (ADR 0014).
+          if (isSelf && has && (role === 'ceo' || role === 'senior_manager')) return null
           const key = `${role}:${has ? 'rev' : 'asg'}`
           return (
             <Button
@@ -102,7 +103,7 @@ export function UserRoleControls({
               }}
               className="h-7 px-2 text-xs"
             >
-              {has ? `− ${role}` : `+ ${role}`}
+              {has ? `− ${formatRoleLabel(role)}` : `+ ${formatRoleLabel(role)}`}
             </Button>
           )
         })}
@@ -148,17 +149,9 @@ export function UserRoleControls({
             onClick={() => {
               const reason = window.prompt('Reason for deactivation?')
               if (!reason) return
-              const reassignToUserId =
-                window.prompt(
-                  'If this user is the assigned DSL on any active flag, enter the userId of a replacement DSL (or leave blank).',
-                ) || undefined
               setError(null)
               setPending('deact')
-              deactivate.mutate({
-                userId,
-                reason,
-                reassignToUserId: reassignToUserId || undefined,
-              })
+              deactivate.mutate({ userId, reason })
             }}
           >
             deactivate
@@ -301,7 +294,7 @@ export function InviteDialog({ actorRole }: { actorRole: Role }) {
                         )
                       }
                     />
-                    {r}
+                    {formatRoleLabel(r)}
                   </label>
                 )
               })}

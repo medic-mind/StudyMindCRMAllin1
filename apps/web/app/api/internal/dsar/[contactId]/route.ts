@@ -28,8 +28,16 @@ async function handleGet(
   if (!userId) {
     return new Response('unauthorised', { status: 401 })
   }
-  const role = (sessionClaims?.['role'] as string | undefined) ?? 'agent'
-  if (role !== 'admin') {
+  // DSAR export restricted to ceo + senior_manager (ADR 0014). Legacy
+  // `admin` / `super_admin` JWTs from before the bulk migration are still
+  // honoured to avoid locking ops out mid-rollout.
+  const role = (sessionClaims?.['role'] as string | undefined) ?? 'virtual_assistant'
+  if (
+    role !== 'ceo' &&
+    role !== 'senior_manager' &&
+    role !== 'admin' &&
+    role !== 'super_admin'
+  ) {
     return new Response('forbidden', { status: 403 })
   }
 

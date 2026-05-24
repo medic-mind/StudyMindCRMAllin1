@@ -271,7 +271,12 @@ export const interactionRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
-        if (!['agent', 'ops_manager', 'admin', 'dsl', 'super_admin', 'finance'].includes(user.role)) {
+        // Sending outbound email is restricted to roles that can act on a
+        // family's behalf. Virtual Assistants draft replies but cannot send.
+        // ADR 0014.
+        if (
+          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+        ) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send email' })
         }
 
