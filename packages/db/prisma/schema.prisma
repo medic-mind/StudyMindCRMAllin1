@@ -198,8 +198,8 @@ model User {
   isActive    Boolean @default(true)
 
   // Slice 14: deactivation (CLAUDE.md §20, ADR 0009).
-  deactivatedAt       DateTime?
-  deactivationReason  String?
+  deactivatedAt      DateTime?
+  deactivationReason String?
 
   // ADR 0010: self-hosted auth columns. Password hash is bcrypt cost 12.
   // mfaSecretCipherId references EncryptedField.id but is not enforced as a
@@ -409,17 +409,25 @@ model Contact {
 }
 
 model Family {
-  id               String       @id
-  name             String?
-  state            FamilyState  @default(lead)
-  billingParty     BillingParty @default(family)
-  billingContactId String?
-  laContractId     String?
-  churnScore       Float?
+  id                String       @id
+  name              String?
+  /// Legacy lifecycle enum. Retained per CLAUDE.md §19 forward-only rule.
+  /// The canonical pipeline assignment is `stageId` (ADR 0015); this column
+  /// is mirrored on a best-effort basis by `moveFamily` for backward
+  /// compatibility with consumers that still read `state` (at-risk derivation,
+  /// reconciliation, churn-score job).
+  state             FamilyState  @default(lead)
+  /// Dynamic pipeline stage (ADR 0015). Replaces the hardcoded `state`
+  /// enum as the source of truth for pipeline position.
+  stageId           String?
+  billingParty      BillingParty @default(family)
+  billingContactId  String?
+  laContractId      String?
+  churnScore        Float?
   lastBookingSyncAt DateTime?
   /// AP (Section 19) placement summary. Mirrors `APPlacement` for fast UI
   /// reads; CLAUDE.md §43.4. Nullable for non-AP families.
-  apPlacement      Json?
+  apPlacement       Json?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -429,6 +437,7 @@ model Family {
 
   billingContact   Contact?                    @relation("BillingContact", fields: [billingContactId], references: [id])
   laContract       LAContract?                 @relation(fields: [laContractId], references: [id])
+  stage            PipelineStage?              @relation(fields: [stageId], references: [id], onDelete: SetNull)
   members          FamilyMember[]
   financialAccount FinancialAccount?
   interactions     Interaction[]               @relation("FamilyInteractions")
@@ -442,8 +451,36 @@ model Family {
   tasks            Task[]
 
   @@index([state])
+  @@index([stageId])
   @@index([billingContactId])
   @@index([laContractId])
+}
+
+/// Operator-managed sales pipeline stage. ADR 0015. CEO and Senior Manager
+/// can create, rename, reorder, and archive stages; all roles see the
+/// current stage list. The legacy `Family.state` enum is mirrored on a
+/// best-effort basis when a stage name matches an old enum value so
+/// downstream consumers keep working during the transition.
+model PipelineStage {
+  id          String    @id
+  name        String
+  /// 1-based order. Only unique among non-archived stages — enforced by a
+  /// partial unique index in the migration.
+  position    Int
+  /// Tailwind token name (e.g. `blue-500`) or hex string. Rendered as the
+  /// column accent (border + dot/badge) on the pipeline kanban.
+  color       String
+  /// Closed stages are terminal (the family has left the funnel). Rendered
+  /// muted on the kanban with a "Closed" pill.
+  isClosed    Boolean   @default(false)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+
+  families Family[]
+
+  @@index([archivedAt])
 }
 
 model FamilyMember {
@@ -483,18 +520,18 @@ model FinancialAccount {
 // -----------------------------------------------------------------------------
 
 model Interaction {
-  id         String          @id
-  type       InteractionType
-  contactId  String?
-  familyId   String?
+  id           String          @id
+  type         InteractionType
+  contactId    String?
+  familyId     String?
   /// Interactions originating on a Tender (which pre-dates the Family). See
   /// CLAUDE.md §43.1.
-  tenderId   String?
+  tenderId     String?
   /// Interactions originating on an LAContract. CLAUDE.md §43.2.
   laContractId String?
-  occurredAt DateTime
-  summary    String?
-  payload    Json
+  occurredAt   DateTime
+  summary      String?
+  payload      Json
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -504,8 +541,8 @@ model Interaction {
 
   /// CLAUDE.md §21 retention. Soft-delete sets `softDeletedAt`; the row is
   /// then hard-deleted after `pendingHardDeleteAt` elapses (default 30d).
-  softDeletedAt        DateTime?
-  pendingHardDeleteAt  DateTime?
+  softDeletedAt       DateTime?
+  pendingHardDeleteAt DateTime?
 
   contact    Contact?    @relation("ContactInteractions", fields: [contactId], references: [id])
   family     Family?     @relation("FamilyInteractions", fields: [familyId], references: [id])
@@ -575,13 +612,13 @@ model RetentionPolicy {
 // -----------------------------------------------------------------------------
 
 model SafeguardingFlag {
-  id         String                @id
-  contactId  String
-  state      SafeguardingFlagState @default(concern_logged)
-  urgency    SafeguardingUrgency   @default(routine)
-  dslUserId  String?
-  raisedById String?
-  closedAt   DateTime?
+  id                String                @id
+  contactId         String
+  state             SafeguardingFlagState @default(concern_logged)
+  urgency           SafeguardingUrgency   @default(routine)
+  dslUserId         String?
+  raisedById        String?
+  closedAt          DateTime?
   /// CLAUDE.md §42.2 — DSL acknowledgement / SLA tracking. `acknowledgedAt`
   /// is set when the assigned DSL takes any triage action that moves the
   /// flag out of `concern_logged`. Used by `safeguarding/sla-escalator`.
@@ -885,7 +922,7 @@ model ReconciliationDiscrepancy {
 // -----------------------------------------------------------------------------
 
 model Lead {
-  id                   String  @id
+  id                   String    @id
   source               String
   rawPayload           Json
   email                String?
@@ -904,8 +941,8 @@ model Lead {
 
   /// CLAUDE.md §21 retention. Soft-delete sets `softDeletedAt`; the row is
   /// hard-deleted after `pendingHardDeleteAt` elapses (default 30d grace).
-  softDeletedAt        DateTime?
-  pendingHardDeleteAt  DateTime?
+  softDeletedAt       DateTime?
+  pendingHardDeleteAt DateTime?
 
   @@index([email])
   @@index([phoneE164])
@@ -913,18 +950,18 @@ model Lead {
 }
 
 model Task {
-  id          String     @id
-  title       String
-  description String?
-  status      TaskStatus @default(open)
-  assigneeId  String?
-  familyId    String?
+  id            String     @id
+  title         String
+  description   String?
+  status        TaskStatus @default(open)
+  assigneeId    String?
+  familyId      String?
   /// Optional Contact linkage (CLAUDE.md §13 — Asana sync stores the CRM
   /// contact id in the `crm_contact_id` custom field on the Asana task).
-  contactId   String?
-  dueAt       DateTime?
+  contactId     String?
+  dueAt         DateTime?
   /// Asana task linkage (CLAUDE.md §13). Unique when set.
-  asanaTaskId String?
+  asanaTaskId   String?
   /// Last writer attribution: "crm", "asana", or a user id. Used to avoid
   /// echo loops when both sides update the same field in quick succession.
   lastWrittenBy String?
@@ -975,8 +1012,8 @@ model Tender {
   updatedById String?
   deletedAt   DateTime?
 
-  contracts    LAContract[]
-  interactions Interaction[]    @relation("TenderInteractions")
+  contracts     LAContract[]
+  interactions  Interaction[]        @relation("TenderInteractions")
   draftRequests TenderDraftRequest[]
 
   @@index([state])
@@ -997,8 +1034,8 @@ model TenderDraftRequest {
   signoffState    String   @default("pending")
   requesterId     String
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
 
@@ -1033,35 +1070,35 @@ model LAContract {
   updatedById String?
   deletedAt   DateTime?
 
-  tender       Tender?              @relation(fields: [tenderId], references: [id])
+  tender       Tender?            @relation(fields: [tenderId], references: [id])
   families     Family[]
   invoices     LAInvoice[]
   reports      LAProgressReport[]
-  interactions Interaction[]        @relation("LAContractInteractions")
+  interactions Interaction[]      @relation("LAContractInteractions")
 
   @@index([laName])
   @@index([retentionPolicyId])
 }
 
 model LAInvoice {
-  id              String    @id
-  contractId      String
+  id               String    @id
+  contractId       String
   /// Invoice covers a learner-Family for a given period.
-  familyId        String?
-  reference       String    @unique
+  familyId         String?
+  reference        String    @unique
   /// draft | sent | paid | disputed | written_off
-  state           String    @default("draft")
-  amountMinor     Int
+  state            String    @default("draft")
+  amountMinor      Int
   /// Period the invoice covers.
-  periodStart     DateTime?
-  periodEnd       DateTime?
+  periodStart      DateTime?
+  periodEnd        DateTime?
   /// LA purchase order number captured at send time.
-  poNumber        String?
+  poNumber         String?
   /// LA payment reference captured at paid time.
   paymentReference String?
-  issuedAt        DateTime
-  sentAt          DateTime?
-  paidAt          DateTime?
+  issuedAt         DateTime
+  sentAt           DateTime?
+  paidAt           DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -1090,8 +1127,8 @@ model LAProgressReport {
   signedAt      DateTime?
   pdfS3Key      String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
 
@@ -1127,18 +1164,18 @@ model APPlacement {
 // -----------------------------------------------------------------------------
 
 model MandateIntent {
-  id                 String  @id
-  familyId           String
-  billingContactId   String
-  idempotencyKey     String  @unique
-  redirectFlowId     String?
-  redirectUrl        String?
-  status             String  @default("pending")
+  id               String  @id
+  familyId         String
+  billingContactId String
+  idempotencyKey   String  @unique
+  redirectFlowId   String?
+  redirectUrl      String?
+  status           String  @default("pending")
   // Resolved GoCardless mandate id once the redirect flow completes.
-  gcMandateId        String?
+  gcMandateId      String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
 
@@ -1250,7 +1287,7 @@ model SlackPost {
 }
 
 model AsanaWebhook {
-  id            String   @id
+  id            String @id
   projectId     String
   /// Secret Asana sends in the X-Hook-Secret header on creation; we echo it
   /// back to complete the handshake and store it for subsequent payload
@@ -1342,7 +1379,7 @@ model DriftSample {
 // One row per outbound Gmail send. The unique key is (threadId, requestId)
 // — replaying the same tRPC mutation must not send twice.
 model OutboundEmailIntent {
-  id             String  @id
+  id             String   @id
   agentId        String
   threadId       String
   requestId      String
@@ -1352,7 +1389,7 @@ model OutboundEmailIntent {
   ccAddresses    String[] @default([])
   bccAddresses   String[] @default([])
   /// pending | sent | failed
-  status         String  @default("pending")
+  status         String   @default("pending")
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1367,7 +1404,7 @@ model OutboundEmailIntent {
 model GmailToken {
   /// User.id. Legacy refresh-token table; ADR 0012 migrated active rows to
   /// EncryptedField via User.gmailRefreshTokenCipherId. Kept for fallback.
-  agentId         String   @id
+  agentId         String    @id
   tokenCiphertext Bytes
   tokenIv         Bytes
   dekCiphertext   Bytes
