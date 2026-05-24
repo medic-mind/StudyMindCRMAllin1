@@ -52,6 +52,7 @@ export const familyRouter = router({
               id: true,
               name: true,
               state: true,
+              stageId: true,
               billingParty: true,
               churnScore: true,
               updatedAt: true,

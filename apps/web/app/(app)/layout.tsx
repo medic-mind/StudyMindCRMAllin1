@@ -36,7 +36,17 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
     { href: '/', label: 'Dashboard' },
     { href: '/inbox', label: 'Inbox' },
     { href: '/contacts', label: 'Contacts' },
-    { href: '/pipeline', label: 'Pipeline' },
+    {
+      href: '/pipeline',
+      label: 'Pipeline',
+      children:
+        role === 'ceo' || role === 'senior_manager'
+          ? [
+              { href: '/pipeline', label: 'Board' },
+              { href: '/pipeline/manage', label: 'Manage stages' },
+            ]
+          : undefined,
+    },
     { href: '/tasks', label: 'Tasks' },
     {
       href: '/finance',
