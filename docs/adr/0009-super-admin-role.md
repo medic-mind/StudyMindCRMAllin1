@@ -1,6 +1,8 @@
+**Status: SUPERSEDED — see ADR 0014.**
+
 # ADR 0009: Super-admin role above admin
 
-- Status: Accepted
+- Status: Superseded by ADR 0014 (2026-05-24)
 - Date: 2026-05-09
 
 ## Context
