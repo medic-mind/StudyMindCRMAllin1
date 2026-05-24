@@ -34,12 +34,6 @@ const PipelineListInput = z.object({
   perStageLimit: z.number().min(1).max(200).default(100),
 })
 
-const PipelineTransitionInput = z.object({
-  familyId: z.string(),
-  toState: z.enum(FAMILY_STATES),
-  reason: z.string().trim().min(3).max(2000),
-})
-
 export const familyRouter = router({
   pipeline: router({
     /**
@@ -90,53 +84,10 @@ export const familyRouter = router({
         return rows
       }),
 
-    /**
-     * Explicit state transition. Writes a `family.state_changed` Interaction
-     * (CLAUDE.md §6.4 — transitions are never silent) and audits.
-     */
-    transition: auditedProcedure
-      .input(PipelineTransitionInput)
-      .mutation(async ({ ctx, input }) => {
-        const user = requireUser(ctx)
-        const before = await ctx.db.family.findFirst({
-          where: { id: input.familyId, deletedAt: null },
-          select: { id: true, state: true },
-        })
-        if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-        if (before.state === input.toState) {
-          throw new TRPCError({ code: 'CONFLICT', message: 'family already in target state' })
-        }
-        const updated = await ctx.db.$transaction(async (tx) => {
-          const next = await tx.family.update({
-            where: { id: input.familyId },
-            data: { state: input.toState, updatedById: user.id },
-          })
-          await tx.interaction.create({
-            data: {
-              id: newId(),
-              type: 'family_state_changed',
-              familyId: input.familyId,
-              occurredAt: new Date(),
-              summary: `State: ${before.state} → ${input.toState}`,
-              payload: {
-                previousState: before.state,
-                newState: input.toState,
-                reason: input.reason,
-              },
-              createdById: user.id,
-              updatedById: user.id,
-            },
-          })
-          return next
-        })
-        await ctx.audit({
-          action: 'family.state_changed',
-          target: { type: 'Family', id: updated.id },
-          before: { state: before.state },
-          after: { state: updated.state, reason: input.reason },
-        })
-        return { id: updated.id, state: updated.state }
-      }),
+    // ADR 0015: the enum-based `transition` mutation has been replaced by
+    // `pipeline.family.move`. The list and recentTransitions queries remain
+    // because the at-risk derivation and reports still surface the legacy
+    // family_state_changed interactions written by the at-risk job.
   }),
 
   create: auditedProcedure

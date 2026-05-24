@@ -9,8 +9,6 @@ import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
-import { PipelineTransitionMenu } from './PipelineTransitionMenu'
-
 type FamilyState = 'lead' | 'trial' | 'active' | 'at_risk' | 'churned'
 
 interface StageDef {
@@ -153,12 +151,6 @@ export default async function PipelinePage() {
                           <p className="mt-1.5 font-mono text-[10px] tabular-nums text-neutral-500">
                             {formatRelativeTime(new Date(f.updatedAt), now)}
                           </p>
-                          <div className="mt-2">
-                            <PipelineTransitionMenu
-                              familyId={f.id}
-                              currentState={state}
-                            />
-                          </div>
                         </li>
                       )
                     })}

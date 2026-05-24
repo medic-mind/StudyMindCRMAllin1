@@ -13,6 +13,7 @@ import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
 import { notificationsRouter } from './routers/notifications'
 import { oauthRouter } from './routers/oauth'
+import { pipelineRouter } from './routers/pipeline'
 import { reportsRouter } from './routers/reports'
 import { searchRouter } from './routers/search'
 import { taskRouter } from './routers/task'
@@ -29,6 +30,7 @@ export const appRouter = router({
   interaction: interactionRouter,
   notifications: notificationsRouter,
   oauth: oauthRouter,
+  pipeline: pipelineRouter,
   reports: reportsRouter,
   search: searchRouter,
   task: taskRouter,
