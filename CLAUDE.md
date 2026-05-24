@@ -203,7 +203,9 @@ Discrepancies become `ReconciliationDiscrepancy` rows on the finance dashboard. 
 
 ### 6.4 Lifecycle states (the ones that matter)
 
-**Family lifecycle.** `lead → trial → active → at_risk → churned`. Transitions are explicit; no row silently moves between states. The transition writes an Interaction of type `family.state_changed` with the previous state, new state, actor (user or `system`), and reason.
+**Family lifecycle.** Operator-managed dynamic pipeline (ADR 0015). Each Family points at a `PipelineStage` row via `Family.stageId`. CEO and Senior Manager can create, rename, recolour, reorder, archive (with mandatory family-reassignment when occupied), and restore stages from `/pipeline/manage`. Sales Executive and above can move a Family between stages via the per-card "Move to…" dropdown on the kanban. Each move writes a `family_pipeline_moved` Interaction (with `{fromStageId, toStageId, fromState, toState}`) and an audit row in one transaction — transitions are never silent.
+
+The legacy `FamilyState` enum (`lead | trial | active | at_risk | churned`) is **deprecated but retained** per §19 forward-only. `moveFamily` mirrors the new stage name back into `Family.state` on a best-effort basis when the name maps to a known enum value (`mirrorStateForStage` in `packages/core/pipeline/stages.ts`). Consumers that still read `state` — the at-risk derivation, the churn-score job, the reconciliation engine — keep working; for custom stage names the column becomes stale and those derivations reflect the family's last legacy state until a follow-up PR retires the column.
 
 **Subscription state (Stripe mirror).** We mirror Stripe statuses verbatim: `trialing | active | past_due | canceled | unpaid | paused | incomplete | incomplete_expired`. Our `at_risk` Family flag is derived (`past_due` for >3 days, or two consecutive failed Direct Debits, or churn score above threshold).
 
@@ -780,7 +782,7 @@ Violations of an SLO open a ticket automatically. Three consecutive quarter-miss
 
 ## 27. API design conventions (tRPC)
 
-**Naming.** Procedures are namespaced by domain: `contact.list`, `contact.get`, `contact.update`, `family.merge`, `finance.refund.create`. The verbs are `list`, `get`, `create`, `update`, `delete`, `restore`, `archive`, plus domain verbs (`merge`, `flag`, `assign`).
+**Naming.** Procedures are namespaced by domain: `contact.list`, `contact.get`, `contact.update`, `family.merge`, `finance.refund.create`, `pipeline.stages.list`, `pipeline.stages.create`, `pipeline.stages.reorder`, `pipeline.stages.archive`, `pipeline.family.move`. The verbs are `list`, `get`, `create`, `update`, `delete`, `restore`, `archive`, plus domain verbs (`merge`, `flag`, `assign`, `move`, `reorder`).
 
 **Inputs and outputs.** Every procedure declares Zod input and output schemas. Outputs are view-models, not raw rows. The same input schema is used by the matching React Hook Form so the client and server validate the same shape.
 
@@ -997,6 +999,9 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a webhook event handler | `packages/integrations/<svc>/events/<event-name>.ts` plus a fixture |
 | Register a new event name | `packages/core/events/registry.ts` (Section 45) |
 | Add a domain invariant | `packages/core/<domain>/invariants.ts` with a property-based test |
+| Manage pipeline stages | `apps/web/app/(app)/pipeline/manage/page.tsx` + `ManageStagesTable.tsx` |
+| Add a pipeline stage helper | `packages/core/src/pipeline/stages.ts` |
+| Change how Family.stageId is written | `packages/core/src/family/pipeline.ts` (`moveFamily`) |
 
 ---
 

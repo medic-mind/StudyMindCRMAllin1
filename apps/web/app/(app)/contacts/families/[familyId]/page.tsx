@@ -7,6 +7,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { resolveStageColor } from '@/app/(app)/pipeline/stage-color'
 import { ChangeBillingContactButton } from '@/components/contact/ChangeBillingContactButton'
 import { ReconcileNowButton } from '@/components/finance/ReconcileNowButton'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
@@ -39,16 +40,41 @@ export default async function FamilyDetailPage({
           <h1 className="text-2xl font-semibold tracking-tight">
             {data.name ?? billingName}
           </h1>
-          <p className="text-sm text-neutral-600">
-            {data.billingParty === 'local_authority'
-              ? 'Billed to a Local Authority'
-              : 'Billed to family'}{' '}
-            · State: <span className="font-mono">{data.state}</span>
+          <p className="flex flex-wrap items-center gap-1.5 text-sm text-neutral-600">
+            <span>
+              {data.billingParty === 'local_authority'
+                ? 'Billed to a Local Authority'
+                : 'Billed to family'}
+            </span>
+            <span>·</span>
+            {data.stage ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span
+                  className="inline-block size-2 rounded-full"
+                  style={{ backgroundColor: resolveStageColor(data.stage.color) }}
+                  aria-hidden
+                />
+                <span className="font-medium text-neutral-800">
+                  {data.stage.name}
+                </span>
+                {data.stage.isClosed ? (
+                  <span className="rounded bg-neutral-200 px-1.5 py-0.5 text-[10px] uppercase text-neutral-700">
+                    Closed
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-amber-700">Unassigned stage</span>
+            )}
             {data.churnScore !== null ? (
               <>
-                {' '}
-                · Churn score:{' '}
-                <span className="font-mono">{data.churnScore.toFixed(2)}</span>
+                <span>·</span>
+                <span>
+                  Churn score:{' '}
+                  <span className="font-mono">
+                    {data.churnScore.toFixed(2)}
+                  </span>
+                </span>
               </>
             ) : null}
           </p>

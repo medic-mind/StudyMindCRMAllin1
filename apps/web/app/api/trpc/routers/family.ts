@@ -96,12 +96,22 @@ export const familyRouter = router({
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       const id = newId()
+      // ADR 0015: assign the new family to the first non-closed, lowest-
+      // position stage by default. If no active stages exist yet, leave
+      // stageId null — the family will surface in the "Unassigned" tray
+      // on the pipeline kanban.
+      const defaultStage = await ctx.db.pipelineStage.findFirst({
+        where: { archivedAt: null, isClosed: false },
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true },
+      })
       const family = await ctx.db.family.create({
         data: {
           id,
           name: input.name ?? null,
           billingParty: input.billingParty,
           billingContactId: input.billingContactId ?? null,
+          stageId: defaultStage?.id ?? null,
           createdById: user.id,
           updatedById: user.id,
         },
@@ -333,6 +343,11 @@ export const familyRouter = router({
           billingContact: {
             select: { id: true, firstName: true, lastName: true, email: true },
           },
+          // ADR 0015: surface the dynamic pipeline stage on the family
+          // detail header instead of the legacy `state` enum.
+          stage: {
+            select: { id: true, name: true, color: true, isClosed: true },
+          },
         },
       })
       if (!f) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -366,6 +381,14 @@ export const familyRouter = router({
         id: f.id,
         name: f.name,
         state: f.state,
+        stage: f.stage
+          ? {
+              id: f.stage.id,
+              name: f.stage.name,
+              color: f.stage.color,
+              isClosed: f.stage.isClosed,
+            }
+          : null,
         billingParty: f.billingParty,
         churnScore: f.churnScore,
         billingContact: f.billingContact
