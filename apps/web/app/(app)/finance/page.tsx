@@ -96,8 +96,8 @@ export default async function FinancePage() {
         <PageHeader title="Finance" />
         <PageBody>
           <p className="text-sm text-neutral-600">
-            You need the finance or admin role to view reconciliation
-            discrepancies.
+            You need the Manager, Senior Manager, or CEO role to view
+            reconciliation discrepancies.
           </p>
         </PageBody>
       </>
