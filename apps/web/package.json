@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "sh ../../scripts/deploy/start-web.sh",
+    "start:next-only": "next start --hostname 0.0.0.0",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "echo 'no tests yet'"
