@@ -42,7 +42,7 @@ function hashToken(token: string): string {
 export interface SeedResult {
   userId: string
   email: string
-  status: 'password-set' | 'needs-link' | 'already-seeded'
+  status: 'password-set' | 'password-reseeded' | 'needs-link' | 'already-seeded'
   inviteUrl?: string
   alreadySuperAdmin: boolean
 }
@@ -104,9 +104,18 @@ export async function seedInitialSuperAdmin(): Promise<SeedResult> {
   let status: SeedResult['status']
   let inviteUrl: string | undefined
 
-  if (password && !user.passwordHash) {
-    // Only set the password when this user has no hash yet — never overwrite
-    // a password the operator has chosen via /account/change-password.
+  // Operator escape hatch: set FORCE_RESEED_SUPER_ADMIN=true in the env to
+  // overwrite the existing password with the seeded one. Use sparingly — this
+  // bypasses the normal "don't clobber an operator-chosen password" guard.
+  // Intended for the very first deploys when something has gone sideways and
+  // sign-in is failing with INVALID_CREDENTIALS despite the seed having
+  // (allegedly) run successfully.
+  const forceReseed = process.env['FORCE_RESEED_SUPER_ADMIN'] === 'true'
+
+  if (password && (!user.passwordHash || forceReseed)) {
+    // Only set the password when this user has no hash yet, OR when the
+    // operator explicitly opts in to a reseed. Never silently overwrite a
+    // password the operator has chosen via /account/change-password.
     const passwordHash = await bcrypt.hash(password, BCRYPT_COST)
     await db.user.update({
       where: { id: user.id },
@@ -121,7 +130,7 @@ export async function seedInitialSuperAdmin(): Promise<SeedResult> {
         lockedUntil: null,
       },
     })
-    status = 'password-set'
+    status = forceReseed && user.passwordHash ? 'password-reseeded' : 'password-set'
   } else if (!user.passwordHash) {
     const rawToken = generateToken()
     await db.emailVerificationToken.create({
@@ -172,8 +181,10 @@ async function main(): Promise<void> {
     `  role:     super_admin ${result.alreadySuperAdmin ? '(already present)' : '(granted)'}`,
   )
   if (result.status === 'password-set') {
-    console.log('  status:   password set from INITIAL_SUPER_ADMIN_PASSWORD')
-    console.log('  next:     user must reset their password on first sign-in')
+    console.log('  status:   password set from INITIAL_SUPER_ADMIN_PASSWORD (or seeded default)')
+  } else if (result.status === 'password-reseeded') {
+    console.log('  status:   password OVERWRITTEN — FORCE_RESEED_SUPER_ADMIN was true')
+    console.log('  next:     unset FORCE_RESEED_SUPER_ADMIN in env to stop overwriting on every deploy')
   } else if (result.status === 'needs-link') {
     console.log('  status:   no password set — invite link below (valid 7 days)')
     console.log(`  link:     ${result.inviteUrl}`)
