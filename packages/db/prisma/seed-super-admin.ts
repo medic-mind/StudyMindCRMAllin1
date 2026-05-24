@@ -1,213 +1,110 @@
-// Seed the initial super_admin (Aashir by default). Idempotent.
-// CLAUDE.md §20, ADR 0009, ADR 0010.
+// Super-admin seed — kept deliberately simple.
 //
-// Two paths:
-//   1. INITIAL_SUPER_ADMIN_PASSWORD set → bcrypt-hash and store the
-//      password, mark email verified, set mustResetPassword=true so the
-//      user picks their own on first sign-in.
-//   2. Otherwise → leave passwordHash null, issue an EmailVerificationToken
-//      with 7-day TTL, and print the accept-invite link to stdout for
-//      out-of-band delivery.
+// Rule: every deploy, the super-admin row gets the password from env and
+// the password is ALWAYS overwritten. Operator owns the SUPER_ADMIN_PASSWORD
+// env var; there is no idempotency guard to fight, no force-reseed flag,
+// no email-link branch, no mustResetPassword gate.
 //
-// Re-running is safe: an existing super_admin RoleAssignment is left in
-// place, an existing User row is patched (not duplicated).
+// To rotate the password: set SUPER_ADMIN_PASSWORD to a new value in Railway
+// env and redeploy. To pin it: leave the env var set.
 //
-// This script is intentionally self-contained — it does not import from
-// @studymind/audit or @studymind/core to avoid a workspace dependency
-// cycle (those packages depend on @studymind/db). Bcrypt + sha256 are
-// inlined; the audit row is written directly to the AuditLogEntry table.
-
-import { createHash, randomBytes } from 'node:crypto'
+// Env vars (all optional):
+//   SUPER_ADMIN_EMAIL    default 'aashir@studymind.co.uk'
+//   SUPER_ADMIN_NAME     default 'Aashir'
+//   SUPER_ADMIN_PASSWORD default 'Wenger20'
+//
+// This script intentionally does not import @studymind/audit or @studymind/core
+// to avoid a workspace dependency cycle (both depend on @studymind/db).
 
 import { createId } from '@paralleldrive/cuid2'
 import bcrypt from 'bcryptjs'
 
 import { db } from '../src/index'
 
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const BCRYPT_COST = 12
 
-function generateToken(): string {
-  return randomBytes(32)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-}
+const EMAIL = (
+  process.env['SUPER_ADMIN_EMAIL'] ??
+  process.env['INITIAL_SUPER_ADMIN_EMAIL'] ??
+  'aashir@studymind.co.uk'
+)
+  .trim()
+  .toLowerCase()
 
-function hashToken(token: string): string {
-  return createHash('sha256').update(token, 'utf8').digest('hex')
-}
+const NAME = (
+  process.env['SUPER_ADMIN_NAME'] ?? process.env['INITIAL_SUPER_ADMIN_NAME'] ?? 'Aashir'
+).trim()
+
+const PASSWORD =
+  process.env['SUPER_ADMIN_PASSWORD'] ?? process.env['INITIAL_SUPER_ADMIN_PASSWORD'] ?? 'Wenger20'
 
 export interface SeedResult {
   userId: string
   email: string
-  status: 'password-set' | 'password-reseeded' | 'needs-link' | 'already-seeded'
-  inviteUrl?: string
-  alreadySuperAdmin: boolean
+  alreadyExisted: boolean
 }
 
 export async function seedInitialSuperAdmin(): Promise<SeedResult> {
-  const email = (
-    process.env['INITIAL_SUPER_ADMIN_EMAIL'] ?? 'aashir@studymind.co.uk'
-  )
-    .trim()
-    .toLowerCase()
-  const name = (process.env['INITIAL_SUPER_ADMIN_NAME'] ?? 'Aashir').trim()
-  // Fallback password baked in so the first deploy of a fresh project can sign
-  // in without any extra env-var fiddling. Pair with mustResetPassword=false
-  // (set further down) so the operator can use it immediately and rotate at
-  // their own pace via /account/change-password. This is weak by §44.2
-  // standards — rotate as soon as you have a real password manager handy.
-  const password = process.env['INITIAL_SUPER_ADMIN_PASSWORD'] ?? 'Wenger20'
-  const appUrl = (
-    process.env['NEXT_PUBLIC_APP_URL'] ??
-    process.env['APP_URL'] ??
-    'http://localhost:3000'
-  ).replace(/\/$/, '')
+  const passwordHash = await bcrypt.hash(PASSWORD, BCRYPT_COST)
+  const existing = await db.user.findUnique({ where: { email: EMAIL } })
 
-  // Find or create the User row.
-  let user = await db.user.findUnique({ where: { email } })
-  if (!user) {
-    user = await db.user.create({
-      data: {
-        id: createId(),
-        email,
-        name,
-        passwordHash: null,
-        emailVerifiedAt: null,
-        mustResetPassword: false,
-      },
-    })
-  } else if (!user.name && name) {
-    user = await db.user.update({
-      where: { id: user.id },
-      data: { name },
-    })
-  }
-
-  // Idempotently ensure a super_admin RoleAssignment exists.
-  const existingRole = await db.roleAssignment.findUnique({
-    where: { userId_role: { userId: user.id, role: 'super_admin' } },
-  })
-  const alreadySuperAdmin = !!existingRole
-  if (!existingRole) {
-    await db.roleAssignment.create({
-      data: {
-        id: createId(),
-        userId: user.id,
-        role: 'super_admin',
-      },
-    })
-  }
-
-  let status: SeedResult['status']
-  let inviteUrl: string | undefined
-
-  // Operator escape hatch: set FORCE_RESEED_SUPER_ADMIN=true in the env to
-  // overwrite the existing password with the seeded one. Use sparingly — this
-  // bypasses the normal "don't clobber an operator-chosen password" guard.
-  // Intended for the very first deploys when something has gone sideways and
-  // sign-in is failing with INVALID_CREDENTIALS despite the seed having
-  // (allegedly) run successfully.
-  const forceReseed = process.env['FORCE_RESEED_SUPER_ADMIN'] === 'true'
-
-  if (password && (!user.passwordHash || forceReseed)) {
-    // Only set the password when this user has no hash yet, OR when the
-    // operator explicitly opts in to a reseed. Never silently overwrite a
-    // password the operator has chosen via /account/change-password.
-    const passwordHash = await bcrypt.hash(password, BCRYPT_COST)
-    await db.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash,
-        emailVerifiedAt: new Date(),
-        // mustResetPassword=false: the operator can sign in with the seeded
-        // password and rotate when convenient. CLAUDE.md §44.2 still applies
-        // — this is a developer-convenience default for the very first deploy.
-        mustResetPassword: false,
-        failedSignInAttempts: 0,
-        lockedUntil: null,
-      },
-    })
-    status = forceReseed && user.passwordHash ? 'password-reseeded' : 'password-set'
-  } else if (!user.passwordHash) {
-    const rawToken = generateToken()
-    await db.emailVerificationToken.create({
-      data: {
-        id: createId(),
-        userId: user.id,
-        tokenHash: hashToken(rawToken),
-        expiresAt: new Date(Date.now() + INVITE_TTL_MS),
-      },
-    })
-    inviteUrl = `${appUrl}/accept-invite?token=${encodeURIComponent(rawToken)}&email=${encodeURIComponent(email)}`
-    status = 'needs-link'
-  } else {
-    status = 'already-seeded'
-  }
-
-  // Inline audit write — the regular writeAuditLogEntry helper lives in
-  // @studymind/audit which depends on @studymind/db, so we cannot import
-  // it from here without creating a cycle.
-  await db.auditLogEntry.create({
-    data: {
+  const user = await db.user.upsert({
+    where: { email: EMAIL },
+    update: {
+      passwordHash,
+      emailVerifiedAt: existing?.emailVerifiedAt ?? new Date(),
+      mustResetPassword: false,
+      failedSignInAttempts: 0,
+      lockedUntil: null,
+      deactivatedAt: null,
+      name: existing?.name ?? NAME,
+    },
+    create: {
       id: createId(),
-      actorId: null,
-      action: 'auth.super_admin_seeded',
-      targetType: 'User',
-      targetId: user.id,
-      requestId: null,
-      after: { email, status, alreadySuperAdmin },
+      email: EMAIL,
+      name: NAME,
+      passwordHash,
+      emailVerifiedAt: new Date(),
+      mustResetPassword: false,
     },
   })
 
-  return {
-    userId: user.id,
-    email,
-    status,
-    inviteUrl,
-    alreadySuperAdmin,
-  }
+  await db.roleAssignment.upsert({
+    where: { userId_role: { userId: user.id, role: 'super_admin' } },
+    update: {},
+    create: {
+      id: createId(),
+      userId: user.id,
+      role: 'super_admin',
+    },
+  })
+
+  return { userId: user.id, email: EMAIL, alreadyExisted: existing !== null }
 }
 
-async function main(): Promise<void> {
-  const result = await seedInitialSuperAdmin()
-  /* eslint-disable no-console */
-  console.log('---')
-  console.log('Initial super_admin seed')
-  console.log(`  user:     ${result.email} (${result.userId})`)
-  console.log(
-    `  role:     super_admin ${result.alreadySuperAdmin ? '(already present)' : '(granted)'}`,
-  )
-  if (result.status === 'password-set') {
-    console.log('  status:   password set from INITIAL_SUPER_ADMIN_PASSWORD (or seeded default)')
-  } else if (result.status === 'password-reseeded') {
-    console.log('  status:   password OVERWRITTEN — FORCE_RESEED_SUPER_ADMIN was true')
-    console.log('  next:     unset FORCE_RESEED_SUPER_ADMIN in env to stop overwriting on every deploy')
-  } else if (result.status === 'needs-link') {
-    console.log('  status:   no password set — invite link below (valid 7 days)')
-    console.log(`  link:     ${result.inviteUrl}`)
-  } else {
-    console.log('  status:   account already has a password — no changes')
-  }
-  console.log('---')
-  /* eslint-enable no-console */
-}
-
-const isDirect = (() => {
+function isMain(): boolean {
   const argv1 = process.argv[1] ?? ''
   return argv1.endsWith('seed-super-admin.ts') || argv1.endsWith('seed-super-admin.js')
-})()
+}
 
-if (isDirect) {
-  main()
-    .then(async () => {
+if (isMain()) {
+  seedInitialSuperAdmin()
+    .then(async (r) => {
+      /* eslint-disable no-console */
+      console.log('---')
+      console.log('super_admin seeded')
+      console.log(`  email:    ${r.email}`)
+      console.log(`  user id:  ${r.userId}`)
+      console.log(`  existed:  ${r.alreadyExisted ? 'yes (password overwritten)' : 'no (created)'}`)
+      console.log(`  password: env-controlled (${PASSWORD.length} chars)`)
+      console.log('---')
+      /* eslint-enable no-console */
       await db.$disconnect()
+      process.exit(0)
     })
-    .catch(async (err) => {
-      // eslint-disable-next-line no-console
-      console.error(err)
+    .catch(async (e: unknown) => {
+      /* eslint-disable-next-line no-console */
+      console.error('super_admin seed failed:', e)
       await db.$disconnect()
       process.exit(1)
     })

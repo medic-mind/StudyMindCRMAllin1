@@ -1,9 +1,9 @@
-// Tests for the initial super_admin seed. Verifies idempotency and that
-// the password vs link paths behave as documented. CLAUDE.md §20.
+// Tests for the simplified super-admin seed. The seed is intentionally
+// simple: always upsert, always set the password from env, always ensure
+// the super_admin role. No idempotency dance, no email-link flow.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Mock the prisma client this script imports.
 vi.mock('../src/index', () => {
   type U = {
     id: string
@@ -14,156 +14,129 @@ vi.mock('../src/index', () => {
     mustResetPassword: boolean
     failedSignInAttempts: number
     lockedUntil: Date | null
+    deactivatedAt: Date | null
   }
   type RA = { id: string; userId: string; role: string }
-  type EVT = { id: string; userId: string; tokenHash: string; expiresAt: Date; usedAt: Date | null }
 
-  const state: { users: U[]; ras: RA[]; tokens: EVT[] } = {
-    users: [],
-    ras: [],
-    tokens: [],
-  }
+  const state: { users: U[]; ras: RA[] } = { users: [], ras: [] }
 
   const db = {
     user: {
       findUnique: ({ where }: { where: { email?: string; id?: string } }) =>
         Promise.resolve(
-          (where.email
-            ? state.users.find((u) => u.email === where.email)
-            : state.users.find((u) => u.id === where.id)) ?? null,
+          state.users.find(
+            (u) => (where.email && u.email === where.email) || (where.id && u.id === where.id),
+          ) ?? null,
         ),
-      create: ({ data }: { data: Partial<U> & { id: string; email: string } }) => {
-        const u: U = {
-          id: data.id,
-          email: data.email,
-          name: data.name ?? null,
-          passwordHash: data.passwordHash ?? null,
-          emailVerifiedAt: data.emailVerifiedAt ?? null,
-          mustResetPassword: data.mustResetPassword ?? false,
-          failedSignInAttempts: 0,
-          lockedUntil: null,
+      upsert: ({
+        where,
+        update,
+        create,
+      }: {
+        where: { email: string }
+        update: Partial<U>
+        create: U
+      }) => {
+        const existing = state.users.find((u) => u.email === where.email)
+        if (existing) {
+          Object.assign(existing, update)
+          return Promise.resolve(existing)
         }
-        state.users.push(u)
-        return Promise.resolve(u)
-      },
-      update: ({ where, data }: { where: { id: string }; data: Partial<U> }) => {
-        const u = state.users.find((x) => x.id === where.id)
-        if (u) Object.assign(u, data)
-        return Promise.resolve(u)
+        state.users.push(create)
+        return Promise.resolve(create)
       },
     },
     roleAssignment: {
-      findUnique: ({
+      upsert: ({
         where,
+        create,
       }: {
         where: { userId_role: { userId: string; role: string } }
-      }) =>
-        Promise.resolve(
-          state.ras.find(
-            (r) =>
-              r.userId === where.userId_role.userId && r.role === where.userId_role.role,
-          ) ?? null,
-        ),
-      create: ({ data }: { data: { id: string; userId: string; role: string } }) => {
-        state.ras.push({ id: data.id, userId: data.userId, role: data.role })
-        return Promise.resolve(data)
-      },
-    },
-    emailVerificationToken: {
-      create: ({
-        data,
-      }: {
-        data: { id: string; userId: string; tokenHash: string; expiresAt: Date }
+        update: Record<string, unknown>
+        create: RA
       }) => {
-        state.tokens.push({ ...data, usedAt: null })
-        return Promise.resolve(data)
+        const existing = state.ras.find(
+          (r) => r.userId === where.userId_role.userId && r.role === where.userId_role.role,
+        )
+        if (existing) return Promise.resolve(existing)
+        state.ras.push(create)
+        return Promise.resolve(create)
       },
     },
-    auditLogEntry: {
-      create: () => Promise.resolve({ id: 'a' }),
+    __state: state,
+    __reset: () => {
+      state.users.length = 0
+      state.ras.length = 0
     },
     $disconnect: () => Promise.resolve(),
   }
-
-  return { db, __state: state }
+  return { db }
 })
 
-import { seedInitialSuperAdmin } from './seed-super-admin'
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const mod = (await import('../src/index')) as any
+describe('seedInitialSuperAdmin (simplified)', () => {
+  type MockDb = {
+    __reset: () => void
+    __state: {
+      users: Array<{ id: string; passwordHash: string }>
+      ras: unknown[]
+    }
+  }
+  let mod: { db: MockDb }
 
-describe('seedInitialSuperAdmin', () => {
-  beforeEach(() => {
-    mod.__state.users.length = 0
-    mod.__state.ras.length = 0
-    mod.__state.tokens.length = 0
-    delete process.env['INITIAL_SUPER_ADMIN_PASSWORD']
+  beforeEach(async () => {
+    mod = (await import('../src/index')) as unknown as { db: MockDb }
+    mod.db.__reset()
+    delete process.env['SUPER_ADMIN_EMAIL']
+    delete process.env['SUPER_ADMIN_PASSWORD']
     delete process.env['INITIAL_SUPER_ADMIN_EMAIL']
-    delete process.env['INITIAL_SUPER_ADMIN_NAME']
-  })
-  afterEach(() => {
-    vi.clearAllMocks()
+    delete process.env['INITIAL_SUPER_ADMIN_PASSWORD']
+    vi.resetModules()
   })
 
-  it('creates a User, grants super_admin, and bakes the default password on first run', async () => {
-    // No INITIAL_SUPER_ADMIN_PASSWORD env → seed falls back to the baked
-    // default ("Wenger20") so a fresh deploy is signable-in immediately.
+  afterEach(() => {
+    delete process.env['SUPER_ADMIN_EMAIL']
+    delete process.env['SUPER_ADMIN_PASSWORD']
+  })
+
+  it('creates the super_admin row with default email when env unset', async () => {
+    const { seedInitialSuperAdmin } = await import('./seed-super-admin')
     const r = await seedInitialSuperAdmin()
     expect(r.email).toBe('aashir@studymind.co.uk')
-    expect(r.status).toBe('password-set')
-    expect(r.inviteUrl).toBeUndefined()
-    expect(r.alreadySuperAdmin).toBe(false)
-    expect(mod.__state.users).toHaveLength(1)
-    expect(mod.__state.users[0].passwordHash).toBeTruthy()
-    // mustResetPassword=false: operator can sign in with the baked password
-    // and rotate at their own pace.
-    expect(mod.__state.users[0].mustResetPassword).toBe(false)
-    expect(mod.__state.ras).toHaveLength(1)
-    expect(mod.__state.ras[0].role).toBe('super_admin')
-    // No EmailVerificationToken — link path is reserved for the explicit
-    // INITIAL_SUPER_ADMIN_PASSWORD='' opt-out.
-    expect(mod.__state.tokens).toHaveLength(0)
+    expect(r.alreadyExisted).toBe(false)
+    expect(mod.db.__state.users).toHaveLength(1)
+    expect(mod.db.__state.ras).toHaveLength(1)
   })
 
-  it('is idempotent — re-running does not duplicate the role assignment', async () => {
+  it('overwrites the existing password on re-run (no idempotency guard)', async () => {
+    const { seedInitialSuperAdmin } = await import('./seed-super-admin')
+    const first = await seedInitialSuperAdmin()
+    const firstHash = mod.db.__state.users[0]!.passwordHash
+
+    process.env['SUPER_ADMIN_PASSWORD'] = 'DifferentPassword42'
+    vi.resetModules()
+    const { seedInitialSuperAdmin: seedAgain } = await import('./seed-super-admin')
+    const second = await seedAgain()
+    const secondHash = mod.db.__state.users[0]!.passwordHash
+
+    expect(second.userId).toBe(first.userId)
+    expect(second.alreadyExisted).toBe(true)
+    expect(secondHash).not.toBe(firstHash)
+    expect(mod.db.__state.ras).toHaveLength(1) // role not duplicated
+  })
+
+  it('honours SUPER_ADMIN_EMAIL override', async () => {
+    process.env['SUPER_ADMIN_EMAIL'] = 'someone-else@studymind.co.uk'
+    vi.resetModules()
+    const { seedInitialSuperAdmin } = await import('./seed-super-admin')
+    const r = await seedInitialSuperAdmin()
+    expect(r.email).toBe('someone-else@studymind.co.uk')
+  })
+
+  it('honours legacy INITIAL_SUPER_ADMIN_PASSWORD env name', async () => {
+    process.env['INITIAL_SUPER_ADMIN_PASSWORD'] = 'LegacyName123'
+    vi.resetModules()
+    const { seedInitialSuperAdmin } = await import('./seed-super-admin')
     await seedInitialSuperAdmin()
-    const second = await seedInitialSuperAdmin()
-    expect(mod.__state.users).toHaveLength(1)
-    expect(mod.__state.ras).toHaveLength(1)
-    expect(second.alreadySuperAdmin).toBe(true)
-  })
-
-  it('honours INITIAL_SUPER_ADMIN_EMAIL and INITIAL_SUPER_ADMIN_NAME', async () => {
-    process.env['INITIAL_SUPER_ADMIN_EMAIL'] = 'someone@example.com'
-    process.env['INITIAL_SUPER_ADMIN_NAME'] = 'Some One'
-    const r = await seedInitialSuperAdmin()
-    expect(r.email).toBe('someone@example.com')
-    expect(mod.__state.users[0].name).toBe('Some One')
-  })
-
-  it('honours an explicit INITIAL_SUPER_ADMIN_PASSWORD over the baked default', async () => {
-    process.env['INITIAL_SUPER_ADMIN_PASSWORD'] = 'CorrectHorse9!Battery'
-    const r = await seedInitialSuperAdmin()
-    expect(r.status).toBe('password-set')
-    expect(mod.__state.users[0].passwordHash).toBeTruthy()
-    expect(mod.__state.users[0].mustResetPassword).toBe(false)
-    expect(mod.__state.users[0].emailVerifiedAt).toBeInstanceOf(Date)
-    expect(mod.__state.tokens).toHaveLength(0)
-  })
-
-  it('link-path opt-out: empty INITIAL_SUPER_ADMIN_PASSWORD issues an invite token with TTL ≈ 7 days', async () => {
-    // Explicit empty string disables the password set and falls back to the
-    // accept-invite link flow. Useful when an operator wants the first sign-
-    // in to come via email link instead of a baked credential.
-    process.env['INITIAL_SUPER_ADMIN_PASSWORD'] = ''
-    const before = Date.now()
-    const r = await seedInitialSuperAdmin()
-    expect(r.status).toBe('needs-link')
-    expect(mod.__state.users[0].passwordHash).toBeNull()
-    expect(mod.__state.tokens).toHaveLength(1)
-    const t = mod.__state.tokens[0]
-    const ttlMs = t.expiresAt.getTime() - before
-    expect(ttlMs).toBeGreaterThan(6.5 * 24 * 60 * 60 * 1000)
-    expect(ttlMs).toBeLessThan(7.5 * 24 * 60 * 60 * 1000)
+    expect(mod.db.__state.users).toHaveLength(1)
   })
 })
