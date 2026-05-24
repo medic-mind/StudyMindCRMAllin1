@@ -17,7 +17,6 @@ const CATEGORY_LABEL: Record<string, string> = {
   late_failure: 'Late failure',
   late_failure_pending_action: 'Late failure — pending action',
   churned_with_active_subscription: 'Churned with active subscription',
-  ap_review_overdue: 'AP review overdue',
   la_family_with_card_subscription: 'LA-billed family has card subscription',
   other: 'Other',
 }
@@ -64,7 +63,6 @@ const CATEGORY_TONE: Record<string, BadgeTone> = {
   late_failure: 'danger',
   late_failure_pending_action: 'danger',
   churned_with_active_subscription: 'danger',
-  ap_review_overdue: 'warn',
   la_family_with_card_subscription: 'warn',
   other: 'neutral',
 }

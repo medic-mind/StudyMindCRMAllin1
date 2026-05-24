@@ -35,7 +35,6 @@ async function buildSignals(familyId: string, now: Date): Promise<ChurnSignals> 
     where: { id: familyId },
     select: {
       state: true,
-      laContract: { select: { endDate: true } },
     },
   })
 
@@ -70,22 +69,12 @@ async function buildSignals(familyId: string, now: Date): Promise<ChurnSignals> 
     where: { familyId, resolvedAt: null },
   })
 
-  const laContractDaysRemaining = family.laContract?.endDate
-    ? Math.max(
-        0,
-        Math.floor(
-          (family.laContract.endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-        ),
-      )
-    : null
-
   return {
     daysSinceLastInteraction,
     paymentFailuresLast60d,
     missedSessionsLast60d,
     // Sentiment-from-inbound is built in a later slice; null is acceptable.
     sentimentMean: null,
-    laContractDaysRemaining,
     state: family.state,
     openDiscrepancies,
   }

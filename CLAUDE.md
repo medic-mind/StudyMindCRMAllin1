@@ -1119,46 +1119,6 @@ Referrals to a Local Authority are recorded as `safeguarding.la_referral` Intera
 
 ---
 
-## 43. LA tender and Alternative Provision contract workflow
-
-**Status: DEPRECATED — see ADR 0011.** The LA tender + AP placement
-workflow described below is not part of the current product. The Prisma
-models (`Tender`, `LAContract`, `APPlacement`, `LAInvoice`,
-`TenderDraftRequest`, `LAProgressReport`) remain in `prisma/schema.prisma`
-as orphans for historical reference and to keep migrations forward-only;
-they have no consumers and no UI surface. Do not add new code that
-references them. The section content below is retained as historical
-context for the eventual revival of this workflow.
-
-Local Authority commissioned work is the high-stakes side of the business. Tenders, contracts, and AP placements have their own lifecycle that touches finance, safeguarding, and reporting differently from PAYG families.
-
-### 43.1 Tender pipeline
-
-Tenders live as `Tender` rows distinct from `Family`. States: `identified → drafting → submitted → shortlisted → awarded | rejected | withdrawn`. A tender is owned by a named account lead; transitions write `tender.state_changed` Interactions and notify `#crm-tenders`.
-
-Tender drafting uses `packages/ai/prompts/tender/` with the StudyMind house style for statutory language. Drafts are always reviewed by the account lead and (for SEMH or EHCP-heavy work) the DSL before submission. The reviewing user signs off in-app; the signoff is audited.
-
-### 43.2 Contract setup on award
-
-On `awarded`, the system prompts to create:
-1. An `LAContract` with commissioner, contract value, term, billing cadence, hours envelope, retention overrides, and reporting cadence.
-2. One or more `Family` rows linked to the contract (one per learner placement). Billing flows to the LA, not the family.
-3. A `RetentionPolicy` override if the LA requires longer retention than our defaults (common for safeguarding notes; some LAs require 25 years from DOB).
-
-LA-billed Families have `billing_party = local_authority`. Stripe and GoCardless are not used; invoicing is via a separate `LAInvoice` flow with manual reconciliation against LA purchase orders.
-
-### 43.3 Reporting
-
-Most LA contracts require a monthly progress report per learner. The CRM generates a draft from delivered sessions, attendance, and tutor notes. The account lead edits and signs off. Reports are exported as PDF and stored in S3 under `la-reports/{contract_id}/{period}/`.
-
-A missed monthly report is a contract risk and is surfaced on the LA contracts dashboard 5 working days before the deadline.
-
-### 43.4 AP-specific rules
-
-Section 19 placements are time-limited and statutory. The system tracks `ap_start_date`, `ap_review_date`, and `ap_end_date` per placement. Missed reviews block invoicing on that placement and raise a `ReconciliationDiscrepancy` of category `ap_review_overdue`.
-
----
-
 ## 44. Threat model and security hardening
 
 This section is the working threat model. It is not exhaustive; it is the list of attacks we have decided to defend against by default.
@@ -1198,7 +1158,7 @@ Consistent event names make logs, audits, and timelines readable six months from
 
 Events are dot-namespaced lower snake case: `<domain>.<entity>.<verb_past_tense>`. Examples: `family.state_changed`, `payment.late_failed`, `safeguarding.concern_raised`, `ai.draft_generated`.
 
-Domains: `contact`, `family`, `interaction`, `payment`, `mandate`, `subscription`, `booking`, `tender`, `lacontract`, `safeguarding`, `audit`, `ai`, `system`.
+Domains: `contact`, `family`, `interaction`, `payment`, `mandate`, `subscription`, `booking`, `safeguarding`, `audit`, `ai`, `system`.
 
 ### 45.2 Three streams, one taxonomy
 

@@ -15,7 +15,6 @@ const sampleSignals: ChurnSignals = {
   paymentFailuresLast60d: 2,
   missedSessionsLast60d: 1,
   sentimentMean: -0.3,
-  laContractDaysRemaining: null,
   state: 'active',
   openDiscrepancies: 1,
 }

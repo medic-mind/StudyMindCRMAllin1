@@ -26,8 +26,6 @@ export interface ChurnSignals {
   missedSessionsLast60d: number
   /** Mean sentiment score from inbound messages, in [-1, 1]. Null when no signal. */
   sentimentMean: number | null
-  /** For LA-billed families, days remaining on the contract. Null otherwise. */
-  laContractDaysRemaining: number | null
   /** Family lifecycle state — lead/trial/active/at_risk/churned. */
   state: string
   /** Number of unresolved reconciliation discrepancies. */
@@ -51,8 +49,6 @@ Definitions:
 Calibration:
 - Strong negatives (multiple recent payment failures, long silence,
   unresolved discrepancies, negative sentiment) push above 0.6.
-- LA-billed Families near contract end without renewal signal warrant a
-  higher score even when payment is healthy.
 - Active engagement, recent successful payments, and positive sentiment
   pull score down.
 `.trim()
