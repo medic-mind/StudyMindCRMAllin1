@@ -20,6 +20,10 @@ export type BusinessErrorCode =
   | 'TOKEN_EXPIRED_OR_USED'
   | 'LAST_SUPER_ADMIN'
   | 'LAST_CEO'
+  | 'PIPELINE_STAGE_HAS_FAMILIES'
+  | 'PIPELINE_STAGE_NAME_TAKEN'
+  | 'PIPELINE_STAGE_NOT_FOUND'
+  | 'PIPELINE_STAGE_ARCHIVED'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

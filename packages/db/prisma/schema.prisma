@@ -79,6 +79,11 @@ enum InteractionType {
   booking
   ai_insight
   family_state_changed
+  // ADR 0015: dynamic pipeline. Emitted by `moveFamily` when an operator
+  // moves a Family from one PipelineStage to another. Legacy
+  // `family_state_changed` is also written when the new stage name maps
+  // back to a legacy FamilyState value.
+  family_pipeline_moved
   family_billing_contact_changed
   safeguarding_concern_raised
   safeguarding_la_referral

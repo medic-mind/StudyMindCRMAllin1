@@ -6,6 +6,10 @@
 -- forward-only rule; `moveFamily` mirrors a best-effort value into it when
 -- a stage name matches an old enum value.
 
+-- 0. Append the new InteractionType enum value. Postgres enums are
+-- append-only in a single migration per CLAUDE.md §19.
+ALTER TYPE "InteractionType" ADD VALUE IF NOT EXISTS 'family_pipeline_moved';
+
 -- 1. PipelineStage table.
 CREATE TABLE "PipelineStage" (
   "id"          TEXT NOT NULL,
