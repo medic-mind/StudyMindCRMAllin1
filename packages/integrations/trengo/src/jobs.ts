@@ -322,4 +322,7 @@ function buildSummary(name: TrengoEventName, channel: TrengoChannel | null): str
   }
 }
 
-export const FUNCTIONS = [trengoEventReceived] as const
+// ADR 0017: 90-day historic backfill on first-connect.
+import { BACKFILL_FUNCTIONS as TRENGO_BACKFILL_FUNCTIONS } from './backfill'
+
+export const FUNCTIONS = [trengoEventReceived, ...TRENGO_BACKFILL_FUNCTIONS] as const
