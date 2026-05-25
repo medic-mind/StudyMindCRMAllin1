@@ -115,6 +115,9 @@ enum InteractionType {
   lacontract_progress_report_signed
   ap_review_overdue
   tutor_session_note
+  // ADR 0018: multi-board cards. Emitted by `moveCard` when an operator
+  // moves a Card between stages on a board.
+  card_moved
 }
 
 enum ContactKind {
@@ -396,6 +399,7 @@ model Contact {
   interactions      Interaction[]      @relation("ContactInteractions")
   safeguardingFlags SafeguardingFlag[]
   encryptedFields   EncryptedField[]
+  cards             Card[]
 
   @@index([email])
   @@index([phoneE164])
@@ -452,8 +456,9 @@ model Family {
 model PipelineStage {
   id          String    @id
   name        String
-  /// 1-based order. Only unique among non-archived stages — enforced by a
-  /// partial unique index in the migration.
+  /// 1-based order. Only unique among non-archived stages per board — enforced
+  /// by a partial unique index on (boardId, position) WHERE archivedAt IS NULL
+  /// in the migration (ADR 0018).
   position    Int
   /// Tailwind token name (e.g. `blue-500`) or hex string. Rendered as the
   /// column accent (border + dot/badge) on the pipeline kanban.
@@ -461,14 +466,112 @@ model PipelineStage {
   /// Closed stages are terminal (the family has left the funnel). Rendered
   /// muted on the kanban with a "Closed" pill.
   isClosed    Boolean   @default(false)
+  /// Board this stage belongs to (ADR 0018 multi-board). Nullable for
+  /// backward compatibility; the data migration assigns all existing stages
+  /// to the default board.
+  boardId     String?
   archivedAt  DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?
 
+  board    Board?   @relation(fields: [boardId], references: [id], onDelete: Cascade)
   families Family[]
+  cards    Card[]
 
   @@index([archivedAt])
+  @@index([boardId])
+}
+
+/// Operator-managed board (ADR 0018). Each board owns its own set of
+/// PipelineStages and Cards. The single legacy pipeline (ADR 0015) becomes
+/// the default board. Board management is CEO + Senior Manager only.
+model Board {
+  id          String  @id
+  name        String
+  description String?
+  /// 1-based ordering among active (non-archived) boards. Partial unique
+  /// index on (position) WHERE archivedAt IS NULL in the migration.
+  position    Int
+  /// Exactly one board may be the default. Enforced in app logic
+  /// (ensureSingleDefault), not by a DB constraint, so swaps are atomic.
+  isDefault   Boolean @default(false)
+  /// Target stage for the per-board "tick" quick action (e.g. mark answered →
+  /// move to Active). Configured per board in settings.
+  tickActionStageId String?
+  /// Target stage for the per-board "x" quick action (e.g. no answer →
+  /// move to Not answered).
+  xActionStageId    String?
+  archivedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+
+  stages PipelineStage[]
+  cards  Card[]
+
+  @@index([archivedAt])
+}
+
+/// A card on a board (ADR 0018). Backed by a Contact (lighter than a Family,
+/// which remains the billing unit). Lives in exactly one stage of one board.
+model Card {
+  id          String    @id
+  boardId     String
+  stageId     String
+  contactId   String
+  subjectId   String?
+  /// 1-based order within (boardId, stageId).
+  position    Int
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+
+  board   Board         @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  stage   PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  subject Subject?      @relation(fields: [subjectId], references: [id])
+  labels  CardLabel[]
+
+  @@index([boardId, stageId, position])
+  @@index([contactId])
+}
+
+/// Coloured label that can be attached to cards (ADR 0018). Three defaults
+/// seeded: B2C, B2B, Summer Camp.
+model Label {
+  id        String   @id
+  name      String   @unique
+  /// Tailwind token name, e.g. `blue-600`.
+  color     String
+  createdAt DateTime @default(now())
+
+  cards CardLabel[]
+}
+
+/// Many-to-many junction between Card and Label (ADR 0018).
+model CardLabel {
+  cardId  String
+  labelId String
+
+  card  Card  @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, labelId])
+  @@index([labelId])
+}
+
+/// Tutoring subject attached to a card (ADR 0018). Dynamically created via
+/// pick-existing-or-create; `lastUsedAt` orders the picker.
+model Subject {
+  id          String    @id
+  name        String    @unique
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  createdById String?
+
+  cards Card[]
 }
 
 model FamilyMember {
