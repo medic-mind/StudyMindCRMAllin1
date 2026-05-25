@@ -2,12 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import {
-  BoardCreateInput,
-  CardCreateInput,
-  LabelCreateInput,
-  SubjectCreateInput,
-} from './types'
+import { BoardCreateInput, CardCreateInput, LabelCreateInput, SubjectCreateInput } from './types'
 
 describe('BoardCreateInput', () => {
   it('accepts a named board and defaults isDefault to false', () => {
@@ -42,9 +37,7 @@ describe('CardCreateInput', () => {
   })
 
   it('rejects a card with neither contact form', () => {
-    expect(() =>
-      CardCreateInput.parse({ boardId: 'b1', stageId: 's1', contact: {} }),
-    ).toThrow()
+    expect(() => CardCreateInput.parse({ boardId: 'b1', stageId: 's1', contact: {} })).toThrow()
   })
 })
 
