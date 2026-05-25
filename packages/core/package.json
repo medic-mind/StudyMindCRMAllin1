@@ -9,6 +9,7 @@
     "./contact": "./src/contact/index.ts",
     "./family": "./src/family/index.ts",
     "./pipeline": "./src/pipeline/index.ts",
+    "./board": "./src/board/index.ts",
     "./finance": "./src/finance/index.ts",
     "./interaction": "./src/interaction/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
