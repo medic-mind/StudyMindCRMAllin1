@@ -16,6 +16,7 @@ import { resolveStageColor } from '../../pipeline/stage-color'
 import { AddCardButton } from './AddCardButton'
 import { BoardSwitcher } from './BoardSwitcher'
 import { MoveCardMenu } from './MoveCardMenu'
+import { QuickActionButtons } from './QuickActionButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,6 +51,10 @@ export default async function BoardPage({ params }: PageProps) {
   ])
 
   const stageOptions = stages.map((s) => ({ id: s.id, name: s.name }))
+  const tickStageId = board.tickActionStageId ?? null
+  const xStageId = board.xActionStageId ?? null
+  const tickStageName = stages.find((s) => s.id === tickStageId)?.name ?? null
+  const xStageName = stages.find((s) => s.id === xStageId)?.name ?? null
   const byStage = new Map<string, typeof cards>()
   for (const s of stages) byStage.set(s.id, [])
   for (const c of cards) {
@@ -158,13 +163,23 @@ export default async function BoardPage({ params }: PageProps) {
                             </p>
                           ) : null}
                           {canWrite ? (
-                            <div className="mt-2">
-                              <MoveCardMenu
+                            <>
+                              <QuickActionButtons
                                 cardId={c.id}
                                 currentStageId={stage.id}
-                                stages={stageOptions}
+                                tickStageId={tickStageId}
+                                tickStageName={tickStageName}
+                                xStageId={xStageId}
+                                xStageName={xStageName}
                               />
-                            </div>
+                              <div className="mt-2">
+                                <MoveCardMenu
+                                  cardId={c.id}
+                                  currentStageId={stage.id}
+                                  stages={stageOptions}
+                                />
+                              </div>
+                            </>
                           ) : null}
                         </li>
                       ))}
