@@ -26,6 +26,18 @@ export const EVENT_NAMES = [
   'pipeline.stage.reordered',
   'pipeline.stage.archived',
   'pipeline.stage.restored',
+  // ADR 0018: multi-board cards. Board + card + label + subject lifecycle.
+  'board.created',
+  'board.updated',
+  'board.archived',
+  'card.created',
+  'card.moved',
+  'card.updated',
+  'card.archived',
+  'label.created',
+  'label.updated',
+  'label.deleted',
+  'subject.created',
 
   // Interactions
   'interaction.created',
@@ -220,6 +232,7 @@ export const INTERACTION_TYPES = [
   'slack_summary',
   'family_state_changed',
   'family_pipeline_moved',
+  'card_moved',
   'family_billing_contact_changed',
   'safeguarding_concern_raised',
   'safeguarding_la_referral',

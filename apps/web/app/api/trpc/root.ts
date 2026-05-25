@@ -4,6 +4,7 @@ import { router } from '@/lib/trpc/builders'
 
 import { accountRouter } from './routers/account'
 import { adminRouter } from './routers/admin'
+import { boardRouter, cardRouter, labelRouter, subjectRouter } from './routers/board'
 import { contactRouter } from './routers/contact'
 import { contactChannelsRouter } from './routers/contact-channels'
 
@@ -35,7 +36,11 @@ import { taskRouter } from './routers/task'
 export const appRouter = router({
   account: accountRouter,
   admin: adminRouter,
+  board: boardRouter,
+  card: cardRouter,
   contact: contactWithChannels,
+  label: labelRouter,
+  subject: subjectRouter,
   cost: costRouter,
   dashboard: dashboardRouter,
   family: familyRouter,

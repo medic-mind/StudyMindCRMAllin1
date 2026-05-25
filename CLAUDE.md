@@ -209,6 +209,8 @@ Discrepancies become `ReconciliationDiscrepancy` rows on the finance dashboard. 
 
 The legacy `FamilyState` enum (`lead | trial | active | at_risk | churned`) is **deprecated but retained** per §19 forward-only. `moveFamily` mirrors the new stage name back into `Family.state` on a best-effort basis when the name maps to a known enum value (`mirrorStateForStage` in `packages/core/pipeline/stages.ts`). Consumers that still read `state` — the at-risk derivation, the churn-score job, the reconciliation engine — keep working; for custom stage names the column becomes stale and those derivations reflect the family's last legacy state until a follow-up PR retires the column.
 
+**Boards and Cards (ADR 0018).** The single pipeline above is generalised into multiple operator-managed **Boards**, each owning its own `PipelineStage` rows (now scoped by `boardId`) and **Card** rows. A Card is backed by a `Contact` (lighter than a Family, which remains the billing unit) and carries an optional `Subject` and any number of coloured `Label`s. Board management (create/rename/reorder/archive, quick-action target stages) is CEO + Senior Manager; card CRUD and moves are Sales Executive and above; Virtual Assistant is read-only. A card move writes a `card_moved` Interaction on the backing contact plus an audit row. `Family.stageId` is retained for finance/at-risk; `Card.stageId` drives the board display. `/pipeline` redirects to the default board (`/boards/<defaultBoardId>`). Domain: `packages/core/src/board/`; tRPC: `board.*`, `card.*`, `label.*`, `subject.*`; UI: `apps/web/app/(app)/boards/`.
+
 **Subscription state (Stripe mirror).** We mirror Stripe statuses verbatim: `trialing | active | past_due | canceled | unpaid | paused | incomplete | incomplete_expired`. Our `at_risk` Family flag is derived (`past_due` for >3 days, or two consecutive failed Direct Debits, or churn score above threshold).
 
 **Mandate state (GoCardless mirror).** `pending_submission | submitted | active | failed | cancelled | expired | replaced`. A `replaced` mandate keeps a pointer to the new mandate; reconciliation walks the chain.
@@ -511,7 +513,7 @@ OpenAI for everything AI today. Models per task:
 
 ### 19.2 Schema reference (top tables)
 
-`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`. Definitive shape: `prisma/schema.prisma`.
+`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018). Definitive shape: `prisma/schema.prisma`.
 
 ---
 
@@ -1008,6 +1010,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Manage pipeline stages | `apps/web/app/(app)/pipeline/manage/page.tsx` + `ManageStagesTable.tsx` |
 | Add a pipeline stage helper | `packages/core/src/pipeline/stages.ts` |
 | Change how Family.stageId is written | `packages/core/src/family/pipeline.ts` (`moveFamily`) |
+| Work on boards / cards / labels / subjects (ADR 0018) | `packages/core/src/board/` (domain), `apps/web/app/api/trpc/routers/board.ts` (tRPC), `apps/web/app/(app)/boards/` (UI). `/pipeline` redirects to the default board. |
 
 ---
 

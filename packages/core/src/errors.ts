@@ -24,6 +24,16 @@ export type BusinessErrorCode =
   | 'PIPELINE_STAGE_NAME_TAKEN'
   | 'PIPELINE_STAGE_NOT_FOUND'
   | 'PIPELINE_STAGE_ARCHIVED'
+  // ADR 0018: multi-board cards.
+  | 'BOARD_NOT_FOUND'
+  | 'BOARD_ARCHIVED'
+  | 'BOARD_NAME_TAKEN'
+  | 'BOARD_IS_DEFAULT'
+  | 'CARD_NOT_FOUND'
+  | 'LABEL_NOT_FOUND'
+  | 'LABEL_NAME_TAKEN'
+  | 'LABEL_IN_USE'
+  | 'SUBJECT_NOT_FOUND'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

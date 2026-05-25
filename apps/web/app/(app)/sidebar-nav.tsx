@@ -45,6 +45,7 @@ const ICONS: Record<string, IconComp> = {
   '/inbox': InboxIcon,
   '/contacts': UsersIcon,
   '/pipeline': GitBranchIcon,
+  '/boards': GitBranchIcon,
   '/tasks': ListTodoIcon,
   '/finance': CoinsIcon,
   '/reports': BarChartIcon,
