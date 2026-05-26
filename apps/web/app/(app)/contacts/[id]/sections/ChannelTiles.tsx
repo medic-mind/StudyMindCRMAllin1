@@ -1,12 +1,35 @@
-// KPI strip at the top of the customer view. One tile per channel; each
-// tile links to its section below via an in-page anchor. RSC.
+// KPI strip at the top of the customer view. One tile per channel; each tile
+// links to its section below via an in-page anchor. Branded to match the
+// dashboard KpiTile (left accent bar, icon chip, mono value). CLAUDE.md §4.
 
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 
+import {
+  ListTodoIcon,
+  MailIcon,
+  MessageSquareIcon,
+  PhoneIcon,
+  SmartphoneIcon,
+} from '@/components/ui/icon'
 import type { ChannelSummary } from '@/lib/view-models/contact-channels'
 
-interface Props {
-  summary: ChannelSummary
+type Tone = 'neutral' | 'info' | 'success' | 'warn' | 'accent'
+
+const BAR: Record<Tone, string> = {
+  neutral: 'bg-neutral-300',
+  info: 'bg-primary-500',
+  success: 'bg-emerald-500',
+  warn: 'bg-amber-500',
+  accent: 'bg-violet-500',
+}
+
+const CHIP: Record<Tone, string> = {
+  neutral: 'bg-neutral-100 text-neutral-500',
+  info: 'bg-primary-50 text-primary-700',
+  success: 'bg-emerald-50 text-emerald-700',
+  warn: 'bg-amber-50 text-amber-700',
+  accent: 'bg-violet-50 text-violet-700',
 }
 
 function Tile({
@@ -14,37 +37,50 @@ function Tile({
   label,
   primary,
   secondary,
+  tone,
+  icon,
 }: {
   href: string
   label: string
   primary: string
   secondary?: string
+  tone: Tone
+  icon: ReactNode
 }) {
   return (
     <Link
       href={href}
-      className="flex flex-1 flex-col gap-0.5 rounded-md border border-neutral-200 bg-white px-3 py-2 text-left hover:border-neutral-400"
+      className="relative flex min-w-[8.5rem] flex-1 flex-col gap-1 overflow-hidden rounded-xl border border-neutral-200 bg-white px-3 py-2.5 pl-4 shadow-sm transition-shadow hover:shadow-md"
     >
-      <span className="text-[11px] uppercase tracking-wide text-neutral-500">
-        {label}
-      </span>
-      <span className="text-lg font-semibold tabular-nums text-neutral-900">
+      <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 ${BAR[tone]}`} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+          {label}
+        </span>
+        <span
+          aria-hidden="true"
+          className={`flex h-6 w-6 items-center justify-center rounded-md ${CHIP[tone]}`}
+        >
+          {icon}
+        </span>
+      </div>
+      <span className="font-mono text-xl font-semibold tabular-nums text-neutral-900">
         {primary}
       </span>
-      {secondary && (
-        <span className="text-xs text-neutral-600">{secondary}</span>
-      )}
+      <span className="text-xs text-neutral-500">{secondary ?? ' '}</span>
     </Link>
   )
 }
 
-export function ChannelTiles({ summary }: Props): JSX.Element {
+export function ChannelTiles({ summary }: { summary: ChannelSummary }): JSX.Element {
   return (
-    <div className="mt-4 flex flex-wrap gap-2">
+    <div className="mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
       <Tile
         href="#section-email"
         label="Email"
-        primary={`${summary.emails.threadCount} thread${summary.emails.threadCount === 1 ? '' : 's'}`}
+        tone="info"
+        icon={<MailIcon size={14} />}
+        primary={`${summary.emails.threadCount}`}
         secondary={
           summary.emails.unreadCount > 0
             ? `${summary.emails.unreadCount} unread`
@@ -54,7 +90,9 @@ export function ChannelTiles({ summary }: Props): JSX.Element {
       <Tile
         href="#section-calls"
         label="Calls"
-        primary={`${summary.calls.recentCount} recent`}
+        tone={summary.calls.missedCount > 0 ? 'warn' : 'neutral'}
+        icon={<PhoneIcon size={14} />}
+        primary={`${summary.calls.recentCount}`}
         secondary={
           summary.calls.missedCount > 0
             ? `${summary.calls.missedCount} missed`
@@ -64,17 +102,26 @@ export function ChannelTiles({ summary }: Props): JSX.Element {
       <Tile
         href="#section-slack"
         label="Slack"
-        primary={`${summary.slack.mentionCount} mention${summary.slack.mentionCount === 1 ? '' : 's'}`}
+        tone="neutral"
+        icon={<MessageSquareIcon size={14} />}
+        primary={`${summary.slack.mentionCount}`}
+        secondary={`mention${summary.slack.mentionCount === 1 ? '' : 's'}`}
       />
       <Tile
         href="#section-trengo"
         label="Trengo"
-        primary={`${summary.trengo.conversationCount} convo${summary.trengo.conversationCount === 1 ? '' : 's'}`}
+        tone="accent"
+        icon={<SmartphoneIcon size={14} />}
+        primary={`${summary.trengo.conversationCount}`}
+        secondary={`conversation${summary.trengo.conversationCount === 1 ? '' : 's'}`}
       />
       <Tile
         href="#section-tasks"
         label="Tasks"
-        primary={`${summary.tasks.openCount} open`}
+        tone={summary.tasks.openCount > 0 ? 'warn' : 'success'}
+        icon={<ListTodoIcon size={14} />}
+        primary={`${summary.tasks.openCount}`}
+        secondary={summary.tasks.openCount > 0 ? 'open' : 'all done'}
       />
     </div>
   )

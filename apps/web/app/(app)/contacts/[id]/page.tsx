@@ -6,11 +6,25 @@
 
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import type { ReactNode } from 'react'
 
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
+import { Avatar } from '@/components/ui/avatar'
+import { Badge, type BadgeTone } from '@/components/ui/badge'
+import {
+  ActivityIcon,
+  CoinsIcon,
+  FileTextIcon,
+  ListTodoIcon,
+  MailIcon,
+  MessageSquareIcon,
+  PhoneIcon,
+  SmartphoneIcon,
+  UsersIcon,
+} from '@/components/ui/icon'
 
 import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 
@@ -24,14 +38,65 @@ import { SlackSection } from './sections/SlackSection'
 import { TasksSection } from './sections/TasksSection'
 import { TrengoSection } from './sections/TrengoSection'
 
-function SectionHeader({ id, title }: { id: string; title: string }): JSX.Element {
+const KIND_TONE: Record<string, BadgeTone> = {
+  parent: 'info',
+  student: 'accent',
+  tutor: 'success',
+  la_caseworker: 'warn',
+  other: 'neutral',
+}
+
+function formatKind(kind: string): string {
+  return kind.replace(/_/g, ' ')
+}
+
+function formatDate(d: Date | string): string {
+  return new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(d))
+}
+
+const ACTION_LINK_CLS =
+  'inline-flex h-9 items-center rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 shadow-sm transition-colors hover:bg-neutral-50'
+
+function SectionCard({
+  id,
+  title,
+  icon,
+  action,
+  children,
+}: {
+  id: string
+  title: string
+  icon: ReactNode
+  action?: ReactNode
+  children: ReactNode
+}): JSX.Element {
   return (
-    <h2
-      id={id}
-      className="scroll-mt-20 border-b border-neutral-200 pb-1 text-lg font-semibold text-neutral-900"
-    >
-      {title}
-    </h2>
+    <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-2 border-b border-neutral-200 bg-neutral-50/70 px-4 py-2.5">
+        <h2
+          id={id}
+          className="flex scroll-mt-24 items-center gap-2 text-sm font-semibold text-neutral-900"
+        >
+          <span aria-hidden="true" className="text-neutral-400">
+            {icon}
+          </span>
+          {title}
+        </h2>
+        {action}
+      </div>
+      <div className="p-4">{children}</div>
+    </section>
+  )
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <dt className="shrink-0 text-xs font-medium uppercase tracking-wide text-neutral-400">
+        {label}
+      </dt>
+      <dd className="min-w-0 text-right text-sm text-neutral-800">{children}</dd>
+    </div>
   )
 }
 
@@ -64,157 +129,206 @@ export default async function ContactDetailPage({
       caller.interaction.list({ contactId: id, limit: 25 }),
     ])
 
+  const kindTone = KIND_TONE[contact.kind] ?? 'neutral'
+
   return (
-    <div className="max-w-4xl">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {contact.displayName}
-          </h1>
-          <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-neutral-600">
-            <span className="rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium uppercase tracking-wide">
-              {contact.kind}
-            </span>
-            {contact.email && <span>{contact.email}</span>}
-            {contact.phoneE164 && <span className="font-mono">{contact.phoneE164}</span>}
+    <div className="mx-auto max-w-6xl space-y-5">
+      {/* Hero header */}
+      <header className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <Avatar name={contact.displayName} size={56} />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-2xl font-semibold tracking-tight text-neutral-900">
+                  {contact.displayName}
+                </h1>
+                <Badge tone={kindTone}>{formatKind(contact.kind)}</Badge>
+                {contact.isMinor && <Badge tone="warn">Minor</Badge>}
+                {contact.isRestricted && <Badge tone="danger">Restricted</Badge>}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-neutral-600">
+                {contact.email && (
+                  <a
+                    href={`mailto:${contact.email}`}
+                    className="inline-flex items-center gap-1.5 hover:text-primary-700"
+                  >
+                    <MailIcon size={14} className="text-neutral-400" />
+                    {contact.email}
+                  </a>
+                )}
+                {contact.phoneE164 && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <PhoneIcon size={14} className="text-neutral-400" />
+                    <span className="font-mono">{contact.phoneE164}</span>
+                  </span>
+                )}
+                {contact.family && (
+                  <Link
+                    href={`/contacts/families/${contact.family.id}`}
+                    className="inline-flex items-center gap-1.5 text-primary-700 hover:underline"
+                  >
+                    <UsersIcon size={14} />
+                    {contact.family.name ?? 'Family'}
+                  </Link>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Action toolbar */}
+          <div className="flex flex-wrap items-center gap-2">
             {contact.family && (
-              <Link
-                href={`/contacts/families/${contact.family.id}`}
-                className="text-primary-700 hover:underline"
-              >
-                Family: {contact.family.name ?? contact.family.id}
+              <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
+            )}
+            <Link href={`/finance/refunds/new?contactId=${contact.id}`} className={ACTION_LINK_CLS}>
+              Issue refund
+            </Link>
+            {contact.family && (
+              <Link href={`/contacts/families/${contact.family.id}`} className={ACTION_LINK_CLS}>
+                Open family
               </Link>
             )}
-            {contact.isMinor && (
-              <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
-                Minor
-              </span>
-            )}
+            <a href="#section-notes" className={ACTION_LINK_CLS}>
+              Add note
+            </a>
           </div>
         </div>
-      </div>
-
-      {/* Action row */}
-      <div className="mt-4 flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
-        {contact.family && (
-          <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
-        )}
-        <Link
-          href={`/finance/refunds/new?contactId=${contact.id}`}
-          className="inline-flex h-8 items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
-        >
-          Issue refund
-        </Link>
-        {contact.family && (
-          <Link
-            href={`/contacts/families/${contact.family.id}`}
-            className="inline-flex h-8 items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
-          >
-            Open family
-          </Link>
-        )}
-        <a
-          href="#section-notes"
-          className="inline-flex h-8 items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
-        >
-          Raise note
-        </a>
-      </div>
-
-      {/* Search */}
-      <ContactSearchBar contactId={contact.id} />
+      </header>
 
       {/* KPI tiles */}
       <ChannelTiles summary={summary} />
 
-      {/* Pinned notes / contact-level note */}
-      {contact.notes && (
-        <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-neutral-800">
-          <span className="text-xs font-semibold uppercase text-amber-800">Pinned</span>
-          <p className="mt-1">{contact.notes}</p>
-        </div>
-      )}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        {/* Main column */}
+        <div className="min-w-0 space-y-5">
+          <ContactSearchBar contactId={contact.id} />
 
-      {/* Sections */}
-      <section className="mt-8 space-y-3">
-        <SectionHeader id="section-email" title="Email" />
-        <EmailSection threads={emailThreads.items} />
-      </section>
+          <SectionCard id="section-email" title="Email" icon={<MailIcon size={16} />}>
+            <EmailSection threads={emailThreads.items} />
+          </SectionCard>
 
-      <section className="mt-8 space-y-3">
-        <SectionHeader id="section-calls" title="Calls" />
-        <CallsSection calls={calls.items} />
-      </section>
+          <SectionCard id="section-calls" title="Calls" icon={<PhoneIcon size={16} />}>
+            <CallsSection calls={calls.items} />
+          </SectionCard>
 
-      <section className="mt-8 space-y-3">
-        <SectionHeader id="section-slack" title="Slack mentions" />
-        <SlackSection mentions={slackMentions.items} />
-      </section>
+          <SectionCard id="section-slack" title="Slack mentions" icon={<MessageSquareIcon size={16} />}>
+            <SlackSection mentions={slackMentions.items} />
+          </SectionCard>
 
-      <section className="mt-8 space-y-3">
-        <SectionHeader id="section-trengo" title="Trengo conversations" />
-        <TrengoSection conversations={trengo.items} />
-      </section>
-
-      {contact.family && (
-        <section className="mt-8 space-y-3">
-          <SectionHeader id="section-payments" title="Payments" />
-          <PaymentsPanel target={{ contactId: contact.id }} />
-        </section>
-      )}
-
-      <section className="mt-8 space-y-3">
-        <div className="flex items-center justify-between gap-2 border-b border-neutral-200 pb-1">
-          <h2
-            id="section-tasks"
-            className="scroll-mt-20 text-lg font-semibold text-neutral-900"
+          <SectionCard
+            id="section-trengo"
+            title="Trengo conversations"
+            icon={<SmartphoneIcon size={16} />}
           >
-            Tasks
-          </h2>
-          <NewTaskDialog contactId={contact.id} contactName={contact.displayName} />
+            <TrengoSection conversations={trengo.items} />
+          </SectionCard>
+
+          {contact.family && (
+            <SectionCard id="section-payments" title="Payments" icon={<CoinsIcon size={16} />}>
+              <PaymentsPanel target={{ contactId: contact.id }} />
+            </SectionCard>
+          )}
+
+          <SectionCard
+            id="section-tasks"
+            title="Tasks"
+            icon={<ListTodoIcon size={16} />}
+            action={<NewTaskDialog contactId={contact.id} contactName={contact.displayName} />}
+          >
+            <TasksSection open={tasks.open} closed={tasks.closed} />
+          </SectionCard>
+
+          <SectionCard id="section-notes" title="Notes" icon={<FileTextIcon size={16} />}>
+            <div className="space-y-3">
+              <AddNote contactId={contact.id} />
+              {notes.items.length > 0 ? (
+                <ol className="space-y-2">
+                  {notes.items.map((n) => (
+                    <li
+                      key={n.id}
+                      className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm"
+                    >
+                      <div className="text-xs text-neutral-500">
+                        <time dateTime={new Date(n.occurredAt).toISOString()}>
+                          {new Intl.DateTimeFormat('en-GB', {
+                            dateStyle: 'medium',
+                            timeStyle: 'short',
+                          }).format(new Date(n.occurredAt))}
+                        </time>
+                      </div>
+                      <p className="mt-1 text-neutral-900">{n.body ?? n.summary ?? '—'}</p>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="text-sm text-neutral-600">No notes yet — add the first note above.</p>
+              )}
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            id="section-timeline"
+            title="Activity timeline"
+            icon={<ActivityIcon size={16} />}
+          >
+            <Timeline
+              initialItems={timeline.items}
+              initialNextCursor={timeline.nextCursor}
+              contactId={contact.id}
+            />
+          </SectionCard>
         </div>
-        <TasksSection open={tasks.open} closed={tasks.closed} />
-      </section>
 
-      <section className="mt-8 space-y-3">
-        <SectionHeader id="section-notes" title="Notes" />
-        <AddNote contactId={contact.id} />
-        {notes.items.length > 0 ? (
-          <ol className="space-y-2">
-            {notes.items.map((n) => (
-              <li
-                key={n.id}
-                className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm"
-              >
-                <div className="text-xs text-neutral-500">
-                  <time dateTime={new Date(n.occurredAt).toISOString()}>
-                    {new Intl.DateTimeFormat('en-GB', {
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                    }).format(new Date(n.occurredAt))}
-                  </time>
-                </div>
-                <p className="mt-1 text-neutral-900">{n.body ?? n.summary ?? '—'}</p>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="text-sm text-neutral-600">
-            No notes yet — add the first note above.
-          </p>
-        )}
-      </section>
+        {/* Sticky detail rail */}
+        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+          {contact.notes && (
+            <div className="rounded-xl border border-secondary-200 bg-secondary-50 p-4 text-sm text-neutral-800 shadow-sm">
+              <span className="text-xs font-semibold uppercase tracking-wide text-secondary-800">
+                Pinned note
+              </span>
+              <p className="mt-1.5 whitespace-pre-line">{contact.notes}</p>
+            </div>
+          )}
 
-      {/* Aggregate timeline (fallback view) */}
-      <section className="mt-8 space-y-3">
-        <SectionHeader id="section-timeline" title="Activity timeline" />
-        <Timeline
-          initialItems={timeline.items}
-          initialNextCursor={timeline.nextCursor}
-          contactId={contact.id}
-        />
-      </section>
+          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Details
+            </h2>
+            <dl className="mt-3 space-y-3">
+              <DetailRow label="Type">
+                <Badge tone={kindTone}>{formatKind(contact.kind)}</Badge>
+              </DetailRow>
+              <DetailRow label="Family">
+                {contact.family ? (
+                  <Link
+                    href={`/contacts/families/${contact.family.id}`}
+                    className="text-primary-700 hover:underline"
+                  >
+                    {contact.family.name ?? 'Family'}
+                  </Link>
+                ) : (
+                  <span className="text-neutral-400">Unassigned</span>
+                )}
+              </DetailRow>
+              {contact.isMinor && (
+                <DetailRow label="Minor">
+                  <span className="text-amber-700">Yes — reads audited</span>
+                </DetailRow>
+              )}
+              {contact.isRestricted && (
+                <DetailRow label="Access">
+                  <span className="text-red-700">Restricted</span>
+                </DetailRow>
+              )}
+              <DetailRow label="Added">{formatDate(contact.createdAt)}</DetailRow>
+              <DetailRow label="Reference">
+                <span className="break-all font-mono text-xs text-neutral-500">{contact.id}</span>
+              </DetailRow>
+            </dl>
+          </div>
+        </aside>
+      </div>
     </div>
   )
 }
