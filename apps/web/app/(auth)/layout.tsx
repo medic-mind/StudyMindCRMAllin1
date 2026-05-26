@@ -5,6 +5,8 @@
 
 import Link from 'next/link'
 
+import { BrandLogo } from '@/components/shell/brand-logo'
+
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
@@ -23,13 +25,14 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         aria-hidden="true"
       >
         <div
-          className="pointer-events-none absolute inset-0 opacity-90"
+          className="pointer-events-none absolute inset-0"
           style={{
             background:
-              'radial-gradient(120% 120% at 0% 0%, var(--tw-gradient-from, #1d4ed8) 0%, transparent 60%), linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #1d4ed8 100%)',
+              'radial-gradient(120% 120% at 0% 0%, #6d28d9 0%, transparent 55%), linear-gradient(135deg, #581c87 0%, #9333ea 55%, #a21caf 100%)',
           }}
         />
-        <div className="relative">
+        <div className="relative flex items-center gap-2">
+          <BrandLogo size={32} markOnly />
           <span className="text-lg font-semibold tracking-tight">StudyMind CRM</span>
         </div>
         <div className="relative max-w-md">

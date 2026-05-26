@@ -6,6 +6,7 @@
 
 import Link from 'next/link'
 
+import { BrandLogo } from './brand-logo'
 import { NotificationsBell } from './notifications-bell'
 import { SearchTrigger } from './search-trigger'
 import { UserMenu } from './user-menu'
@@ -34,12 +35,13 @@ export function TopBar({ user }: Props) {
       </a>
 
       <Link
-        href="/inbox"
-        className="flex items-center gap-1 text-base font-semibold tracking-tight text-primary-700 hover:text-primary-800"
+        href="/"
+        className="flex items-center gap-2 tracking-tight"
         aria-label="StudyMind CRM home"
       >
-        <span className="font-semibold">StudyMind</span>
-        <span className="font-medium text-neutral-500">CRM</span>
+        <BrandLogo size={26} markOnly />
+        <span className="text-base font-semibold text-primary-700">StudyMind</span>
+        <span className="text-base font-medium text-neutral-500">CRM</span>
       </Link>
 
       <div className="flex flex-1 justify-center">
