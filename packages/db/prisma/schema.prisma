@@ -118,6 +118,13 @@ enum InteractionType {
   // ADR 0018: multi-board cards. Emitted by `moveCard` when an operator
   // moves a Card between stages on a board.
   card_moved
+  // Card detail modal: comment thread + inline description edit. Comments and
+  // description changes persist as Interactions on the backing Contact so they
+  // appear in the customer's history.
+  card_comment
+  card_description_changed
+  // Universal task comment thread (slice B).
+  task_comment
 }
 
 enum ContactKind {
@@ -521,6 +528,10 @@ model Card {
   stageId     String
   contactId   String
   subjectId   String?
+  /// Free-text card description, editable inline from the card modal
+  /// (sales_executive+). A change writes a `card_description_changed`
+  /// Interaction on the backing Contact.
+  description String?
   /// 1-based order within (boardId, stageId).
   position    Int
   archivedAt  DateTime?

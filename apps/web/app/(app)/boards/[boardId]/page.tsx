@@ -9,14 +9,12 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Badge } from '@/components/ui/badge'
 import { getCurrentUser } from '@/lib/auth/server'
-import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
 import { AddCardButton } from './AddCardButton'
+import { BoardCard } from './BoardCard'
 import { BoardSwitcher } from './BoardSwitcher'
-import { MoveCardMenu } from './MoveCardMenu'
-import { QuickActionButtons } from './QuickActionButtons'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,6 +31,10 @@ export default async function BoardPage({ params }: PageProps) {
   const role = me?.role ?? 'virtual_assistant'
   const canWrite = CAN_WRITE.has(role)
   const canManage = CAN_MANAGE.has(role)
+  // Any authenticated user may comment (incl. virtual_assistant); the server
+  // gates card.comments.add the same way.
+  const canComment = Boolean(me)
+  const currentUserName = me?.name?.trim() || me?.email || 'You'
 
   const caller = await createServerCaller()
 
@@ -60,7 +62,6 @@ export default async function BoardPage({ params }: PageProps) {
   for (const c of cards) {
     if (byStage.has(c.stageId)) byStage.get(c.stageId)!.push(c)
   }
-  const now = new Date()
 
   return (
     <>
@@ -138,50 +139,27 @@ export default async function BoardPage({ params }: PageProps) {
                   ) : (
                     <ul className="divide-y divide-neutral-100">
                       {items.map((c) => (
-                        <li key={c.id} className="bg-white p-3 text-sm">
-                          <a
-                            href={`/contacts/${c.contactId}`}
-                            className="block min-w-0 truncate font-medium text-neutral-900 hover:text-primary-700 hover:underline"
-                          >
-                            {c.contactName}
-                          </a>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                            {c.subject ? <Badge tone="info">{c.subject.name}</Badge> : null}
-                            {c.labels.map((l) => (
-                              <span
-                                key={l.id}
-                                className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
-                                style={{ backgroundColor: resolveStageColor(l.color) }}
-                              >
-                                {l.name}
-                              </span>
-                            ))}
-                          </div>
-                          {c.lastActivityAt ? (
-                            <p className="mt-1.5 font-mono text-[10px] tabular-nums text-neutral-500">
-                              {formatRelativeTime(new Date(c.lastActivityAt), now)}
-                            </p>
-                          ) : null}
-                          {canWrite ? (
-                            <>
-                              <QuickActionButtons
-                                cardId={c.id}
-                                currentStageId={stage.id}
-                                tickStageId={tickStageId}
-                                tickStageName={tickStageName}
-                                xStageId={xStageId}
-                                xStageName={xStageName}
-                              />
-                              <div className="mt-2">
-                                <MoveCardMenu
-                                  cardId={c.id}
-                                  currentStageId={stage.id}
-                                  stages={stageOptions}
-                                />
-                              </div>
-                            </>
-                          ) : null}
-                        </li>
+                        <BoardCard
+                          key={c.id}
+                          card={{
+                            id: c.id,
+                            stageId: c.stageId,
+                            contactId: c.contactId,
+                            contactName: c.contactName,
+                            subject: c.subject,
+                            labels: c.labels,
+                            lastActivityAt: c.lastActivityAt,
+                          }}
+                          stageId={stage.id}
+                          stages={stageOptions}
+                          tickStageId={tickStageId}
+                          tickStageName={tickStageName}
+                          xStageId={xStageId}
+                          xStageName={xStageName}
+                          canWrite={canWrite}
+                          canComment={canComment}
+                          currentUserName={currentUserName}
+                        />
                       ))}
                     </ul>
                   )}

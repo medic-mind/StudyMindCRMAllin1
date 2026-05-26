@@ -30,6 +30,7 @@ export type BusinessErrorCode =
   | 'BOARD_NAME_TAKEN'
   | 'BOARD_IS_DEFAULT'
   | 'CARD_NOT_FOUND'
+  | 'COMMENT_EMPTY'
   | 'LABEL_NOT_FOUND'
   | 'LABEL_NAME_TAKEN'
   | 'LABEL_IN_USE'
