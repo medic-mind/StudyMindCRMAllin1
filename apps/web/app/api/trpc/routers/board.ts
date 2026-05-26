@@ -17,6 +17,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  addCardComment,
   archiveBoard,
   archiveCard,
   BoardCreateInput,
@@ -34,6 +35,8 @@ import {
   deleteLabel,
   findOrCreateSubject,
   LabelCreateInput,
+  listCardComments,
+  setCardDescription,
   LabelUpdateInput,
   listLabels,
   listSubjects,
@@ -101,6 +104,8 @@ function mapBusinessError(err: unknown): never {
       case 'PIPELINE_STAGE_ARCHIVED':
       case 'INVALID_STATE_TRANSITION':
         throw new TRPCError({ code: 'CONFLICT', message: err.message })
+      case 'COMMENT_EMPTY':
+        throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
       case 'BOARD_NOT_FOUND':
       case 'CARD_NOT_FOUND':
       case 'LABEL_NOT_FOUND':
@@ -531,6 +536,104 @@ const cardRouter = router({
         lastActivityAt: latestByContact.get(r.contact.id) ?? null,
         updatedAt: r.updatedAt,
       }))
+    }),
+
+  /** Full card detail for the modal. Any authenticated role may read. */
+  get: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+    const card = await ctx.db.card.findFirst({
+      where: { id: input.id, archivedAt: null },
+      select: {
+        id: true,
+        boardId: true,
+        stageId: true,
+        description: true,
+        updatedAt: true,
+        board: { select: { id: true, name: true } },
+        stage: { select: { id: true, name: true, color: true } },
+        subject: { select: { id: true, name: true } },
+        contact: {
+          select: { id: true, firstName: true, lastName: true, email: true, phoneE164: true },
+        },
+        labels: { select: { label: { select: { id: true, name: true, color: true } } } },
+      },
+    })
+    if (!card) throw new TRPCError({ code: 'NOT_FOUND', message: 'Card not found' })
+    const lastActivity = await ctx.db.interaction.aggregate({
+      where: { contactId: card.contact.id, deletedAt: null },
+      _max: { occurredAt: true },
+    })
+    return {
+      id: card.id,
+      boardId: card.boardId,
+      stageId: card.stageId,
+      description: card.description,
+      board: card.board,
+      stage: card.stage,
+      subject: card.subject,
+      contactId: card.contact.id,
+      contactName: displayNameOf(card.contact),
+      contactEmail: card.contact.email,
+      contactPhone: card.contact.phoneE164,
+      labels: card.labels.map((l) => l.label),
+      lastActivityAt: lastActivity._max.occurredAt ?? null,
+      updatedAt: card.updatedAt,
+    }
+  }),
+
+  comments: router({
+    list: protectedProcedure
+      .input(z.object({ cardId: z.string(), cursor: z.string().nullish() }))
+      .query(async ({ ctx, input }) => {
+        const comments = await listCardComments(ctx.db, { cardId: input.cardId })
+        return comments.map((c) => ({
+          id: c.id,
+          body: c.body,
+          authorId: c.authorId,
+          authorName: c.authorName,
+          occurredAt: c.occurredAt,
+        }))
+      }),
+
+    add: auditedProcedure
+      .input(z.object({ cardId: z.string(), body: z.string().trim().min(1).max(4000) }))
+      .mutation(async ({ ctx, input }) => {
+        // Any authenticated user may comment (incl. virtual_assistant).
+        const user = requireUser(ctx)
+        try {
+          const comment = await addCardComment(
+            ctx.db,
+            { cardId: input.cardId, authorId: user.id, body: input.body },
+            { actorId: user.id, requestId: ctx.requestId },
+          )
+          ctx.audit.called = true
+          return {
+            id: comment.id,
+            body: comment.body,
+            authorId: comment.authorId,
+            authorName: comment.authorName,
+            occurredAt: comment.occurredAt,
+          }
+        } catch (err) {
+          mapBusinessError(err)
+        }
+      }),
+  }),
+
+  setDescription: auditedProcedure
+    .input(z.object({ cardId: z.string(), description: z.string().max(4000).nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCardWrite(user.role)
+      try {
+        const result = await setCardDescription(ctx.db, input, {
+          actorId: user.id,
+          requestId: ctx.requestId,
+        })
+        ctx.audit.called = true
+        return result
+      } catch (err) {
+        mapBusinessError(err)
+      }
     }),
 
   create: auditedProcedure.input(CardCreateInput).mutation(async ({ ctx, input }) => {
