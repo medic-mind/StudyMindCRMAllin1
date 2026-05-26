@@ -17,6 +17,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  addCallSummary,
   addCardComment,
   archiveBoard,
   archiveCard,
@@ -24,6 +25,10 @@ import {
   BoardQuickActionsInput,
   BoardReorderInput,
   BoardUpdateInput,
+  CallSummaryAddInput,
+  CallSummarySendInput,
+  type CallSummarySenders,
+  type ChannelResult,
   CardCreateInput,
   CardMoveInput,
   CardSetLabelsInput,
@@ -42,6 +47,7 @@ import {
   listSubjects,
   moveCard,
   reorderBoards,
+  sendCallSummary,
   setCardLabels,
   setCardSubject,
   setQuickActions,
@@ -105,9 +111,11 @@ function mapBusinessError(err: unknown): never {
       case 'INVALID_STATE_TRANSITION':
         throw new TRPCError({ code: 'CONFLICT', message: err.message })
       case 'COMMENT_EMPTY':
+      case 'CALL_SUMMARY_EMPTY':
         throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
       case 'BOARD_NOT_FOUND':
       case 'CARD_NOT_FOUND':
+      case 'CALL_SUMMARY_NOT_FOUND':
       case 'LABEL_NOT_FOUND':
       case 'SUBJECT_NOT_FOUND':
       case 'CONTACT_NOT_FOUND':
@@ -617,6 +625,116 @@ const cardRouter = router({
           mapBusinessError(err)
         }
       }),
+  }),
+
+  // Call summary (slice B). Add records a call_summary Interaction on the
+  // backing contact; send fans it out to the enabled channels. Both gated to
+  // sales_executive+ and audited via the domain writers.
+  callSummary: router({
+    // Which channels are actionable for this card right now — drives the
+    // send popover's disabled checkboxes + reason tooltips.
+    availability: protectedProcedure
+      .input(z.object({ cardId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const card = await ctx.db.card.findFirst({
+          where: { id: input.cardId, archivedAt: null },
+          select: { contact: { select: { id: true, email: true, phoneE164: true } } },
+        })
+        if (!card) throw new TRPCError({ code: 'NOT_FOUND', message: 'Card not found' })
+        const contactId = card.contact.id
+
+        const hasSlackChannel = Boolean(process.env['SLACK_ALERTS_CHANNEL_ID'])
+
+        const hasPhone = Boolean(card.contact.phoneE164)
+        const trengoConvo = hasPhone
+          ? await ctx.db.interaction.findFirst({
+              where: { contactId, type: 'message', deletedAt: null },
+              select: { id: true },
+            })
+          : null
+
+        const hasEmail = Boolean(card.contact.email)
+        const mailbox = await ctx.db.gmailMailbox.findUnique({
+          where: { agentId: ctx.user?.id ?? '' },
+          select: { agentId: true },
+        })
+        const emailThread =
+          hasEmail && mailbox
+            ? await ctx.db.interaction.findFirst({
+                where: {
+                  contactId,
+                  type: { in: ['email_received', 'email_sent'] },
+                  deletedAt: null,
+                },
+                select: { id: true },
+              })
+            : null
+
+        return {
+          slack: { available: hasSlackChannel },
+          trengo: {
+            available: hasPhone && Boolean(trengoConvo),
+            hasPhone,
+          },
+          email: {
+            available: hasEmail && Boolean(mailbox) && Boolean(emailThread),
+            hasEmail,
+            gmailConnected: Boolean(mailbox),
+          },
+        }
+      }),
+
+    add: auditedProcedure.input(CallSummaryAddInput).mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCardWrite(user.role)
+      try {
+        const result = await addCallSummary(
+          ctx.db,
+          { cardId: input.cardId, authorId: user.id, body: input.body, outcome: input.outcome },
+          { actorId: user.id, requestId: ctx.requestId },
+        )
+        ctx.audit.called = true
+        return {
+          id: result.id,
+          contactId: result.contactId,
+          cardId: result.cardId,
+          body: result.body,
+          outcome: result.outcome,
+          occurredAt: result.occurredAt,
+        }
+      } catch (err) {
+        mapBusinessError(err)
+      }
+    }),
+
+    send: auditedProcedure.input(CallSummarySendInput).mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCardWrite(user.role)
+      // Wire the live channel senders (lazy-imports the integration clients).
+      const { buildCallSummarySenders } = await import('@/lib/board/call-summary-senders')
+      const senders: CallSummarySenders = buildCallSummarySenders({
+        agentId: user.id,
+        requestId: ctx.requestId,
+      })
+      try {
+        const results = await sendCallSummary(
+          ctx.db,
+          {
+            summaryInteractionId: input.summaryInteractionId,
+            channels: input.channels,
+            slackChannelId: input.slackChannelId,
+            senders,
+          },
+          { actorId: user.id, requestId: ctx.requestId },
+        )
+        ctx.audit.called = true
+        // Return a plain per-channel result map for the UI toasts.
+        const out: Partial<Record<'slack' | 'trengo' | 'email', ChannelResult>> = results
+        return out
+      } catch (err) {
+        mapBusinessError(err)
+      }
+    }),
   }),
 
   setDescription: auditedProcedure
