@@ -3,7 +3,13 @@
 
 import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
+import type { PrismaClient } from '@prisma/client'
 import { z } from 'zod'
+
+import {
+  paymentsForFamily,
+  paymentSummaryForFamily,
+} from '@studymind/core/finance'
 
 import {
   createPaymentLink,
@@ -119,6 +125,41 @@ const PaymentLinkListInput = z.object({
   limit: z.number().min(1).max(100).default(25),
 })
 
+// Per-customer payments panel (Slice A). Accepts either a familyId or a
+// contactId — a Contact's payments are its Family's payments (CLAUDE.md §6.1).
+const CustomerPaymentsInput = z
+  .object({
+    familyId: z.string().min(1).optional(),
+    contactId: z.string().min(1).optional(),
+  })
+  .refine((v) => !!v.familyId || !!v.contactId, {
+    message: 'familyId or contactId is required',
+  })
+
+/**
+ * Resolve the Family for the given input. When a contactId is supplied we
+ * follow the (single) FamilyMember link. Returns null when the contact has no
+ * family (the caller renders an empty "link to a family" state).
+ */
+async function resolveFamilyId(
+  db: PrismaClient,
+  input: { familyId?: string; contactId?: string },
+): Promise<string | null> {
+  if (input.familyId) {
+    const family = await db.family.findFirst({
+      where: { id: input.familyId, deletedAt: null },
+      select: { id: true },
+    })
+    return family?.id ?? null
+  }
+  const member = await db.familyMember.findFirst({
+    where: { contactId: input.contactId, family: { deletedAt: null } },
+    select: { familyId: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  return member?.familyId ?? null
+}
+
 export const financeRouter = router({
   paymentLink: router({
     create: auditedProcedure.input(PaymentLinkCreateInput).mutation(async ({ ctx, input }) => {
@@ -203,6 +244,48 @@ export const financeRouter = router({
         nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
       }
     }),
+  }),
+
+  // Per-customer payments panel (Slice A). Financial data — every read is
+  // audited (CLAUDE.md §20). These are queries, so the auditedProcedure
+  // middleware does not enforce; we call ctx.audit explicitly.
+  customerPayments: router({
+    list: protectedProcedure
+      .input(CustomerPaymentsInput)
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const familyId = await resolveFamilyId(ctx.db, input)
+        if (!familyId) {
+          // Contact without a family — no billing relationship yet.
+          return { familyId: null, items: [] }
+        }
+        const items = await paymentsForFamily(ctx.db, familyId)
+        await ctx.audit({
+          action: 'finance.payments_viewed',
+          target: { type: 'Family', id: familyId },
+          purpose: 'view_customer_payments',
+          after: { view: 'list', count: items.length },
+        })
+        return { familyId, items }
+      }),
+
+    summary: protectedProcedure
+      .input(CustomerPaymentsInput)
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const familyId = await resolveFamilyId(ctx.db, input)
+        if (!familyId) {
+          return { familyId: null, summary: null }
+        }
+        const summary = await paymentSummaryForFamily(ctx.db, familyId)
+        await ctx.audit({
+          action: 'finance.payments_viewed',
+          target: { type: 'Family', id: familyId },
+          purpose: 'view_customer_payments',
+          after: { view: 'summary' },
+        })
+        return { familyId, summary }
+      }),
   }),
 
   refund: router({

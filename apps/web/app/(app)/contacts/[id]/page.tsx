@@ -9,6 +9,7 @@ import { notFound } from 'next/navigation'
 
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 
 import { NewTaskDialog } from '../../tasks/NewTaskDialog'
@@ -155,6 +156,13 @@ export default async function ContactDetailPage({
         <SectionHeader id="section-trengo" title="Trengo conversations" />
         <TrengoSection conversations={trengo.items} />
       </section>
+
+      {contact.family && (
+        <section className="mt-8 space-y-3">
+          <SectionHeader id="section-payments" title="Payments" />
+          <PaymentsPanel target={{ contactId: contact.id }} />
+        </section>
+      )}
 
       <section className="mt-8 space-y-3">
         <div className="flex items-center justify-between gap-2 border-b border-neutral-200 pb-1">
