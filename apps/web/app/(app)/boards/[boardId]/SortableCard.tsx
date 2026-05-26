@@ -1,0 +1,69 @@
+// Draggable wrapper around a single BoardCard (ADR 0019). Adds a drag handle
+// region via @dnd-kit/sortable. Dragging is an enhancement only — the card's
+// own "Move to…" dropdown and tick/cross quick actions remain keyboard
+// accessible (CLAUDE.md §28). A small activation distance on the parent
+// DndContext sensor keeps a click (which opens the modal, PR #55) distinct
+// from a drag.
+
+'use client'
+
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+
+import { BoardCard } from './BoardCard'
+
+interface StageOption {
+  id: string
+  name: string
+}
+interface LabelChip {
+  id: string
+  name: string
+  color: string
+}
+interface CardData {
+  id: string
+  stageId: string
+  contactId: string
+  contactName: string
+  subject: { id: string; name: string } | null
+  labels: ReadonlyArray<LabelChip>
+  lastActivityAt: string | Date | null
+}
+
+interface Props {
+  card: CardData
+  stageId: string
+  stages: ReadonlyArray<StageOption>
+  tickStageId: string | null
+  tickStageName: string | null
+  xStageId: string | null
+  xStageName: string | null
+  canWrite: boolean
+  canComment: boolean
+  currentUserName: string
+}
+
+export function SortableCard(props: Props) {
+  // Only writers can drag; read-only roles render a plain card.
+  const sortable = useSortable({ id: props.card.id, disabled: !props.canWrite })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = sortable
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+  }
+
+  // We spread the drag listeners/attributes onto the list item so the whole
+  // card is a drag source. BoardCard's own buttons stop propagation via the
+  // activation-distance threshold; keyboard users use the dropdown fallback.
+  return (
+    <BoardCard
+      {...props}
+      dragRef={setNodeRef}
+      dragStyle={style}
+      dragHandleProps={props.canWrite ? { ...attributes, ...listeners } : undefined}
+    />
+  )
+}

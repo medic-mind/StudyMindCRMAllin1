@@ -1,11 +1,15 @@
 // Client wrapper for a single board card. Clicking the card body opens the
 // detail modal; the contact name remains a secondary link (cmd/ctrl-click or
 // the explicit link still navigates). ADR 0018, CLAUDE.md §26.
+//
+// Drag-and-drop (ADR 0019) is layered on by the SortableCard wrapper, which
+// passes a `dragRef`, `dragStyle`, and `dragHandleProps`. When absent the card
+// renders exactly as before, so the component is usable without DnD.
 
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useState, type CSSProperties, type HTMLAttributes, type Ref } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { formatRelativeTime } from '@/lib/format/relative-time'
@@ -46,6 +50,10 @@ interface Props {
   canWrite: boolean
   canComment: boolean
   currentUserName: string
+  // Supplied by SortableCard (ADR 0019); undefined when DnD is not in play.
+  dragRef?: Ref<HTMLLIElement>
+  dragStyle?: CSSProperties
+  dragHandleProps?: HTMLAttributes<HTMLElement>
 }
 
 export function BoardCard({
@@ -59,12 +67,20 @@ export function BoardCard({
   canWrite,
   canComment,
   currentUserName,
+  dragRef,
+  dragStyle,
+  dragHandleProps,
 }: Props) {
   const [open, setOpen] = useState(false)
   const now = new Date()
 
   return (
-    <li className="bg-white p-3 text-sm">
+    <li
+      ref={dragRef}
+      style={dragStyle}
+      {...dragHandleProps}
+      className={`bg-white p-3 text-sm ${dragHandleProps ? 'touch-none' : ''}`}
+    >
       <button
         type="button"
         onClick={() => setOpen(true)}

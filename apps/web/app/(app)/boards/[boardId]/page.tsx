@@ -1,19 +1,18 @@
-// Board kanban. ADR 0018. Columns are the board's PipelineStages; cards are
-// grouped by stage. Each card shows the backing contact, its subject, and
-// coloured label chips. No drag yet (slice 3) — a per-card "Move to…"
-// dropdown handles transitions. CLAUDE.md §26, §20, §3.
+// Board kanban. ADR 0018 + ADR 0019 (drag-and-drop). Columns are the board's
+// PipelineStages; cards are grouped by stage. The interactive column grid is a
+// client island (BoardDnd) so cards can be dragged between/within columns; the
+// per-card "Move to…" dropdown + tick/cross quick actions remain as
+// keyboard-accessible fallbacks (CLAUDE.md §26, §28, §20, §3).
 
 import { notFound } from 'next/navigation'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
-import { Badge } from '@/components/ui/badge'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 
-import { resolveStageColor } from '../../pipeline/stage-color'
 import { AddCardButton } from './AddCardButton'
-import { BoardCard } from './BoardCard'
+import { BoardDnd } from './BoardDnd'
 import { BoardSwitcher } from './BoardSwitcher'
 
 export const dynamic = 'force-dynamic'
@@ -57,11 +56,22 @@ export default async function BoardPage({ params }: PageProps) {
   const xStageId = board.xActionStageId ?? null
   const tickStageName = stages.find((s) => s.id === tickStageId)?.name ?? null
   const xStageName = stages.find((s) => s.id === xStageId)?.name ?? null
-  const byStage = new Map<string, typeof cards>()
-  for (const s of stages) byStage.set(s.id, [])
-  for (const c of cards) {
-    if (byStage.has(c.stageId)) byStage.get(c.stageId)!.push(c)
-  }
+
+  const dndCards = cards.map((c) => ({
+    id: c.id,
+    stageId: c.stageId,
+    contactId: c.contactId,
+    contactName: c.contactName,
+    subject: c.subject,
+    labels: c.labels,
+    lastActivityAt: c.lastActivityAt,
+  }))
+  const dndStages = stages.map((s) => ({
+    id: s.id,
+    name: s.name,
+    color: s.color,
+    isClosed: s.isClosed,
+  }))
 
   return (
     <>
@@ -106,67 +116,18 @@ export default async function BoardPage({ params }: PageProps) {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
-            {stages.map((stage) => {
-              const items = byStage.get(stage.id) ?? []
-              const colour = resolveStageColor(stage.color)
-              return (
-                <section
-                  key={stage.id}
-                  className={`flex flex-col rounded-lg border border-neutral-200 bg-white shadow-sm ${
-                    stage.isClosed ? 'opacity-80' : ''
-                  }`}
-                  style={{ borderTop: `3px solid ${colour}` }}
-                >
-                  <header className="flex items-center justify-between gap-2 border-b border-neutral-100 px-3 py-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span
-                        className="inline-block size-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: colour }}
-                        aria-hidden
-                      />
-                      <h2 className="truncate text-sm font-semibold text-neutral-800">
-                        {stage.name}
-                      </h2>
-                      {stage.isClosed ? <Badge tone="neutral">Closed</Badge> : null}
-                    </div>
-                    <Badge tone="neutral">{items.length}</Badge>
-                  </header>
-                  {items.length === 0 ? (
-                    <div className="p-4 text-center text-xs text-neutral-500">
-                      No cards in {stage.name}.
-                    </div>
-                  ) : (
-                    <ul className="divide-y divide-neutral-100">
-                      {items.map((c) => (
-                        <BoardCard
-                          key={c.id}
-                          card={{
-                            id: c.id,
-                            stageId: c.stageId,
-                            contactId: c.contactId,
-                            contactName: c.contactName,
-                            subject: c.subject,
-                            labels: c.labels,
-                            lastActivityAt: c.lastActivityAt,
-                          }}
-                          stageId={stage.id}
-                          stages={stageOptions}
-                          tickStageId={tickStageId}
-                          tickStageName={tickStageName}
-                          xStageId={xStageId}
-                          xStageName={xStageName}
-                          canWrite={canWrite}
-                          canComment={canComment}
-                          currentUserName={currentUserName}
-                        />
-                      ))}
-                    </ul>
-                  )}
-                </section>
-              )
-            })}
-          </div>
+          <BoardDnd
+            stages={dndStages}
+            cards={dndCards}
+            stageOptions={stageOptions}
+            tickStageId={tickStageId}
+            tickStageName={tickStageName}
+            xStageId={xStageId}
+            xStageName={xStageName}
+            canWrite={canWrite}
+            canComment={canComment}
+            currentUserName={currentUserName}
+          />
         )}
       </PageBody>
     </>
