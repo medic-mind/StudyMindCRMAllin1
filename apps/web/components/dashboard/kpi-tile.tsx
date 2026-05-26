@@ -38,6 +38,16 @@ const TONE_ACCENT: Record<KpiTone, string> = {
   info: 'text-primary-700 bg-primary-50',
 }
 
+// Left accent bar colour per tone — gives each tile a flash of identity
+// instead of a uniform grey card.
+const TONE_BAR: Record<KpiTone, string> = {
+  neutral: 'bg-neutral-300',
+  success: 'bg-emerald-500',
+  warn: 'bg-amber-500',
+  danger: 'bg-rose-500',
+  info: 'bg-primary-500',
+}
+
 export function KpiTile({
   label,
   value,
@@ -85,8 +95,12 @@ export function KpiTile({
 
   return (
     <div
-      className={`rounded-lg border border-neutral-200 ${TONE_BG[tone]} p-4 shadow-sm transition-shadow hover:shadow-md`}
+      className={`relative overflow-hidden rounded-xl border border-neutral-200 ${TONE_BG[tone]} p-4 pl-5 shadow-sm transition-shadow hover:shadow-md`}
     >
+      <span
+        aria-hidden="true"
+        className={`absolute inset-y-0 left-0 w-1 ${TONE_BAR[tone]}`}
+      />
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-xs font-medium uppercase tracking-wide text-neutral-500">
