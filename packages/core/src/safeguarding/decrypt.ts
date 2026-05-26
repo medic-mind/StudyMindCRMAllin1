@@ -12,14 +12,13 @@
 
 import { createDecipheriv } from 'node:crypto'
 
-import { DecryptCommand } from '@aws-sdk/client-kms'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { z } from 'zod'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 
 import { BusinessError } from '../errors'
-import { getKmsClient } from './kms'
+import { unwrapDataKey } from './envelope'
 
 export type DbReader = PrismaClient | Prisma.TransactionClient
 
@@ -65,22 +64,18 @@ export async function decryptField(
     return Buffer.from(envelope.ciphertext).toString('utf8')
   }
 
-  return runKmsDecrypt(envelope)
+  return runEnvelopeDecrypt(envelope)
 }
 
-async function runKmsDecrypt(envelope: EnvelopeCiphertext): Promise<string> {
-  const kms = getKmsClient()
-  const dek = await kms.send(
-    new DecryptCommand({
-      CiphertextBlob: envelope.dekCiphertext,
-      // EncryptionContext could be added here for KMS-side AAD; we keep the
-      // AAD inside the GCM tag so a tampered AAD also fails closed locally.
-    }),
-  )
-  if (!dek.Plaintext) {
-    throw new BusinessError('CONTACT_RESTRICTED', 'KMS Decrypt returned no key material')
+async function runEnvelopeDecrypt(envelope: EnvelopeCiphertext): Promise<string> {
+  // Unwrap the DEK via whichever backend wrapped it (KMS or local key). AAD is
+  // kept inside the GCM tag below so a tampered AAD also fails closed locally.
+  let dekPlain: Buffer
+  try {
+    dekPlain = await unwrapDataKey(envelope.dekCiphertext)
+  } catch {
+    throw new BusinessError('CONTACT_RESTRICTED', 'failed to unwrap data key')
   }
-  const dekPlain = Buffer.from(dek.Plaintext)
 
   // The encrypt path appends the GCM auth tag to ciphertext.
   const cBuf = Buffer.from(envelope.ciphertext)

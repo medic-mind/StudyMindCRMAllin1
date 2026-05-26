@@ -10,13 +10,13 @@
 
 import { createCipheriv, randomBytes } from 'node:crypto'
 
-import { GenerateDataKeyCommand } from '@aws-sdk/client-kms'
 import { createId } from '@paralleldrive/cuid2'
 import type { Prisma, PrismaClient } from '@prisma/client'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 
-import { getKmsClient, getKmsKeyId, KEY_VERSION } from './kms'
+import { generateDataKey } from './envelope'
+import { KEY_VERSION } from './kms'
 
 export type DbWriter = PrismaClient | Prisma.TransactionClient
 
@@ -59,17 +59,7 @@ export async function encryptField(
 ): Promise<EncryptedFieldRow> {
   const { ownerType, ownerId, fieldName, plaintext, ctx } = input
 
-  const kms = getKmsClient()
-  const keyId = getKmsKeyId()
-
-  const dataKey = await kms.send(
-    new GenerateDataKeyCommand({ KeyId: keyId, KeySpec: 'AES_256' }),
-  )
-  if (!dataKey.Plaintext || !dataKey.CiphertextBlob) {
-    throw new Error('KMS GenerateDataKey returned no key material')
-  }
-  const dekPlain = Buffer.from(dataKey.Plaintext)
-  const dekCiphertext = Buffer.from(dataKey.CiphertextBlob)
+  const { plaintext: dekPlain, ciphertext: dekCiphertext } = await generateDataKey()
 
   const iv = randomBytes(12)
   const aad = Buffer.from(`${ownerType}|${ownerId}|${fieldName}|${KEY_VERSION}`, 'utf8')

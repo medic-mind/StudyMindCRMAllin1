@@ -32,4 +32,13 @@ export function getKmsKeyId(): string {
   return id
 }
 
+/**
+ * True when a CMK is configured. When false, field encryption falls back to a
+ * local AES master key (see envelope.ts) so a self-hosted install without AWS
+ * still works. KMS stays the preferred backend whenever this returns true.
+ */
+export function isKmsConfigured(): boolean {
+  return Boolean(process.env['AWS_KMS_KEY_ID']?.trim())
+}
+
 export const KEY_VERSION = 1 as const

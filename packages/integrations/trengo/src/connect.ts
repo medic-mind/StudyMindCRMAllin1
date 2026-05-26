@@ -6,12 +6,11 @@
 // Trengo `/me`, KMS-envelope-encrypts the secret, and upserts the
 // TrengoToken row keyed on `agentId`.
 
-import { GenerateDataKeyCommand } from '@aws-sdk/client-kms'
 import { createCipheriv, randomBytes } from 'node:crypto'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
-import { getKmsClient, getKmsKeyId, KEY_VERSION } from '@studymind/core/safeguarding'
+import { generateDataKey, KEY_VERSION } from '@studymind/core/safeguarding'
 import { db } from '@studymind/db'
 
 import { TRENGO_API_BASE } from './client'
@@ -77,19 +76,11 @@ export async function connectTrengoToken(
   const trengoUserId = parsed.data?.id ?? parsed.id
   const trengoEmail = parsed.data?.email ?? parsed.email
 
-  // 2. KMS envelope-encrypt the token. Mirrors packages/core/safeguarding/
+  // 2. Envelope-encrypt the token. Mirrors packages/core/safeguarding/
   //    encrypt.ts but persists into the existing TrengoToken columns rather
   //    than EncryptedField (the model pre-dates the EncryptedField pattern).
-  const kms = getKmsClient()
-  const keyId = getKmsKeyId()
-  const dataKey = await kms.send(
-    new GenerateDataKeyCommand({ KeyId: keyId, KeySpec: 'AES_256' }),
-  )
-  if (!dataKey.Plaintext || !dataKey.CiphertextBlob) {
-    throw new Error('KMS GenerateDataKey returned no key material')
-  }
-  const dekPlain = Buffer.from(dataKey.Plaintext)
-  const dekCiphertext = Buffer.from(dataKey.CiphertextBlob)
+  //    generateDataKey() uses KMS when configured, else a local key.
+  const { plaintext: dekPlain, ciphertext: dekCiphertext } = await generateDataKey()
   const iv = randomBytes(12)
   const aad = Buffer.from(`User|${input.agentId}|trengo.api_token|${KEY_VERSION}`, 'utf8')
   const cipher = createCipheriv('aes-256-gcm', dekPlain, iv)
