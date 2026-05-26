@@ -51,6 +51,7 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/finance', label: 'Discrepancies' },
+        { href: '/finance/direct-debit', label: 'Direct Debit issues' },
         { href: '/finance/refunds', label: 'Refunds' },
         { href: '/finance/payment-links', label: 'Payment links' },
       ],

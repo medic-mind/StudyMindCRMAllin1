@@ -18,6 +18,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   late_failure_pending_action: 'Late failure — pending action',
   churned_with_active_subscription: 'Churned with active subscription',
   la_family_with_card_subscription: 'LA-billed family has card subscription',
+  direct_debit_default: 'Direct Debit default',
   other: 'Other',
 }
 
@@ -64,6 +65,7 @@ const CATEGORY_TONE: Record<string, BadgeTone> = {
   late_failure_pending_action: 'danger',
   churned_with_active_subscription: 'danger',
   la_family_with_card_subscription: 'warn',
+  direct_debit_default: 'danger',
   other: 'neutral',
 }
 
@@ -113,6 +115,12 @@ export default async function FinancePage() {
         subtitle="Open reconciliation discrepancies across active families. Nothing is ever auto-resolved — every item below needs a human decision."
         actions={
           <div className="flex items-center gap-3 text-sm">
+            <a
+              href="/finance/direct-debit"
+              className="text-neutral-700 hover:text-neutral-900 hover:underline"
+            >
+              Direct Debit issues →
+            </a>
             <a
               href="/finance/payment-links"
               className="text-neutral-700 hover:text-neutral-900 hover:underline"

@@ -16,6 +16,15 @@ export {
   type PaymentSummary,
 } from './customer-payments'
 export {
+  classifyDefaulter,
+  listDefaulters,
+  defaulterDetail,
+  type DefaulterReason,
+  type DefaulterRow,
+  type DefaulterDetail,
+  type ListDefaultersOptions,
+} from './dd-defaulters'
+export {
   deriveAtRisk,
   recomputeAtRiskForFamily,
   type AtRiskFamilyInput,

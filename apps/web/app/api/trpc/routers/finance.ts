@@ -7,6 +7,8 @@ import type { PrismaClient } from '@prisma/client'
 import { z } from 'zod'
 
 import {
+  defaulterDetail,
+  listDefaulters,
   paymentsForFamily,
   paymentSummaryForFamily,
 } from '@studymind/core/finance'
@@ -71,6 +73,7 @@ const ListInput = z.object({
       'late_failure_pending_action',
       'churned_with_active_subscription',
       'la_family_with_card_subscription',
+      'direct_debit_default',
       'other',
     ])
     .optional(),
@@ -285,6 +288,40 @@ export const financeRouter = router({
           after: { view: 'summary' },
         })
         return { familyId, summary }
+      }),
+  }),
+
+  // Direct Debit defaulters view (Slice B). Read-only analysis over the
+  // existing mandate / payment / invoice mirrors — never auto-charges or
+  // auto-duns (CLAUDE.md §3). Financial data: every read is audited.
+  directDebit: router({
+    listDefaulters: protectedProcedure
+      .input(z.object({}).optional())
+      .query(async ({ ctx }) => {
+        assertFinanceRole(requireUser(ctx))
+        const items = await listDefaulters(ctx.db)
+        await ctx.audit({
+          action: 'finance.dd_defaulters_viewed',
+          target: { type: 'System', id: 'direct-debit-defaulters' },
+          purpose: 'view_dd_defaulters',
+          after: { count: items.length },
+        })
+        return { items }
+      }),
+
+    detail: protectedProcedure
+      .input(z.object({ familyId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const detail = await defaulterDetail(ctx.db, input.familyId)
+        if (!detail) throw new TRPCError({ code: 'NOT_FOUND', message: 'family not found' })
+        await ctx.audit({
+          action: 'finance.dd_defaulters_viewed',
+          target: { type: 'Family', id: input.familyId },
+          purpose: 'view_dd_defaulter_detail',
+          after: { view: 'detail' },
+        })
+        return detail
       }),
   }),
 

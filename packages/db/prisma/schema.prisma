@@ -181,6 +181,10 @@ enum ReconciliationCategory {
   late_failure_pending_action
   churned_with_active_subscription
   la_family_with_card_subscription
+  // Slice B: a family that has defaulted on a Direct Debit / instalment scheme.
+  // Raised by the nightly finance/flag-dd-defaulters job (forward-only enum
+  // add per CLAUDE.md §19).
+  direct_debit_default
   other
 }
 
