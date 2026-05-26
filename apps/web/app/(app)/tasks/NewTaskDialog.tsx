@@ -14,9 +14,11 @@ interface Props {
   /** Optional preset linkages from the parent page. */
   contactId?: string
   familyId?: string
+  /** When the contact is preset (e.g. from a contact page), its display name. */
+  contactName?: string
 }
 
-export function NewTaskDialog({ contactId, familyId }: Props) {
+export function NewTaskDialog({ contactId, familyId, contactName }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -24,6 +26,16 @@ export function NewTaskDialog({ contactId, familyId }: Props) {
   const [assigneeId, setAssigneeId] = useState('')
   const [dueAt, setDueAt] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // Optional contact linkage. When a contactId is preset by the parent it is
+  // locked; otherwise the agent may search and pick one.
+  const presetContact = Boolean(contactId)
+  const [contactQuery, setContactQuery] = useState('')
+  const [pickedContactId, setPickedContactId] = useState<string | null>(contactId ?? null)
+  const contactSearch = trpc.contact.list.useQuery(
+    { q: contactQuery, limit: 8 },
+    { enabled: open && !presetContact && contactQuery.trim().length >= 2 },
+  )
 
   const usersQuery = trpc.task.assignableUsers.useQuery({}, { enabled: open })
   const create = trpc.task.create.useMutation({
@@ -33,6 +45,8 @@ export function NewTaskDialog({ contactId, familyId }: Props) {
       setDescription('')
       setAssigneeId('')
       setDueAt('')
+      setContactQuery('')
+      setPickedContactId(contactId ?? null)
       setError(null)
       toast.success('Task created')
       router.refresh()
@@ -62,7 +76,7 @@ export function NewTaskDialog({ contactId, familyId }: Props) {
       description: description.trim() || undefined,
       assigneeId,
       dueAt: dueAt ? new Date(dueAt) : undefined,
-      contactId,
+      contactId: pickedContactId ?? undefined,
       familyId,
     })
   }
@@ -129,6 +143,59 @@ export function NewTaskDialog({ contactId, familyId }: Props) {
             className="rounded border border-neutral-300 bg-white px-2 py-1"
           />
         </label>
+        <div className="flex flex-col gap-1 text-sm">
+          <span className="text-xs text-neutral-700">Linked contact (optional)</span>
+          {presetContact ? (
+            <span className="rounded border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs text-neutral-700">
+              {contactName ?? 'This contact'}
+            </span>
+          ) : pickedContactId && contactQuery ? (
+            <span className="flex items-center justify-between rounded border border-primary-200 bg-primary-50 px-2 py-1 text-xs text-primary-800">
+              {contactQuery}
+              <button
+                type="button"
+                onClick={() => {
+                  setPickedContactId(null)
+                  setContactQuery('')
+                }}
+                className="text-primary-700 hover:underline"
+              >
+                Clear
+              </button>
+            </span>
+          ) : (
+            <>
+              <input
+                value={contactQuery}
+                onChange={(e) => {
+                  setContactQuery(e.target.value)
+                  setPickedContactId(null)
+                }}
+                placeholder="Search contacts (name, email, phone)"
+                className="rounded border border-neutral-300 bg-white px-2 py-1"
+              />
+              {contactSearch.data && contactSearch.data.items.length > 0 ? (
+                <ul className="max-h-32 overflow-auto rounded border border-neutral-200">
+                  {contactSearch.data.items.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPickedContactId(c.id)
+                          setContactQuery(c.displayName)
+                        }}
+                        className="block w-full px-2 py-1 text-left text-xs hover:bg-neutral-100"
+                      >
+                        {c.displayName}
+                        {c.email ? <span className="text-neutral-500"> · {c.email}</span> : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          )}
+        </div>
         {error && (
           <p role="alert" className="text-sm text-red-700">
             {error}

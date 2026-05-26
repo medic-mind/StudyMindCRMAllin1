@@ -1,5 +1,7 @@
-// Tasks page. CLAUDE.md §26 (URL state for shareable views, dense rows).
-// Filters: scope (me / all), status. Sorted by due date ascending.
+// Org-wide tasks list (slice B). Columns: assignee, title (links to detail),
+// linked contact, due date (red if overdue), status. Filters via URL state:
+// scope (Mine / Team / All), status, overdue. Default scope = All — everyone
+// sees everything (product owner). CLAUDE.md §26.
 
 import Link from 'next/link'
 
@@ -12,7 +14,6 @@ import { dueAtLabel } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { NewTaskDialog } from './NewTaskDialog'
-import { ReassignTaskButton } from './ReassignTaskButton'
 
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
@@ -37,46 +38,70 @@ const DUE_TONE_CLASS: Record<string, string> = {
   later: 'text-neutral-600',
 }
 
+type Scope = 'mine' | 'team' | 'all'
+type StatusKey = 'open' | 'in_progress' | 'done'
+
 interface SP {
-  scope?: 'me' | 'all'
-  status?: 'open' | 'in_progress' | 'blocked' | 'done' | 'cancelled'
+  scope?: string
+  status?: string
+  overdue?: string
 }
 
-export default async function TasksPage({
-  searchParams,
-}: {
-  searchParams: Promise<SP>
-}) {
+export default async function TasksPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams
-  const scope: 'me' | 'all' = sp.scope === 'all' ? 'all' : 'me'
-  const status = sp.status
+  const scope: Scope = sp.scope === 'mine' ? 'mine' : sp.scope === 'team' ? 'team' : 'all'
+  const status = (
+    sp.status === 'open' || sp.status === 'in_progress' || sp.status === 'done'
+      ? sp.status
+      : undefined
+  ) as StatusKey | undefined
+  const overdue = sp.overdue === '1'
+
   const caller = await createServerCaller()
-  const data = await caller.task.list({ scope, limit: 100, status })
+  // "Mine" filters to the caller; "Team" and "All" both show every task in this
+  // single-team CRM (the router scope is me | all).
+  const data = await caller.task.list({
+    scope: scope === 'mine' ? 'me' : 'all',
+    status,
+    overdue: overdue || undefined,
+    limit: 100,
+  })
   const now = new Date()
 
-  const tabs: Array<{ key: 'me' | 'all'; label: string }> = [
-    { key: 'me', label: 'Assigned to me' },
-    { key: 'all', label: 'Team' },
+  const scopeTabs: Array<{ key: Scope; label: string }> = [
+    { key: 'mine', label: 'Mine' },
+    { key: 'team', label: 'Team' },
+    { key: 'all', label: 'All' },
   ]
-  const statusFilters: Array<{ key: SP['status']; label: string }> = [
-    { key: undefined, label: 'All' },
+  const statusFilters: Array<{ key: StatusKey | undefined; label: string }> = [
+    { key: undefined, label: 'All statuses' },
     { key: 'open', label: 'Open' },
     { key: 'in_progress', label: 'In progress' },
     { key: 'done', label: 'Done' },
   ]
 
+  function buildQuery(next: {
+    scope?: Scope
+    status?: StatusKey | undefined
+    setStatus?: boolean
+    overdue?: boolean
+  }) {
+    const nextStatus = next.setStatus ? next.status : status
+    const q: Record<string, string> = { scope: next.scope ?? scope }
+    if (nextStatus) q.status = nextStatus
+    if (next.overdue ?? overdue) q.overdue = '1'
+    return q
+  }
+
   return (
     <>
       <PageHeader title="Tasks" actions={<NewTaskDialog />} />
       <PageBody>
-        <div className="flex items-center gap-2 text-sm">
-          {tabs.map((t) => (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {scopeTabs.map((t) => (
             <Link
               key={t.key}
-              href={{
-                pathname: '/tasks',
-                query: { scope: t.key, ...(status ? { status } : {}) },
-              }}
+              href={{ pathname: '/tasks', query: buildQuery({ scope: t.key }) }}
               className={
                 scope === t.key
                   ? 'rounded bg-primary-700 px-2.5 py-1 text-white'
@@ -92,10 +117,7 @@ export default async function TasksPage({
             return (
               <Link
                 key={f.label}
-                href={{
-                  pathname: '/tasks',
-                  query: { scope, ...(f.key ? { status: f.key } : {}) },
-                }}
+                href={{ pathname: '/tasks', query: buildQuery({ status: f.key, setStatus: true }) }}
                 className={
                   active
                     ? 'rounded bg-neutral-100 px-2 py-1 text-neutral-900'
@@ -106,31 +128,36 @@ export default async function TasksPage({
               </Link>
             )
           })}
+          <span className="mx-2 h-4 w-px bg-neutral-300" aria-hidden />
+          <Link
+            href={{ pathname: '/tasks', query: buildQuery({ overdue: !overdue }) }}
+            className={
+              overdue
+                ? 'rounded bg-red-700 px-2.5 py-1 text-white'
+                : 'rounded border border-neutral-200 px-2.5 py-1 text-neutral-700 hover:bg-neutral-100'
+            }
+          >
+            Overdue only
+          </Link>
         </div>
 
         <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
           {data.items.length === 0 ? (
             <div className="p-10 text-center">
-              <p className="text-sm font-medium text-neutral-700">
-                {scope === 'me'
-                  ? 'You have no tasks here yet.'
-                  : 'No tasks for the team here.'}
-              </p>
+              <p className="text-sm font-medium text-neutral-700">No tasks match this filter.</p>
               <p className="mt-1 text-sm text-neutral-500">
-                Create a task from a Contact or Family timeline to start
-                tracking follow-ups.
+                Create a task with the New task button, or from a contact&apos;s timeline.
               </p>
             </div>
           ) : (
             <Table>
               <Thead>
                 <Tr>
-                  <Th>Task</Th>
-                  <Th>Status</Th>
                   <Th>Assignee</Th>
+                  <Th>Task</Th>
+                  <Th>Contact</Th>
                   <Th>Due</Th>
-                  <Th>Family</Th>
-                  <Th>Actions</Th>
+                  <Th>Status</Th>
                 </Tr>
               </Thead>
               <Tbody>
@@ -138,21 +165,6 @@ export default async function TasksPage({
                   const due = t.dueAt ? dueAtLabel(t.dueAt, now) : null
                   return (
                     <Tr key={t.id}>
-                      <Td>
-                        <span className="font-medium text-neutral-900">
-                          {t.title}
-                        </span>
-                        {t.description ? (
-                          <div className="truncate text-xs text-neutral-500">
-                            {t.description}
-                          </div>
-                        ) : null}
-                      </Td>
-                      <Td>
-                        <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>
-                          {STATUS_LABEL[t.status] ?? t.status}
-                        </Badge>
-                      </Td>
                       <Td>
                         {t.assigneeEmail ? (
                           <span className="inline-flex items-center gap-2">
@@ -165,17 +177,26 @@ export default async function TasksPage({
                           <span className="text-xs text-neutral-400">Unassigned</span>
                         )}
                       </Td>
-                      <Td className="font-mono text-xs tabular-nums">
-                        {due ? (
-                          <span className={DUE_TONE_CLASS[due.tone] ?? ''}>
-                            {due.label}
-                          </span>
-                        ) : (
-                          <span className="text-neutral-400">—</span>
-                        )}
+                      <Td>
+                        <Link
+                          href={`/tasks/${t.id}`}
+                          className="font-medium text-neutral-900 hover:text-primary-700 hover:underline"
+                        >
+                          {t.title}
+                        </Link>
+                        {t.description ? (
+                          <div className="truncate text-xs text-neutral-500">{t.description}</div>
+                        ) : null}
                       </Td>
                       <Td>
-                        {t.familyId ? (
+                        {t.contactId ? (
+                          <Link
+                            href={`/contacts/${t.contactId}`}
+                            className="text-sm text-primary-700 hover:underline"
+                          >
+                            View contact
+                          </Link>
+                        ) : t.familyId ? (
                           <Link
                             href={`/contacts/families/${t.familyId}`}
                             className="text-sm text-primary-700 hover:underline"
@@ -186,11 +207,17 @@ export default async function TasksPage({
                           <span className="text-sm text-neutral-400">—</span>
                         )}
                       </Td>
+                      <Td className="font-mono text-xs tabular-nums">
+                        {due ? (
+                          <span className={DUE_TONE_CLASS[due.tone] ?? ''}>{due.label}</span>
+                        ) : (
+                          <span className="text-neutral-400">—</span>
+                        )}
+                      </Td>
                       <Td>
-                        <ReassignTaskButton
-                          taskId={t.id}
-                          currentAssigneeId={t.assigneeId}
-                        />
+                        <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>
+                          {STATUS_LABEL[t.status] ?? t.status}
+                        </Badge>
                       </Td>
                     </Tr>
                   )
