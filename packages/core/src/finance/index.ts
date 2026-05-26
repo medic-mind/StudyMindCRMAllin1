@@ -8,6 +8,14 @@ export * from './sync-gocardless'
 export * from './booking-rules'
 export * from './reconcile'
 export {
+  paymentsForFamily,
+  paymentSummaryForFamily,
+  type PaymentProvider,
+  type PaymentStatus,
+  type PaymentRow,
+  type PaymentSummary,
+} from './customer-payments'
+export {
   deriveAtRisk,
   recomputeAtRiskForFamily,
   type AtRiskFamilyInput,
