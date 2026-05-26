@@ -34,6 +34,8 @@ export const EVENT_NAMES = [
   'card.moved',
   'card.updated',
   'card.archived',
+  'card.commented',
+  'card.description_changed',
   'label.created',
   'label.updated',
   'label.deleted',
@@ -236,6 +238,14 @@ export const INTERACTION_TYPES = [
   'family_billing_contact_changed',
   'safeguarding_concern_raised',
   'safeguarding_la_referral',
+  // Card detail modal: comment thread + inline description. Comments persist
+  // as Interactions on the backing Contact so they appear in the customer's
+  // history.
+  'card_comment',
+  'card_description_changed',
+  // Universal task comment thread (slice B). Persisted on the linked contact
+  // when the task has one, else on the task itself.
+  'task_comment',
 ] as const
 
 export type InteractionType = (typeof INTERACTION_TYPES)[number]
