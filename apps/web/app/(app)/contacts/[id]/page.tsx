@@ -11,6 +11,8 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 
+import { NewTaskDialog } from '../../tasks/NewTaskDialog'
+
 import { AddNote } from './AddNote'
 import { Timeline } from './Timeline'
 import { CallsSection } from './sections/CallsSection'
@@ -155,7 +157,15 @@ export default async function ContactDetailPage({
       </section>
 
       <section className="mt-8 space-y-3">
-        <SectionHeader id="section-tasks" title="Tasks" />
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-200 pb-1">
+          <h2
+            id="section-tasks"
+            className="scroll-mt-20 text-lg font-semibold text-neutral-900"
+          >
+            Tasks
+          </h2>
+          <NewTaskDialog contactId={contact.id} contactName={contact.displayName} />
+        </div>
         <TasksSection open={tasks.open} closed={tasks.closed} />
       </section>
 

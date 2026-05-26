@@ -92,6 +92,9 @@ export const EVENT_NAMES = [
 
   // Tasks / admin / flags
   'task.created',
+  'task.updated',
+  'task.closed',
+  'task.commented',
   'admin.role.assign',
   'admin.role.revoke',
   'flag.toggled',
