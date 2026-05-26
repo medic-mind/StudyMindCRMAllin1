@@ -167,6 +167,13 @@ function makeDb() {
       }),
       findFirst: async ({ where }: { where: Row }) =>
         cards.find((c) => c.id === where.id && c.archivedAt == null) ?? null,
+      findMany: async ({ where }: { where: Row }) =>
+        cards.filter(
+          (c) =>
+            c.archivedAt == null &&
+            (where.boardId === undefined || c.boardId === where.boardId) &&
+            (where.stageId === undefined || c.stageId === where.stageId),
+        ),
       create: async ({ data }: { data: Row }) => {
         const { labels: _l, ...rest } = data
         const row = { ...rest, archivedAt: null }
@@ -356,6 +363,35 @@ describe('moveCard', () => {
     expect(moved.stageId).toBe('s2')
     expect(t.interactions.some((i) => i.type === 'card_moved')).toBe(true)
     expect(t.audits.some((a) => a.action === 'card.moved')).toBe(true)
+  })
+
+  it('resequences cards within a stage when toPosition is given (reorder persists)', async () => {
+    const t = makeDb()
+    t.boards.push({ id: 'b1', name: 'Sales', position: 1, isDefault: true, archivedAt: null })
+    t.stages.push({ id: 's1', name: 'Lead', boardId: 'b1', archivedAt: null })
+    for (const [id, position] of [
+      ['a', 1],
+      ['b', 2],
+      ['c', 3],
+    ] as const) {
+      t.contacts.push({ id: `c_${id}`, deletedAt: null })
+      t.cards.push({
+        id: id,
+        boardId: 'b1',
+        stageId: 's1',
+        contactId: `c_${id}`,
+        subjectId: null,
+        position,
+        archivedAt: null,
+      })
+    }
+    // Move card 'c' (last) to position 1 (top of the same stage).
+    const moved = await moveCard(t.db, { cardId: 'c', toStageId: 's1', toPosition: 1 }, ctx)
+    expect(moved.position).toBe(1)
+    const byId = (id: string) => t.cards.find((x) => x.id === id)!.position
+    expect(byId('c')).toBe(1)
+    expect(byId('a')).toBe(2)
+    expect(byId('b')).toBe(3)
   })
 })
 
