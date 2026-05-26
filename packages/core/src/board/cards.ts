@@ -175,9 +175,31 @@ export async function createCard(
 }
 
 /**
+ * Recompute contiguous `position` values for the active cards of a stage,
+ * inserting `movedCardId` at `targetIndex` (0-based). Returns the list of
+ * `{ id, position }` writes to persist. Positions are 1-based and contiguous
+ * so drag reorders stay stable across moves. Pure — no I/O.
+ */
+function resequence(
+  siblings: ReadonlyArray<{ id: string; position: number }>,
+  movedCardId: string,
+  targetIndex: number,
+): Array<{ id: string; position: number }> {
+  const others = siblings
+    .filter((c) => c.id !== movedCardId)
+    .sort((a, b) => a.position - b.position)
+    .map((c) => c.id)
+  const clamped = Math.max(0, Math.min(targetIndex, others.length))
+  const ordered = [...others.slice(0, clamped), movedCardId, ...others.slice(clamped)]
+  return ordered.map((id, i) => ({ id, position: i + 1 }))
+}
+
+/**
  * Move a card to a different stage (and optional position) on the same
  * board. Writes a `card_moved` Interaction on the backing Contact plus an
- * audit row, atomically.
+ * audit row, atomically. When `toPosition` is supplied the target stage's
+ * cards are resequenced into contiguous positions so within-column drag
+ * reorders persist; without it the card lands at the end of the stage.
  */
 export async function moveCard(
   db: Db,
@@ -192,13 +214,34 @@ export async function moveCard(
 
   const toStage = await resolveStage(db, card.boardId, input.toStageId)
   const fromStageId = card.stageId
-  const position = input.toPosition ?? (await nextCardPosition(db, card.boardId, input.toStageId))
 
-  const updated = await db.card.update({
+  // First place the card on the target stage (so it is part of the sibling
+  // set), then resequence when an explicit position was requested.
+  const landingPosition =
+    input.toPosition ?? (await nextCardPosition(db, card.boardId, input.toStageId))
+  await db.card.update({
     where: { id: card.id },
-    data: { stageId: input.toStageId, position },
+    data: { stageId: input.toStageId, position: landingPosition },
+  })
+
+  let position = landingPosition
+  if (input.toPosition !== undefined) {
+    const siblings = await db.card.findMany({
+      where: { boardId: card.boardId, stageId: input.toStageId, archivedAt: null },
+      select: { id: true, position: true },
+    })
+    const writes = resequence(siblings, card.id, input.toPosition - 1)
+    for (const w of writes) {
+      await db.card.update({ where: { id: w.id }, data: { position: w.position } })
+    }
+    position = writes.find((w) => w.id === card.id)?.position ?? landingPosition
+  }
+
+  const updated = await db.card.findFirst({
+    where: { id: card.id, archivedAt: null },
     select: cardSelect,
   })
+  if (!updated) throw new BusinessError('CARD_NOT_FOUND', 'Card not found')
 
   await db.interaction.create({
     data: {
