@@ -35,6 +35,7 @@ export type BusinessErrorCode =
   | 'LABEL_NAME_TAKEN'
   | 'LABEL_IN_USE'
   | 'SUBJECT_NOT_FOUND'
+  | 'TASK_NOT_FOUND'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {
