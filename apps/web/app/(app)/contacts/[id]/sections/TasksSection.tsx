@@ -6,15 +6,21 @@ import { useState } from 'react'
 
 import type { TaskEntry } from '@/lib/view-models/contact-channels'
 
+import { TaskCheckbox } from '../../../tasks/TaskCheckbox'
+
 interface Props {
   open: TaskEntry[]
   closed: TaskEntry[]
 }
 
 function TaskRow({ task }: { task: TaskEntry }) {
+  const isDone = task.status === 'done' || task.status === 'cancelled'
   return (
-    <li className="flex items-center justify-between rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
-      <span className="text-neutral-900">{task.title}</span>
+    <li className="flex items-center gap-3 rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm">
+      <TaskCheckbox id={task.id} status={task.status} size={18} />
+      <span className={`flex-1 ${isDone ? 'text-neutral-400 line-through' : 'text-neutral-900'}`}>
+        {task.title}
+      </span>
       <span className="flex items-center gap-2 text-xs text-neutral-500">
         <span className="rounded bg-neutral-100 px-1.5 py-0.5 uppercase">
           {task.status}
