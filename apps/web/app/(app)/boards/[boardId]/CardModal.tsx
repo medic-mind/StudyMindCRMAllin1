@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
+import { CallSummarySection } from './CallSummarySection'
 import { MoveCardMenu } from './MoveCardMenu'
 import { QuickActionButtons } from './QuickActionButtons'
 
@@ -236,6 +237,8 @@ export function CardModal({
                 <p className="text-sm text-neutral-500">No description yet.</p>
               )}
             </section>
+
+            <CallSummarySection cardId={card.id} canWrite={canWrite} />
 
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">

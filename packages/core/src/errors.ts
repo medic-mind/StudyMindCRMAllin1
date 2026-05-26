@@ -31,6 +31,8 @@ export type BusinessErrorCode =
   | 'BOARD_IS_DEFAULT'
   | 'CARD_NOT_FOUND'
   | 'COMMENT_EMPTY'
+  | 'CALL_SUMMARY_EMPTY'
+  | 'CALL_SUMMARY_NOT_FOUND'
   | 'LABEL_NOT_FOUND'
   | 'LABEL_NAME_TAKEN'
   | 'LABEL_IN_USE'

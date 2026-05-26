@@ -87,6 +87,29 @@ export const CardSetSubjectInput = z.object({
 })
 export type CardSetSubjectInput = z.infer<typeof CardSetSubjectInput>
 
+// --- Call summary (slice B) ------------------------------------------------
+
+export const CallOutcomeEnum = z.enum(['answered', 'voicemail', 'no_answer'])
+export type CallOutcomeEnum = z.infer<typeof CallOutcomeEnum>
+
+export const CallSummaryAddInput = z.object({
+  cardId: z.string(),
+  body: z.string().trim().min(1).max(4000),
+  outcome: CallOutcomeEnum.optional(),
+})
+export type CallSummaryAddInput = z.infer<typeof CallSummaryAddInput>
+
+export const CallSummarySendInput = z.object({
+  summaryInteractionId: z.string(),
+  channels: z.object({
+    slack: z.boolean().optional(),
+    trengo: z.boolean().optional(),
+    email: z.boolean().optional(),
+  }),
+  slackChannelId: z.string().trim().min(1).max(64).optional(),
+})
+export type CallSummarySendInput = z.infer<typeof CallSummarySendInput>
+
 // --- Label -----------------------------------------------------------------
 
 export const LabelCreateInput = z.object({

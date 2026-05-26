@@ -36,6 +36,10 @@ export const EVENT_NAMES = [
   'card.archived',
   'card.commented',
   'card.description_changed',
+  // Call summary on a card (slice B): an agent records the outcome of a call
+  // and can fan it out to Slack / Trengo / email.
+  'card.call_summary_added',
+  'card.call_summary_sent',
   'label.created',
   'label.updated',
   'label.deleted',
@@ -249,6 +253,11 @@ export const INTERACTION_TYPES = [
   // Universal task comment thread (slice B). Persisted on the linked contact
   // when the task has one, else on the task itself.
   'task_comment',
+  // Call summary on a board card (slice B). The summary itself and the record
+  // of fanning it out to Slack / Trengo / email both persist on the backing
+  // Contact.
+  'call_summary',
+  'call_summary_sent',
 ] as const
 
 export type InteractionType = (typeof INTERACTION_TYPES)[number]
