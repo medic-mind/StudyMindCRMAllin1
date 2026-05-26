@@ -7,7 +7,38 @@ import { z } from 'zod'
 
 import { createId } from '@paralleldrive/cuid2'
 
+import { addTaskComment, listTaskComments } from '@studymind/core/task'
+import { BusinessError } from '@studymind/core/errors'
+import { displayNameOf } from '@studymind/core/contact'
+
 import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
+
+// Task field writes (create/update/close) are Sales Executive and above;
+// Virtual Assistant is read + comment only (CLAUDE.md §20).
+const TASK_WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+
+function assertTaskWrite(role: string): void {
+  if (!TASK_WRITE_ROLES.has(role)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Your role cannot create or change tasks',
+    })
+  }
+}
+
+function mapTaskBusinessError(err: unknown): never {
+  if (err instanceof BusinessError) {
+    switch (err.code) {
+      case 'TASK_NOT_FOUND':
+        throw new TRPCError({ code: 'NOT_FOUND', message: err.message })
+      case 'COMMENT_EMPTY':
+        throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+      default:
+        throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+    }
+  }
+  throw err
+}
 
 const TASK_STATUSES = ['open', 'in_progress', 'blocked', 'done', 'cancelled'] as const
 type TaskStatus = (typeof TASK_STATUSES)[number]
@@ -16,8 +47,10 @@ const ListInput = z.object({
   cursor: z.object({ id: z.string(), createdAt: z.date() }).nullish(),
   limit: z.number().min(1).max(100).default(50),
   status: z.enum(TASK_STATUSES).optional(),
-  /** "me" returns only tasks assigned to the calling user. "all" returns the team view. */
-  scope: z.enum(['me', 'all']).default('me'),
+  /** "me" returns only tasks assigned to the calling user. "all" returns every task. */
+  scope: z.enum(['me', 'all']).default('all'),
+  /** When true, only tasks with a dueAt in the past and not done/cancelled. */
+  overdue: z.boolean().optional(),
 })
 
 const UpdateInput = z.object({
@@ -49,8 +82,15 @@ export const taskRouter = router({
     const rows = await ctx.db.task.findMany({
       where: {
         deletedAt: null,
-        ...(input.status ? { status: input.status } : {}),
         ...(input.scope === 'me' ? { assigneeId: user.id } : {}),
+        // Status: an explicit status filter wins. Otherwise, when "overdue" is
+        // set we exclude terminal statuses so closed work never shows as late.
+        ...(input.status
+          ? { status: input.status }
+          : input.overdue
+            ? { status: { notIn: ['done', 'cancelled'] as TaskStatus[] } }
+            : {}),
+        ...(input.overdue ? { dueAt: { lt: new Date() } } : {}),
         ...(input.cursor
           ? {
               OR: [
@@ -124,6 +164,7 @@ export const taskRouter = router({
 
   update: auditedProcedure.input(UpdateInput).mutation(async ({ ctx, input }) => {
     const user = requireUser(ctx)
+    assertTaskWrite(user.role)
     const before = await ctx.db.task.findFirst({
       where: { id: input.id, deletedAt: null },
     })
@@ -180,6 +221,7 @@ export const taskRouter = router({
 
   create: auditedProcedure.input(CreateInput).mutation(async ({ ctx, input }) => {
     const user = requireUser(ctx)
+    assertTaskWrite(user.role)
     // Validate referenced rows exist and aren't soft-deleted.
     if (input.contactId) {
       const c = await ctx.db.contact.findFirst({
@@ -228,6 +270,7 @@ export const taskRouter = router({
 
   close: auditedProcedure.input(CloseInput).mutation(async ({ ctx, input }) => {
     const user = requireUser(ctx)
+    assertTaskWrite(user.role)
     const before = await ctx.db.task.findFirst({
       where: { id: input.id, deletedAt: null },
     })
@@ -248,5 +291,98 @@ export const taskRouter = router({
       after,
     })
     return { id: after.id }
+  }),
+
+  /** Full task detail for the detail page / modal. Any authenticated role. */
+  get: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+    const task = await ctx.db.task.findFirst({
+      where: { id: input.id, deletedAt: null },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        status: true,
+        assigneeId: true,
+        contactId: true,
+        familyId: true,
+        dueAt: true,
+        asanaTaskId: true,
+        createdAt: true,
+        family: { select: { name: true } },
+      },
+    })
+    if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' })
+
+    const [assignee, contact, taskComments] = await Promise.all([
+      task.assigneeId
+        ? ctx.db.user.findUnique({
+            where: { id: task.assigneeId },
+            select: { id: true, name: true, email: true },
+          })
+        : Promise.resolve(null),
+      task.contactId
+        ? ctx.db.contact.findFirst({
+            where: { id: task.contactId, deletedAt: null },
+            select: { id: true, firstName: true, lastName: true, email: true },
+          })
+        : Promise.resolve(null),
+      listTaskComments(ctx.db, { taskId: task.id }),
+    ])
+
+    return {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      assigneeId: task.assigneeId,
+      assigneeName: assignee ? (assignee.name?.trim() || assignee.email) : null,
+      contactId: task.contactId,
+      contactName: contact ? displayNameOf(contact) : null,
+      familyId: task.familyId,
+      familyName: task.family?.name ?? null,
+      dueAt: task.dueAt,
+      asanaTaskId: task.asanaTaskId,
+      createdAt: task.createdAt,
+      commentCount: taskComments.length,
+    }
+  }),
+
+  comments: router({
+    list: protectedProcedure
+      .input(z.object({ taskId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const comments = await listTaskComments(ctx.db, { taskId: input.taskId })
+        return comments.map((c) => ({
+          id: c.id,
+          body: c.body,
+          authorId: c.authorId,
+          authorName: c.authorName,
+          occurredAt: c.occurredAt,
+        }))
+      }),
+
+    add: auditedProcedure
+      .input(z.object({ taskId: z.string(), body: z.string().trim().min(1).max(4000) }))
+      .mutation(async ({ ctx, input }) => {
+        // Any authenticated user may comment (incl. virtual_assistant).
+        const user = requireUser(ctx)
+        try {
+          const comment = await addTaskComment(
+            ctx.db,
+            { taskId: input.taskId, authorId: user.id, body: input.body },
+            { actorId: user.id, requestId: ctx.requestId },
+          )
+          ctx.audit.called = true
+          return {
+            id: comment.id,
+            body: comment.body,
+            authorId: comment.authorId,
+            authorName: comment.authorName,
+            occurredAt: comment.occurredAt,
+          }
+        } catch (err) {
+          mapTaskBusinessError(err)
+        }
+      }),
   }),
 })
