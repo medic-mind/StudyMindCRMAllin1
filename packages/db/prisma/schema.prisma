@@ -125,6 +125,12 @@ enum InteractionType {
   card_description_changed
   // Universal task comment thread (slice B).
   task_comment
+  // Call summary on a board card: an agent records the outcome of a call and
+  // can fan it out to Slack / Trengo / email. Both the summary and the send
+  // persist as Interactions on the backing Contact so they appear in the
+  // customer's history.
+  call_summary
+  call_summary_sent
 }
 
 enum ContactKind {
