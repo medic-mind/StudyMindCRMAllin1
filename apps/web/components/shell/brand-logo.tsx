@@ -11,6 +11,12 @@ interface Props {
   markOnly?: boolean
   /** Wordmark colour — defaults to current text colour. */
   wordmarkClassName?: string
+  /**
+   * When set, render the uploaded custom logo (served from
+   * /api/branding/logo) in place of the inline SVG mark. The number is the
+   * logo version (epoch millis) used to cache-bust. Null/undefined → SVG.
+   */
+  customLogoVersion?: number | null
 }
 
 export function BrandLogo({
@@ -18,7 +24,24 @@ export function BrandLogo({
   className,
   markOnly = false,
   wordmarkClassName = 'text-neutral-900',
+  customLogoVersion = null,
 }: Props) {
+  if (customLogoVersion != null) {
+    // Custom logo replaces the SVG mark. We cap the width so a wide wordmark
+    // logo still fits the bar; height tracks the requested size.
+    return (
+      <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
+        {/* Dynamic bytes from our own endpoint, not a static asset — plain img. */}
+        <img
+          src={`/api/branding/logo?v=${customLogoVersion}`}
+          alt="StudyMind"
+          height={size}
+          className="shrink-0 object-contain"
+          style={{ height: size, width: 'auto', maxWidth: size * 6 }}
+        />
+      </span>
+    )
+  }
   return (
     <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
       <svg
