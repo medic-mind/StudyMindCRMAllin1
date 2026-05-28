@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/shell/page-header'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ChevronRightIcon, SearchIcon, UsersIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { formatRelativeTime } from '@/lib/format/relative-time'
@@ -25,6 +26,18 @@ const KIND_TONE: Record<string, BadgeTone> = {
   tutor: 'success',
   la_caseworker: 'warn',
   other: 'neutral',
+}
+
+const KIND_RING: Record<string, string> = {
+  parent: 'ring-primary-100',
+  student: 'ring-violet-100',
+  tutor: 'ring-emerald-100',
+  la_caseworker: 'ring-amber-100',
+  other: 'ring-neutral-100',
+}
+
+function formatKind(kind: string): string {
+  return kind.replace(/_/g, ' ')
 }
 
 export default async function ContactsPage({
@@ -58,19 +71,25 @@ export default async function ContactsPage({
       />
       <PageBody>
         <form className="flex gap-2" method="GET">
-          <Input
-            type="search"
-            name="q"
-            defaultValue={sp.q ?? ''}
-            placeholder="Search by name, email, or phone"
-            className="max-w-sm"
-          />
+          <div className="relative max-w-sm flex-1">
+            <SearchIcon
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"
+            />
+            <Input
+              type="search"
+              name="q"
+              defaultValue={sp.q ?? ''}
+              placeholder="Search by name, email, or phone"
+              className="pl-9"
+            />
+          </div>
           <Button type="submit" variant="secondary">
             Search
           </Button>
         </form>
 
-        <div className="mt-6 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+        <div className="mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
           {data.items.length === 0 ? (
             <div className="p-10 text-center">
               <p className="text-sm font-medium text-neutral-700">
@@ -87,28 +106,30 @@ export default async function ContactsPage({
               <Thead>
                 <Tr>
                   <Th>Contact</Th>
-                  <Th>Role</Th>
+                  <Th>Type</Th>
                   <Th>Family</Th>
-                  <Th>Last interaction</Th>
+                  <Th className="text-right">Last activity</Th>
+                  <Th className="w-8" aria-label="Open" />
                 </Tr>
               </Thead>
               <Tbody>
                 {data.items.map((c) => {
                   const tone = KIND_TONE[c.kind] ?? 'neutral'
+                  const ring = KIND_RING[c.kind] ?? 'ring-neutral-100'
                   return (
-                    <Tr key={c.id}>
+                    <Tr key={c.id} className="group">
                       <Td>
                         <Link
                           href={`/contacts/${c.id}`}
                           className="flex min-w-0 items-center gap-3"
                         >
-                          <Avatar name={c.displayName} />
+                          <Avatar name={c.displayName} size={36} className={`ring-2 ${ring}`} />
                           <span className="min-w-0">
-                            <span className="block truncate font-medium text-neutral-900 group-hover:text-primary-800">
+                            <span className="block truncate font-medium text-neutral-900 group-hover:text-primary-700">
                               {c.displayName}
                             </span>
                             <span className="block truncate text-xs text-neutral-500">
-                              {c.email ?? '—'}
+                              {c.email ?? <span className="text-neutral-400">no email</span>}
                               {c.phoneE164 ? (
                                 <>
                                   {' · '}
@@ -120,15 +141,41 @@ export default async function ContactsPage({
                         </Link>
                       </Td>
                       <Td>
-                        <Badge tone={tone}>{c.kind}</Badge>
+                        <Badge tone={tone}>{formatKind(c.kind)}</Badge>
                       </Td>
-                      <Td className="text-sm text-neutral-700">
-                        {c.familyName ?? <span className="text-neutral-400">—</span>}
+                      <Td className="text-sm">
+                        {c.familyId ? (
+                          <Link
+                            href={`/contacts/families/${c.familyId}`}
+                            className="inline-flex items-center gap-1.5 text-neutral-700 hover:text-primary-700 hover:underline"
+                          >
+                            <UsersIcon size={13} className="text-neutral-400" />
+                            <span className="truncate">{c.familyName ?? 'Family'}</span>
+                          </Link>
+                        ) : (
+                          <span className="text-neutral-400">—</span>
+                        )}
                       </Td>
-                      <Td className="font-mono text-xs tabular-nums text-neutral-500">
+                      <Td
+                        className="text-right font-mono text-xs tabular-nums text-neutral-500"
+                        title={
+                          c.lastInteractionAt
+                            ? new Date(c.lastInteractionAt).toISOString()
+                            : undefined
+                        }
+                      >
                         {c.lastInteractionAt
                           ? formatRelativeTime(new Date(c.lastInteractionAt), now)
                           : '—'}
+                      </Td>
+                      <Td className="text-right">
+                        <Link
+                          href={`/contacts/${c.id}`}
+                          aria-label={`Open ${c.displayName}`}
+                          className="inline-flex text-neutral-300 transition-colors group-hover:text-primary-600"
+                        >
+                          <ChevronRightIcon size={16} />
+                        </Link>
                       </Td>
                     </Tr>
                   )

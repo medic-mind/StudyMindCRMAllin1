@@ -18,6 +18,12 @@ const links: Array<{ href: string; title: string; description: string; roles: st
     roles: 'CEO · Senior Manager',
   },
   {
+    href: '/settings/branding',
+    title: 'Branding',
+    description: 'Upload the logo shown in the top bar and on sign-in.',
+    roles: 'CEO · Senior Manager',
+  },
+  {
     href: '/settings/mailbox',
     title: 'Mailbox',
     description: 'Connect or disconnect your Gmail mailbox (per-agent).',

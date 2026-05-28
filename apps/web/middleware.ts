@@ -31,6 +31,8 @@ const PUBLIC_PATH_PREFIXES = [
   '/api/webhooks',
   '/api/oauth/gmail/callback',
   '/api/health',
+  // Custom brand logo bytes — rendered on the unauthenticated sign-in screen.
+  '/api/branding/logo',
   '/_next',
 ]
 

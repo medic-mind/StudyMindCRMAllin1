@@ -45,6 +45,10 @@ export const EVENT_NAMES = [
   'label.deleted',
   'subject.created',
 
+  // Branding (CLAUDE.md §4). Custom logo upload/removal — settings.write tier.
+  'branding.logo_updated',
+  'branding.logo_removed',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',

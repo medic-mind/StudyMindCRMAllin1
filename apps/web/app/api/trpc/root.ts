@@ -5,6 +5,7 @@ import { router } from '@/lib/trpc/builders'
 import { accountRouter } from './routers/account'
 import { adminRouter } from './routers/admin'
 import { boardRouter, cardRouter, labelRouter, subjectRouter } from './routers/board'
+import { brandingRouter } from './routers/branding'
 import { contactRouter } from './routers/contact'
 import { contactChannelsRouter } from './routers/contact-channels'
 
@@ -37,6 +38,7 @@ export const appRouter = router({
   account: accountRouter,
   admin: adminRouter,
   board: boardRouter,
+  branding: brandingRouter,
   card: cardRouter,
   contact: contactWithChannels,
   label: labelRouter,

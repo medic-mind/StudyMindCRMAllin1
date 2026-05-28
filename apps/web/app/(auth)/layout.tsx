@@ -5,6 +5,9 @@
 
 import Link from 'next/link'
 
+import { getBrandingLogoMeta } from '@studymind/core/branding'
+
+import { db } from '@/lib/db'
 import { BrandLogo } from '@/components/shell/brand-logo'
 
 export const dynamic = 'force-dynamic'
@@ -16,7 +19,8 @@ const HIGHLIGHTS = [
   'Direct Debit and reconciliation visibility across Stripe and GoCardless',
 ] as const
 
-export default function AuthLayout({ children }: { children: React.ReactNode }) {
+export default async function AuthLayout({ children }: { children: React.ReactNode }) {
+  const branding = await getBrandingLogoMeta(db)
   return (
     <div className="flex min-h-screen bg-neutral-50">
       {/* Brand hero — hidden on small screens */}
@@ -32,8 +36,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         <div className="relative flex items-center gap-2">
-          <BrandLogo size={32} markOnly />
-          <span className="text-lg font-semibold tracking-tight">StudyMind CRM</span>
+          <BrandLogo size={32} markOnly customLogoVersion={branding.version} />
+          {branding.version == null ? (
+            <span className="text-lg font-semibold tracking-tight">StudyMind CRM</span>
+          ) : null}
         </div>
         <div className="relative max-w-md">
           <h2 className="text-3xl font-semibold leading-tight tracking-tight">

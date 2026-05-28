@@ -1152,6 +1152,24 @@ model FeatureFlag {
 }
 
 // -----------------------------------------------------------------------------
+// Branding (CLAUDE.md §4). Optional custom logo, stored in Postgres so a
+// self-hosted install needs no AWS/S3. Singleton row, id = "branding". The
+// inline SVG brand mark stays as the fallback when no row exists.
+// -----------------------------------------------------------------------------
+
+model BrandingSetting {
+  id              String  @id
+  logoData        Bytes
+  logoContentType String
+  logoFileName    String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+}
+
+// -----------------------------------------------------------------------------
 // DSL rota (CLAUDE.md §42).
 // One primary + one deputy per ISO week; raiseConcern resolves the on-duty
 // DSL from this table at runtime. Empty rota → DEFAULT_DSL_USER_ID env.

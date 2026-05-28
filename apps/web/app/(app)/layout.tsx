@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation'
 
+import { getBrandingLogoMeta } from '@studymind/core/branding'
+
 import { getCurrentUser } from '@/lib/auth/server'
+import { db } from '@/lib/db'
 import { BackfillProgressBanner } from '@/components/shell/backfill-progress-banner'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
 import { TopBar } from '@/components/shell/top-bar'
@@ -77,6 +80,7 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       children: [
         { href: '/settings/users', label: 'Users' },
         { href: '/settings/flags', label: 'Flags' },
+        { href: '/settings/branding', label: 'Branding' },
         { href: '/settings/integrations', label: 'Integrations' },
         { href: '/settings/mailbox', label: 'Mailbox' },
       ],
@@ -121,11 +125,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const role: Role = me.role
   const totpEnabled = !!me.totpEnabledAt
   const nav = buildNav(role, totpEnabled)
+  const branding = await getBrandingLogoMeta(db)
 
   return (
     <div className="flex min-h-screen flex-col bg-neutral-50">
       <TopBar
         user={{ email: me.email, name: me.name ?? null, role: me.role }}
+        logoVersion={branding.version}
       />
       <div className="flex flex-1">
         <aside

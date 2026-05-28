@@ -7,4 +7,5 @@ export const SAFEGUARDING_DOMAIN = 'safeguarding' as const
 
 export * from './decrypt'
 export * from './encrypt'
-export { getKmsClient, setKmsClient, getKmsKeyId, KEY_VERSION } from './kms'
+export { generateDataKey, unwrapDataKey, type GeneratedDataKey } from './envelope'
+export { getKmsClient, setKmsClient, getKmsKeyId, isKmsConfigured, KEY_VERSION } from './kms'

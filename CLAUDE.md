@@ -515,7 +515,7 @@ OpenAI for everything AI today. Models per task:
 
 ### 19.2 Schema reference (top tables)
 
-`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018). Definitive shape: `prisma/schema.prisma`.
+`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018), `BrandingSetting` (custom logo, §4). Definitive shape: `prisma/schema.prisma`.
 
 ---
 
@@ -595,6 +595,7 @@ Full procedure: `docs/compliance/`.
 - **CMK** (AWS KMS Customer Master Key) per environment: `crm-prod`, `crm-staging`, `crm-dev`. Rotation: AWS-managed annual.
 - **Per-tenant DEKs** are not used today (we are single-tenant). Per-contact DEKs are used for high-sensitivity contacts (DSL-flagged), so crypto-shred on erasure is real.
 - **Envelope encryption.** Each `EncryptedField` row holds `ciphertext`, `iv`, `dek_ciphertext` (DEK encrypted under CMK), `aad` (associated data binding the field to its row id and column name), and `key_version`.
+- **Local-key fallback (self-hosted without AWS).** When `AWS_KMS_KEY_ID` is unset, the DEK is wrapped with a local AES-256 master key instead of KMS — from `CRM_LOCAL_ENCRYPTION_KEY`, else derived from `AUTH_SECRET` via HKDF. Locally-wrapped DEKs carry an 8-byte sentinel so KMS-wrapped and local-wrapped rows coexist and route correctly on decrypt; fails closed if no key source exists. KMS stays the preferred backend whenever it is configured. Implementation: `packages/core/safeguarding/envelope.ts`.
 - **Decryption** is centralised in `packages/core/safeguarding/decrypt.ts`. That function:
   1. Verifies the caller has the correct role and per-row attribute.
   2. Records an `AuditLogEntry` with `actor_id`, `purpose`, `request_id`, before any decryption.
@@ -1002,6 +1003,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a runbook | `docs/runbooks/` |
 | Record an architecture decision | `docs/adr/` |
 | Adjust a brand token | `packages/ui/tokens/` |
+| Change the brand logo | Settings → Branding (`/settings/branding`); domain `packages/core/src/branding/`, stored in `BrandingSetting`, served from `/api/branding/logo` |
 | Update the budget for an AI task | `packages/ai/budget.ts` |
 | Add a new permission to the matrix | `packages/core/auth/policies.ts` (matrix in section 20 regenerates) |
 | Add a tRPC procedure | `apps/web/app/api/trpc/routers/<domain>.ts`; register router in `root.ts` |

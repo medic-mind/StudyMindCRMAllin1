@@ -14,6 +14,7 @@ import { dueAtLabel } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { NewTaskDialog } from './NewTaskDialog'
+import { TaskCheckbox } from './TaskCheckbox'
 
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
@@ -153,6 +154,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
             <Table>
               <Thead>
                 <Tr>
+                  <Th className="w-8" aria-label="Done" />
                   <Th>Assignee</Th>
                   <Th>Task</Th>
                   <Th>Contact</Th>
@@ -163,8 +165,12 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
               <Tbody>
                 {data.items.map((t) => {
                   const due = t.dueAt ? dueAtLabel(t.dueAt, now) : null
+                  const isDone = t.status === 'done' || t.status === 'cancelled'
                   return (
                     <Tr key={t.id}>
+                      <Td className="pr-0">
+                        <TaskCheckbox id={t.id} status={t.status} />
+                      </Td>
                       <Td>
                         {t.assigneeEmail ? (
                           <span className="inline-flex items-center gap-2">
@@ -180,7 +186,11 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                       <Td>
                         <Link
                           href={`/tasks/${t.id}`}
-                          className="font-medium text-neutral-900 hover:text-primary-700 hover:underline"
+                          className={`font-medium hover:text-primary-700 hover:underline ${
+                            isDone
+                              ? 'text-neutral-400 line-through'
+                              : 'text-neutral-900'
+                          }`}
                         >
                           {t.title}
                         </Link>

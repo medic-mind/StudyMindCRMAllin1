@@ -292,3 +292,69 @@ describe('decryptFieldById', () => {
     expect(called).toBe(0)
   })
 })
+
+describe('local-key fallback (no KMS configured)', () => {
+  beforeEach(() => {
+    // Parent beforeEach set AWS_KMS_KEY_ID + a mock client; undo both so the
+    // local backend is exercised and any stray KMS call would be obvious.
+    delete process.env['AWS_KMS_KEY_ID']
+    setKmsClient(null)
+    process.env['CRM_LOCAL_ENCRYPTION_KEY'] = Buffer.alloc(32, 7).toString('base64')
+  })
+
+  afterEach(() => {
+    delete process.env['CRM_LOCAL_ENCRYPTION_KEY']
+    delete process.env['AUTH_SECRET']
+  })
+
+  it('round-trips plaintext via an explicit local AES master key', async () => {
+    const db = makeFakeDb()
+    const row = await encryptField(db as never, {
+      ownerType: 'TrengoToken',
+      ownerId: 'agent-1',
+      fieldName: 'trengo.api_token',
+      plaintext: 'tok_local_secret',
+      ctx: { actorId: 'agent-1', requestId: 'req-L' },
+    })
+
+    // Locally-wrapped DEKs carry the sentinel prefix; KMS blobs never do.
+    expect(row.dekCiphertext.subarray(0, 8).toString('utf8')).toBe('SMxLOCAL')
+
+    const plaintext = await decryptField(
+      {
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        dekCiphertext: row.dekCiphertext,
+        aad: row.aad,
+        keyVersion: row.keyVersion,
+      },
+      { actorId: 'agent-1', purpose: 'unit-test' },
+    )
+    expect(plaintext).toBe('tok_local_secret')
+  })
+
+  it('derives the key from AUTH_SECRET when no explicit local key is set', async () => {
+    delete process.env['CRM_LOCAL_ENCRYPTION_KEY']
+    process.env['AUTH_SECRET'] = 'stable-test-auth-secret'
+
+    const db = makeFakeDb()
+    const row = await encryptField(db as never, {
+      ownerType: 'TrengoToken',
+      ownerId: 'agent-2',
+      fieldName: 'trengo.api_token',
+      plaintext: 'tok_derived',
+      ctx: { actorId: 'agent-2' },
+    })
+    const plaintext = await decryptField(
+      {
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        dekCiphertext: row.dekCiphertext,
+        aad: row.aad,
+        keyVersion: row.keyVersion,
+      },
+      { actorId: 'agent-2', purpose: 'unit-test' },
+    )
+    expect(plaintext).toBe('tok_derived')
+  })
+})

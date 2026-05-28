@@ -16,6 +16,8 @@ import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { trpc } from '@/lib/trpc/client'
 
+import { TaskCheckbox } from '../TaskCheckbox'
+
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
   in_progress: 'In progress',
@@ -110,6 +112,7 @@ export function TaskDetail({
       <div className="space-y-4 lg:col-span-2">
         <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2">
+            {canWrite ? <TaskCheckbox id={task.id} status={task.status} /> : null}
             <Badge tone={STATUS_TONE[task.status] ?? 'neutral'}>
               {STATUS_LABEL[task.status] ?? task.status}
             </Badge>

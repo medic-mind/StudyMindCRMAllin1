@@ -10,27 +10,13 @@ vi.mock('@studymind/audit', () => ({
   writeAuditLogEntry: vi.fn(async () => 'audit_1'),
 }))
 
-vi.mock('@aws-sdk/client-kms', () => {
-  class GenerateDataKeyCommand {
-    input: unknown
-    constructor(input: unknown) {
-      this.input = input
-    }
-  }
-  return { GenerateDataKeyCommand }
-})
-
 vi.mock('@studymind/core/safeguarding', () => {
-  const FAKE_DEK = new Uint8Array(32)
   return {
     KEY_VERSION: 1,
-    getKmsKeyId: () => 'arn:aws:kms:eu-west-2:000:key/test',
-    getKmsClient: () => ({
-      send: async () =>
-        Promise.resolve({
-          Plaintext: FAKE_DEK,
-          CiphertextBlob: new Uint8Array([1, 2, 3, 4]),
-        }),
+    // 32-byte DEK so AES-256-GCM init succeeds; opaque wrapped blob.
+    generateDataKey: async () => ({
+      plaintext: Buffer.alloc(32),
+      ciphertext: Buffer.from([1, 2, 3, 4]),
     }),
   }
 })

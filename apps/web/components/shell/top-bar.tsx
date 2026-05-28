@@ -17,9 +17,11 @@ interface Props {
     name: string | null
     role: string
   }
+  /** Custom-logo version (epoch millis) or null to use the inline SVG mark. */
+  logoVersion?: number | null
 }
 
-export function TopBar({ user }: Props) {
+export function TopBar({ user, logoVersion = null }: Props) {
   return (
     <header
       role="banner"
@@ -39,9 +41,13 @@ export function TopBar({ user }: Props) {
         className="flex items-center gap-2 tracking-tight"
         aria-label="StudyMind CRM home"
       >
-        <BrandLogo size={26} markOnly />
-        <span className="text-base font-semibold text-primary-700">StudyMind</span>
-        <span className="text-base font-medium text-neutral-500">CRM</span>
+        <BrandLogo size={26} markOnly customLogoVersion={logoVersion} />
+        {logoVersion == null ? (
+          <>
+            <span className="text-base font-semibold text-primary-700">StudyMind</span>
+            <span className="text-base font-medium text-neutral-500">CRM</span>
+          </>
+        ) : null}
       </Link>
 
       <div className="flex flex-1 justify-center">
