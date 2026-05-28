@@ -19,6 +19,7 @@ const contactWithChannels = router({
   update: contactRouter.update,
   mergeSuggestions: contactRouter.mergeSuggestions,
   merge: contactRouter.merge,
+  links: contactRouter.links,
   channels: contactChannelsRouter,
 })
 import { costRouter } from './routers/cost'
@@ -33,6 +34,7 @@ import { pipelineRouter } from './routers/pipeline'
 import { reportsRouter } from './routers/reports'
 import { searchRouter } from './routers/search'
 import { taskRouter } from './routers/task'
+import { teamRouter } from './routers/team'
 
 export const appRouter = router({
   account: accountRouter,
@@ -55,6 +57,7 @@ export const appRouter = router({
   reports: reportsRouter,
   search: searchRouter,
   task: taskRouter,
+  team: teamRouter,
 })
 
 export type AppRouter = typeof appRouter

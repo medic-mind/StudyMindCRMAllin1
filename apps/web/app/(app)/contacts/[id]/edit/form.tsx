@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -12,11 +13,31 @@ import { Textarea } from '@/components/ui/textarea'
 
 import { trpc } from '@/lib/trpc/client'
 
-// Controlled form (not RHF) so the dateOfBirth / optional-string normalisation
-// is explicit. The server is the source of truth for validation.
+type SendStatus = 'none' | 'send_support' | 'ehcp_in_place' | 'ehcp_in_progress' | 'other'
+
+interface InitialContact {
+  id: string
+  kind: 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
+  firstName: string | null
+  lastName: string | null
+  pronouns: string | null
+  email: string | null
+  phoneE164: string | null
+  dateOfBirth: string | null // YYYY-MM-DD
+  jobTitle: string | null
+  addressLine1: string | null
+  addressLine2: string | null
+  city: string | null
+  postcode: string | null
+  country: string | null
+  schoolName: string | null
+  yearGroup: string | null
+  sendStatus: SendStatus | null
+  mailchimpEmail: string | null
+  notes: string | null
+}
 
 interface FormState {
-  kind: 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
   firstName: string
   lastName: string
   pronouns: string
@@ -31,35 +52,14 @@ interface FormState {
   country: string
   schoolName: string
   yearGroup: string
-  sendStatus: '' | 'none' | 'send_support' | 'ehcp_in_place' | 'ehcp_in_progress' | 'other'
+  sendStatus: '' | SendStatus
   mailchimpEmail: string
   notes: string
 }
 
-const EMPTY: FormState = {
-  kind: 'parent',
-  firstName: '',
-  lastName: '',
-  pronouns: '',
-  email: '',
-  phoneE164: '',
-  dateOfBirth: '',
-  jobTitle: '',
-  addressLine1: '',
-  addressLine2: '',
-  city: '',
-  postcode: '',
-  country: '',
-  schoolName: '',
-  yearGroup: '',
-  sendStatus: '',
-  mailchimpEmail: '',
-  notes: '',
-}
-
-function clean(s: string): string | undefined {
+function emptyToNull(s: string): string | null {
   const t = s.trim()
-  return t.length > 0 ? t : undefined
+  return t.length > 0 ? t : null
 }
 
 function Section({
@@ -84,16 +84,36 @@ function Section({
   )
 }
 
-export function NewContactForm() {
+export function EditContactForm({ contact }: { contact: InitialContact }) {
   const router = useRouter()
-  const [form, setForm] = useState<FormState>(EMPTY)
-  const create = trpc.contact.create.useMutation({
-    onSuccess: ({ id }) => {
-      toast.success('Contact created')
-      router.push(`/contacts/${id}`)
+  const [form, setForm] = useState<FormState>({
+    firstName: contact.firstName ?? '',
+    lastName: contact.lastName ?? '',
+    pronouns: contact.pronouns ?? '',
+    email: contact.email ?? '',
+    phoneE164: contact.phoneE164 ?? '',
+    dateOfBirth: contact.dateOfBirth ?? '',
+    jobTitle: contact.jobTitle ?? '',
+    addressLine1: contact.addressLine1 ?? '',
+    addressLine2: contact.addressLine2 ?? '',
+    city: contact.city ?? '',
+    postcode: contact.postcode ?? '',
+    country: contact.country ?? '',
+    schoolName: contact.schoolName ?? '',
+    yearGroup: contact.yearGroup ?? '',
+    sendStatus: contact.sendStatus ?? '',
+    mailchimpEmail: contact.mailchimpEmail ?? '',
+    notes: contact.notes ?? '',
+  })
+
+  const update = trpc.contact.update.useMutation({
+    onSuccess: () => {
+      toast.success('Contact updated')
+      router.push(`/contacts/${contact.id}`)
+      router.refresh()
     },
     onError: (err) => {
-      toast.error(err.message ?? 'Could not create contact')
+      toast.error(err.message ?? 'Could not save changes')
     },
   })
 
@@ -104,45 +124,38 @@ export function NewContactForm() {
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const dob = form.dateOfBirth ? new Date(form.dateOfBirth) : undefined
-    create.mutate({
-      kind: form.kind,
-      firstName: clean(form.firstName),
-      lastName: clean(form.lastName),
-      pronouns: clean(form.pronouns),
-      email: clean(form.email),
-      phoneE164: clean(form.phoneE164),
-      dateOfBirth: dob,
-      jobTitle: clean(form.jobTitle),
-      addressLine1: clean(form.addressLine1),
-      addressLine2: clean(form.addressLine2),
-      city: clean(form.city),
-      postcode: clean(form.postcode),
-      country: clean(form.country),
-      schoolName: clean(form.schoolName),
-      yearGroup: clean(form.yearGroup),
-      sendStatus: form.sendStatus === '' ? undefined : form.sendStatus,
-      mailchimpEmail: clean(form.mailchimpEmail),
-      notes: clean(form.notes),
+    update.mutate({
+      id: contact.id,
+      firstName: emptyToNull(form.firstName),
+      lastName: emptyToNull(form.lastName),
+      pronouns: emptyToNull(form.pronouns),
+      email: emptyToNull(form.email),
+      phoneE164: emptyToNull(form.phoneE164),
+      dateOfBirth: form.dateOfBirth ? new Date(form.dateOfBirth) : null,
+      jobTitle: emptyToNull(form.jobTitle),
+      addressLine1: emptyToNull(form.addressLine1),
+      addressLine2: emptyToNull(form.addressLine2),
+      city: emptyToNull(form.city),
+      postcode: emptyToNull(form.postcode),
+      country: emptyToNull(form.country),
+      schoolName: emptyToNull(form.schoolName),
+      yearGroup: emptyToNull(form.yearGroup),
+      sendStatus: form.sendStatus === '' ? null : form.sendStatus,
+      mailchimpEmail: emptyToNull(form.mailchimpEmail),
+      notes: emptyToNull(form.notes),
     })
   }
 
-  const showStudentFields = form.kind === 'student'
+  const showStudentFields = contact.kind === 'student'
+  const showJobTitle =
+    contact.kind === 'tutor' ||
+    contact.kind === 'la_caseworker' ||
+    contact.kind === 'other'
 
   return (
     <form className="space-y-5" onSubmit={onSubmit}>
-      <Section title="Identity" description="Who is this contact?">
+      <Section title="Identity">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="kind">Role</Label>
-            <Select id="kind" value={form.kind} onChange={set('kind')}>
-              <option value="parent">Parent</option>
-              <option value="student">Student</option>
-              <option value="tutor">Tutor</option>
-              <option value="la_caseworker">LA caseworker</option>
-              <option value="other">Other</option>
-            </Select>
-          </div>
           <div className="space-y-1.5">
             <Label htmlFor="firstName">First name</Label>
             <Input id="firstName" value={form.firstName} onChange={set('firstName')} />
@@ -153,12 +166,7 @@ export function NewContactForm() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="pronouns">Pronouns</Label>
-            <Input
-              id="pronouns"
-              value={form.pronouns}
-              onChange={set('pronouns')}
-              placeholder="e.g. they/them"
-            />
+            <Input id="pronouns" value={form.pronouns} onChange={set('pronouns')} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="dateOfBirth">Date of birth</Label>
@@ -187,9 +195,7 @@ export function NewContactForm() {
               placeholder="+447700900123"
             />
           </div>
-          {(form.kind === 'tutor' ||
-            form.kind === 'la_caseworker' ||
-            form.kind === 'other') && (
+          {showJobTitle && (
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="jobTitle">Job title</Label>
               <Input id="jobTitle" value={form.jobTitle} onChange={set('jobTitle')} />
@@ -198,7 +204,7 @@ export function NewContactForm() {
         </div>
       </Section>
 
-      <Section title="Address" description="Optional postal address.">
+      <Section title="Address">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="addressLine1">Address line 1</Label>
@@ -218,21 +224,13 @@ export function NewContactForm() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="country">Country</Label>
-            <Input
-              id="country"
-              value={form.country}
-              onChange={set('country')}
-              placeholder="United Kingdom"
-            />
+            <Input id="country" value={form.country} onChange={set('country')} />
           </div>
         </div>
       </Section>
 
       {showStudentFields && (
-        <Section
-          title="Education"
-          description="School + year group + SEND status — fill what's known."
-        >
+        <Section title="Education">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="schoolName">School</Label>
@@ -240,12 +238,7 @@ export function NewContactForm() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="yearGroup">Year group</Label>
-              <Input
-                id="yearGroup"
-                value={form.yearGroup}
-                onChange={set('yearGroup')}
-                placeholder="e.g. Year 9"
-              />
+              <Input id="yearGroup" value={form.yearGroup} onChange={set('yearGroup')} />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="sendStatus">SEND status</Label>
@@ -262,10 +255,7 @@ export function NewContactForm() {
         </Section>
       )}
 
-      <Section
-        title="Marketing"
-        description="Optional. Stored only for reference; Mailchimp push is a separate action."
-      >
+      <Section title="Marketing">
         <div className="space-y-1.5">
           <Label htmlFor="mailchimpEmail">Mailchimp audience email</Label>
           <Input
@@ -273,25 +263,24 @@ export function NewContactForm() {
             type="email"
             value={form.mailchimpEmail}
             onChange={set('mailchimpEmail')}
-            placeholder="Defaults to Email if blank"
           />
         </div>
       </Section>
 
       <Section title="Internal notes">
-        <Textarea
-          id="notes"
-          rows={4}
-          value={form.notes}
-          onChange={set('notes')}
-          placeholder="Anything the next agent needs to know."
-        />
+        <Textarea id="notes" rows={4} value={form.notes} onChange={set('notes')} />
       </Section>
 
       <div className="flex items-center gap-2">
-        <Button type="submit" disabled={create.isPending}>
-          {create.isPending ? 'Creating…' : 'Create contact'}
+        <Button type="submit" disabled={update.isPending}>
+          {update.isPending ? 'Saving…' : 'Save changes'}
         </Button>
+        <Link
+          href={`/contacts/${contact.id}`}
+          className="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium text-neutral-600 hover:text-neutral-900"
+        >
+          Cancel
+        </Link>
       </div>
     </form>
   )

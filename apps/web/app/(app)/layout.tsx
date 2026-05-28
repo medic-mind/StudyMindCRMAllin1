@@ -79,6 +79,7 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/settings/users', label: 'Users' },
+        { href: '/settings/teams', label: 'Teams' },
         { href: '/settings/flags', label: 'Flags' },
         { href: '/settings/branding', label: 'Branding' },
         { href: '/settings/integrations', label: 'Integrations' },

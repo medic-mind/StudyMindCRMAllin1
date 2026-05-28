@@ -49,6 +49,20 @@ export const EVENT_NAMES = [
   'branding.logo_updated',
   'branding.logo_removed',
 
+  // Contact links (parent/student, sibling, caseworker, etc) — many-to-many
+  // between contacts. Reciprocal links count as one event per side.
+  'contact.link_added',
+  'contact.link_removed',
+
+  // Teams (internal ops squads).
+  'team.created',
+  'team.updated',
+  'team.archived',
+  'team.restored',
+  'team.member_added',
+  'team.member_removed',
+  'task.team_changed',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',

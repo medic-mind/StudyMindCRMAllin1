@@ -405,6 +405,20 @@ model Contact {
   isMinor     Boolean     @default(false)
   notes       String?
 
+  // Extended profile fields (additive, all optional) so we can capture
+  // enough on a contact to be useful in education ops (CLAUDE.md §2).
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  postcode       String?
+  country        String?
+  schoolName     String?
+  yearGroup      String?
+  sendStatus     ContactSendStatus?
+  jobTitle       String?
+  pronouns       String?
+  mailchimpEmail String?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?
@@ -417,10 +431,54 @@ model Contact {
   safeguardingFlags SafeguardingFlag[]
   encryptedFields   EncryptedField[]
   cards             Card[]
+  linksFrom         ContactLink[]      @relation("ContactLinkFrom")
+  linksTo           ContactLink[]      @relation("ContactLinkTo")
 
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
+}
+
+enum ContactSendStatus {
+  none
+  send_support
+  ehcp_in_place
+  ehcp_in_progress
+  other
+}
+
+enum ContactLinkRelation {
+  parent_of
+  child_of
+  guardian_of
+  sibling_of
+  spouse_of
+  partner_of
+  caseworker_for
+  tutor_of
+  student_of
+  other
+}
+
+// Free-form many-to-many between contacts (parent/child, sibling, caseworker,
+// tutor, etc). Both sides are first-class so a list of "linked contacts"
+// reads either direction. Reciprocal links are an application concern; the
+// router writes the inverse where appropriate.
+model ContactLink {
+  id            String              @id
+  fromContactId String
+  toContactId   String
+  relation      ContactLinkRelation
+  notes         String?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  fromContact Contact @relation("ContactLinkFrom", fields: [fromContactId], references: [id])
+  toContact   Contact @relation("ContactLinkTo", fields: [toContactId], references: [id])
+
+  @@unique([fromContactId, toContactId, relation])
+  @@index([toContactId])
 }
 
 model Family {
@@ -1058,6 +1116,9 @@ model Task {
   description   String?
   status        TaskStatus @default(open)
   assigneeId    String?
+  /// Optional Team ownership so tasks can be scoped per ops squad as well
+  /// as per assignee.
+  teamId        String?
   familyId      String?
   /// Optional Contact linkage (CLAUDE.md §13 — Asana sync stores the CRM
   /// contact id in the `crm_contact_id` custom field on the Asana task).
@@ -1077,11 +1138,50 @@ model Task {
   deletedAt   DateTime?
 
   family Family? @relation(fields: [familyId], references: [id])
+  team   Team?   @relation(fields: [teamId], references: [id])
 
   @@unique([asanaTaskId])
   @@index([assigneeId, status])
   @@index([familyId])
   @@index([contactId])
+  @@index([teamId, status])
+}
+
+// -----------------------------------------------------------------------------
+// Teams — internal ops squads. Tasks can be assigned to a team in addition
+// to (or instead of) a person. CEO + Senior Manager manage membership.
+// -----------------------------------------------------------------------------
+
+model Team {
+  id          String  @id
+  name        String  @unique
+  color       String?
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  members TeamMember[]
+  tasks   Task[]
+
+  @@index([archivedAt])
+}
+
+model TeamMember {
+  id        String @id
+  teamId    String
+  userId    String
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  team Team @relation(fields: [teamId], references: [id])
+
+  @@unique([teamId, userId])
+  @@index([userId])
 }
 
 // -----------------------------------------------------------------------------

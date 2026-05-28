@@ -47,8 +47,14 @@ const ListInput = z.object({
   cursor: z.object({ id: z.string(), createdAt: z.date() }).nullish(),
   limit: z.number().min(1).max(100).default(50),
   status: z.enum(TASK_STATUSES).optional(),
-  /** "me" returns only tasks assigned to the calling user. "all" returns every task. */
-  scope: z.enum(['me', 'all']).default('all'),
+  /**
+   * "me" → tasks assigned to the calling user.
+   * "team" → tasks owned by any team the caller is a member of.
+   * "all" → every task.
+   */
+  scope: z.enum(['me', 'team', 'all']).default('all'),
+  /** Filter to a specific team. Overrides scope-derived team filtering. */
+  teamId: z.string().nullish(),
   /** When true, only tasks with a dueAt in the past and not done/cancelled. */
   overdue: z.boolean().optional(),
 })
@@ -59,6 +65,7 @@ const UpdateInput = z.object({
   description: z.string().trim().max(4000).nullish(),
   status: z.enum(TASK_STATUSES).optional(),
   assigneeId: z.string().nullish(),
+  teamId: z.string().nullish(),
   dueAt: z.date().nullish(),
 })
 
@@ -71,6 +78,7 @@ const CreateInput = z.object({
   title: z.string().trim().min(1).max(280),
   description: z.string().trim().max(4000).optional(),
   assigneeId: z.string().min(1),
+  teamId: z.string().min(1).optional(),
   dueAt: z.date().optional(),
   contactId: z.string().min(1).optional(),
   familyId: z.string().min(1).optional(),
@@ -79,10 +87,26 @@ const CreateInput = z.object({
 export const taskRouter = router({
   list: protectedProcedure.input(ListInput).query(async ({ ctx, input }) => {
     const user = requireUser(ctx)
+
+    // For scope="team", we need the team ids the caller belongs to so we can
+    // filter tasks. One small query, then the main list builds a single where
+    // clause from it.
+    let teamFilter: { teamId: { in: string[] } } | { teamId: string } | undefined
+    if (input.teamId) {
+      teamFilter = { teamId: input.teamId }
+    } else if (input.scope === 'team') {
+      const memberships = await ctx.db.teamMember.findMany({
+        where: { userId: user.id },
+        select: { teamId: true },
+      })
+      teamFilter = { teamId: { in: memberships.map((m) => m.teamId) } }
+    }
+
     const rows = await ctx.db.task.findMany({
       where: {
         deletedAt: null,
         ...(input.scope === 'me' ? { assigneeId: user.id } : {}),
+        ...(teamFilter ?? {}),
         // Status: an explicit status filter wins. Otherwise, when "overdue" is
         // set we exclude terminal statuses so closed work never shows as late.
         ...(input.status
@@ -113,11 +137,13 @@ export const taskRouter = router({
         description: true,
         status: true,
         assigneeId: true,
+        teamId: true,
         familyId: true,
         contactId: true,
         dueAt: true,
         createdAt: true,
         family: { select: { name: true } },
+        team: { select: { id: true, name: true, color: true } },
       },
     })
     const hasMore = rows.length > input.limit
@@ -154,6 +180,9 @@ export const taskRouter = router({
       assigneeName: r.assigneeId
         ? (assigneeMap.get(r.assigneeId)?.name ?? null)
         : null,
+      teamId: r.teamId,
+      teamName: r.team?.name ?? null,
+      teamColor: r.team?.color ?? null,
     }))
 
     return {
@@ -176,6 +205,7 @@ export const taskRouter = router({
         ...(input.description !== undefined ? { description: input.description } : {}),
         ...(input.status !== undefined ? { status: input.status as TaskStatus } : {}),
         ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+        ...(input.teamId !== undefined ? { teamId: input.teamId } : {}),
         ...(input.dueAt !== undefined ? { dueAt: input.dueAt } : {}),
         updatedById: user.id,
         lastWrittenBy: 'crm',
@@ -251,6 +281,7 @@ export const taskRouter = router({
         description: input.description ?? null,
         status: 'open',
         assigneeId: assignee.id,
+        teamId: input.teamId ?? null,
         contactId: input.contactId ?? null,
         familyId: input.familyId ?? null,
         dueAt: input.dueAt ?? null,

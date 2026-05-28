@@ -48,6 +48,62 @@ export const ContactSummary = z.object({
 })
 export type ContactSummary = z.infer<typeof ContactSummary>
 
+// Extended profile (additive). All optional; new contacts can still be
+// created with just kind + a name.
+export const ContactSendStatus = z.enum([
+  'none',
+  'send_support',
+  'ehcp_in_place',
+  'ehcp_in_progress',
+  'other',
+])
+export type ContactSendStatus = z.infer<typeof ContactSendStatus>
+
+export const ContactLinkRelation = z.enum([
+  'parent_of',
+  'child_of',
+  'guardian_of',
+  'sibling_of',
+  'spouse_of',
+  'partner_of',
+  'caseworker_for',
+  'tutor_of',
+  'student_of',
+  'other',
+])
+export type ContactLinkRelation = z.infer<typeof ContactLinkRelation>
+
+/** Inverse of each relation — used when we auto-create the reciprocal link. */
+export const INVERSE_RELATION: Record<ContactLinkRelation, ContactLinkRelation> = {
+  parent_of: 'child_of',
+  child_of: 'parent_of',
+  guardian_of: 'child_of',
+  sibling_of: 'sibling_of',
+  spouse_of: 'spouse_of',
+  partner_of: 'partner_of',
+  caseworker_for: 'student_of',
+  tutor_of: 'student_of',
+  student_of: 'tutor_of',
+  other: 'other',
+}
+
+const OptionalShort = z.string().trim().min(1).max(120).optional()
+const OptionalLong = z.string().trim().min(1).max(2000).optional()
+
+const ProfileFields = {
+  addressLine1: OptionalShort,
+  addressLine2: OptionalShort,
+  city: OptionalShort,
+  postcode: OptionalShort,
+  country: OptionalShort,
+  schoolName: OptionalShort,
+  yearGroup: OptionalShort,
+  sendStatus: ContactSendStatus.optional(),
+  jobTitle: OptionalShort,
+  pronouns: z.string().trim().min(1).max(40).optional(),
+  mailchimpEmail: Email.optional(),
+} as const
+
 export const ContactCreateInput = z.object({
   kind: ContactKind,
   firstName: NameField.optional(),
@@ -55,7 +111,8 @@ export const ContactCreateInput = z.object({
   email: Email.optional(),
   phoneE164: E164.optional(),
   dateOfBirth: z.date().optional(),
-  notes: z.string().max(2000).optional(),
+  notes: OptionalLong,
+  ...ProfileFields,
 })
 export type ContactCreateInput = z.infer<typeof ContactCreateInput>
 
@@ -67,6 +124,17 @@ export const ContactUpdateInput = z.object({
   phoneE164: E164.nullish(),
   dateOfBirth: z.date().nullish(),
   notes: z.string().max(2000).nullish(),
+  addressLine1: z.string().trim().max(120).nullish(),
+  addressLine2: z.string().trim().max(120).nullish(),
+  city: z.string().trim().max(120).nullish(),
+  postcode: z.string().trim().max(120).nullish(),
+  country: z.string().trim().max(120).nullish(),
+  schoolName: z.string().trim().max(120).nullish(),
+  yearGroup: z.string().trim().max(120).nullish(),
+  sendStatus: ContactSendStatus.nullish(),
+  jobTitle: z.string().trim().max(120).nullish(),
+  pronouns: z.string().trim().max(40).nullish(),
+  mailchimpEmail: Email.nullish(),
 })
 export type ContactUpdateInput = z.infer<typeof ContactUpdateInput>
 

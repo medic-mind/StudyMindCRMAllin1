@@ -7,8 +7,11 @@ import { z } from 'zod'
 
 import {
   ContactCreateInput,
+  ContactLinkRelation,
   ContactSummary,
   ContactUpdateInput,
+  displayNameOf,
+  INVERSE_RELATION,
   isMinorByDob,
 } from '@studymind/core/contact'
 
@@ -130,6 +133,17 @@ export const contactRouter = router({
           dateOfBirth: input.dateOfBirth ?? null,
           isMinor: minor,
           notes: input.notes ?? null,
+          addressLine1: input.addressLine1 ?? null,
+          addressLine2: input.addressLine2 ?? null,
+          city: input.city ?? null,
+          postcode: input.postcode ?? null,
+          country: input.country ?? null,
+          schoolName: input.schoolName ?? null,
+          yearGroup: input.yearGroup ?? null,
+          sendStatus: input.sendStatus ?? null,
+          jobTitle: input.jobTitle ?? null,
+          pronouns: input.pronouns ?? null,
+          mailchimpEmail: input.mailchimpEmail ?? null,
           createdById: user.id,
           updatedById: user.id,
         },
@@ -152,15 +166,35 @@ export const contactRouter = router({
       })
       if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
 
+      // Update semantics: undefined → don't touch, null → clear, value → set.
+      // Zod nullish() preserves the distinction.
+      function pass<T>(v: T | null | undefined): T | null | undefined {
+        return v
+      }
       const after = await ctx.db.contact.update({
         where: { id: input.id },
         data: {
-          firstName: input.firstName ?? undefined,
-          lastName: input.lastName ?? undefined,
-          email: input.email ?? undefined,
-          phoneE164: input.phoneE164 ?? undefined,
-          dateOfBirth: input.dateOfBirth ?? undefined,
-          notes: input.notes ?? undefined,
+          firstName: pass(input.firstName),
+          lastName: pass(input.lastName),
+          email: pass(input.email),
+          phoneE164: pass(input.phoneE164),
+          dateOfBirth: pass(input.dateOfBirth),
+          notes: pass(input.notes),
+          addressLine1: pass(input.addressLine1),
+          addressLine2: pass(input.addressLine2),
+          city: pass(input.city),
+          postcode: pass(input.postcode),
+          country: pass(input.country),
+          schoolName: pass(input.schoolName),
+          yearGroup: pass(input.yearGroup),
+          sendStatus: pass(input.sendStatus),
+          jobTitle: pass(input.jobTitle),
+          pronouns: pass(input.pronouns),
+          mailchimpEmail: pass(input.mailchimpEmail),
+          // Refresh isMinor from DOB whenever DOB is sent in this update.
+          ...(input.dateOfBirth !== undefined
+            ? { isMinor: isMinorByDob(input.dateOfBirth ?? null) }
+            : {}),
           updatedById: user.id,
         },
       })
@@ -212,6 +246,187 @@ export const contactRouter = router({
           after: result,
         })
         return result
+      }),
+  }),
+
+  // Free-form relationships between contacts (parent ↔ student, sibling,
+  // caseworker, tutor, etc). The reciprocal link is created in the same
+  // transaction so the "linked contacts" list reads consistently from
+  // either side.
+  links: router({
+    list: protectedProcedure
+      .input(z.object({ contactId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const rows = await ctx.db.contactLink.findMany({
+          where: { fromContactId: input.contactId },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            toContact: {
+              select: {
+                id: true,
+                kind: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneE164: true,
+              },
+            },
+          },
+        })
+        return rows.map((r) => ({
+          id: r.id,
+          relation: r.relation,
+          notes: r.notes,
+          createdAt: r.createdAt,
+          contact: {
+            id: r.toContact.id,
+            kind: r.toContact.kind,
+            displayName: displayNameOf(r.toContact),
+            email: r.toContact.email,
+            phoneE164: r.toContact.phoneE164,
+          },
+        }))
+      }),
+
+    add: auditedProcedure
+      .input(
+        z.object({
+          fromContactId: z.string(),
+          toContactId: z.string(),
+          relation: ContactLinkRelation,
+          notes: z.string().trim().max(500).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (input.fromContactId === input.toContactId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'A contact cannot be linked to itself.',
+          })
+        }
+        // Create forward + reciprocal in one transaction; ignore unique-key
+        // conflicts so re-adding the same relation is a no-op.
+        const result = await ctx.db.$transaction(async (tx) => {
+          const forward = await tx.contactLink.upsert({
+            where: {
+              fromContactId_toContactId_relation: {
+                fromContactId: input.fromContactId,
+                toContactId: input.toContactId,
+                relation: input.relation,
+              },
+            },
+            create: {
+              id: createId(),
+              fromContactId: input.fromContactId,
+              toContactId: input.toContactId,
+              relation: input.relation,
+              notes: input.notes ?? null,
+              createdById: user.id,
+            },
+            update: { notes: input.notes ?? null },
+          })
+          const inverseRel = INVERSE_RELATION[input.relation]
+          await tx.contactLink.upsert({
+            where: {
+              fromContactId_toContactId_relation: {
+                fromContactId: input.toContactId,
+                toContactId: input.fromContactId,
+                relation: inverseRel,
+              },
+            },
+            create: {
+              id: createId(),
+              fromContactId: input.toContactId,
+              toContactId: input.fromContactId,
+              relation: inverseRel,
+              notes: input.notes ?? null,
+              createdById: user.id,
+            },
+            update: {},
+          })
+          return forward
+        })
+        await ctx.audit({
+          action: 'contact.link_added',
+          target: { type: 'Contact', id: input.fromContactId },
+          after: {
+            linkId: result.id,
+            toContactId: input.toContactId,
+            relation: input.relation,
+          },
+        })
+        return { id: result.id }
+      }),
+
+    remove: auditedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        const link = await ctx.db.contactLink.findUnique({ where: { id: input.id } })
+        if (!link) throw new TRPCError({ code: 'NOT_FOUND' })
+        await ctx.db.$transaction(async (tx) => {
+          await tx.contactLink.delete({ where: { id: link.id } })
+          // Remove the reciprocal too if it exists.
+          await tx.contactLink.deleteMany({
+            where: {
+              fromContactId: link.toContactId,
+              toContactId: link.fromContactId,
+              relation: INVERSE_RELATION[link.relation],
+            },
+          })
+        })
+        await ctx.audit({
+          action: 'contact.link_removed',
+          target: { type: 'Contact', id: link.fromContactId },
+          before: {
+            linkId: link.id,
+            toContactId: link.toContactId,
+            relation: link.relation,
+          },
+        })
+        return { id: link.id }
+      }),
+
+    // Pick-list of candidates for the link picker. Cheap prefix search across
+    // name/email/phone, excluding the current contact.
+    candidates: protectedProcedure
+      .input(
+        z.object({
+          excludeContactId: z.string(),
+          q: z.string().trim().min(1).max(120),
+          limit: z.number().int().min(1).max(20).default(8),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        const rows = await ctx.db.contact.findMany({
+          where: {
+            deletedAt: null,
+            id: { not: input.excludeContactId },
+            OR: [
+              { firstName: { contains: input.q, mode: 'insensitive' } },
+              { lastName: { contains: input.q, mode: 'insensitive' } },
+              { email: { contains: input.q, mode: 'insensitive' } },
+              { phoneE164: { contains: input.q } },
+            ],
+          },
+          take: input.limit,
+          select: {
+            id: true,
+            kind: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phoneE164: true,
+          },
+          orderBy: [{ createdAt: 'desc' }],
+        })
+        return rows.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          displayName: displayNameOf(r),
+          email: r.email,
+          phoneE164: r.phoneE164,
+        }))
       }),
   }),
 })
