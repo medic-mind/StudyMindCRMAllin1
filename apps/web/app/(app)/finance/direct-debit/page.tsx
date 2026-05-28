@@ -62,7 +62,7 @@ export default async function DirectDebitDefaultersPage(): Promise<JSX.Element> 
       />
       <PageBody>
         {items.length === 0 ? (
-          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-sm">
+          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
             <p className="text-sm font-medium text-emerald-700">
               No Direct Debit defaulters — every mandate is healthy.
             </p>
@@ -72,7 +72,7 @@ export default async function DirectDebitDefaultersPage(): Promise<JSX.Element> 
             </p>
           </div>
         ) : (
-          <div className="rounded-lg border border-neutral-200 bg-white shadow-sm">
+          <div className="rounded-lg border border-neutral-200 bg-white shadow-card">
             <Table>
               <Thead>
                 <Tr>

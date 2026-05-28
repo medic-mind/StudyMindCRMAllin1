@@ -57,7 +57,7 @@ export default async function FlagsSettingsPage() {
         </div>
       ) : null}
 
-      <div className="mt-6 rounded-md border border-neutral-200 bg-white shadow-sm">
+      <div className="mt-6 rounded-md border border-neutral-200 bg-white shadow-card">
         <Table>
           <Thead>
             <Tr>

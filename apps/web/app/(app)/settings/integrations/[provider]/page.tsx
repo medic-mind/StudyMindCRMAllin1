@@ -160,7 +160,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                 {detail.setupSteps.map((step, i) => (
                   <li
                     key={i}
-                    className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm"
+                    className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card"
                   >
                     <div className="flex items-baseline gap-2">
                       <span className="font-mono text-xs text-neutral-500">
@@ -206,7 +206,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
               </Link>
               .
             </p>
-            <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+            <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
               <Table>
                 <Thead>
                   <Tr>
@@ -243,7 +243,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   : `${detail.perAgent.length} agent${detail.perAgent.length === 1 ? '' : 's'} connected.`}
               </p>
               {detail.perAgent.length > 0 ? (
-                <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+                <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
                   <Table>
                     <Thead>
                       <Tr>
@@ -282,13 +282,13 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
               Recent webhooks
             </h2>
             {detail.recentEvents.length === 0 ? (
-              <p className="mt-3 rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-600 shadow-sm">
+              <p className="mt-3 rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-600 shadow-card">
                 No events received from {detail.label} yet. Use the{' '}
                 <strong>Test webhook</strong> button above to insert a
                 synthetic event and confirm the persistence path is healthy.
               </p>
             ) : (
-              <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+              <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
                 <Table>
                   <Thead>
                     <Tr>
@@ -320,7 +320,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
                 Recent cron runs
               </h2>
-              <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+              <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
                 <Table>
                   <Thead>
                     <Tr>
@@ -371,11 +371,11 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   : 'A 90-day historic import runs automatically the first time an agent connects.'}
               </p>
               {backfillRuns.length === 0 ? (
-                <p className="mt-3 rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-600 shadow-sm">
+                <p className="mt-3 rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-600 shadow-card">
                   No backfill has run for {detail.label} yet.
                 </p>
               ) : (
-                <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+                <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
                   <Table>
                     <Thead>
                       <Tr>

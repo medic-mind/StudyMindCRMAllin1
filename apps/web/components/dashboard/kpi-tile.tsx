@@ -95,7 +95,7 @@ export function KpiTile({
 
   return (
     <div
-      className={`relative overflow-hidden rounded-xl border border-neutral-200 ${TONE_BG[tone]} p-4 pl-5 shadow-sm transition-shadow hover:shadow-md`}
+      className={`relative overflow-hidden rounded-xl border border-neutral-200 ${TONE_BG[tone]} p-4 pl-5 shadow-card transition-shadow hover:shadow-card-hover`}
     >
       <span
         aria-hidden="true"

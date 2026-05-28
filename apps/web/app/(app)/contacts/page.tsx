@@ -89,7 +89,7 @@ export default async function ContactsPage({
           </Button>
         </form>
 
-        <div className="mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+        <div className="mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
           {data.items.length === 0 ? (
             <div className="p-10 text-center">
               <p className="text-sm font-medium text-neutral-700">

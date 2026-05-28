@@ -27,8 +27,8 @@ export function PageHeader({ title, subtitle, breadcrumbs, actions }: Props) {
       // shell when the page lives inside the layout's default padded
       // content container. Pages that want a fully custom layout can wrap
       // PageHeader in a Fragment + their own padded body.
-      className="-mx-6 -mt-6 mb-6 flex flex-col justify-center border-b border-neutral-200 bg-white px-6"
-      style={{ minHeight: '80px' }}
+      className="-mx-6 -mt-6 mb-6 flex flex-col justify-center border-b border-neutral-200/80 bg-gradient-to-b from-white via-white to-neutral-50/70 px-6"
+      style={{ minHeight: '88px' }}
     >
       {breadcrumbs && breadcrumbs.length > 0 ? (
         <nav aria-label="Breadcrumb" className="pt-2">
@@ -62,13 +62,13 @@ export function PageHeader({ title, subtitle, breadcrumbs, actions }: Props) {
         </nav>
       ) : null}
 
-      <div className="flex items-center justify-between gap-4 py-3">
+      <div className="flex items-center justify-between gap-4 py-3.5">
         <div className="min-w-0">
-          <h1 className="truncate text-2xl font-semibold tracking-tight text-neutral-900">
+          <h1 className="truncate text-[1.7rem] font-semibold leading-tight tracking-tight text-neutral-900">
             {title}
           </h1>
           {subtitle ? (
-            <p className="mt-0.5 truncate text-sm text-neutral-600">{subtitle}</p>
+            <p className="mt-1 truncate text-sm text-neutral-500">{subtitle}</p>
           ) : null}
         </div>
         {actions ? (

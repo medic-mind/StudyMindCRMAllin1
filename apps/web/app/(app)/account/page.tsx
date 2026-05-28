@@ -38,7 +38,7 @@ export default async function AccountPage() {
       />
       <PageBody>
         <div className="max-w-2xl space-y-6">
-      <section className="rounded-md border border-neutral-200 bg-white p-4 shadow-sm">
+      <section className="rounded-md border border-neutral-200 bg-white p-4 shadow-card">
         <dl className="grid grid-cols-3 gap-2 text-sm">
           <dt className="text-neutral-500">Name</dt>
           <dd className="col-span-2 text-neutral-900">{me.name ?? '—'}</dd>

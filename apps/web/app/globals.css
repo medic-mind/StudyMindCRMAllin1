@@ -36,9 +36,32 @@ body {
 }
 
 body {
-  @apply bg-neutral-50 text-neutral-900 antialiased;
-  font-family: theme('fontFamily.sans');
+  @apply text-neutral-900 antialiased;
+  font-family: var(--font-sans), 'Inter', ui-sans-serif, system-ui, sans-serif;
   font-feature-settings: 'cv11', 'ss01';
+  /* Subtle radial brand tint at the top so the workspace doesn't look flat.
+     Stays well below 4% opacity so contrast is unaffected. */
+  background-color: theme('colors.neutral.50');
+  background-image:
+    radial-gradient(1200px 600px at 20% -10%, rgb(147 51 234 / 0.06), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgb(168 85 247 / 0.04), transparent 55%);
+  background-attachment: fixed;
+}
+
+/*
+ * Card elevation utility — layered hairline shadow that reads as depth
+ * without the muddy look of `shadow-sm` alone. Use `shadow-card` on every
+ * primary surface (cards, tiles, the top bar).
+ */
+.shadow-card {
+  box-shadow:
+    0 1px 1px 0 rgb(15 23 42 / 0.03),
+    0 1px 3px 0 rgb(15 23 42 / 0.05);
+}
+.shadow-card-hover {
+  box-shadow:
+    0 1px 1px 0 rgb(15 23 42 / 0.04),
+    0 4px 12px -2px rgb(15 23 42 / 0.08);
 }
 
 /*

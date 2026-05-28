@@ -25,7 +25,7 @@ export function TopBar({ user, logoVersion = null }: Props) {
   return (
     <header
       role="banner"
-      className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-neutral-200 bg-white px-4"
+      className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-neutral-200/70 bg-white/85 px-4 backdrop-blur"
       style={{ height: 'var(--shell-topbar-height)' }}
     >
       {/* Skip link — visible on focus only. CLAUDE.md §28. */}

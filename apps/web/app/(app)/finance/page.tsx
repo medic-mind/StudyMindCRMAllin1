@@ -138,7 +138,7 @@ export default async function FinancePage() {
       />
       <PageBody>
         {items.length === 0 ? (
-          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-sm">
+          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
             <p className="text-sm font-medium text-emerald-700">
               No open discrepancies — reconciliation is clean.
             </p>
@@ -157,7 +157,7 @@ export default async function FinancePage() {
                     {group.length}
                   </Badge>
                 </h2>
-                <ul className="mt-3 divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white shadow-sm">
+                <ul className="mt-3 divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white shadow-card">
                   {group.map((d) => (
                     <li key={d.id} className="flex flex-col gap-2 p-3">
                       <div className="flex items-start justify-between gap-4">

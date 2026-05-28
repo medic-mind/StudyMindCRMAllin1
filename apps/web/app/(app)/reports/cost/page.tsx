@@ -47,7 +47,7 @@ export default async function CostReportPage() {
           </p>
 
           {series.length > 0 ? (
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
                 AI spend by week ($USD)
               </h2>
@@ -73,7 +73,7 @@ export default async function CostReportPage() {
               {archive.reports.map((r) => (
                 <li
                   key={r.s3Key}
-                  className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm"
+                  className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card"
                 >
                   <div className="flex items-center justify-between">
                     <h2 className="font-mono text-sm">{r.weekIso}</h2>
@@ -98,7 +98,7 @@ export default async function CostReportPage() {
                 {live!.reports.map((r) => (
                   <li
                     key={r.weekIso}
-                    className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm"
+                    className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card"
                   >
                     <div className="flex items-center justify-between">
                       <h2 className="font-mono text-sm">{r.weekIso}</h2>

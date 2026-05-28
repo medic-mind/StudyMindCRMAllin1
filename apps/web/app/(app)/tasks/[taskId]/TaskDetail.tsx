@@ -110,10 +110,10 @@ export function TaskDetail({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
           <div className="flex items-center gap-2">
             {canWrite ? <TaskCheckbox id={task.id} status={task.status} /> : null}
-            <Badge tone={STATUS_TONE[task.status] ?? 'neutral'}>
+            <Badge tone={STATUS_TONE[task.status] ?? 'neutral'} dot>
               {STATUS_LABEL[task.status] ?? task.status}
             </Badge>
             {task.asanaTaskId ? <Badge tone="neutral">Asana-synced</Badge> : null}
@@ -127,7 +127,7 @@ export function TaskDetail({
           )}
         </section>
 
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
           <h3 className="mb-3 text-sm font-semibold text-neutral-900">Comments</h3>
           <CommentThread
             comments={threadComments}
@@ -143,7 +143,7 @@ export function TaskDetail({
       </div>
 
       <aside className="space-y-4">
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
           <h3 className="mb-3 text-sm font-semibold text-neutral-900">Details</h3>
           <dl className="space-y-3 text-sm">
             <div>

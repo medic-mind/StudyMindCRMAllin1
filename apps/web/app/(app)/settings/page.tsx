@@ -47,7 +47,7 @@ export default function SettingsPage() {
           <Link
             key={l.href}
             href={l.href}
-            className="block rounded-md border border-neutral-200 bg-white p-4 hover:border-neutral-300"
+            className="block rounded-xl border border-neutral-200 bg-white p-4 shadow-card transition-shadow hover:border-neutral-300 hover:shadow-card-hover"
           >
             <div className="flex items-center justify-between">
               <h2 className="font-medium">{l.title}</h2>

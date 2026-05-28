@@ -55,7 +55,7 @@ function formatDate(d: Date | string): string {
 }
 
 const ACTION_LINK_CLS =
-  'inline-flex h-9 items-center rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 shadow-sm transition-colors hover:bg-neutral-50'
+  'inline-flex h-9 items-center rounded-md border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-800 shadow-card transition-colors hover:border-neutral-300 hover:bg-neutral-50'
 
 function SectionCard({
   id,
@@ -71,7 +71,7 @@ function SectionCard({
   children: ReactNode
 }): JSX.Element {
   return (
-    <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+    <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
       <div className="flex items-center justify-between gap-2 border-b border-neutral-200 bg-neutral-50/70 px-4 py-2.5">
         <h2
           id={id}
@@ -134,7 +134,7 @@ export default async function ContactDetailPage({
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       {/* Hero header */}
-      <header className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <header className="overflow-hidden rounded-xl border border-neutral-200 bg-gradient-to-br from-white via-white to-primary-50/40 shadow-card">
         <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
             <Avatar name={contact.displayName} size={56} />
@@ -291,7 +291,7 @@ export default async function ContactDetailPage({
             </div>
           )}
 
-          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
               Details
             </h2>
