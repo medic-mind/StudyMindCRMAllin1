@@ -27,17 +27,30 @@ export function BrandLogo({
   customLogoVersion = null,
 }: Props) {
   if (customLogoVersion != null) {
-    // Custom logo replaces the SVG mark. We cap the width so a wide wordmark
-    // logo still fits the bar; height tracks the requested size.
+    // Hard-clip the uploaded logo to the requested box so a large source PNG
+    // can never blow out the top bar or the sign-in hero. The container
+    // owns the height + width budget; the img scales to fit via
+    // object-contain.
+    const boxHeight = `${size}px`
+    const boxMaxWidth = `${size * 6}px`
     return (
-      <span className={`inline-flex items-center gap-2 ${className ?? ''}`}>
-        {/* Dynamic bytes from our own endpoint, not a static asset — plain img. */}
+      <span
+        className={`inline-flex shrink-0 items-center overflow-hidden align-middle ${className ?? ''}`}
+        style={{ height: boxHeight, maxWidth: boxMaxWidth }}
+      >
         <img
           src={`/api/branding/logo?v=${customLogoVersion}`}
           alt="StudyMind"
+          width={size * 6}
           height={size}
-          className="shrink-0 object-contain"
-          style={{ height: size, width: 'auto', maxWidth: size * 6 }}
+          className="block"
+          style={{
+            height: boxHeight,
+            maxHeight: boxHeight,
+            width: 'auto',
+            maxWidth: boxMaxWidth,
+            objectFit: 'contain',
+          }}
         />
       </span>
     )
