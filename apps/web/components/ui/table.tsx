@@ -13,7 +13,11 @@ Table.displayName = 'Table'
 
 export const Thead = forwardRef<HTMLTableSectionElement, HTMLAttributes<HTMLTableSectionElement>>(
   ({ className, ...rest }, ref) => (
-    <thead ref={ref} className={cn('border-b border-neutral-200 bg-neutral-50', className)} {...rest} />
+    <thead
+      ref={ref}
+      className={cn('border-b border-neutral-200/80 bg-neutral-50/60', className)}
+      {...rest}
+    />
   ),
 )
 Thead.displayName = 'Thead'
@@ -29,7 +33,10 @@ export const Tr = forwardRef<HTMLTableRowElement, HTMLAttributes<HTMLTableRowEle
   ({ className, ...rest }, ref) => (
     <tr
       ref={ref}
-      className={cn('border-b border-neutral-100 transition-colors hover:bg-neutral-50', className)}
+      className={cn(
+        'border-b border-neutral-100/80 transition-colors hover:bg-primary-50/40',
+        className,
+      )}
       {...rest}
     />
   ),
@@ -42,7 +49,7 @@ export const Th = forwardRef<HTMLTableCellElement, ThHTMLAttributes<HTMLTableCel
       ref={ref}
       scope="col"
       className={cn(
-        'h-10 px-3 text-left align-middle text-xs font-medium uppercase tracking-wide text-neutral-500',
+        'h-11 px-3 text-left align-middle text-[11px] font-semibold uppercase tracking-[0.06em] text-neutral-500',
         className,
       )}
       {...rest}

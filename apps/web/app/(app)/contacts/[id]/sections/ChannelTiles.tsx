@@ -50,7 +50,7 @@ function Tile({
   return (
     <Link
       href={href}
-      className="relative flex min-w-[8.5rem] flex-1 flex-col gap-1 overflow-hidden rounded-xl border border-neutral-200 bg-white px-3 py-2.5 pl-4 shadow-sm transition-shadow hover:shadow-md"
+      className="group relative flex min-w-[8.5rem] flex-1 flex-col gap-1 overflow-hidden rounded-xl border border-neutral-200 bg-white px-3 py-2.5 pl-4 shadow-card transition-shadow hover:shadow-card-hover"
     >
       <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 ${BAR[tone]}`} />
       <div className="flex items-center justify-between gap-2">
@@ -78,7 +78,7 @@ export function ChannelTiles({ summary }: { summary: ChannelSummary }): JSX.Elem
       <Tile
         href="#section-email"
         label="Email"
-        tone="info"
+        tone={summary.emails.unreadCount > 0 ? 'info' : 'neutral'}
         icon={<MailIcon size={14} />}
         primary={`${summary.emails.threadCount}`}
         secondary={
@@ -110,7 +110,7 @@ export function ChannelTiles({ summary }: { summary: ChannelSummary }): JSX.Elem
       <Tile
         href="#section-trengo"
         label="Trengo"
-        tone="accent"
+        tone="neutral"
         icon={<SmartphoneIcon size={14} />}
         primary={`${summary.trengo.conversationCount}`}
         secondary={`conversation${summary.trengo.conversationCount === 1 ? '' : 's'}`}

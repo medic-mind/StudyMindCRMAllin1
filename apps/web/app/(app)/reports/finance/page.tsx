@@ -74,7 +74,7 @@ export default async function FinanceReportPage({
         <div className="space-y-6">
           <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
-          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Money in by week
             </h2>
@@ -114,7 +114,7 @@ export default async function FinanceReportPage({
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
               By provider
             </h2>
-            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-sm">
+            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-card">
               {Object.keys(data.byProviderMinor).length === 0 ? (
                 <p className="p-4 text-sm text-neutral-500">
                   No payments received in this period.
@@ -144,7 +144,7 @@ export default async function FinanceReportPage({
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Open discrepancies
             </h2>
-            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-sm">
+            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-card">
               {data.openDiscrepancies.length === 0 ? (
                 <p className="p-4 text-sm text-neutral-500">
                   No open discrepancies — reconciliation is clean.
@@ -193,7 +193,7 @@ function Kpi({
         ? 'text-amber-700'
         : 'text-neutral-900'
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
       <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
         {label}
       </p>

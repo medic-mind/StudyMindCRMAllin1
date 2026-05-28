@@ -96,7 +96,7 @@ export function BrandingLogoForm({
 
   return (
     <div className="max-w-xl space-y-5">
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
         <h2 className="text-sm font-semibold text-neutral-900">Current logo</h2>
         <p className="mt-1 text-sm text-neutral-500">
           Shown in the top bar and on the sign-in screen. Falls back to the
@@ -128,7 +128,7 @@ export function BrandingLogoForm({
         </div>
       </div>
 
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
         <h2 className="text-sm font-semibold text-neutral-900">Upload a new logo</h2>
         <p className="mt-1 text-sm text-neutral-500">
           PNG, JPEG, or WebP. Up to 512&nbsp;KB. A wide logo that already

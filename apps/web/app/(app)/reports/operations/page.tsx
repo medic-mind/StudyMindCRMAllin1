@@ -66,7 +66,7 @@ export default async function OperationsReportPage({
         <div className="space-y-6">
           <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
-          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Delivery by week
             </h2>
@@ -99,7 +99,7 @@ export default async function OperationsReportPage({
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
               By session state
             </h2>
-            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-sm">
+            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-card">
               <Table>
                 <Thead>
                   <Tr>
@@ -154,7 +154,7 @@ function Stat({
         ? 'text-amber-700'
         : 'text-neutral-900'
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
       <div className="text-xs font-medium uppercase tracking-wide text-neutral-500">
         {label}
       </div>

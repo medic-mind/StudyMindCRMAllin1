@@ -75,7 +75,7 @@ export default async function IntegrationsSettingsPage() {
             return (
               <li
                 key={p.provider}
-                className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm"
+                className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card"
               >
                 <Link
                   href={`/settings/integrations/${p.provider}`}

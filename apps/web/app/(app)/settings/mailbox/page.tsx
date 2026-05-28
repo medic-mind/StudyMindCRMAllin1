@@ -56,7 +56,7 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
         </div>
       ) : null}
 
-      <div className="mt-6 rounded-md border border-neutral-200 bg-white p-4 shadow-sm">
+      <div className="mt-6 rounded-md border border-neutral-200 bg-white p-4 shadow-card">
         {status.status === 'connected' ? (
           <>
             <div className="flex items-center justify-between">

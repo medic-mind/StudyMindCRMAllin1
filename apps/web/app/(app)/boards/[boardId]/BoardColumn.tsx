@@ -62,7 +62,7 @@ export function BoardColumn({
   return (
     <section
       ref={setNodeRef}
-      className={`flex flex-col rounded-lg border border-neutral-200 bg-white shadow-sm ${
+      className={`flex flex-col rounded-lg border border-neutral-200 bg-white shadow-card ${
         stage.isClosed ? 'opacity-80' : ''
       } ${isOver ? 'ring-2 ring-primary-300' : ''}`}
       style={{ borderTop: `3px solid ${colour}` }}

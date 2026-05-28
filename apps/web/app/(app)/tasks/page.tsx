@@ -142,7 +142,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
           </Link>
         </div>
 
-        <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+        <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
           {data.items.length === 0 ? (
             <div className="p-10 text-center">
               <p className="text-sm font-medium text-neutral-700">No tasks match this filter.</p>
@@ -225,7 +225,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                         )}
                       </Td>
                       <Td>
-                        <Badge tone={STATUS_TONE[t.status] ?? 'neutral'}>
+                        <Badge tone={STATUS_TONE[t.status] ?? 'neutral'} dot>
                           {STATUS_LABEL[t.status] ?? t.status}
                         </Badge>
                       </Td>

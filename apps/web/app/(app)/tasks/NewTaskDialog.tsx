@@ -85,7 +85,7 @@ export function NewTaskDialog({ contactId, familyId, contactName }: Props) {
     <div
       role="dialog"
       aria-label="Create task"
-      className="rounded-md border border-neutral-200 bg-white p-4 shadow-sm"
+      className="rounded-md border border-neutral-200 bg-white p-4 shadow-card"
     >
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-neutral-900">New task</h3>
