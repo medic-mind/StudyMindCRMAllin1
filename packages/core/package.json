@@ -12,6 +12,7 @@
     "./pipeline": "./src/pipeline/index.ts",
     "./board": "./src/board/index.ts",
     "./task": "./src/task/index.ts",
+    "./team": "./src/team/index.ts",
     "./finance": "./src/finance/index.ts",
     "./interaction": "./src/interaction/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",

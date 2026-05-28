@@ -1,7 +1,7 @@
 // Contact view-models. Constructed in RSC, never expose raw rows to the client.
 // See CLAUDE.md Section 26.
 
-import type { ContactKind, ContactSummary } from '@studymind/core/contact'
+import type { ContactKind, ContactSendStatus, ContactSummary } from '@studymind/core/contact'
 import { displayNameOf } from '@studymind/core/contact'
 
 export type { ContactSummary } from '@studymind/core/contact'
@@ -10,10 +10,25 @@ export interface ContactDetailViewModel {
   id: string
   kind: ContactKind
   displayName: string
+  firstName: string | null
+  lastName: string | null
   email: string | null
   phoneE164: string | null
+  dateOfBirth: Date | null
   isMinor: boolean
   notes: string | null
+  // Extended profile.
+  addressLine1: string | null
+  addressLine2: string | null
+  city: string | null
+  postcode: string | null
+  country: string | null
+  schoolName: string | null
+  yearGroup: string | null
+  sendStatus: ContactSendStatus | null
+  jobTitle: string | null
+  pronouns: string | null
+  mailchimpEmail: string | null
   hasSafeguardingFlag: boolean
   isRestricted: boolean
   family: { id: string; name: string | null } | null
@@ -27,8 +42,20 @@ interface ContactRow {
   lastName: string | null
   email: string | null
   phoneE164: string | null
+  dateOfBirth: Date | null
   isMinor: boolean
   notes: string | null
+  addressLine1: string | null
+  addressLine2: string | null
+  city: string | null
+  postcode: string | null
+  country: string | null
+  schoolName: string | null
+  yearGroup: string | null
+  sendStatus: ContactSendStatus | null
+  jobTitle: string | null
+  pronouns: string | null
+  mailchimpEmail: string | null
   createdAt: Date
 }
 
@@ -69,10 +96,24 @@ export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
     id: row.id,
     kind: row.kind,
     displayName: displayNameOf(row),
+    firstName: row.firstName,
+    lastName: row.lastName,
     email: row.email,
     phoneE164: row.phoneE164,
+    dateOfBirth: row.dateOfBirth,
     isMinor: row.isMinor,
     notes: row.notes,
+    addressLine1: row.addressLine1,
+    addressLine2: row.addressLine2,
+    city: row.city,
+    postcode: row.postcode,
+    country: row.country,
+    schoolName: row.schoolName,
+    yearGroup: row.yearGroup,
+    sendStatus: row.sendStatus,
+    jobTitle: row.jobTitle,
+    pronouns: row.pronouns,
+    mailchimpEmail: row.mailchimpEmail,
     hasSafeguardingFlag: hasFlag,
     isRestricted,
     family,

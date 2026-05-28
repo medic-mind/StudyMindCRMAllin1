@@ -34,6 +34,7 @@ import { CallsSection } from './sections/CallsSection'
 import { ChannelTiles } from './sections/ChannelTiles'
 import { ContactSearchBar } from './sections/ContactSearchBar'
 import { EmailSection } from './sections/EmailSection'
+import { LinkedContactsSection } from './sections/LinkedContactsSection'
 import { SlackSection } from './sections/SlackSection'
 import { TasksSection } from './sections/TasksSection'
 import { TrengoSection } from './sections/TrengoSection'
@@ -181,6 +182,9 @@ export default async function ContactDetailPage({
             {contact.family && (
               <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
             )}
+            <Link href={`/contacts/${contact.id}/edit`} className={ACTION_LINK_CLS}>
+              Edit details
+            </Link>
             <Link href={`/finance/refunds/new?contactId=${contact.id}`} className={ACTION_LINK_CLS}>
               Issue refund
             </Link>
@@ -203,6 +207,14 @@ export default async function ContactDetailPage({
         {/* Main column */}
         <div className="min-w-0 space-y-5">
           <ContactSearchBar contactId={contact.id} />
+
+          <SectionCard
+            id="section-links"
+            title="Linked contacts"
+            icon={<UsersIcon size={16} />}
+          >
+            <LinkedContactsSection contactId={contact.id} />
+          </SectionCard>
 
           <SectionCard id="section-email" title="Email" icon={<MailIcon size={16} />}>
             <EmailSection threads={emailThreads.items} />
@@ -319,6 +331,65 @@ export default async function ContactDetailPage({
               {contact.isRestricted && (
                 <DetailRow label="Access">
                   <span className="text-red-700">Restricted</span>
+                </DetailRow>
+              )}
+              {contact.dateOfBirth && (
+                <DetailRow label="DOB">{formatDate(contact.dateOfBirth)}</DetailRow>
+              )}
+              {contact.pronouns && (
+                <DetailRow label="Pronouns">{contact.pronouns}</DetailRow>
+              )}
+              {contact.jobTitle && (
+                <DetailRow label="Role">{contact.jobTitle}</DetailRow>
+              )}
+              {contact.schoolName && (
+                <DetailRow label="School">
+                  <span className="text-right">
+                    {contact.schoolName}
+                    {contact.yearGroup ? (
+                      <span className="block text-xs text-neutral-500">{contact.yearGroup}</span>
+                    ) : null}
+                  </span>
+                </DetailRow>
+              )}
+              {!contact.schoolName && contact.yearGroup && (
+                <DetailRow label="Year group">{contact.yearGroup}</DetailRow>
+              )}
+              {contact.sendStatus && (
+                <DetailRow label="SEND">
+                  <Badge
+                    tone={
+                      contact.sendStatus === 'ehcp_in_place'
+                        ? 'info'
+                        : contact.sendStatus === 'ehcp_in_progress' ||
+                            contact.sendStatus === 'send_support'
+                          ? 'warn'
+                          : 'neutral'
+                    }
+                    dot
+                  >
+                    {contact.sendStatus.replace(/_/g, ' ')}
+                  </Badge>
+                </DetailRow>
+              )}
+              {(contact.addressLine1 || contact.city || contact.postcode) && (
+                <DetailRow label="Address">
+                  <span className="text-right text-sm text-neutral-700">
+                    {[contact.addressLine1, contact.addressLine2, contact.city, contact.postcode, contact.country]
+                      .filter(Boolean)
+                      .map((part, i) => (
+                        <span key={i} className="block">
+                          {part}
+                        </span>
+                      ))}
+                  </span>
+                </DetailRow>
+              )}
+              {contact.mailchimpEmail && (
+                <DetailRow label="Mailchimp">
+                  <span className="break-all text-xs text-neutral-600">
+                    {contact.mailchimpEmail}
+                  </span>
                 </DetailRow>
               )}
               <DetailRow label="Added">{formatDate(contact.createdAt)}</DetailRow>

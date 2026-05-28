@@ -46,6 +46,7 @@ interface SP {
   scope?: string
   status?: string
   overdue?: string
+  teamId?: string
 }
 
 export default async function TasksPage({ searchParams }: { searchParams: Promise<SP> }) {
@@ -57,16 +58,19 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
       : undefined
   ) as StatusKey | undefined
   const overdue = sp.overdue === '1'
+  const teamId = sp.teamId && sp.teamId.length > 0 ? sp.teamId : undefined
 
   const caller = await createServerCaller()
-  // "Mine" filters to the caller; "Team" and "All" both show every task in this
-  // single-team CRM (the router scope is me | all).
-  const data = await caller.task.list({
-    scope: scope === 'mine' ? 'me' : 'all',
-    status,
-    overdue: overdue || undefined,
-    limit: 100,
-  })
+  const [data, teams] = await Promise.all([
+    caller.task.list({
+      scope: scope === 'mine' ? 'me' : scope === 'team' ? 'team' : 'all',
+      teamId,
+      status,
+      overdue: overdue || undefined,
+      limit: 100,
+    }),
+    caller.team.list({ includeArchived: false }),
+  ])
   const now = new Date()
 
   const scopeTabs: Array<{ key: Scope; label: string }> = [
@@ -86,56 +90,120 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
     status?: StatusKey | undefined
     setStatus?: boolean
     overdue?: boolean
+    teamId?: string | undefined
+    setTeamId?: boolean
   }) {
     const nextStatus = next.setStatus ? next.status : status
+    const nextTeamId = next.setTeamId ? next.teamId : teamId
     const q: Record<string, string> = { scope: next.scope ?? scope }
     if (nextStatus) q.status = nextStatus
     if (next.overdue ?? overdue) q.overdue = '1'
+    if (nextTeamId) q.teamId = nextTeamId
     return q
   }
 
   return (
     <>
-      <PageHeader title="Tasks" actions={<NewTaskDialog />} />
+      <PageHeader
+        title="Tasks"
+        subtitle={`${data.items.length} task${data.items.length === 1 ? '' : 's'} in this view`}
+        actions={<NewTaskDialog />}
+      />
       <PageBody>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          {scopeTabs.map((t) => (
-            <Link
-              key={t.key}
-              href={{ pathname: '/tasks', query: buildQuery({ scope: t.key }) }}
-              className={
-                scope === t.key
-                  ? 'rounded bg-primary-700 px-2.5 py-1 text-white'
-                  : 'rounded border border-neutral-200 px-2.5 py-1 text-neutral-700 hover:bg-neutral-100'
-              }
-            >
-              {t.label}
-            </Link>
-          ))}
-          <span className="mx-2 h-4 w-px bg-neutral-300" aria-hidden />
-          {statusFilters.map((f) => {
-            const active = status === f.key
-            return (
+        {/* Scope segmented control */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div
+            role="tablist"
+            aria-label="Task scope"
+            className="inline-flex items-center rounded-lg border border-neutral-200 bg-white p-0.5 shadow-card"
+          >
+            {scopeTabs.map((t) => (
               <Link
-                key={f.label}
-                href={{ pathname: '/tasks', query: buildQuery({ status: f.key, setStatus: true }) }}
+                key={t.key}
+                role="tab"
+                aria-selected={scope === t.key}
+                href={{ pathname: '/tasks', query: buildQuery({ scope: t.key }) }}
                 className={
-                  active
-                    ? 'rounded bg-neutral-100 px-2 py-1 text-neutral-900'
-                    : 'rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100'
+                  scope === t.key
+                    ? 'inline-flex items-center rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors'
+                    : 'inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900'
                 }
               >
-                {f.label}
+                {t.label}
               </Link>
-            )
-          })}
-          <span className="mx-2 h-4 w-px bg-neutral-300" aria-hidden />
+            ))}
+          </div>
+
+          {/* Status filters */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {statusFilters.map((f) => {
+              const active = status === f.key
+              return (
+                <Link
+                  key={f.label}
+                  href={{
+                    pathname: '/tasks',
+                    query: buildQuery({ status: f.key, setStatus: true }),
+                  }}
+                  className={
+                    active
+                      ? 'inline-flex items-center rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
+                      : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900'
+                  }
+                >
+                  {f.label}
+                </Link>
+              )
+            })}
+          </div>
+
+          {/* Team filter pills */}
+          {teams.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Link
+                href={{ pathname: '/tasks', query: buildQuery({ teamId: undefined, setTeamId: true }) }}
+                className={
+                  !teamId
+                    ? 'inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
+                    : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
+                }
+              >
+                All teams
+              </Link>
+              {teams.map((tm) => {
+                const active = teamId === tm.id
+                return (
+                  <Link
+                    key={tm.id}
+                    href={{
+                      pathname: '/tasks',
+                      query: buildQuery({ teamId: tm.id, setTeamId: true }),
+                    }}
+                    className={
+                      active
+                        ? 'inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
+                        : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50'
+                    }
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: tm.color ?? '#94a3b8' }}
+                    />
+                    {tm.name}
+                  </Link>
+                )
+              })}
+            </div>
+          ) : null}
+
+          {/* Overdue toggle */}
           <Link
             href={{ pathname: '/tasks', query: buildQuery({ overdue: !overdue }) }}
             className={
               overdue
-                ? 'rounded bg-red-700 px-2.5 py-1 text-white'
-                : 'rounded border border-neutral-200 px-2.5 py-1 text-neutral-700 hover:bg-neutral-100'
+                ? 'inline-flex items-center rounded-full bg-red-600 px-3 py-1 text-xs font-medium text-white'
+                : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900'
             }
           >
             Overdue only
@@ -157,6 +225,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                   <Th className="w-8" aria-label="Done" />
                   <Th>Assignee</Th>
                   <Th>Task</Th>
+                  <Th>Team</Th>
                   <Th>Contact</Th>
                   <Th>Due</Th>
                   <Th>Status</Th>
@@ -197,6 +266,20 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                         {t.description ? (
                           <div className="truncate text-xs text-neutral-500">{t.description}</div>
                         ) : null}
+                      </Td>
+                      <Td>
+                        {t.teamName ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-neutral-700">
+                            <span
+                              aria-hidden="true"
+                              className="h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: t.teamColor ?? '#94a3b8' }}
+                            />
+                            {t.teamName}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-neutral-400">—</span>
+                        )}
                       </Td>
                       <Td>
                         {t.contactId ? (
