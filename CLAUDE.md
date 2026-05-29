@@ -1015,6 +1015,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Work on boards / cards / labels / subjects (ADR 0018) | `packages/core/src/board/` (domain), `apps/web/app/api/trpc/routers/board.ts` (tRPC), `apps/web/app/(app)/boards/` (UI). `/pipeline` redirects to the default board. |
 | Manage "Forward to <team>" quick actions | `/settings/forwarding` (Manager+). Domain `packages/core/src/forwarding/`, tRPC `forwarding.*`, sender `apps/web/lib/forwarding/senders.ts` (Resend). UI lives on the contact page (`ForwardingSection`). Records `email_forwarded` Interactions; defaults seeded by migration `20260529120000_add_forwarding_rules`. |
 | Group ops staff into teams (one user → many teams) | Settings → Teams (`/settings/teams`, CEO + Senior Manager). Domain `packages/core/src/team/`, tRPC `team.*`, schema `Team` + `TeamMember` (M:N junction). |
+| Track B2B partnerships and schools | `/accounts` (kind tabs). tRPC `businessAccount.*` (`apps/web/app/api/trpc/routers/businessAccount.ts`); schema `BusinessAccount` (kind: `school | partnership`, status lifecycle, address, notes) + `BusinessAccountContact` (M:N to Contact, optional `role`). Manager+ for writes; all roles read. |
 
 ---
 

@@ -12,6 +12,7 @@ import type { ComponentType, SVGProps } from 'react'
 
 import {
   BarChartIcon,
+  BuildingIcon,
   CoinsIcon,
   GitBranchIcon,
   HomeIcon,
@@ -43,6 +44,7 @@ const ICONS: Record<string, IconComp> = {
   '/': HomeIcon,
   '/inbox': InboxIcon,
   '/contacts': UsersIcon,
+  '/accounts': BuildingIcon,
   '/pipeline': GitBranchIcon,
   '/boards': GitBranchIcon,
   '/tasks': ListTodoIcon,
@@ -59,6 +61,7 @@ const SECTION: Record<string, string> = {
   '/': 'Work',
   '/inbox': 'Work',
   '/contacts': 'Work',
+  '/accounts': 'Work',
   '/boards': 'Work',
   '/tasks': 'Work',
   '/finance': 'Operations',

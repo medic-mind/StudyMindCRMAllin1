@@ -6,6 +6,7 @@ import { accountRouter } from './routers/account'
 import { adminRouter } from './routers/admin'
 import { boardRouter, cardRouter, labelRouter, subjectRouter } from './routers/board'
 import { brandingRouter } from './routers/branding'
+import { businessAccountRouter } from './routers/businessAccount'
 import { companyRouter } from './routers/company'
 import { contactRouter } from './routers/contact'
 import { contactChannelsRouter } from './routers/contact-channels'
@@ -46,6 +47,7 @@ export const appRouter = router({
   admin: adminRouter,
   board: boardRouter,
   branding: brandingRouter,
+  businessAccount: businessAccountRouter,
   company: companyRouter,
   card: cardRouter,
   contact: contactWithChannels,
