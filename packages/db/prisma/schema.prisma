@@ -433,10 +433,31 @@ model Contact {
   cards             Card[]
   linksFrom         ContactLink[]      @relation("ContactLinkFrom")
   linksTo           ContactLink[]      @relation("ContactLinkTo")
+  documents         ContactDocument[]
 
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
+}
+
+// Small files attached to a contact (EHCPs, school letters, evidence). Bytes
+// live in Postgres so a self-hosted install needs no S3 — same trade-off as
+// the branding logo. Capped at a reasonable size at the boundary.
+model ContactDocument {
+  id          String  @id
+  contactId   String
+  fileName    String
+  contentType String
+  byteSize    Int
+  data        Bytes
+  description String?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  contact Contact @relation(fields: [contactId], references: [id])
+
+  @@index([contactId, createdAt(sort: Desc)])
 }
 
 enum ContactSendStatus {

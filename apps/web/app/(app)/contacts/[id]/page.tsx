@@ -31,8 +31,10 @@ import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 import { AddNote } from './AddNote'
 import { Timeline } from './Timeline'
 import { CallsSection } from './sections/CallsSection'
+import { CallSummarySection } from './sections/CallSummarySection'
 import { ChannelTiles } from './sections/ChannelTiles'
 import { ContactSearchBar } from './sections/ContactSearchBar'
+import { DocumentsSection } from './sections/DocumentsSection'
 import { EmailSection } from './sections/EmailSection'
 import { LinkedContactsSection } from './sections/LinkedContactsSection'
 import { SlackSection } from './sections/SlackSection'
@@ -224,6 +226,14 @@ export default async function ContactDetailPage({
             <CallsSection calls={calls.items} />
           </SectionCard>
 
+          <SectionCard
+            id="section-call-summary"
+            title="Record call summary"
+            icon={<PhoneIcon size={16} />}
+          >
+            <CallSummarySection contactId={contact.id} contactDisplayName={contact.displayName} />
+          </SectionCard>
+
           <SectionCard id="section-slack" title="Slack mentions" icon={<MessageSquareIcon size={16} />}>
             <SlackSection mentions={slackMentions.items} />
           </SectionCard>
@@ -277,6 +287,14 @@ export default async function ContactDetailPage({
                 <p className="text-sm text-neutral-600">No notes yet — add the first note above.</p>
               )}
             </div>
+          </SectionCard>
+
+          <SectionCard
+            id="section-documents"
+            title="Documents"
+            icon={<FileTextIcon size={16} />}
+          >
+            <DocumentsSection contactId={contact.id} />
           </SectionCard>
 
           <SectionCard

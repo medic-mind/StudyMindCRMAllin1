@@ -5,6 +5,22 @@ import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { BusinessError } from '@studymind/core/errors'
+
+import {
+  addContactCallSummary,
+  sendContactCallSummary,
+} from '@studymind/core/contact/call-summary'
+import {
+  addContactDocument,
+  ALLOWED_DOCUMENT_CONTENT_TYPES,
+  InvalidDocumentError,
+  listContactDocuments,
+  removeContactDocument,
+} from '@studymind/core/contact/documents'
+
+import { buildCallSummarySenders } from '@/lib/board/call-summary-senders'
+
 import {
   ContactCreateInput,
   ContactLinkRelation,
@@ -427,6 +443,172 @@ export const contactRouter = router({
           email: r.email,
           phoneE164: r.phoneE164,
         }))
+      }),
+  }),
+
+  // Documents — small files attached to a contact (EHCPs, school letters,
+  // intake forms). Bytes live in Postgres so a self-hosted install needs no
+  // S3. CEO / Senior Manager / Manager / Sales Executive can upload; everyone
+  // can read.
+  documents: router({
+    list: protectedProcedure
+      .input(z.object({ contactId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const rows = await listContactDocuments(ctx.db, input.contactId)
+        return rows
+      }),
+
+    add: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string(),
+          fileName: z.string().trim().min(1).max(255),
+          contentType: z.enum(ALLOWED_DOCUMENT_CONTENT_TYPES),
+          description: z.string().trim().max(500).optional(),
+          // Base64 payload — capped at ~11 MB (8 MB binary * 1.37) which is the
+          // ContactDocument size limit.
+          dataBase64: z.string().min(1).max(12_000_000),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (user.role === 'virtual_assistant') {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Virtual assistants cannot upload documents',
+          })
+        }
+        const data = Buffer.from(input.dataBase64, 'base64')
+        try {
+          const id = createId()
+          const row = await addContactDocument(ctx.db, {
+            id,
+            contactId: input.contactId,
+            fileName: input.fileName,
+            contentType: input.contentType,
+            data,
+            description: input.description ?? null,
+            actorId: user.id,
+          })
+          await ctx.audit({
+            action: 'contact.document_added',
+            target: { type: 'Contact', id: input.contactId },
+            after: {
+              documentId: row.id,
+              fileName: input.fileName,
+              contentType: input.contentType,
+              byteSize: row.byteSize,
+            },
+          })
+          return { id: row.id, byteSize: row.byteSize }
+        } catch (err) {
+          if (err instanceof InvalidDocumentError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          throw err
+        }
+      }),
+
+    remove: auditedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (user.role === 'virtual_assistant') {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const before = await ctx.db.contactDocument.findUnique({
+          where: { id: input.id },
+          select: { contactId: true, fileName: true, contentType: true, byteSize: true },
+        })
+        if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+        await removeContactDocument(ctx.db, input.id)
+        await ctx.audit({
+          action: 'contact.document_removed',
+          target: { type: 'Contact', id: before.contactId },
+          before: {
+            documentId: input.id,
+            fileName: before.fileName,
+            contentType: before.contentType,
+            byteSize: before.byteSize,
+          },
+        })
+        return { id: input.id }
+      }),
+  }),
+
+  // Call summary — agent writes a summary against the contact directly (not
+  // tied to a board card) and can fan it out to Slack / Trengo / email in
+  // one click.
+  callSummary: router({
+    add: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string(),
+          body: z.string().trim().min(1).max(8000),
+          outcome: z.enum(['answered', 'voicemail', 'no_answer']).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        try {
+          const result = await addContactCallSummary(
+            ctx.db,
+            {
+              contactId: input.contactId,
+              body: input.body,
+              outcome: input.outcome ?? null,
+            },
+            { actorId: user.id, requestId: ctx.requestId },
+          )
+          // Core writer audits via writeAuditLogEntry — satisfy the
+          // auditedProcedure runtime check.
+          ctx.audit.called = true
+          return { id: result.id, occurredAt: result.occurredAt }
+        } catch (err) {
+          if (err instanceof BusinessError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          throw err
+        }
+      }),
+
+    send: auditedProcedure
+      .input(
+        z.object({
+          summaryInteractionId: z.string(),
+          channels: z.object({
+            slack: z.boolean().optional(),
+            trengo: z.boolean().optional(),
+            email: z.boolean().optional(),
+          }),
+          slackChannelId: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        const senders = buildCallSummarySenders({
+          agentId: user.id,
+          requestId: ctx.requestId,
+        })
+        try {
+          const results = await sendContactCallSummary(
+            ctx.db,
+            {
+              summaryInteractionId: input.summaryInteractionId,
+              channels: input.channels,
+              slackChannelId: input.slackChannelId,
+              senders,
+            },
+            { actorId: user.id, requestId: ctx.requestId },
+          )
+          ctx.audit.called = true
+          return results
+        } catch (err) {
+          if (err instanceof BusinessError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          throw err
+        }
       }),
   }),
 })

@@ -20,6 +20,8 @@ const contactWithChannels = router({
   mergeSuggestions: contactRouter.mergeSuggestions,
   merge: contactRouter.merge,
   links: contactRouter.links,
+  documents: contactRouter.documents,
+  callSummary: contactRouter.callSummary,
   channels: contactChannelsRouter,
 })
 import { costRouter } from './routers/cost'
