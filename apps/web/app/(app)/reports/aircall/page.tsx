@@ -15,7 +15,7 @@ import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { PeriodForm } from '../_components/period-form'
-import { parsePeriod } from '../period'
+import { buildPeriodPresets, parsePeriod } from '../period'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,15 +23,16 @@ interface SP {
   from?: string
   to?: string
   direction?: string
+  provider?: string
 }
 
 type Direction = 'all' | 'inbound' | 'outbound'
+type Provider = 'all' | 'aircall' | 'google_voice' | 'manual'
 
 const KIND_TONE: Record<string, BadgeTone> = {
   parent: 'info',
   student: 'accent',
   tutor: 'success',
-  la_caseworker: 'warn',
   other: 'neutral',
 }
 
@@ -168,6 +169,56 @@ function PeakHeatmap({ peak }: { peak: number[][] }) {
   )
 }
 
+function WeeklyHoursBars({
+  weekStarts,
+  hours,
+  calls,
+}: {
+  weekStarts: string[]
+  hours: number[]
+  calls: number[]
+}) {
+  if (weekStarts.length === 0 || hours.every((h) => h === 0)) {
+    return (
+      <p className="py-12 text-center text-sm text-neutral-500">
+        No call hours logged in this period.
+      </p>
+    )
+  }
+  const max = Math.max(1, ...hours)
+  function shortWk(iso: string): string {
+    const [, m, d] = iso.split('-')
+    return `${Number(m)}/${Number(d)}`
+  }
+  return (
+    <div
+      className="grid gap-1.5"
+      style={{ gridTemplateColumns: `repeat(${weekStarts.length}, minmax(0, 1fr))` }}
+    >
+      {weekStarts.map((wk, i) => {
+        const h = hours[i] ?? 0
+        const c = calls[i] ?? 0
+        const pct = Math.round((h / max) * 100)
+        return (
+          <div key={wk} className="flex flex-col items-center gap-1.5">
+            <span className="font-mono text-[10px] tabular-nums text-neutral-600">
+              {h > 0 ? `${h}h` : ''}
+            </span>
+            <div className="flex h-32 w-full items-end">
+              <div
+                className="w-full rounded-t bg-primary-500/85 transition-colors hover:bg-primary-600"
+                style={{ height: `${Math.max(2, pct)}%` }}
+                title={`Week of ${shortWk(wk)} — ${h}h on ${c} calls`}
+              />
+            </div>
+            <span className="text-[10px] text-neutral-500">{shortWk(wk)}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function HourlyBars({ hourly }: { hourly: number[] }) {
   const max = Math.max(1, ...hourly)
   return (
@@ -276,29 +327,62 @@ export default async function AircallReportPage({
   const period = parsePeriod(sp)
   const direction: Direction =
     sp.direction === 'inbound' || sp.direction === 'outbound' ? sp.direction : 'all'
+  const provider: Provider =
+    sp.provider === 'aircall' ||
+    sp.provider === 'google_voice' ||
+    sp.provider === 'manual'
+      ? sp.provider
+      : 'all'
   const caller = await createServerCaller()
   const data = await caller.reports.aircall.summary({
     from: period.from,
     to: period.to,
     direction,
+    provider,
   })
+
+  const presets = buildPeriodPresets()
+  const activePreset = presets.find(
+    (p) => p.fromIso === period.fromIso && p.toIso === period.toIso,
+  )
 
   const directionTabs: Array<{ key: Direction; label: string }> = [
     { key: 'all', label: 'All' },
     { key: 'inbound', label: 'Inbound' },
     { key: 'outbound', label: 'Outbound' },
   ]
+  const providerTabs: Array<{ key: Provider; label: string }> = [
+    { key: 'all', label: 'All providers' },
+    { key: 'aircall', label: 'Aircall' },
+    { key: 'google_voice', label: 'Google Voice' },
+    { key: 'manual', label: 'Manual log' },
+  ]
 
-  function directionHref(d: Direction): {
-    pathname: string
-    query: Record<string, string>
-  } {
+  function hrefWith(overrides: {
+    from?: string
+    to?: string
+    direction?: Direction
+    provider?: Provider
+  }): { pathname: string; query: Record<string, string> } {
     const q: Record<string, string> = {
-      from: period.fromIso,
-      to: period.toIso,
+      from: overrides.from ?? period.fromIso,
+      to: overrides.to ?? period.toIso,
     }
-    if (d !== 'all') q.direction = d
+    const nextDirection = overrides.direction ?? direction
+    if (nextDirection !== 'all') q.direction = nextDirection
+    const nextProvider = overrides.provider ?? provider
+    if (nextProvider !== 'all') q.provider = nextProvider
     return { pathname: '/reports/aircall', query: q }
+  }
+
+  function directionHref(d: Direction) {
+    return hrefWith({ direction: d })
+  }
+  function providerHref(p: Provider) {
+    return hrefWith({ provider: p })
+  }
+  function presetHref(fromIso: string, toIso: string) {
+    return hrefWith({ from: fromIso, to: toIso })
   }
 
   const trendSeries = [
@@ -334,6 +418,26 @@ export default async function AircallReportPage({
       />
       <PageBody>
         <div className="space-y-6">
+          {/* Quick-pick period presets */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {presets.map((p) => {
+              const active = activePreset?.key === p.key
+              return (
+                <Link
+                  key={p.key}
+                  href={presetHref(p.fromIso, p.toIso)}
+                  className={
+                    active
+                      ? 'inline-flex items-center rounded-full bg-primary-600 px-3 py-1 text-xs font-medium text-white shadow-sm'
+                      : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900'
+                  }
+                >
+                  {p.label}
+                </Link>
+              )
+            })}
+          </div>
+
           <div className="flex flex-wrap items-center gap-3">
             <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
@@ -358,7 +462,57 @@ export default async function AircallReportPage({
                 </Link>
               ))}
             </div>
+
+            <div
+              role="tablist"
+              aria-label="Provider"
+              className="inline-flex items-center rounded-lg border border-neutral-200 bg-white p-0.5 shadow-card"
+            >
+              {providerTabs.map((t) => (
+                <Link
+                  key={t.key}
+                  role="tab"
+                  aria-selected={provider === t.key}
+                  href={providerHref(t.key)}
+                  className={
+                    provider === t.key
+                      ? 'inline-flex items-center rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm'
+                      : 'inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900'
+                  }
+                >
+                  {t.label}
+                </Link>
+              ))}
+            </div>
           </div>
+
+          {/* Cold-calling KPIs — outbound-first-touch */}
+          {data.coldCalling.calls > 0 ? (
+            <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <KpiTile
+                label="Cold calls"
+                value={String(data.coldCalling.calls)}
+                tone="info"
+                hint="Outbound, first touch"
+              />
+              <KpiTile
+                label="Cold connect rate"
+                value={fmtPct(data.coldCalling.connectRate)}
+                tone={data.coldCalling.connectRate >= 0.3 ? 'success' : 'warn'}
+                hint="Picked up"
+              />
+              <KpiTile
+                label="Cold talk time"
+                value={fmtDuration(data.coldCalling.talkSec)}
+                hint="Total minutes on cold calls"
+              />
+              <KpiTile
+                label="Provider mix"
+                value={`${data.providerMix.aircall} / ${data.providerMix.google_voice}`}
+                hint="Aircall / Google Voice"
+              />
+            </section>
+          ) : null}
 
           {/* KPIs with period-over-period deltas */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -433,6 +587,24 @@ export default async function AircallReportPage({
                 No calls in this period.
               </p>
             )}
+          </section>
+
+          {/* Weekly call hours — answers "how busy is the line?" */}
+          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+            <div className="mb-3 flex items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
+                Weekly call hours
+              </h2>
+              <span className="font-mono text-xs tabular-nums text-neutral-500">
+                {(data.weekly.hours.reduce((s, n) => s + n, 0)).toFixed(1)}h total ·{' '}
+                {data.weekly.calls.reduce((s, n) => s + n, 0)} calls
+              </span>
+            </div>
+            <WeeklyHoursBars
+              weekStarts={data.weekly.labels}
+              hours={data.weekly.hours}
+              calls={data.weekly.calls}
+            />
           </section>
 
           {/* Peak heatmap + hourly throughput side-by-side on lg */}

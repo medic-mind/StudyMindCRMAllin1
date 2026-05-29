@@ -19,7 +19,7 @@ type PreferredContact = 'email' | 'phone' | 'whatsapp' | 'any'
 
 interface InitialContact {
   id: string
-  kind: 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
+  kind: 'parent' | 'student' | 'tutor' | 'other'
   companyIds: string[]
   subjectIds: string[]
   subjects: Array<{ id: string; name: string }>
@@ -211,10 +211,7 @@ export function EditContactForm({ contact }: { contact: InitialContact }) {
   }
 
   const showStudentFields = contact.kind === 'student'
-  const showJobTitle =
-    contact.kind === 'tutor' ||
-    contact.kind === 'la_caseworker' ||
-    contact.kind === 'other'
+  const showJobTitle = contact.kind === 'tutor' || contact.kind === 'other'
 
   return (
     <form className="space-y-5" onSubmit={onSubmit}>

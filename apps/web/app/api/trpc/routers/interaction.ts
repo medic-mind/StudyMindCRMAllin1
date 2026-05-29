@@ -256,6 +256,86 @@ export const interactionRouter = router({
       }
     }),
 
+  // Manual call log — used by the click-to-call buttons (Aircall + Google
+  // Voice). We don't have a webhook for Google Voice and Aircall click-to-
+  // call doesn't fire a webhook synchronously, so the agent records the
+  // intent here. The Aircall webhook may later attach a fuller payload to
+  // the same call thread; this stub interaction is the visible timeline
+  // entry the agent sees immediately. CLAUDE.md §10.
+  logManualCall: auditedProcedure
+    .input(
+      z.object({
+        contactId: z.string(),
+        provider: z.enum(['aircall', 'google_voice', 'manual']),
+        direction: z.enum(['inbound', 'outbound']).default('outbound'),
+        durationSec: z.number().int().min(0).max(60 * 60 * 8).optional(),
+        outcome: z
+          .enum(['answered', 'voicemail', 'no_answer', 'unknown'])
+          .optional(),
+        note: z.string().trim().max(2000).optional(),
+        /** Phone number actually dialled, for the timeline summary. */
+        toNumber: z.string().trim().max(40).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const contact = await ctx.db.contact.findFirst({
+        where: { id: input.contactId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!contact) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+      }
+      const id = newId()
+      const now = new Date()
+      const providerLabel =
+        input.provider === 'aircall'
+          ? 'Aircall'
+          : input.provider === 'google_voice'
+            ? 'Google Voice'
+            : 'manual'
+      const summary = `${input.direction === 'inbound' ? 'Inbound' : 'Outbound'} call via ${providerLabel}${
+        input.toNumber ? ` to ${input.toNumber}` : ''
+      }${
+        input.outcome && input.outcome !== 'unknown'
+          ? ` — ${input.outcome.replace('_', ' ')}`
+          : ''
+      }`
+      const created = await ctx.db.interaction.create({
+        data: {
+          id,
+          type: 'call',
+          contactId: input.contactId,
+          occurredAt: now,
+          summary,
+          payload: {
+            event: 'call.manually_logged',
+            provider: input.provider,
+            manual: true,
+            direction: input.direction,
+            durationSec: input.durationSec ?? 0,
+            outcome: input.outcome ?? null,
+            toNumber: input.toNumber ?? null,
+            note: input.note ?? null,
+            loggedBy: user.id,
+          },
+          createdById: user.id,
+          updatedById: user.id,
+        },
+        select: { id: true, occurredAt: true },
+      })
+      await ctx.audit({
+        action: 'call.manually_logged',
+        target: { type: 'Interaction', id: created.id },
+        after: {
+          contactId: input.contactId,
+          provider: input.provider,
+          direction: input.direction,
+        },
+      })
+      return { id: created.id, occurredAt: created.occurredAt }
+    }),
+
   // CLAUDE.md §14 — Gmail outbound reply. Resolves a seed `email_received`
   // Interaction, computes the reply recipients, and goes through the Gmail
   // outbound which is idempotent on (threadId, requestId).

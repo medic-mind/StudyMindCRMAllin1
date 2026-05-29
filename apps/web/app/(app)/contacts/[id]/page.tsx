@@ -30,6 +30,7 @@ import {
 import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 
 import { AddNote } from './AddNote'
+import { CallButton } from './CallButton'
 import { Timeline } from './Timeline'
 import { CallsSection } from './sections/CallsSection'
 import { CallSummarySection } from './sections/CallSummarySection'
@@ -47,7 +48,6 @@ const KIND_TONE: Record<string, BadgeTone> = {
   parent: 'info',
   student: 'accent',
   tutor: 'success',
-  la_caseworker: 'warn',
   other: 'neutral',
 }
 
@@ -238,8 +238,15 @@ export default async function ContactDetailPage({
 
           {/* Action toolbar */}
           <div className="flex flex-wrap items-center gap-2">
+            <CallButton
+              contactId={contact.id}
+              phoneE164={contact.phoneE164}
+              displayName={contact.displayName}
+            />
             <Link href={`/contacts/${contact.id}/edit`}>
-              <Button size="sm">Edit details</Button>
+              <Button size="sm" variant="secondary">
+                Edit details
+              </Button>
             </Link>
             {contact.family && (
               <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
