@@ -59,6 +59,8 @@ export const EVENT_NAMES = [
   // Call summary on a contact (not a card) + multi-channel fan-out.
   'contact.call_summary_added',
   'contact.call_summary_sent',
+  // Mailchimp audience push (CLAUDE.md §16).
+  'contact.mailchimp_pushed',
 
   // Teams (internal ops squads).
   'team.created',

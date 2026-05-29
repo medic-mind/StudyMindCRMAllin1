@@ -8,6 +8,12 @@ import { z } from 'zod'
 import { BusinessError } from '@studymind/core/errors'
 
 import {
+  buildCallSummaryDraftPrompt,
+  CALL_SUMMARY_DRAFT_PROMPT_VERSION,
+  CallSummaryDraftShape,
+  runDraft,
+} from '@studymind/ai'
+import {
   addContactCallSummary,
   sendContactCallSummary,
 } from '@studymind/core/contact/call-summary'
@@ -20,6 +26,11 @@ import {
 } from '@studymind/core/contact/documents'
 
 import { buildCallSummarySenders } from '@/lib/board/call-summary-senders'
+import {
+  MailchimpError,
+  MailchimpNotConfiguredError,
+  pushContactToMailchimp,
+} from '@/lib/mailchimp/outbound'
 
 import {
   ContactCreateInput,
@@ -606,6 +617,152 @@ export const contactRouter = router({
         } catch (err) {
           if (err instanceof BusinessError) {
             throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          throw err
+        }
+      }),
+
+    // Draft a call summary from a recent Aircall transcript using GPT-4o-mini.
+    // Returns the draft text; the agent reviews + edits before saving via
+    // .add. If no call with a transcript is available, returns null so the UI
+    // can show an informative state.
+    draftFromCall: protectedProcedure
+      .input(
+        z.object({
+          contactId: z.string(),
+          callInteractionId: z.string().optional(),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        const call = await ctx.db.interaction.findFirst({
+          where: input.callInteractionId
+            ? { id: input.callInteractionId, type: 'call' as const, deletedAt: null }
+            : { contactId: input.contactId, type: 'call' as const, deletedAt: null },
+          orderBy: { occurredAt: 'desc' },
+          select: { id: true, occurredAt: true, payload: true },
+        })
+        if (!call) {
+          return { status: 'no_call' as const }
+        }
+        const payload = (call.payload ?? {}) as {
+          transcriptText?: unknown
+          outcome?: unknown
+        }
+        const transcript =
+          typeof payload.transcriptText === 'string' ? payload.transcriptText.trim() : ''
+        if (!transcript) {
+          return {
+            status: 'no_transcript' as const,
+            callInteractionId: call.id,
+            callOccurredAt: call.occurredAt,
+          }
+        }
+
+        const contact = await ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: { id: true, firstName: true, lastName: true, email: true },
+        })
+        const contactName =
+          [contact?.firstName, contact?.lastName].filter(Boolean).join(' ').trim() ||
+          contact?.email ||
+          'this contact'
+        const outcomeRaw = typeof payload.outcome === 'string' ? payload.outcome : undefined
+        const outcomeHint =
+          outcomeRaw === 'answered' || outcomeRaw === 'voicemail' || outcomeRaw === 'no_answer'
+            ? outcomeRaw
+            : undefined
+
+        const prompt = buildCallSummaryDraftPrompt({
+          transcript,
+          contactName,
+          outcomeHint,
+        })
+        try {
+          const result = await runDraft({
+            task: 'call_summary_draft',
+            promptVersion: CALL_SUMMARY_DRAFT_PROMPT_VERSION,
+            system: prompt.system,
+            user: prompt.user,
+            model: 'gpt-4o-mini',
+            temperature: 0.2,
+            contentShape: CallSummaryDraftShape,
+            contactId: input.contactId,
+            ctx: { source: 'contact.callSummary.draftFromCall' },
+          })
+          return {
+            status: 'ok' as const,
+            text: result.text,
+            outcomeHint: outcomeHint ?? null,
+            callInteractionId: call.id,
+            callOccurredAt: call.occurredAt,
+          }
+        } catch (err) {
+          if (err instanceof BusinessError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          throw err
+        }
+      }),
+  }),
+
+  // Mailchimp upsert. Pushes the contact (using mailchimpEmail if set, else
+  // the regular email) to the configured audience. Idempotent on email hash.
+  mailchimp: router({
+    push: auditedProcedure
+      .input(z.object({ contactId: z.string(), listId: z.string().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (user.role === 'virtual_assistant') {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const contact = await ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            mailchimpEmail: true,
+          },
+        })
+        if (!contact) throw new TRPCError({ code: 'NOT_FOUND' })
+        const email = (contact.mailchimpEmail ?? contact.email)?.trim()
+        if (!email) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'No email on this contact to push to Mailchimp.',
+          })
+        }
+        try {
+          const result = await pushContactToMailchimp({
+            email,
+            firstName: contact.firstName,
+            lastName: contact.lastName,
+            listId: input.listId,
+          })
+          await ctx.audit({
+            action: 'contact.mailchimp_pushed',
+            target: { type: 'Contact', id: contact.id },
+            after: {
+              email,
+              listId: input.listId ?? null,
+              subscriberHash: result.subscriberHash,
+              status: result.status,
+            },
+          })
+          return result
+        } catch (err) {
+          if (err instanceof MailchimpNotConfiguredError) {
+            throw new TRPCError({
+              code: 'PRECONDITION_FAILED',
+              message: err.message,
+            })
+          }
+          if (err instanceof MailchimpError) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `${err.message}${err.detail ? `: ${err.detail}` : ''}`,
+            })
           }
           throw err
         }

@@ -12,6 +12,7 @@
 
 export type AiTaskCategory =
   | 'call_outcome_classification'
+  | 'call_summary_draft'
   | 'slack_summary'
   | 'merge_suggestion'
   | 'status_summary'
@@ -32,6 +33,7 @@ export interface BudgetLimit {
 // headroom for spikes without normalising into them.
 export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   call_outcome_classification: { daily: 5, monthly: 100 },
+  call_summary_draft: { daily: 4, monthly: 80 },
   slack_summary: { daily: 3, monthly: 60 },
   merge_suggestion: { daily: 2, monthly: 40 },
   status_summary: { daily: 8, monthly: 160 },

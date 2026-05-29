@@ -96,6 +96,12 @@ export {
   type ReplyDraftPromptInput,
 } from './prompts/reply-draft'
 export {
+  buildCallSummaryDraftPrompt,
+  CallSummaryDraftShape,
+  VERSION as CALL_SUMMARY_DRAFT_PROMPT_VERSION,
+  type CallSummaryDraftPromptInput,
+} from './prompts/call-summary-draft'
+export {
   buildStatusSummaryPrompt,
   statusSummarySchema,
   VERSION as STATUS_SUMMARY_PROMPT_VERSION,
