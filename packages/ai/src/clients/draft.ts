@@ -1,9 +1,9 @@
 // Drafting OpenAI client wrapper. Free-text output, validated post-hoc.
 // See CLAUDE.md Sections 18.1 and 18.2.
 //
-// Drafting tasks (reply, tender) cannot use structured outputs because the
-// content is prose. We instead validate with a small Zod schema describing
-// length bounds and the absence of leakage markers (e.g. literal
+// Drafting tasks (e.g. reply drafts) cannot use structured outputs because
+// the content is prose. We instead validate with a small Zod schema
+// describing length bounds and the absence of leakage markers (e.g. literal
 // `[REDACTED:...]` strings indicate the model regurgitated a redacted token,
 // which means our pre-prompt sanitisation failed or the model is confused).
 

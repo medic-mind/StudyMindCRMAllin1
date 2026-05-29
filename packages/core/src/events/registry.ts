@@ -77,6 +77,15 @@ export const EVENT_NAMES = [
   'team.member_removed',
   'task.team_changed',
 
+  // Forwarding (Settings → Forwarding): configurable "Forward to <team>"
+  // quick actions on a contact. Rule CRUD is Manager+; sending is
+  // Sales Executive+.
+  'forwarding.rule_created',
+  'forwarding.rule_updated',
+  'forwarding.rule_archived',
+  'forwarding.rule_restored',
+  'forwarding.email_sent',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',
@@ -290,6 +299,9 @@ export const INTERACTION_TYPES = [
   // Contact.
   'call_summary',
   'call_summary_sent',
+  // Forwarding quick action: agent forwarded a query about this contact to
+  // an internal address (AP team, CEOs, schools, partnerships, etc).
+  'email_forwarded',
 ] as const
 
 export type InteractionType = (typeof INTERACTION_TYPES)[number]

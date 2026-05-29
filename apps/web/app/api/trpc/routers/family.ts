@@ -318,8 +318,8 @@ export const familyRouter = router({
 
   /**
    * View-model for the Family detail page. Returns a shaped object — never
-   * the raw row — and includes AP placement, open discrepancies, and recent
-   * timeline entries. CLAUDE.md §26 (RSC ↔ client data boundary), §43.4.
+   * the raw row — and includes open discrepancies and recent timeline
+   * entries. CLAUDE.md §26 (RSC ↔ client data boundary).
    */
   getDetail: protectedProcedure
     .input(z.object({ id: z.string() }))

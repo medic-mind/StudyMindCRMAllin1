@@ -38,6 +38,9 @@ export type BusinessErrorCode =
   | 'LABEL_IN_USE'
   | 'SUBJECT_NOT_FOUND'
   | 'TASK_NOT_FOUND'
+  // Forwarding ("Forward to <team>" quick action — packages/core/src/forwarding).
+  | 'FORWARDING_RULE_NOT_FOUND'
+  | 'FORWARDING_RULE_ARCHIVED'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

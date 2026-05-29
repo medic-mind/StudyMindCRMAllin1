@@ -37,6 +37,7 @@ import { ChannelTiles } from './sections/ChannelTiles'
 import { ContactSearchBar } from './sections/ContactSearchBar'
 import { DocumentsSection } from './sections/DocumentsSection'
 import { EmailSection } from './sections/EmailSection'
+import { ForwardingSection } from './sections/ForwardingSection'
 import { LinkedContactsSection } from './sections/LinkedContactsSection'
 import { MailchimpPushButton } from './sections/MailchimpPushButton'
 import { SlackSection } from './sections/SlackSection'
@@ -255,6 +256,9 @@ export default async function ContactDetailPage({
             <a href="#section-notes" className={ACTION_LINK_CLS}>
               Add note
             </a>
+            <a href="#section-forward" className={ACTION_LINK_CLS}>
+              Forward to…
+            </a>
           </div>
         </div>
       </header>
@@ -289,6 +293,14 @@ export default async function ContactDetailPage({
             icon={<PhoneIcon size={16} />}
           >
             <CallSummarySection contactId={contact.id} contactDisplayName={contact.displayName} />
+          </SectionCard>
+
+          <SectionCard
+            id="section-forward"
+            title="Forward to team"
+            icon={<MailIcon size={16} />}
+          >
+            <ForwardingSection contactId={contact.id} />
           </SectionCard>
 
           <SectionCard id="section-slack" title="Slack mentions" icon={<MessageSquareIcon size={16} />}>
