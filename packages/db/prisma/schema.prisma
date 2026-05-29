@@ -1333,6 +1333,43 @@ model ForwardingRule {
 }
 
 // -----------------------------------------------------------------------------
+// Call summary templates — admin-managed prefill templates for the contact
+// page Call Summary panel (UCAT call, Medical Interview call, Dental
+// Interview call, etc). Optionally carries an attached PDF (stored inline
+// as bytes, same trade-off as ContactDocument / BrandingSetting per
+// CLAUDE.md §4) which the caller can open while running the script. Manager+
+// manages the catalogue; everyone reads.
+// -----------------------------------------------------------------------------
+
+model CallSummaryTemplate {
+  id          String   @id
+  name        String   @unique
+  description String?
+  /// The body shown in the textarea when the agent picks this template.
+  /// Free-form markdown-ish text — same shape as the existing hardcoded
+  /// quick-start fragments.
+  body        String
+  sortOrder   Int      @default(0)
+
+  // Optional attached PDF. Same byte-storage approach as ContactDocument
+  // and BrandingSetting — keeps self-hosted deploys S3-free. `pdfData` is
+  // null when there's no attachment; the four fields are written together.
+  pdfFileName    String?
+  pdfContentType String?
+  pdfByteSize    Int?
+  pdfData        Bytes?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  @@index([archivedAt])
+  @@index([sortOrder])
+}
+
+// -----------------------------------------------------------------------------
 // B2B accounts — schools and partnership organisations we work with. Tracked
 // as first-class records (name, contact info, lifecycle status, address,
 // notes) with a many-to-many to Contact so each touch-point on the account

@@ -82,6 +82,14 @@ const GROUPS: Group[] = [
         roles: 'Manager+',
         icon: <MailIcon size={16} />,
       },
+      {
+        href: '/settings/call-summary-templates',
+        title: 'Call summary templates',
+        description:
+          'Prefill templates for the contact page Call Summary panel (UCAT, Medical Interview, Dental Interview…). Optionally carries an attached PDF.',
+        roles: 'Manager+',
+        icon: <MailIcon size={16} />,
+      },
     ],
   },
   {
