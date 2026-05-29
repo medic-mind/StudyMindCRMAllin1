@@ -86,6 +86,15 @@ export const EVENT_NAMES = [
   'forwarding.rule_restored',
   'forwarding.email_sent',
 
+  // B2B accounts (Schools + Partnerships) — tracked organisations we work
+  // with. CRUD is Manager+; viewing is all roles.
+  'business_account.created',
+  'business_account.updated',
+  'business_account.archived',
+  'business_account.restored',
+  'business_account.contact_linked',
+  'business_account.contact_unlinked',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',

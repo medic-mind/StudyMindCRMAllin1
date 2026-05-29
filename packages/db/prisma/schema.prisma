@@ -457,6 +457,9 @@ model Contact {
   /// (Maths, Biology, etc). Reuses the existing Subject table that boards
   /// already populate.
   subjects          ContactSubject[]
+  /// Many-to-many: B2B accounts (schools, partnerships) this contact is
+  /// linked to with a role (e.g. "Head teacher", "SENCo", "Programme lead").
+  businessAccounts  BusinessAccountContact[]
 
   @@index([email])
   @@index([phoneE164])
@@ -1327,6 +1330,88 @@ model ForwardingRule {
 
   @@index([archivedAt])
   @@index([sortOrder])
+}
+
+// -----------------------------------------------------------------------------
+// B2B accounts — schools and partnership organisations we work with. Tracked
+// as first-class records (name, contact info, lifecycle status, address,
+// notes) with a many-to-many to Contact so each touch-point on the account
+// (head teacher, SENCo, finance lead, partner manager…) lives as a normal
+// Contact and surfaces on the account detail page.
+//
+// Mirrors the shape of `Company` (sister-brand tag) but for outward-facing
+// B2B relationships. Manager+ manages the catalogue; everyone can view.
+// -----------------------------------------------------------------------------
+
+enum BusinessAccountKind {
+  school
+  partnership
+}
+
+enum BusinessAccountStatus {
+  prospect
+  active
+  paused
+  churned
+}
+
+model BusinessAccount {
+  id          String              @id
+  kind        BusinessAccountKind
+  name        String
+  /// URL-safe handle (e.g. `oakwood-primary`, `acme-tutors`). Unique per kind.
+  slug        String
+  /// #RRGGBB. Drives the chip + dot in the UI.
+  color       String?
+  description String?
+  status      BusinessAccountStatus @default(prospect)
+
+  // B2B coordinates — optional; the account may exist before we have full
+  // contact details. Email + phone are the primary org-level points; for
+  // per-person details, link a Contact via BusinessAccountContact.
+  contactEmail String?
+  contactPhone String?
+  website      String?
+
+  // Address — same shape as Contact for consistency.
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  postcode     String?
+  country      String?
+
+  notes String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  contacts BusinessAccountContact[]
+
+  @@unique([kind, slug])
+  @@index([kind])
+  @@index([status])
+  @@index([archivedAt])
+}
+
+/// Many-to-many join: BusinessAccount ↔ Contact. The optional `role` text is
+/// the contact's role at the account (e.g. "Head teacher", "SENCo",
+/// "Finance contact", "Programme lead"). One row per link.
+model BusinessAccountContact {
+  accountId String
+  contactId String
+  role      String?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  account BusinessAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contact Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, contactId])
+  @@index([contactId])
 }
 
 // -----------------------------------------------------------------------------

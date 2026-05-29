@@ -43,6 +43,14 @@ function buildNav(role: Role): NavItem[] {
     { href: '/', label: 'Dashboard' },
     { href: '/inbox', label: 'Inbox' },
     { href: '/contacts', label: 'Contacts' },
+    {
+      href: '/accounts',
+      label: 'Accounts',
+      children: [
+        { href: '/accounts?kind=school', label: 'Schools' },
+        { href: '/accounts?kind=partnership', label: 'Partnerships' },
+      ],
+    },
     { href: '/boards', label: 'Boards' },
     { href: '/tasks', label: 'Tasks' },
     {
