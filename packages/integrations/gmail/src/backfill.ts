@@ -80,8 +80,9 @@ export const gmailBackfillRequested = inngest.createFunction(
 
     try {
       const mailbox = await step.run('load-mailbox', async () =>
-        db.gmailMailbox.findUnique({
-          where: { agentId },
+        db.gmailMailbox.findFirst({
+          where: { agentId, deletedAt: null },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
           select: { address: true },
         }),
       )

@@ -1,7 +1,12 @@
 // Contact view-models. Constructed in RSC, never expose raw rows to the client.
 // See CLAUDE.md Section 26.
 
-import type { ContactKind, ContactSendStatus, ContactSummary } from '@studymind/core/contact'
+import type {
+  Company,
+  ContactKind,
+  ContactSendStatus,
+  ContactSummary,
+} from '@studymind/core/contact'
 import { displayNameOf } from '@studymind/core/contact'
 
 export type { ContactSummary } from '@studymind/core/contact'
@@ -29,6 +34,7 @@ export interface ContactDetailViewModel {
   jobTitle: string | null
   pronouns: string | null
   mailchimpEmail: string | null
+  company: Company | null
   hasSafeguardingFlag: boolean
   isRestricted: boolean
   family: { id: string; name: string | null } | null
@@ -56,6 +62,7 @@ interface ContactRow {
   jobTitle: string | null
   pronouns: string | null
   mailchimpEmail: string | null
+  company: Company | null
   createdAt: Date
 }
 
@@ -76,6 +83,7 @@ export function toContactSummary(row: ContactSummaryRow): ContactSummary {
     familyId: family?.id ?? null,
     familyName: family?.name ?? null,
     lastInteractionAt: last,
+    company: row.company,
   }
 }
 
@@ -114,6 +122,7 @@ export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
     jobTitle: row.jobTitle,
     pronouns: row.pronouns,
     mailchimpEmail: row.mailchimpEmail,
+    company: row.company,
     hasSafeguardingFlag: hasFlag,
     isRestricted,
     family,

@@ -327,8 +327,9 @@ export const interactionRouter = router({
 
         // Recipients: the from of the inbound becomes the To; original to/cc
         // become the cc minus our own connected mailbox address.
-        const myMailbox = await ctx.db.gmailMailbox.findUnique({
-          where: { agentId: user.id },
+        const myMailbox = await ctx.db.gmailMailbox.findFirst({
+          where: { agentId: user.id, deletedAt: null },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
           select: { address: true },
         })
         const myAddress = myMailbox?.address?.toLowerCase() ?? null

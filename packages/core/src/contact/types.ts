@@ -45,6 +45,7 @@ export const ContactSummary = z.object({
   familyId: z.string().nullable(),
   familyName: z.string().nullable(),
   lastInteractionAt: z.date().nullable(),
+  company: z.enum(['medic_mind', 'oxbridge_mind', 'study_mind']).nullable(),
 })
 export type ContactSummary = z.infer<typeof ContactSummary>
 
@@ -58,6 +59,23 @@ export const ContactSendStatus = z.enum([
   'other',
 ])
 export type ContactSendStatus = z.infer<typeof ContactSendStatus>
+
+/** StudyMind sister brand. CLAUDE.md §4. */
+export const Company = z.enum(['medic_mind', 'oxbridge_mind', 'study_mind'])
+export type Company = z.infer<typeof Company>
+
+export const COMPANY_LABEL: Record<Company, string> = {
+  medic_mind: 'Medic Mind',
+  oxbridge_mind: 'Oxbridge Mind',
+  study_mind: 'Study Mind',
+}
+
+/** Brand colour for the small company chip — matches the wordmark intent. */
+export const COMPANY_COLOR: Record<Company, string> = {
+  medic_mind: '#e11d48', // rose
+  oxbridge_mind: '#0284c7', // sky
+  study_mind: '#9333ea', // primary purple
+}
 
 export const ContactLinkRelation = z.enum([
   'parent_of',
@@ -102,6 +120,7 @@ const ProfileFields = {
   jobTitle: OptionalShort,
   pronouns: z.string().trim().min(1).max(40).optional(),
   mailchimpEmail: Email.optional(),
+  company: Company.optional(),
 } as const
 
 export const ContactCreateInput = z.object({
@@ -135,6 +154,7 @@ export const ContactUpdateInput = z.object({
   jobTitle: z.string().trim().max(120).nullish(),
   pronouns: z.string().trim().max(40).nullish(),
   mailchimpEmail: Email.nullish(),
+  company: Company.nullish(),
 })
 export type ContactUpdateInput = z.infer<typeof ContactUpdateInput>
 

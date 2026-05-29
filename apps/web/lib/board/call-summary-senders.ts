@@ -107,8 +107,9 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
         return { status: 'skipped', detail: 'Contact has no email address' }
       }
       // The acting agent must have a connected Gmail mailbox.
-      const mailbox = await db.gmailMailbox.findUnique({
-        where: { agentId },
+      const mailbox = await db.gmailMailbox.findFirst({
+        where: { agentId, deletedAt: null },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
         select: { address: true },
       })
       if (!mailbox) {

@@ -14,10 +14,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
 type SendStatus = 'none' | 'send_support' | 'ehcp_in_place' | 'ehcp_in_progress' | 'other'
+type CompanyOpt = 'medic_mind' | 'oxbridge_mind' | 'study_mind'
 
 interface InitialContact {
   id: string
   kind: 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
+  company: CompanyOpt | null
   firstName: string | null
   lastName: string | null
   pronouns: string | null
@@ -38,6 +40,7 @@ interface InitialContact {
 }
 
 interface FormState {
+  company: '' | CompanyOpt
   firstName: string
   lastName: string
   pronouns: string
@@ -87,6 +90,7 @@ function Section({
 export function EditContactForm({ contact }: { contact: InitialContact }) {
   const router = useRouter()
   const [form, setForm] = useState<FormState>({
+    company: contact.company ?? '',
     firstName: contact.firstName ?? '',
     lastName: contact.lastName ?? '',
     pronouns: contact.pronouns ?? '',
@@ -126,6 +130,7 @@ export function EditContactForm({ contact }: { contact: InitialContact }) {
     e.preventDefault()
     update.mutate({
       id: contact.id,
+      company: form.company === '' ? null : form.company,
       firstName: emptyToNull(form.firstName),
       lastName: emptyToNull(form.lastName),
       pronouns: emptyToNull(form.pronouns),
@@ -156,6 +161,15 @@ export function EditContactForm({ contact }: { contact: InitialContact }) {
     <form className="space-y-5" onSubmit={onSubmit}>
       <Section title="Identity">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="company">Company</Label>
+            <Select id="company" value={form.company} onChange={set('company')}>
+              <option value="">Not set</option>
+              <option value="medic_mind">Medic Mind</option>
+              <option value="oxbridge_mind">Oxbridge Mind</option>
+              <option value="study_mind">Study Mind</option>
+            </Select>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="firstName">First name</Label>
             <Input id="firstName" value={form.firstName} onChange={set('firstName')} />

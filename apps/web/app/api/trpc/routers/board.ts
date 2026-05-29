@@ -654,8 +654,9 @@ const cardRouter = router({
           : null
 
         const hasEmail = Boolean(card.contact.email)
-        const mailbox = await ctx.db.gmailMailbox.findUnique({
-          where: { agentId: ctx.user?.id ?? '' },
+        const mailbox = await ctx.db.gmailMailbox.findFirst({
+          where: { agentId: ctx.user?.id ?? '', deletedAt: null },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
           select: { agentId: true },
         })
         const emailThread =

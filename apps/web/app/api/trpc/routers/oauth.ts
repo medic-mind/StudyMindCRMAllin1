@@ -23,6 +23,31 @@ void _setKmsClient // keep tree-shake happy across import shapes
 
 export const oauthRouter = router({
   gmail: router({
+    /** All Gmail mailboxes connected to the calling agent, default first. */
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const me = requireUser(ctx)
+      const rows = await ctx.db.gmailMailbox.findMany({
+        where: { agentId: me.id, deletedAt: null },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          address: true,
+          isDefault: true,
+          historyId: true,
+          watchExpiresAt: true,
+          createdAt: true,
+        },
+      })
+      const user = await ctx.db.user.findUnique({
+        where: { id: me.id },
+        select: { gmailConnectionStatus: true },
+      })
+      return {
+        connectionStatus: user?.gmailConnectionStatus ?? null,
+        mailboxes: rows,
+      }
+    }),
+
     /** Status surface for /settings/mailbox. */
     status: protectedProcedure.query(async ({ ctx }) => {
       const me = requireUser(ctx)
@@ -34,8 +59,9 @@ export const oauthRouter = router({
             gmailRefreshTokenCipherId: true,
           },
         }),
-        ctx.db.gmailMailbox.findUnique({
-          where: { agentId: me.id },
+        ctx.db.gmailMailbox.findFirst({
+          where: { agentId: me.id, deletedAt: null },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
           select: {
             address: true,
             historyId: true,
