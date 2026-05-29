@@ -1,6 +1,7 @@
-// User avatar menu — client island. Shows initials in a circle, with a
-// dropdown of Profile, role pill, and Sign out. CLAUDE.md §26 (client
-// leaves), §28 (Esc closes, restores focus, keyboard reachable).
+// User avatar menu — client island. Identity at the top, then account links
+// (Profile / Password / Sessions / 2FA / Trengo) and Sign out. Account no
+// longer needs a sidebar section. CLAUDE.md §26 (client leaves), §28 (Esc
+// closes, restores focus, keyboard reachable).
 
 'use client'
 
@@ -8,13 +9,22 @@ import Link from 'next/link'
 import { signOut } from 'next-auth/react'
 import { useEffect, useRef, useState } from 'react'
 
-import { ChevronDownIcon, LogOutIcon, UserCircleIcon } from '@/components/ui/icon'
+import {
+  ChevronDownIcon,
+  LogOutIcon,
+  MailIcon,
+  PhoneIcon,
+  ShieldAlertIcon,
+  SmartphoneIcon,
+  UserCircleIcon,
+} from '@/components/ui/icon'
 import { formatRoleLabel } from '@/lib/format/role-label'
 
 interface Props {
   email: string
   name: string | null
   role: string
+  totpEnabled?: boolean
 }
 
 function initialsOf(email: string, name: string | null): string {
@@ -28,7 +38,7 @@ function initialsOf(email: string, name: string | null): string {
   return email.slice(0, 2).toUpperCase()
 }
 
-export function UserMenu({ email, name, role }: Props) {
+export function UserMenu({ email, name, role, totpEnabled = false }: Props) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -55,6 +65,7 @@ export function UserMenu({ email, name, role }: Props) {
   }, [open])
 
   const initials = initialsOf(email, name)
+  const twoFaHref = totpEnabled ? '/account/disable-2fa' : '/account/setup-2fa'
 
   return (
     <div className="relative">
@@ -81,44 +92,128 @@ export function UserMenu({ email, name, role }: Props) {
           ref={panelRef}
           role="menu"
           aria-label="User menu"
-          className="absolute right-0 z-40 mt-2 w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg"
+          className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
         >
-          <div className="border-b border-neutral-100 px-3 py-3">
-            <p className="truncate text-sm font-medium text-neutral-900">
-              {name ?? email}
-            </p>
-            <p className="truncate text-xs text-neutral-500">{email}</p>
+          {/* Identity */}
+          <div className="border-b border-neutral-100 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary-600 text-sm font-semibold text-white"
+              >
+                {initials}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-neutral-900">
+                  {name ?? email}
+                </p>
+                <p className="truncate text-xs text-neutral-500">{email}</p>
+              </div>
+            </div>
             <span className="mt-2 inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-700">
               {formatRoleLabel(role)}
             </span>
           </div>
-          <ul className="py-1 text-sm">
+
+          {/* Account */}
+          <p className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+            Account
+          </p>
+          <ul className="pb-1 text-sm" role="none">
             <li>
               <Link
                 href="/account"
                 role="menuitem"
                 onClick={() => setOpen(false)}
-                className="flex items-center gap-2 px-3 py-2 text-neutral-700 hover:bg-neutral-50"
+                className="flex items-center gap-2.5 px-4 py-2 text-neutral-700 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
               >
-                <UserCircleIcon size={16} className="text-neutral-500" />
+                <UserCircleIcon size={15} className="text-neutral-400" />
                 Profile
               </Link>
             </li>
             <li>
-              <button
+              <Link
+                href="/account/change-password"
                 role="menuitem"
-                type="button"
-                onClick={() => {
-                  setOpen(false)
-                  signOut({ callbackUrl: '/sign-in' })
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-neutral-700 hover:bg-neutral-50"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-4 py-2 text-neutral-700 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
               >
-                <LogOutIcon size={16} className="text-neutral-500" />
-                Sign out
-              </button>
+                <ShieldAlertIcon size={15} className="text-neutral-400" />
+                Change password
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/account/sessions"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-4 py-2 text-neutral-700 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+              >
+                <PhoneIcon size={15} className="text-neutral-400" />
+                Sessions
+              </Link>
+            </li>
+            <li>
+              <Link
+                href={twoFaHref}
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center justify-between gap-2.5 px-4 py-2 text-neutral-700 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+              >
+                <span className="flex items-center gap-2.5">
+                  <ShieldAlertIcon size={15} className="text-neutral-400" />
+                  Two-factor auth
+                </span>
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                    totpEnabled
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-amber-50 text-amber-800'
+                  }`}
+                >
+                  {totpEnabled ? 'On' : 'Off'}
+                </span>
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/account/trengo/connect"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-4 py-2 text-neutral-700 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+              >
+                <SmartphoneIcon size={15} className="text-neutral-400" />
+                Trengo
+              </Link>
+            </li>
+            <li>
+              <Link
+                href="/settings/mailbox"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-4 py-2 text-neutral-700 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+              >
+                <MailIcon size={15} className="text-neutral-400" />
+                Mailboxes
+              </Link>
             </li>
           </ul>
+
+          {/* Sign out */}
+          <div className="border-t border-neutral-100">
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                signOut({ callbackUrl: '/sign-in' })
+              }}
+              className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-neutral-700 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+            >
+              <LogOutIcon size={15} className="text-neutral-400" />
+              Sign out
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

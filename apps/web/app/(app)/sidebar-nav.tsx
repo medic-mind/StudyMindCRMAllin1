@@ -52,20 +52,20 @@ const ICONS: Record<string, IconComp> = {
   '/account': UserCircleIcon,
 }
 
-// Section assignments. Anything not listed defaults to "Workspace" so the
-// nav still renders cleanly if a new top-level page is added.
+// Section assignments. Anything not listed defaults to "Work" so the nav
+// still renders cleanly if a new top-level page is added. Account pages live
+// in the user menu (top right) — not here.
 const SECTION: Record<string, string> = {
-  '/': 'Workspace',
-  '/inbox': 'Workspace',
-  '/contacts': 'Workspace',
-  '/boards': 'Workspace',
-  '/tasks': 'Workspace',
-  '/finance': 'Insights',
-  '/reports': 'Insights',
+  '/': 'Work',
+  '/inbox': 'Work',
+  '/contacts': 'Work',
+  '/boards': 'Work',
+  '/tasks': 'Work',
+  '/finance': 'Operations',
+  '/reports': 'Operations',
   '/settings': 'Admin',
-  '/account': 'You',
 }
-const SECTION_ORDER = ['Workspace', 'Insights', 'Admin', 'You'] as const
+const SECTION_ORDER = ['Work', 'Operations', 'Admin'] as const
 
 function isActive(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/'

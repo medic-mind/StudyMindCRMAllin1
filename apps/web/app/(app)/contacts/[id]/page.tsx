@@ -162,14 +162,15 @@ export default async function ContactDetailPage({
                 <h1 className="truncate text-3xl font-semibold leading-tight tracking-tight text-neutral-900">
                   {contact.displayName}
                 </h1>
-                {contact.company ? (
+                {contact.companies.map((c) => (
                   <span
+                    key={c.id}
                     className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white"
-                    style={{ backgroundColor: contact.company.color ?? '#475569' }}
+                    style={{ backgroundColor: c.color ?? '#475569' }}
                   >
-                    {contact.company.name}
+                    {c.name}
                   </span>
-                ) : null}
+                ))}
                 <Badge tone={kindTone} dot>
                   {formatKind(contact.kind)}
                 </Badge>
@@ -220,6 +221,18 @@ export default async function ContactDetailPage({
                   Added {formatDate(contact.createdAt)}
                 </span>
               </div>
+              {contact.subjects.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {contact.subjects.map((s) => (
+                    <span
+                      key={s.id}
+                      className="inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-800"
+                    >
+                      {s.name}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -405,6 +418,18 @@ export default async function ContactDetailPage({
                 {contact.pronouns && (
                   <DetailRow label="Pronouns">{contact.pronouns}</DetailRow>
                 )}
+                {contact.preferredContactMethod && (
+                  <DetailRow label="Preferred">
+                    <span className="capitalize">
+                      {contact.preferredContactMethod === 'whatsapp'
+                        ? 'WhatsApp'
+                        : contact.preferredContactMethod}
+                    </span>
+                  </DetailRow>
+                )}
+                {contact.timezone && (
+                  <DetailRow label="Time zone">{contact.timezone}</DetailRow>
+                )}
               </dl>
             </div>
 
@@ -445,6 +470,9 @@ export default async function ContactDetailPage({
                       </Badge>
                     </DetailRow>
                   )}
+                  {contact.examTarget && (
+                    <DetailRow label="Exam target">{contact.examTarget}</DetailRow>
+                  )}
                 </dl>
               </div>
             )}
@@ -473,6 +501,9 @@ export default async function ContactDetailPage({
                 Marketing
               </h3>
               <dl className="space-y-3">
+                {contact.referralSource && (
+                  <DetailRow label="Source">{contact.referralSource}</DetailRow>
+                )}
                 {(contact.mailchimpEmail || contact.email) && (
                   <DetailRow label="Mailchimp">
                     <div className="space-y-1.5">

@@ -1,73 +1,147 @@
-// Settings landing page. Sub-areas are role-gated on their own pages.
+// Settings landing page. Grouped into People / Brand & Data / Platform so
+// admins can find what they need at a glance. Mailbox + 2FA + Sessions
+// live in the user menu — they are per-agent, not org-wide.
 
 import Link from 'next/link'
 
 import { PageHeader } from '@/components/shell/page-header'
+import {
+  BarChartIcon,
+  CoinsIcon,
+  MailIcon,
+  SettingsIcon,
+  ShieldAlertIcon,
+  UsersIcon,
+} from '@/components/ui/icon'
 
-const links: Array<{ href: string; title: string; description: string; roles: string }> = [
+interface Tile {
+  href: string
+  title: string
+  description: string
+  roles: string
+  icon: React.ReactNode
+}
+
+interface Group {
+  title: string
+  description?: string
+  tiles: Tile[]
+}
+
+const GROUPS: Group[] = [
   {
-    href: '/settings/users',
-    title: 'Users & roles',
-    description: 'List users, assign and revoke roles. Audited.',
-    roles: 'CEO · Senior Manager',
+    title: 'People & Access',
+    description: 'Who can use the CRM and what they can do.',
+    tiles: [
+      {
+        href: '/settings/users',
+        title: 'Users & roles',
+        description: 'List users, invite, assign or revoke roles. Audited.',
+        roles: 'CEO · Senior Manager',
+        icon: <UsersIcon size={16} />,
+      },
+      {
+        href: '/settings/teams',
+        title: 'Teams',
+        description: 'Group ops staff into squads. Tasks can be scoped per team.',
+        roles: 'CEO · Senior Manager',
+        icon: <UsersIcon size={16} />,
+      },
+    ],
   },
   {
-    href: '/settings/teams',
-    title: 'Teams',
-    description: 'Group ops staff into squads. Tasks can be scoped per team.',
-    roles: 'CEO · Senior Manager',
+    title: 'Brand & Data',
+    description: 'Tags, brand identity, and what families see.',
+    tiles: [
+      {
+        href: '/settings/companies',
+        title: 'Companies',
+        description:
+          'Sister-brand tags (Medic Mind, Oxbridge Mind, Study Mind, anything you add).',
+        roles: 'CEO · Senior Manager',
+        icon: <CoinsIcon size={16} />,
+      },
+      {
+        href: '/settings/branding',
+        title: 'Branding',
+        description: 'Upload the logo shown in the top bar and on sign-in.',
+        roles: 'CEO · Senior Manager',
+        icon: <SettingsIcon size={16} />,
+      },
+    ],
   },
   {
-    href: '/settings/companies',
-    title: 'Companies',
-    description:
-      'Sister-brand tags shown across contacts (Medic Mind, Oxbridge Mind, Study Mind, anything you add).',
-    roles: 'CEO · Senior Manager',
-  },
-  {
-    href: '/settings/flags',
-    title: 'Feature flags',
-    description: 'Effective values, env overrides, stale release flags.',
-    roles: 'CEO · Senior Manager',
-  },
-  {
-    href: '/settings/branding',
-    title: 'Branding',
-    description: 'Upload the logo shown in the top bar and on sign-in.',
-    roles: 'CEO · Senior Manager',
-  },
-  {
-    href: '/settings/mailbox',
-    title: 'Mailbox',
-    description: 'Connect or disconnect your Gmail mailbox (per-agent).',
-    roles: 'all',
-  },
-  {
-    href: '/settings/integrations',
-    title: 'Integrations status',
-    description:
-      'Webhook receive recency, Gmail watch expiry, Asana webhook health.',
-    roles: 'CEO · Senior Manager',
+    title: 'Platform',
+    description: 'Operational state of the system itself.',
+    tiles: [
+      {
+        href: '/settings/integrations',
+        title: 'Integrations status',
+        description: 'Webhook recency, Gmail watch expiry, Asana webhook health.',
+        roles: 'CEO · Senior Manager',
+        icon: <BarChartIcon size={16} />,
+      },
+      {
+        href: '/settings/flags',
+        title: 'Feature flags',
+        description: 'Effective values, env overrides, stale release flags.',
+        roles: 'CEO · Senior Manager',
+        icon: <ShieldAlertIcon size={16} />,
+      },
+      {
+        href: '/settings/mailbox',
+        title: 'My mailboxes',
+        description: 'Connect or disconnect your Gmail mailboxes (per-agent).',
+        roles: 'all',
+        icon: <MailIcon size={16} />,
+      },
+    ],
   },
 ]
 
 export default function SettingsPage() {
   return (
     <>
-      <PageHeader title="Settings" />
-      <div className="grid gap-3 sm:grid-cols-2">
-        {links.map((l) => (
-          <Link
-            key={l.href}
-            href={l.href}
-            className="block rounded-xl border border-neutral-200 bg-white p-4 shadow-card transition-shadow hover:border-neutral-300 hover:shadow-card-hover"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="font-medium">{l.title}</h2>
-              <span className="text-xs text-neutral-500">{l.roles}</span>
+      <PageHeader title="Settings" subtitle="Organisation, brand, and platform configuration" />
+      <div className="space-y-8">
+        {GROUPS.map((group) => (
+          <section key={group.title}>
+            <header className="mb-3">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-500">
+                {group.title}
+              </h2>
+              {group.description ? (
+                <p className="mt-0.5 text-xs text-neutral-500">{group.description}</p>
+              ) : null}
+            </header>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {group.tiles.map((t) => (
+                <Link
+                  key={t.href}
+                  href={t.href}
+                  className="group block rounded-xl border border-neutral-200 bg-white p-4 shadow-card transition-shadow hover:border-neutral-300 hover:shadow-card-hover"
+                >
+                  <div className="flex items-start gap-3">
+                    <span
+                      aria-hidden
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary-50 text-primary-700 transition-colors group-hover:bg-primary-100"
+                    >
+                      {t.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-medium text-neutral-900">{t.title}</h3>
+                        <span className="shrink-0 text-[11px] text-neutral-500">
+                          {t.roles}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-neutral-600">{t.description}</p>
+                    </div>
+                  </div>
+                </Link>
+              ))}
             </div>
-            <p className="mt-1 text-sm text-neutral-600">{l.description}</p>
-          </Link>
+          </section>
         ))}
       </div>
     </>

@@ -45,6 +45,13 @@ export const CompanyRef = z.object({
 })
 export type CompanyRef = z.infer<typeof CompanyRef>
 
+/** Subject reference exposed through view-models. */
+export const SubjectRef = z.object({
+  id: z.string(),
+  name: z.string(),
+})
+export type SubjectRef = z.infer<typeof SubjectRef>
+
 export const ContactSummary = z.object({
   id: z.string(),
   kind: ContactKind,
@@ -54,9 +61,13 @@ export const ContactSummary = z.object({
   familyId: z.string().nullable(),
   familyName: z.string().nullable(),
   lastInteractionAt: z.date().nullable(),
-  company: CompanyRef.nullable(),
+  /** Up to three for the list dot strip; first one is the primary. */
+  companies: CompanyRef.array(),
 })
 export type ContactSummary = z.infer<typeof ContactSummary>
+
+export const ContactPreferredContactMethod = z.enum(['email', 'phone', 'whatsapp', 'any'])
+export type ContactPreferredContactMethod = z.infer<typeof ContactPreferredContactMethod>
 
 // Extended profile (additive). All optional; new contacts can still be
 // created with just kind + a name.
@@ -112,7 +123,14 @@ const ProfileFields = {
   jobTitle: OptionalShort,
   pronouns: z.string().trim().min(1).max(40).optional(),
   mailchimpEmail: Email.optional(),
-  companyId: z.string().min(1).optional(),
+  preferredContactMethod: ContactPreferredContactMethod.optional(),
+  timezone: OptionalShort,
+  referralSource: OptionalShort,
+  examTarget: OptionalShort,
+  /** Many-to-many; replace whole set on create. */
+  companyIds: z.string().min(1).array().max(20).optional(),
+  /** Many-to-many; replace whole set on create. */
+  subjectIds: z.string().min(1).array().max(20).optional(),
 } as const
 
 export const ContactCreateInput = z.object({
@@ -146,7 +164,14 @@ export const ContactUpdateInput = z.object({
   jobTitle: z.string().trim().max(120).nullish(),
   pronouns: z.string().trim().max(40).nullish(),
   mailchimpEmail: Email.nullish(),
-  companyId: z.string().nullish(),
+  preferredContactMethod: ContactPreferredContactMethod.nullish(),
+  timezone: z.string().trim().max(120).nullish(),
+  referralSource: z.string().trim().max(120).nullish(),
+  examTarget: z.string().trim().max(120).nullish(),
+  /** When present, replaces the current set of company tags. */
+  companyIds: z.string().min(1).array().max(20).optional(),
+  /** When present, replaces the current set of subject tags. */
+  subjectIds: z.string().min(1).array().max(20).optional(),
 })
 export type ContactUpdateInput = z.infer<typeof ContactUpdateInput>
 

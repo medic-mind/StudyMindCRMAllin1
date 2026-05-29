@@ -9,15 +9,18 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { XIcon } from '@/components/ui/icon'
 
 import { trpc } from '@/lib/trpc/client'
 
-// Controlled form (not RHF) so the dateOfBirth / optional-string normalisation
-// is explicit. The server is the source of truth for validation.
+type Kind = 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
+type SendStatus = 'none' | 'send_support' | 'ehcp_in_place' | 'ehcp_in_progress' | 'other'
+type PreferredContact = 'email' | 'phone' | 'whatsapp' | 'any'
 
 interface FormState {
-  kind: 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
-  companyId: string
+  kind: Kind
+  companyIds: string[]
+  subjects: Array<{ id: string; name: string }>
   firstName: string
   lastName: string
   pronouns: string
@@ -32,14 +35,19 @@ interface FormState {
   country: string
   schoolName: string
   yearGroup: string
-  sendStatus: '' | 'none' | 'send_support' | 'ehcp_in_place' | 'ehcp_in_progress' | 'other'
+  sendStatus: '' | SendStatus
+  examTarget: string
+  preferredContactMethod: '' | PreferredContact
+  timezone: string
+  referralSource: string
   mailchimpEmail: string
   notes: string
 }
 
 const EMPTY: FormState = {
   kind: 'parent',
-  companyId: '',
+  companyIds: [],
+  subjects: [],
   firstName: '',
   lastName: '',
   pronouns: '',
@@ -55,6 +63,10 @@ const EMPTY: FormState = {
   schoolName: '',
   yearGroup: '',
   sendStatus: '',
+  examTarget: '',
+  preferredContactMethod: '',
+  timezone: '',
+  referralSource: '',
   mailchimpEmail: '',
   notes: '',
 }
@@ -90,6 +102,10 @@ export function NewContactForm() {
   const router = useRouter()
   const [form, setForm] = useState<FormState>(EMPTY)
   const companies = trpc.company.pickList.useQuery()
+  const subjectsQuery = trpc.subject.list.useQuery({})
+  const findOrCreateSubject = trpc.subject.findOrCreate.useMutation()
+  const [newSubject, setNewSubject] = useState('')
+
   const create = trpc.contact.create.useMutation({
     onSuccess: ({ id }) => {
       toast.success('Contact created')
@@ -105,12 +121,42 @@ export function NewContactForm() {
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       setForm((f) => ({ ...f, [key]: e.target.value as FormState[K] }))
 
+  function toggleCompany(id: string) {
+    setForm((f) =>
+      f.companyIds.includes(id)
+        ? { ...f, companyIds: f.companyIds.filter((x) => x !== id) }
+        : { ...f, companyIds: [...f.companyIds, id] },
+    )
+  }
+
+  function pickExistingSubject(s: { id: string; name: string }) {
+    setForm((f) =>
+      f.subjects.some((x) => x.id === s.id) ? f : { ...f, subjects: [...f.subjects, s] },
+    )
+  }
+
+  function removeSubject(id: string) {
+    setForm((f) => ({ ...f, subjects: f.subjects.filter((s) => s.id !== id) }))
+  }
+
+  async function addSubject() {
+    const name = newSubject.trim()
+    if (!name) return
+    try {
+      const result = await findOrCreateSubject.mutateAsync({ name })
+      pickExistingSubject({ id: result.id, name: result.name })
+      setNewSubject('')
+      await subjectsQuery.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add subject')
+    }
+  }
+
   function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     const dob = form.dateOfBirth ? new Date(form.dateOfBirth) : undefined
     create.mutate({
       kind: form.kind,
-      companyId: form.companyId === '' ? undefined : form.companyId,
       firstName: clean(form.firstName),
       lastName: clean(form.lastName),
       pronouns: clean(form.pronouns),
@@ -126,12 +172,21 @@ export function NewContactForm() {
       schoolName: clean(form.schoolName),
       yearGroup: clean(form.yearGroup),
       sendStatus: form.sendStatus === '' ? undefined : form.sendStatus,
+      examTarget: clean(form.examTarget),
+      preferredContactMethod:
+        form.preferredContactMethod === '' ? undefined : form.preferredContactMethod,
+      timezone: clean(form.timezone),
+      referralSource: clean(form.referralSource),
       mailchimpEmail: clean(form.mailchimpEmail),
       notes: clean(form.notes),
+      companyIds: form.companyIds.length > 0 ? form.companyIds : undefined,
+      subjectIds: form.subjects.length > 0 ? form.subjects.map((s) => s.id) : undefined,
     })
   }
 
   const showStudentFields = form.kind === 'student'
+  const showJobTitle =
+    form.kind === 'tutor' || form.kind === 'la_caseworker' || form.kind === 'other'
 
   return (
     <form className="space-y-5" onSubmit={onSubmit}>
@@ -145,22 +200,6 @@ export function NewContactForm() {
               <option value="tutor">Tutor</option>
               <option value="la_caseworker">LA caseworker</option>
               <option value="other">Other</option>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="companyId">Company</Label>
-            <Select
-              id="companyId"
-              value={form.companyId}
-              onChange={set('companyId')}
-              disabled={companies.isLoading}
-            >
-              <option value="">Not set</option>
-              {(companies.data ?? []).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
             </Select>
           </div>
           <div className="space-y-1.5">
@@ -192,6 +231,119 @@ export function NewContactForm() {
         </div>
       </Section>
 
+      <Section
+        title="Companies"
+        description="Tick every sister brand this contact belongs to. Add new brands at Settings → Companies."
+      >
+        {companies.isLoading ? (
+          <p className="text-xs text-neutral-500">Loading…</p>
+        ) : (companies.data?.length ?? 0) === 0 ? (
+          <p className="text-xs text-neutral-500">
+            No companies yet. Add one at Settings → Companies.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {(companies.data ?? []).map((c) => {
+              const active = form.companyIds.includes(c.id)
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => toggleCompany(c.id)}
+                  aria-pressed={active}
+                  className={
+                    active
+                      ? 'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-white'
+                      : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50'
+                  }
+                  style={active ? { backgroundColor: c.color ?? '#475569' } : undefined}
+                >
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: c.color ?? '#94a3b8' }}
+                  />
+                  {c.name}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </Section>
+
+      <Section
+        title="Subjects"
+        description="What this contact tutors, learns, or specialises in. Type to add new ones."
+      >
+        <div className="space-y-3">
+          {form.subjects.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {form.subjects.map((s) => (
+                <span
+                  key={s.id}
+                  className="inline-flex items-center gap-1 rounded-full bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-800"
+                >
+                  {s.name}
+                  <button
+                    type="button"
+                    onClick={() => removeSubject(s.id)}
+                    aria-label={`Remove ${s.name}`}
+                    className="rounded-full text-primary-700 hover:text-primary-900"
+                  >
+                    <XIcon size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={newSubject}
+              onChange={(e) => setNewSubject(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void addSubject()
+                }
+              }}
+              placeholder="e.g. Maths, Chemistry, 11+ English"
+              className="max-w-xs"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => void addSubject()}
+              disabled={!newSubject.trim() || findOrCreateSubject.isPending}
+            >
+              Add
+            </Button>
+          </div>
+          {(subjectsQuery.data?.length ?? 0) > 0 ? (
+            <div>
+              <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+                Existing
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {(subjectsQuery.data ?? [])
+                  .filter((s) => !form.subjects.some((x) => x.id === s.id))
+                  .slice(0, 24)
+                  .map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => pickExistingSubject(s)}
+                      className="inline-flex items-center rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </Section>
+
       <Section title="Contact details">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -207,9 +359,30 @@ export function NewContactForm() {
               placeholder="+447700900123"
             />
           </div>
-          {(form.kind === 'tutor' ||
-            form.kind === 'la_caseworker' ||
-            form.kind === 'other') && (
+          <div className="space-y-1.5">
+            <Label htmlFor="preferredContactMethod">Preferred channel</Label>
+            <Select
+              id="preferredContactMethod"
+              value={form.preferredContactMethod}
+              onChange={set('preferredContactMethod')}
+            >
+              <option value="">Not set</option>
+              <option value="email">Email</option>
+              <option value="phone">Phone</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="any">Any</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="timezone">Time zone</Label>
+            <Input
+              id="timezone"
+              value={form.timezone}
+              onChange={set('timezone')}
+              placeholder="Europe/London"
+            />
+          </div>
+          {showJobTitle && (
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="jobTitle">Job title</Label>
               <Input id="jobTitle" value={form.jobTitle} onChange={set('jobTitle')} />
@@ -251,7 +424,7 @@ export function NewContactForm() {
       {showStudentFields && (
         <Section
           title="Education"
-          description="School + year group + SEND status — fill what's known."
+          description="School + year group + SEND + exam target — fill what's known."
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -265,6 +438,15 @@ export function NewContactForm() {
                 value={form.yearGroup}
                 onChange={set('yearGroup')}
                 placeholder="e.g. Year 9"
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="examTarget">Exam target</Label>
+              <Input
+                id="examTarget"
+                value={form.examTarget}
+                onChange={set('examTarget')}
+                placeholder="GCSE Year 11 Maths, A-Level Biology, 11+ English…"
               />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
@@ -283,18 +465,29 @@ export function NewContactForm() {
       )}
 
       <Section
-        title="Marketing"
-        description="Optional. Stored only for reference; Mailchimp push is a separate action."
+        title="Marketing & origin"
+        description="Where did this lead come from? Mailchimp email is stored only for reference."
       >
-        <div className="space-y-1.5">
-          <Label htmlFor="mailchimpEmail">Mailchimp audience email</Label>
-          <Input
-            id="mailchimpEmail"
-            type="email"
-            value={form.mailchimpEmail}
-            onChange={set('mailchimpEmail')}
-            placeholder="Defaults to Email if blank"
-          />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="referralSource">Referral source</Label>
+            <Input
+              id="referralSource"
+              value={form.referralSource}
+              onChange={set('referralSource')}
+              placeholder="Google, word-of-mouth, booking site…"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="mailchimpEmail">Mailchimp audience email</Label>
+            <Input
+              id="mailchimpEmail"
+              type="email"
+              value={form.mailchimpEmail}
+              onChange={set('mailchimpEmail')}
+              placeholder="Defaults to Email if blank"
+            />
+          </div>
         </div>
       </Section>
 

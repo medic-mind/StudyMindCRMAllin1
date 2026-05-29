@@ -419,8 +419,16 @@ model Contact {
   pronouns       String?
   mailchimpEmail String?
 
-  /// Which sister-brand owns this contact (Company table).
-  companyId String?
+  /// Preferred channel for follow-up — drives the suggested send route on
+  /// templated outreach.
+  preferredContactMethod ContactPreferredContactMethod?
+  /// IANA timezone or free-text fallback ("Europe/London", "GMT+1"). Used to
+  /// pick humane call/send times.
+  timezone       String?
+  /// Where the lead came from — Google, word-of-mouth, booking site, etc.
+  referralSource String?
+  /// "GCSE Year 11 Maths", "A-Level Biology", "11+ English"…
+  examTarget     String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -437,12 +445,54 @@ model Contact {
   linksFrom         ContactLink[]      @relation("ContactLinkFrom")
   linksTo           ContactLink[]      @relation("ContactLinkTo")
   documents         ContactDocument[]
-  company           Company?           @relation(fields: [companyId], references: [id])
+  /// Many-to-many: a contact can be tagged with multiple sister-brand
+  /// companies (Medic Mind, Oxbridge Mind, Study Mind, anything admins add).
+  companies         ContactCompany[]
+  /// Many-to-many: academic subjects this contact is interested in
+  /// (Maths, Biology, etc). Reuses the existing Subject table that boards
+  /// already populate.
+  subjects          ContactSubject[]
 
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
+}
+
+/// Preferred contact channel (CLAUDE.md §11, §14). 'any' means agent picks.
+enum ContactPreferredContactMethod {
+  email
+  phone
+  whatsapp
+  any
+}
+
+/// Many-to-many join: Contact ↔ Company (a contact can belong to multiple
+/// sister brands).
+model ContactCompany {
+  contactId   String
+  companyId   String
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, companyId])
   @@index([companyId])
+}
+
+/// Many-to-many join: Contact ↔ Subject (tutoring subjects).
+model ContactSubject {
+  contactId   String
+  subjectId   String
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, subjectId])
+  @@index([subjectId])
 }
 
 // Small files attached to a contact (EHCPs, school letters, evidence). Bytes
@@ -491,7 +541,7 @@ model Company {
   createdById String?
   updatedById String?
 
-  contacts Contact[]
+  contacts ContactCompany[]
   families Family[]
 
   @@index([archivedAt])
@@ -702,10 +752,14 @@ model Subject {
   id          String    @id
   name        String    @unique
   lastUsedAt  DateTime?
+  archivedAt  DateTime?
   createdAt   DateTime  @default(now())
   createdById String?
 
-  cards Card[]
+  cards    Card[]
+  contacts ContactSubject[]
+
+  @@index([archivedAt])
 }
 
 model FamilyMember {
