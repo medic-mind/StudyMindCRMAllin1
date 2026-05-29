@@ -63,8 +63,10 @@ const ListInput = z.object({
     .nullish(),
   limit: z.number().min(1).max(100).default(25),
   q: z.string().trim().min(1).max(120).optional(),
-  /** Filter by Company.id (now relational, not enum). */
+  /** Filter by Company.id (m2m — matches contacts tagged with this brand). */
   companyId: z.string().nullish(),
+  /** Filter by Subject.id (m2m). */
+  subjectId: z.string().nullish(),
 })
 
 function newId(): string {
@@ -78,7 +80,12 @@ export const contactRouter = router({
       const rows = await ctx.db.contact.findMany({
         where: {
           deletedAt: null,
-          ...(input.companyId ? { companyId: input.companyId } : {}),
+          ...(input.companyId
+            ? { companies: { some: { companyId: input.companyId } } }
+            : {}),
+          ...(input.subjectId
+            ? { subjects: { some: { subjectId: input.subjectId } } }
+            : {}),
           ...(input.q
             ? {
                 OR: [
@@ -116,7 +123,11 @@ export const contactRouter = router({
             take: 1,
             select: { occurredAt: true },
           },
-          company: { select: { id: true, name: true, slug: true, color: true } },
+          companies: {
+            include: {
+              company: { select: { id: true, name: true, slug: true, color: true } },
+            },
+          },
         },
       })
 
@@ -141,7 +152,14 @@ export const contactRouter = router({
             include: { family: { select: { id: true, name: true } } },
           },
           safeguardingFlags: { where: { deletedAt: null }, select: { state: true } },
-          company: { select: { id: true, name: true, slug: true, color: true } },
+          companies: {
+            include: {
+              company: { select: { id: true, name: true, slug: true, color: true } },
+            },
+          },
+          subjects: {
+            include: { subject: { select: { id: true, name: true } } },
+          },
         },
       })
       if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -176,9 +194,32 @@ export const contactRouter = router({
           jobTitle: input.jobTitle ?? null,
           pronouns: input.pronouns ?? null,
           mailchimpEmail: input.mailchimpEmail ?? null,
-          companyId: input.companyId ?? null,
+          preferredContactMethod: input.preferredContactMethod ?? null,
+          timezone: input.timezone ?? null,
+          referralSource: input.referralSource ?? null,
+          examTarget: input.examTarget ?? null,
           createdById: user.id,
           updatedById: user.id,
+          ...(input.companyIds && input.companyIds.length > 0
+            ? {
+                companies: {
+                  create: input.companyIds.map((companyId) => ({
+                    companyId,
+                    createdById: user.id,
+                  })),
+                },
+              }
+            : {}),
+          ...(input.subjectIds && input.subjectIds.length > 0
+            ? {
+                subjects: {
+                  create: input.subjectIds.map((subjectId) => ({
+                    subjectId,
+                    createdById: user.id,
+                  })),
+                },
+              }
+            : {}),
         },
       })
       await ctx.audit({
@@ -224,7 +265,34 @@ export const contactRouter = router({
           jobTitle: pass(input.jobTitle),
           pronouns: pass(input.pronouns),
           mailchimpEmail: pass(input.mailchimpEmail),
-          companyId: pass(input.companyId),
+          preferredContactMethod: pass(input.preferredContactMethod),
+          timezone: pass(input.timezone),
+          referralSource: pass(input.referralSource),
+          examTarget: pass(input.examTarget),
+          // m2m: replace the whole set when the array is sent. Undefined =
+          // don't touch. Empty array = clear.
+          ...(input.companyIds !== undefined
+            ? {
+                companies: {
+                  deleteMany: {},
+                  create: input.companyIds.map((companyId) => ({
+                    companyId,
+                    createdById: user.id,
+                  })),
+                },
+              }
+            : {}),
+          ...(input.subjectIds !== undefined
+            ? {
+                subjects: {
+                  deleteMany: {},
+                  create: input.subjectIds.map((subjectId) => ({
+                    subjectId,
+                    createdById: user.id,
+                  })),
+                },
+              }
+            : {}),
           // Refresh isMinor from DOB whenever DOB is sent in this update.
           ...(input.dateOfBirth !== undefined
             ? { isMinor: isMinorByDob(input.dateOfBirth ?? null) }

@@ -35,22 +35,22 @@ interface NavItemDef extends NavItem {
   visibleTo?: ReadonlyArray<Role>
 }
 
-function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
+function buildNav(role: Role): NavItem[] {
+  // Day-to-day work first, then ops/analytics, then admin. Account is
+  // intentionally not here — it lives in the user menu (top right) so the
+  // sidebar stays focused on actual work surfaces.
   const items: NavItemDef[] = [
     { href: '/', label: 'Dashboard' },
     { href: '/inbox', label: 'Inbox' },
     { href: '/contacts', label: 'Contacts' },
-    {
-      href: '/boards',
-      label: 'Boards',
-    },
+    { href: '/boards', label: 'Boards' },
     { href: '/tasks', label: 'Tasks' },
     {
       href: '/finance',
       label: 'Finance',
-      // Sales Executives do not see the Finance dashboard — they can create
-      // payment links from the contact detail UI but never see refund/
-      // allocation tooling. CEO, Senior Manager, Manager only (ADR 0014).
+      // Sales Executives do not see Finance — they can create payment links
+      // from the contact detail UI but never see refund/allocation tooling.
+      // CEO, Senior Manager, Manager only (ADR 0014).
       visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/finance', label: 'Discrepancies' },
@@ -63,9 +63,9 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       href: '/reports',
       label: 'Reports',
       children: [
+        { href: '/reports/aircall', label: 'Aircall' },
         { href: '/reports/finance', label: 'Finance' },
         { href: '/reports/operations', label: 'Operations' },
-        { href: '/reports/aircall', label: 'Aircall' },
         { href: '/reports/retention', label: 'Retention' },
         { href: '/reports/cost', label: 'Cost' },
       ],
@@ -75,31 +75,16 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       label: 'Settings',
       // Settings is admin-tier. CEO and Senior Manager get the full panel;
       // Manager can read Integrations only (each child page enforces its own
-      // role gate so Users / Flags / Mailbox stay locked to CEO/SM).
-      // ADR 0014.
+      // role gate so Users / Flags / Branding stay locked to CEO/SM).
+      // Ordered people → branding → platform.
       visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/settings/users', label: 'Users' },
         { href: '/settings/teams', label: 'Teams' },
         { href: '/settings/companies', label: 'Companies' },
-        { href: '/settings/flags', label: 'Flags' },
         { href: '/settings/branding', label: 'Branding' },
         { href: '/settings/integrations', label: 'Integrations' },
-        { href: '/settings/mailbox', label: 'Mailbox' },
-      ],
-    },
-    {
-      href: '/account',
-      label: 'Account',
-      children: [
-        { href: '/account', label: 'Profile' },
-        { href: '/account/change-password', label: 'Change password' },
-        { href: '/account/sessions', label: 'Sessions' },
-        {
-          href: totpEnabled ? '/account/disable-2fa' : '/account/setup-2fa',
-          label: totpEnabled ? 'Disable 2FA' : 'Set up 2FA',
-        },
-        { href: '/account/trengo/connect', label: 'Trengo' },
+        { href: '/settings/flags', label: 'Feature flags' },
       ],
     },
   ]
@@ -127,13 +112,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   }
   const role: Role = me.role
   const totpEnabled = !!me.totpEnabledAt
-  const nav = buildNav(role, totpEnabled)
+  const nav = buildNav(role)
   const branding = await getBrandingLogoMeta(db)
 
   return (
     <div className="flex min-h-screen flex-col bg-neutral-50">
       <TopBar
-        user={{ email: me.email, name: me.name ?? null, role: me.role }}
+        user={{
+          email: me.email,
+          name: me.name ?? null,
+          role: me.role,
+          totpEnabled,
+        }}
         logoVersion={branding.version}
       />
       <div className="flex flex-1">

@@ -4,8 +4,10 @@
 import type {
   CompanyRef,
   ContactKind,
+  ContactPreferredContactMethod,
   ContactSendStatus,
   ContactSummary,
+  SubjectRef,
 } from '@studymind/core/contact'
 import { displayNameOf } from '@studymind/core/contact'
 
@@ -34,7 +36,14 @@ export interface ContactDetailViewModel {
   jobTitle: string | null
   pronouns: string | null
   mailchimpEmail: string | null
-  company: CompanyRef | null
+  preferredContactMethod: ContactPreferredContactMethod | null
+  timezone: string | null
+  referralSource: string | null
+  examTarget: string | null
+  /** Many-to-many sister brands. */
+  companies: CompanyRef[]
+  /** Tutoring subjects. */
+  subjects: SubjectRef[]
   hasSafeguardingFlag: boolean
   isRestricted: boolean
   family: { id: string; name: string | null } | null
@@ -62,13 +71,25 @@ interface ContactRow {
   jobTitle: string | null
   pronouns: string | null
   mailchimpEmail: string | null
-  company: CompanyRef | null
+  preferredContactMethod: ContactPreferredContactMethod | null
+  timezone: string | null
+  referralSource: string | null
+  examTarget: string | null
   createdAt: Date
+}
+
+interface ContactCompanyJoin {
+  company: { id: string; name: string; slug: string; color: string | null }
+}
+
+interface ContactSubjectJoin {
+  subject: { id: string; name: string }
 }
 
 interface ContactSummaryRow extends ContactRow {
   familyMembers: Array<{ family: { id: string; name: string | null } | null }>
   interactions: Array<{ occurredAt: Date }>
+  companies: ContactCompanyJoin[]
 }
 
 export function toContactSummary(row: ContactSummaryRow): ContactSummary {
@@ -83,13 +104,15 @@ export function toContactSummary(row: ContactSummaryRow): ContactSummary {
     familyId: family?.id ?? null,
     familyName: family?.name ?? null,
     lastInteractionAt: last,
-    company: row.company,
+    companies: row.companies.map((cc) => cc.company),
   }
 }
 
 interface ContactDetailRow extends ContactRow {
   familyMembers: Array<{ family: { id: string; name: string | null } | null }>
   safeguardingFlags: Array<{ state: string }>
+  companies: ContactCompanyJoin[]
+  subjects: ContactSubjectJoin[]
 }
 
 export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
@@ -122,7 +145,12 @@ export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
     jobTitle: row.jobTitle,
     pronouns: row.pronouns,
     mailchimpEmail: row.mailchimpEmail,
-    company: row.company,
+    preferredContactMethod: row.preferredContactMethod,
+    timezone: row.timezone,
+    referralSource: row.referralSource,
+    examTarget: row.examTarget,
+    companies: row.companies.map((cc) => cc.company),
+    subjects: row.subjects.map((cs) => cs.subject),
     hasSafeguardingFlag: hasFlag,
     isRestricted,
     family,

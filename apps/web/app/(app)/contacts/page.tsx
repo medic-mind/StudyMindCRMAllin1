@@ -186,13 +186,21 @@ export default async function ContactsPage({
                           <Avatar name={c.displayName} size={36} className={`ring-2 ${ring}`} />
                           <span className="min-w-0">
                             <span className="flex items-center gap-1.5">
-                              {c.company ? (
+                              {c.companies.length > 0 ? (
                                 <span
-                                  aria-hidden
-                                  title={c.company.name}
-                                  className="h-2 w-2 shrink-0 rounded-full"
-                                  style={{ backgroundColor: c.company.color ?? '#94a3b8' }}
-                                />
+                                  className="flex shrink-0 items-center gap-0.5"
+                                  title={c.companies.map((cc) => cc.name).join(' · ')}
+                                  aria-label={`Companies: ${c.companies.map((cc) => cc.name).join(', ')}`}
+                                >
+                                  {c.companies.slice(0, 3).map((cc) => (
+                                    <span
+                                      key={cc.id}
+                                      aria-hidden
+                                      className="h-2 w-2 rounded-full"
+                                      style={{ backgroundColor: cc.color ?? '#94a3b8' }}
+                                    />
+                                  ))}
+                                </span>
                               ) : null}
                               <span className="block truncate font-medium text-neutral-900 group-hover:text-primary-700">
                                 {c.displayName}

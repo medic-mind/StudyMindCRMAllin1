@@ -16,6 +16,7 @@ interface Props {
     email: string
     name: string | null
     role: string
+    totpEnabled?: boolean
   }
   /** Custom-logo version (epoch millis) or null to use the inline SVG mark. */
   logoVersion?: number | null
@@ -56,7 +57,12 @@ export function TopBar({ user, logoVersion = null }: Props) {
 
       <div className="flex items-center gap-2">
         <NotificationsBell />
-        <UserMenu email={user.email} name={user.name} role={user.role} />
+        <UserMenu
+          email={user.email}
+          name={user.name}
+          role={user.role}
+          totpEnabled={user.totpEnabled ?? false}
+        />
       </div>
     </header>
   )
