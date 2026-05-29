@@ -131,6 +131,11 @@ enum InteractionType {
   // customer's history.
   call_summary
   call_summary_sent
+  // Forwarding (Settings → Forwarding): a configurable rule lets an agent
+  // forward a query about a contact to an internal address (e.g. AP team,
+  // CEOs, schools, partnerships). The send is recorded here so the
+  // contact's timeline shows it.
+  email_forwarded
 }
 
 enum ContactKind {
@@ -1291,6 +1296,37 @@ model TeamMember {
 
   @@unique([teamId, userId])
   @@index([userId])
+}
+
+// -----------------------------------------------------------------------------
+// Forwarding rules — configurable "Forward to <team>" quick actions on a
+// contact. Each rule defines the recipients (to/cc/bcc) and the subject + body
+// templates. Manager+ manages the catalogue; Sales Executive+ triggers sends.
+// CLAUDE.md §20.1.
+// -----------------------------------------------------------------------------
+
+model ForwardingRule {
+  id              String   @id
+  // Stable identifier surfaced to code paths that need to refer to a rule by
+  // name (defaults are seeded with keys like `ap_team`, `ceos`, `schools`).
+  key             String   @unique
+  label           String
+  description     String?
+  toAddresses     String[]
+  ccAddresses     String[] @default([])
+  bccAddresses    String[] @default([])
+  subjectTemplate String
+  bodyTemplate    String
+  sortOrder       Int      @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  @@index([archivedAt])
+  @@index([sortOrder])
 }
 
 // -----------------------------------------------------------------------------

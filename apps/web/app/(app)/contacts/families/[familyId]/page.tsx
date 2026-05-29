@@ -1,8 +1,7 @@
-// Family detail page. RSC. CLAUDE.md §6.1, §26, §43.4.
+// Family detail page. RSC. CLAUDE.md §6.1, §26.
 //
-// Displays the Family's billing party, lifecycle state, members, AP
-// placement (if any) with overdue banner, open reconciliation
-// discrepancies, and a recent timeline slice.
+// Displays the Family's billing party, lifecycle state, members, open
+// reconciliation discrepancies, and a recent timeline slice.
 
 import Link from 'next/link'
 import { notFound } from 'next/navigation'

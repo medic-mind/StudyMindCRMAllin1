@@ -97,6 +97,10 @@ function makeCtx(opts: {
         Promise.resolve(
           mailbox && mailbox.agentId === where.agentId ? mailbox : null,
         ),
+      findFirst: ({ where }: { where: { agentId: string } }) =>
+        Promise.resolve(
+          mailbox && mailbox.agentId === where.agentId ? mailbox : null,
+        ),
     },
     encryptedField: {
       deleteMany: ({ where }: { where: { id: string } }) => {

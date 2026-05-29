@@ -30,6 +30,7 @@ import { costRouter } from './routers/cost'
 import { dashboardRouter } from './routers/dashboard'
 import { familyRouter } from './routers/family'
 import { financeRouter } from './routers/finance'
+import { forwardingRouter } from './routers/forwarding'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
 import { notificationsRouter } from './routers/notifications'
@@ -54,6 +55,7 @@ export const appRouter = router({
   dashboard: dashboardRouter,
   family: familyRouter,
   finance: financeRouter,
+  forwarding: forwardingRouter,
   inbox: inboxRouter,
   interaction: interactionRouter,
   notifications: notificationsRouter,

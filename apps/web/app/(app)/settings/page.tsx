@@ -71,6 +71,20 @@ const GROUPS: Group[] = [
     ],
   },
   {
+    title: 'Workflows',
+    description: 'Quick actions the agents trigger from a contact.',
+    tiles: [
+      {
+        href: '/settings/forwarding',
+        title: 'Forwarding rules',
+        description:
+          'Configure the “Forward to <team>” quick actions (AP team, CEOs, schools, partnerships).',
+        roles: 'Manager+',
+        icon: <MailIcon size={16} />,
+      },
+    ],
+  },
+  {
     title: 'Platform',
     description: 'Operational state of the system itself.',
     tiles: [

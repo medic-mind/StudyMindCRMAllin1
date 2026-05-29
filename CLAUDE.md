@@ -14,7 +14,7 @@
 **Users (staff only):**
 - Operations agents — day to day comms, scheduling, follow ups
 - Finance lead — payments, reconciliation, dunning, refunds
-- Account owners and senior team — pipeline, retention, AP tender work
+- Account owners and senior team — pipeline, retention, partnerships
 - Designated Safeguarding Lead (DSL) — safeguarding flags, restricted notes
 
 Parents, students, tutors do **not** log in. They use the booking site, Trengo, email, phone.
@@ -63,7 +63,7 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 
 The CRM is internal but it is the daily workspace for the people speaking to families on our behalf. The interface should feel like StudyMind — calm, careful, expert — so that tone carries into every email, call, and Trengo message agents send from inside it.
 
-**Voice.** Warm, professional, and specific. We write to parents and Local Authorities with care. We avoid jargon when speaking to families and use precise statutory language (EHCP, Section 19, AP) when speaking to Local Authorities. Never patronising, never breezy about safeguarding.
+**Voice.** Warm, professional, and specific. We write to parents and Local Authorities with care. We avoid jargon when speaking to families and use precise statutory language (EHCP, Section 19, SEND) when speaking to Local Authorities. Never patronising, never breezy about safeguarding.
 
 **Naming.** "StudyMind" is one word, capitalised S and M. Never "Study Mind" or "Studymind" in product copy. The CRM internal product name is "StudyMind All in One CRM"; in UI chrome we shorten to "StudyMind CRM".
 
@@ -463,7 +463,6 @@ OpenAI for everything AI today. Models per task:
 | Contact merge suggestion | gpt-4o-mini | Fast, surfaces candidates only — humans decide |
 | Status summary (2 sentence header) | gpt-4o-mini | High volume, low complexity |
 | Reply draft (email and Trengo) | gpt-4o | Quality matters, agent reads and edits |
-| Tender response drafting | gpt-4o | High stakes, long form, references house style |
 | Intent classifier (inbound message) | gpt-4o-mini | Routes to right team |
 | Churn score | gpt-4o-mini | Aggregates signals into a score |
 | Audio transcription (Aircall fallback) | Whisper | Only used when AI Assist not available |
@@ -471,7 +470,7 @@ OpenAI for everything AI today. Models per task:
 ### 18.1 Prompt rules
 
 - Every prompt lives in `packages/ai/prompts/<task>.ts` as a typed function. No prompts inline in handlers. Tone/style fragments live in `packages/ai/prompts/style/` and are imported by task prompts. Tasks never inline style copy.
-- Every AI call has a Zod output schema. Use `response_format: json_schema` (Structured Outputs) for all classification and extraction tasks. Drafting tasks (reply, tender) return free text and are validated post-hoc with a content-shape Zod schema (length, no PII leak markers). The two patterns are implemented in `packages/ai/clients/structured.ts` and `packages/ai/clients/draft.ts`; do not call OpenAI directly.
+- Every AI call has a Zod output schema. Use `response_format: json_schema` (Structured Outputs) for all classification and extraction tasks. Drafting tasks (e.g. reply drafts) return free text and are validated post-hoc with a content-shape Zod schema (length, no PII leak markers). The two patterns are implemented in `packages/ai/clients/structured.ts` and `packages/ai/clients/draft.ts`; do not call OpenAI directly.
 - Every AI call logs: model, prompt version, input token count, output token count, latency, cost estimate, outcome.
 - Never feed safeguarding fields into a prompt. Those are encrypted; AI cannot see them.
 - Temperature defaults to 0.2 unless the task is creative drafting (then 0.7).
@@ -479,7 +478,7 @@ OpenAI for everything AI today. Models per task:
 ### 18.2 Confidence and human in the loop
 
 - AI output below the task threshold lands in a triage queue, not in production data.
-- Merge suggestions, intent routing for safeguarding, and tender drafts are always human reviewed before they take effect.
+- Merge suggestions and intent routing for safeguarding are always human reviewed before they take effect.
 - "Confidence" is task-specific. For classifiers we use the model's logprob proxy; for extraction we score on schema completeness and presence of required fields.
 
 ### 18.3 AI safety and evaluation
@@ -967,7 +966,6 @@ When asked something that touches money, safeguarding, or external mutation:
 
 ## 36. Glossary
 
-- **AP.** Alternative Provision. Education for learners outside mainstream school, often commissioned by Local Authorities.
 - **Bacs.** UK bank-to-bank transfer system used by GoCardless Direct Debit.
 - **DSL.** Designated Safeguarding Lead.
 - **DSAR.** Data Subject Access Request.
@@ -1015,6 +1013,8 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a pipeline stage helper | `packages/core/src/pipeline/stages.ts` |
 | Change how Family.stageId is written | `packages/core/src/family/pipeline.ts` (`moveFamily`) |
 | Work on boards / cards / labels / subjects (ADR 0018) | `packages/core/src/board/` (domain), `apps/web/app/api/trpc/routers/board.ts` (tRPC), `apps/web/app/(app)/boards/` (UI). `/pipeline` redirects to the default board. |
+| Manage "Forward to <team>" quick actions | `/settings/forwarding` (Manager+). Domain `packages/core/src/forwarding/`, tRPC `forwarding.*`, sender `apps/web/lib/forwarding/senders.ts` (Resend). UI lives on the contact page (`ForwardingSection`). Records `email_forwarded` Interactions; defaults seeded by migration `20260529120000_add_forwarding_rules`. |
+| Group ops staff into teams (one user → many teams) | Settings → Teams (`/settings/teams`, CEO + Senior Manager). Domain `packages/core/src/team/`, tRPC `team.*`, schema `Team` + `TeamMember` (M:N junction). |
 
 ---
 

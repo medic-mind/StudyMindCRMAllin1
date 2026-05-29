@@ -11,6 +11,7 @@
     "./contact/documents": "./src/contact/documents.ts",
     "./contact/call-summary": "./src/contact/call-summary.ts",
     "./family": "./src/family/index.ts",
+    "./forwarding": "./src/forwarding/index.ts",
     "./pipeline": "./src/pipeline/index.ts",
     "./board": "./src/board/index.ts",
     "./task": "./src/task/index.ts",
