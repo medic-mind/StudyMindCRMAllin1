@@ -104,6 +104,15 @@ export const EVENT_NAMES = [
   'call_summary_template.pdf_attached',
   'call_summary_template.pdf_removed',
 
+  // Uploaded invoices — manually uploaded invoice files attached to a
+  // BusinessAccount / Contact / Family. Different from the finance-mirrored
+  // Invoice rows.
+  'uploaded_invoice.created',
+  'uploaded_invoice.updated',
+  'uploaded_invoice.archived',
+  'uploaded_invoice.restored',
+  'uploaded_invoice.deleted',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',

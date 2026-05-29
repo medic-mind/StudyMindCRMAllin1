@@ -12,6 +12,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
+import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -327,6 +328,14 @@ export default async function ContactDetailPage({
               <PaymentsPanel target={{ contactId: contact.id }} />
             </SectionCard>
           )}
+
+          <SectionCard
+            id="section-invoices"
+            title="Uploaded invoices"
+            icon={<FileTextIcon size={16} />}
+          >
+            <InvoicesPanel target={{ kind: 'contact', contactId: contact.id }} />
+          </SectionCard>
 
           <SectionCard
             id="section-tasks"

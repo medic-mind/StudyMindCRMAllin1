@@ -23,6 +23,24 @@ import {
   UsersIcon,
 } from '@/components/ui/icon'
 
+/**
+ * External links shown at the bottom of the sidebar — quick jumps to the
+ * sister-app surfaces. Open in a new tab. Configurable via env so a
+ * self-hosted install can re-point them without a code change.
+ */
+const EXTERNAL_LINKS = [
+  {
+    label: 'Main Portal',
+    href:
+      process.env['NEXT_PUBLIC_MAIN_PORTAL_URL'] ?? 'https://portal.studymind.co.uk',
+  },
+  {
+    label: 'Invoice Site',
+    href:
+      process.env['NEXT_PUBLIC_INVOICE_SITE_URL'] ?? 'https://b2b.studymind.co.uk',
+  },
+]
+
 export interface NavChild {
   href: string
   label: string
@@ -146,6 +164,45 @@ export function SidebarNav({ items }: Props) {
           </div>
         )
       })}
+
+      <div className="flex flex-col gap-0.5">
+        <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+          External
+        </div>
+        {EXTERNAL_LINKS.map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+          >
+            <ExternalLinkGlyph />
+            <span>{link.label}</span>
+          </a>
+        ))}
+      </div>
     </nav>
+  )
+}
+
+function ExternalLinkGlyph() {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-neutral-400"
+      aria-hidden
+    >
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
   )
 }

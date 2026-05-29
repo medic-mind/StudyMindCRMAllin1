@@ -4,6 +4,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -79,6 +80,18 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
           <AccountEditor account={account} />
           <AccountContacts account={account} />
         </div>
+
+        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-neutral-900">Invoices</h2>
+            <span className="text-[11px] uppercase tracking-wide text-neutral-500">
+              Uploaded paperwork
+            </span>
+          </div>
+          <InvoicesPanel
+            target={{ kind: 'businessAccount', businessAccountId: account.id }}
+          />
+        </section>
       </div>
     </>
   )
