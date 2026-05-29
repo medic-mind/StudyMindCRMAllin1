@@ -33,7 +33,6 @@ const KIND_TONE: Record<string, BadgeTone> = {
   parent: 'info',
   student: 'accent',
   tutor: 'success',
-  la_caseworker: 'warn',
   other: 'neutral',
 }
 
@@ -41,7 +40,6 @@ const KIND_RING: Record<string, string> = {
   parent: 'ring-primary-100',
   student: 'ring-violet-100',
   tutor: 'ring-emerald-100',
-  la_caseworker: 'ring-amber-100',
   other: 'ring-neutral-100',
 }
 

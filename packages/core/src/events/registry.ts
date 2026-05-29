@@ -90,6 +90,8 @@ export const EVENT_NAMES = [
   'call.commented',
   'call.transcription_added',
   'aircall.webhook_reenabled',
+  // Manual click-to-call log (Aircall fallback / Google Voice / freeform).
+  'call.manually_logged',
 
   // Messaging (Trengo — CLAUDE.md §11)
   'message.inbound',

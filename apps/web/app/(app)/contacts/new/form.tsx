@@ -13,7 +13,7 @@ import { XIcon } from '@/components/ui/icon'
 
 import { trpc } from '@/lib/trpc/client'
 
-type Kind = 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
+type Kind = 'parent' | 'student' | 'tutor' | 'other'
 type SendStatus = 'none' | 'send_support' | 'ehcp_in_place' | 'ehcp_in_progress' | 'other'
 type PreferredContact = 'email' | 'phone' | 'whatsapp' | 'any'
 
@@ -186,7 +186,7 @@ export function NewContactForm() {
 
   const showStudentFields = form.kind === 'student'
   const showJobTitle =
-    form.kind === 'tutor' || form.kind === 'la_caseworker' || form.kind === 'other'
+    form.kind === 'tutor' || form.kind === 'other'
 
   return (
     <form className="space-y-5" onSubmit={onSubmit}>
@@ -198,7 +198,6 @@ export function NewContactForm() {
               <option value="parent">Parent</option>
               <option value="student">Student</option>
               <option value="tutor">Tutor</option>
-              <option value="la_caseworker">LA caseworker</option>
               <option value="other">Other</option>
             </Select>
           </div>

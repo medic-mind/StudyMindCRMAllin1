@@ -7,7 +7,7 @@ export default function NewContactPage() {
     <div className="max-w-xl">
       <h1 className="text-2xl font-semibold tracking-tight">New contact</h1>
       <p className="mt-1 text-sm text-neutral-600">
-        Add a new parent, student, tutor, or LA caseworker to the CRM.
+        Add a new parent, student, tutor, or other contact to the CRM.
       </p>
       <div className="mt-6">
         <NewContactForm />

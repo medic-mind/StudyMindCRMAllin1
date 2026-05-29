@@ -330,6 +330,10 @@ export const reportsRouter = router({
       .input(
         PeriodInput.extend({
           direction: z.enum(['all', 'inbound', 'outbound']).default('all'),
+          /** Provider filter: all | aircall | google_voice | manual. */
+          provider: z
+            .enum(['all', 'aircall', 'google_voice', 'manual'])
+            .default('all'),
         }),
       )
       .query(async ({ ctx, input }) => {
@@ -342,6 +346,7 @@ export const reportsRouter = router({
           direction: 'inbound' | 'outbound' | null
           durationSec: number
           isVoicemail: boolean
+          provider: 'aircall' | 'google_voice' | 'manual'
         }
 
         async function loadCalls(from: Date, to: Date): Promise<NormalisedCall[]> {
@@ -357,10 +362,18 @@ export const reportsRouter = router({
           const byCall = new Map<string, NormalisedCall>()
           for (const r of rows) {
             const p = (r.payload ?? {}) as Record<string, unknown>
-            const callId =
-              typeof p['aircallCallId'] === 'string'
-                ? (p['aircallCallId'] as string)
-                : `unknown:${r.occurredAt.toISOString()}`
+            const aircallId =
+              typeof p['aircallCallId'] === 'string' ? (p['aircallCallId'] as string) : null
+            const providerRaw = typeof p['provider'] === 'string' ? (p['provider'] as string) : null
+            const provider: 'aircall' | 'google_voice' | 'manual' =
+              providerRaw === 'google_voice'
+                ? 'google_voice'
+                : providerRaw === 'manual'
+                  ? 'manual'
+                  : aircallId
+                    ? 'aircall'
+                    : 'manual'
+            const callId = aircallId ?? `${provider}:${r.occurredAt.toISOString()}`
             const directionRaw = p['direction']
             const direction =
               directionRaw === 'inbound' || directionRaw === 'outbound'
@@ -381,6 +394,7 @@ export const reportsRouter = router({
                 direction,
                 durationSec,
                 isVoicemail,
+                provider,
               })
             } else {
               if (durationSec > prev.durationSec) prev.durationSec = durationSec
@@ -390,8 +404,9 @@ export const reportsRouter = router({
             }
           }
           return [...byCall.values()].filter((c) => {
-            if (input.direction === 'inbound') return c.direction === 'inbound'
-            if (input.direction === 'outbound') return c.direction === 'outbound'
+            if (input.direction === 'inbound' && c.direction !== 'inbound') return false
+            if (input.direction === 'outbound' && c.direction !== 'outbound') return false
+            if (input.provider !== 'all' && c.provider !== input.provider) return false
             return true
           })
         }
@@ -596,10 +611,93 @@ export const reportsRouter = router({
           return curr - prev
         }
 
+        // --- Weekly bucketing (hours + calls) -----------------------------
+        // ISO week starts on Monday. We snap to Monday and bucket by week.
+        function isoWeekKey(d: Date): string {
+          const day = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+          const dow = day.getUTCDay() // 0=Sun..6=Sat
+          const offset = dow === 0 ? -6 : 1 - dow
+          day.setUTCDate(day.getUTCDate() + offset)
+          return isoDay(day)
+        }
+        const weekStarts: string[] = []
+        const wCursor = new Date(input.from)
+        wCursor.setUTCHours(0, 0, 0, 0)
+        const wDow = wCursor.getUTCDay()
+        wCursor.setUTCDate(wCursor.getUTCDate() + (wDow === 0 ? -6 : 1 - wDow))
+        while (wCursor <= input.to) {
+          weekStarts.push(isoDay(wCursor))
+          wCursor.setUTCDate(wCursor.getUTCDate() + 7)
+        }
+        const weeklyCallsMap = new Map<string, number>(weekStarts.map((w) => [w, 0]))
+        const weeklyHoursMap = new Map<string, number>(weekStarts.map((w) => [w, 0]))
+        for (const c of calls) {
+          const wk = isoWeekKey(c.occurredAt)
+          if (!weeklyCallsMap.has(wk)) continue
+          weeklyCallsMap.set(wk, (weeklyCallsMap.get(wk) ?? 0) + 1)
+          weeklyHoursMap.set(
+            wk,
+            (weeklyHoursMap.get(wk) ?? 0) + c.durationSec / 3600,
+          )
+        }
+
+        // --- Cold-call detection ------------------------------------------
+        // A call is "cold" when it's outbound AND no earlier interaction of
+        // any kind exists for the contact — i.e. this call IS the first
+        // touch. We query each candidate contact's earliest interaction once.
+        const contactIdsWithCalls = Array.from(
+          new Set(
+            calls
+              .filter((c) => c.direction === 'outbound' && c.contactId)
+              .map((c) => c.contactId as string),
+          ),
+        )
+        const earliestByContact = contactIdsWithCalls.length
+          ? await ctx.db.interaction.groupBy({
+              by: ['contactId'],
+              where: {
+                contactId: { in: contactIdsWithCalls },
+                deletedAt: null,
+              },
+              _min: { occurredAt: true },
+            })
+          : []
+        const earliestMap = new Map<string, Date>()
+        for (const e of earliestByContact) {
+          if (e.contactId && e._min.occurredAt) {
+            earliestMap.set(e.contactId, e._min.occurredAt)
+          }
+        }
+        let coldCalls = 0
+        let coldTalkSec = 0
+        let coldAnswered = 0
+        for (const c of calls) {
+          if (c.direction !== 'outbound' || !c.contactId) continue
+          const earliest = earliestMap.get(c.contactId)
+          if (!earliest) continue
+          // Cold = the contact's earliest interaction in the DB is at-or-after
+          // this call's occurredAt (tolerance 60s for the multi-event call
+          // grouping we do above).
+          if (earliest.getTime() >= c.occurredAt.getTime() - 60_000) {
+            coldCalls += 1
+            coldTalkSec += c.durationSec
+            if (!c.isVoicemail && c.durationSec > 0) coldAnswered += 1
+          }
+        }
+
+        // --- Provider mix --------------------------------------------------
+        const providerCounts = {
+          aircall: 0,
+          google_voice: 0,
+          manual: 0,
+        }
+        for (const c of calls) providerCounts[c.provider] += 1
+
         return {
           period: { from: input.from, to: input.to },
           previousPeriod: { from: prevFrom, to: prevTo },
           direction: input.direction,
+          provider: input.provider,
           kpis,
           deltas: {
             total: delta(kpis.total, prevKpis.total),
@@ -612,11 +710,25 @@ export const reportsRouter = router({
             totalTalkSec: delta(kpis.totalTalkSec, prevKpis.totalTalkSec),
             answeredRate: kpis.answeredRate - prevKpis.answeredRate,
           },
+          coldCalling: {
+            calls: coldCalls,
+            answered: coldAnswered,
+            talkSec: coldTalkSec,
+            connectRate: coldCalls === 0 ? 0 : coldAnswered / coldCalls,
+          },
+          providerMix: providerCounts,
           daily: {
             labels: days,
             counts: days.map((d) => dailyTotal.get(d) ?? 0),
             inbound: days.map((d) => dailyIn.get(d) ?? 0),
             outbound: days.map((d) => dailyOut.get(d) ?? 0),
+          },
+          weekly: {
+            labels: weekStarts,
+            calls: weekStarts.map((w) => weeklyCallsMap.get(w) ?? 0),
+            hours: weekStarts.map(
+              (w) => Math.round((weeklyHoursMap.get(w) ?? 0) * 10) / 10,
+            ),
           },
           hourly,
           durationBuckets: DURATION_BUCKETS.map((b, i) => ({

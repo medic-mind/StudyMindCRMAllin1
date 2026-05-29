@@ -31,7 +31,7 @@ interface Props {
 }
 
 type Mode = 'new' | 'existing'
-type ContactRole = 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
+type ContactRole = 'parent' | 'student' | 'tutor' | 'other'
 
 export function AddCardButton({ boardId, stages, labels }: Props) {
   const router = useRouter()
@@ -213,7 +213,6 @@ export function AddCardButton({ boardId, stages, labels }: Props) {
                   <option value="parent">Parent</option>
                   <option value="student">Student</option>
                   <option value="tutor">Tutor</option>
-                  <option value="la_caseworker">LA caseworker</option>
                   <option value="other">Other</option>
                 </Select>
               </div>
