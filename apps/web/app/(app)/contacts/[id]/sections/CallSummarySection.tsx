@@ -15,38 +15,13 @@ import { trpc } from '@/lib/trpc/client'
 
 type Outcome = 'answered' | 'voicemail' | 'no_answer'
 
-interface Template {
-  label: string
+interface DbTemplate {
+  id: string
+  name: string
   body: string
-  outcome: Outcome
+  hasPdf: boolean
+  pdfFileName: string | null
 }
-
-const TEMPLATES: readonly Template[] = [
-  {
-    label: 'Voicemail left',
-    outcome: 'voicemail',
-    body:
-      "Left a voicemail introducing myself and asking the parent to call back. Mentioned we have availability for tutoring and can talk through options. Will retry tomorrow.",
-  },
-  {
-    label: 'Discussed booking',
-    outcome: 'answered',
-    body:
-      "Spoke about lesson scheduling and confirmed availability. Walked through pricing and the trial session process. Parent will confirm preferred slot by tomorrow.",
-  },
-  {
-    label: 'EHCP / SEND discussion',
-    outcome: 'answered',
-    body:
-      "Discussed SEND profile and EHCP status. Parent shared current goals and what's working at school. Agreed to send the EHCP extract for the tutor to review before the first session.",
-  },
-  {
-    label: 'No answer',
-    outcome: 'no_answer',
-    body:
-      "No answer. Will retry later today, then SMS tomorrow if still no reply.",
-  },
-]
 
 interface Props {
   contactId: string
@@ -61,15 +36,19 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
   const [trengo, setTrengo] = useState(false)
   const [email, setEmail] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null)
 
   const add = trpc.contact.callSummary.add.useMutation()
   const send = trpc.contact.callSummary.send.useMutation()
   const utils = trpc.useUtils()
+  const templatesQuery = trpc.callSummaryTemplate.pickList.useQuery()
+  const templates: DbTemplate[] = templatesQuery.data ?? []
+  const activeTemplate = templates.find((t) => t.id === activeTemplateId) ?? null
   const [drafting, setDrafting] = useState(false)
 
-  function pickTemplate(t: Template) {
+  function pickTemplate(t: DbTemplate) {
     setBody(t.body)
-    setOutcome(t.outcome)
+    setActiveTemplateId(t.id)
   }
 
   async function draftFromCall() {
@@ -126,6 +105,7 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
       setSlack(false)
       setTrengo(false)
       setEmail(false)
+      setActiveTemplateId(null)
       router.refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save')
@@ -149,17 +129,53 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
           <span aria-hidden="true">✨</span>
           {drafting ? 'Drafting…' : 'AI draft from latest call'}
         </button>
-        {TEMPLATES.map((t) => (
-          <button
-            key={t.label}
-            type="button"
-            onClick={() => pickTemplate(t)}
-            className="inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
-          >
-            {t.label}
-          </button>
-        ))}
+        {templates.map((t) => {
+          const active = t.id === activeTemplateId
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => pickTemplate(t)}
+              className={
+                active
+                  ? 'inline-flex items-center gap-1 rounded-full border border-primary-300 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-800'
+                  : 'inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700'
+              }
+            >
+              {t.name}
+              {t.hasPdf ? (
+                <span
+                  aria-hidden
+                  className="rounded bg-primary-100 px-1 text-[9px] font-semibold uppercase tracking-wide text-primary-800"
+                >
+                  PDF
+                </span>
+              ) : null}
+            </button>
+          )
+        })}
+        {templatesQuery.data && templates.length === 0 ? (
+          <span className="text-xs text-neutral-500">
+            No templates yet — admins can add some at Settings → Call summary templates.
+          </span>
+        ) : null}
       </div>
+
+      {activeTemplate?.hasPdf ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary-200 bg-primary-50/50 px-3 py-2 text-xs">
+          <span className="font-medium text-primary-900">
+            Script for {activeTemplate.name}:
+          </span>
+          <a
+            href={`/api/call-summary-templates/${activeTemplate.id}/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-primary-800 hover:underline"
+          >
+            Open PDF{activeTemplate.pdfFileName ? ` (${activeTemplate.pdfFileName})` : ''}
+          </a>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_10rem]">
         <Textarea

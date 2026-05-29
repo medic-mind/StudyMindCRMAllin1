@@ -95,6 +95,15 @@ export const EVENT_NAMES = [
   'business_account.contact_linked',
   'business_account.contact_unlinked',
 
+  // Call summary templates (Settings → Call summary templates). Admin
+  // catalogue used to prefill the contact page Call Summary panel.
+  'call_summary_template.created',
+  'call_summary_template.updated',
+  'call_summary_template.archived',
+  'call_summary_template.restored',
+  'call_summary_template.pdf_attached',
+  'call_summary_template.pdf_removed',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',
