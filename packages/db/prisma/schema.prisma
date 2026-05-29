@@ -419,8 +419,8 @@ model Contact {
   pronouns       String?
   mailchimpEmail String?
 
-  /// Which StudyMind sister brand this contact is associated with.
-  company Company?
+  /// Which sister-brand owns this contact (Company table).
+  companyId String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -437,10 +437,12 @@ model Contact {
   linksFrom         ContactLink[]      @relation("ContactLinkFrom")
   linksTo           ContactLink[]      @relation("ContactLinkTo")
   documents         ContactDocument[]
+  company           Company?           @relation(fields: [companyId], references: [id])
 
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
+  @@index([companyId])
 }
 
 // Small files attached to a contact (EHCPs, school letters, evidence). Bytes
@@ -471,11 +473,28 @@ enum ContactSendStatus {
   other
 }
 
-/// Which StudyMind sister brand this contact belongs to. CLAUDE.md §4.
-enum Company {
-  medic_mind
-  oxbridge_mind
-  study_mind
+/// Sister-brand container (Medic Mind, Oxbridge Mind, Study Mind, plus
+/// anything the team adds later from Settings → Companies). CLAUDE.md §4.
+/// Created at runtime — the previous fixed enum is gone.
+model Company {
+  id          String    @id
+  name        String
+  /// URL-safe handle used in filters (e.g. ?company=medic-mind).
+  slug        String    @unique
+  /// #RRGGBB. Drives the brand chip + dot in the UI.
+  color       String?
+  description String?
+  archivedAt  DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  contacts Contact[]
+  families Family[]
+
+  @@index([archivedAt])
 }
 
 enum ContactLinkRelation {
@@ -529,8 +548,8 @@ model Family {
   churnScore        Float?
   lastBookingSyncAt DateTime?
 
-  /// Which StudyMind sister brand owns the relationship with this family.
-  company Company?
+  /// Which sister-brand owns this family (Company table).
+  companyId String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -551,8 +570,10 @@ model Family {
   payments         Payment[]
   discrepancies    ReconciliationDiscrepancy[]
   tasks            Task[]
+  company          Company?                    @relation(fields: [companyId], references: [id])
 
   @@index([state])
+  @@index([companyId])
   @@index([stageId])
   @@index([billingContactId])
 }

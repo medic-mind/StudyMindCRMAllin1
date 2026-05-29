@@ -1,5 +1,7 @@
-// Aircall analytics. RSC. KPIs + daily trend line + day-of-week × hour
-// peak heatmap + top contacts by call volume.
+// Aircall analytics. RSC. KPIs (with period-over-period delta) + direction
+// filter + daily trend (total / inbound / outbound) + day-of-week × hour
+// peak heatmap + hourly throughput + duration distribution + missed +
+// voicemail trays + top contacts by call volume.
 
 import Link from 'next/link'
 
@@ -20,7 +22,10 @@ export const dynamic = 'force-dynamic'
 interface SP {
   from?: string
   to?: string
+  direction?: string
 }
+
+type Direction = 'all' | 'inbound' | 'outbound'
 
 const KIND_TONE: Record<string, BadgeTone> = {
   parent: 'info',
@@ -40,28 +45,41 @@ function shortDayLabel(iso: string): string {
 function fmtDuration(sec: number): string {
   if (!sec) return '0:00'
   const m = Math.floor(sec / 60)
-  const s = sec % 60
+  const s = Math.abs(sec) % 60
   if (m >= 60) {
     const h = Math.floor(m / 60)
     const remM = m % 60
-    return `${h}h ${remM}m`
+    return `${sec < 0 ? '-' : ''}${h}h ${remM}m`
   }
-  return `${m}:${String(s).padStart(2, '0')}`
+  return `${sec < 0 ? '-' : ''}${m}:${String(s).padStart(2, '0')}`
 }
 
 function fmtPct(n: number): string {
   return `${Math.round(n * 1000) / 10}%`
 }
 
+function fmtSignedInt(n: number): string {
+  return n > 0 ? `+${n}` : `${n}`
+}
+
+function fmtSignedPct(n: number): string {
+  const v = Math.round(n * 1000) / 10
+  return v > 0 ? `+${v}%` : `${v}%`
+}
+
 function KpiTile({
   label,
   value,
   hint,
+  delta,
+  deltaDir = 'up_is_good',
   tone = 'neutral',
 }: {
   label: string
   value: string
   hint?: string
+  delta?: string
+  deltaDir?: 'up_is_good' | 'up_is_bad' | 'neutral'
   tone?: 'neutral' | 'success' | 'warn' | 'danger' | 'info'
 }) {
   const bar: Record<typeof tone, string> = {
@@ -71,6 +89,16 @@ function KpiTile({
     danger: 'bg-rose-500',
     info: 'bg-primary-500',
   }
+  const deltaColor = (() => {
+    if (!delta) return 'text-neutral-500'
+    const positive = delta.startsWith('+')
+    const zero = delta === '+0' || delta === '0' || delta === '+0%' || delta === '0%' || delta === '+0:00'
+    if (zero) return 'text-neutral-500'
+    if (deltaDir === 'neutral') return 'text-neutral-500'
+    const good =
+      (deltaDir === 'up_is_good' && positive) || (deltaDir === 'up_is_bad' && !positive)
+    return good ? 'text-emerald-700' : 'text-rose-700'
+  })()
   return (
     <div className="relative overflow-hidden rounded-xl border border-neutral-200 bg-white p-4 pl-5 shadow-card transition-shadow hover:shadow-card-hover">
       <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${bar[tone]}`} />
@@ -80,15 +108,20 @@ function KpiTile({
       <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-neutral-900">
         {value}
       </p>
-      {hint ? <p className="mt-1 text-xs text-neutral-500">{hint}</p> : null}
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {delta ? (
+          <span className={`text-xs font-medium tabular-nums ${deltaColor}`}>{delta} vs prev</span>
+        ) : null}
+        {hint ? <span className="text-xs text-neutral-500">{hint}</span> : null}
+      </div>
     </div>
   )
 }
 
-// Inline peak heatmap (7 rows × 24 cols). Cell intensity = count / max.
+// Inline peak heatmap (7 rows × 24 cols).
 function PeakHeatmap({ peak }: { peak: number[][] }) {
   const max = Math.max(1, ...peak.flat())
-  const hourLabels = [0, 6, 9, 12, 15, 18, 21, 23] // sparse axis labels
+  const hourLabels = [0, 6, 9, 12, 15, 18, 21, 23]
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[640px] border-separate border-spacing-[2px]">
@@ -96,11 +129,7 @@ function PeakHeatmap({ peak }: { peak: number[][] }) {
           <tr>
             <th aria-hidden className="w-10" />
             {Array.from({ length: 24 }).map((_, h) => (
-              <th
-                key={h}
-                className="text-[10px] font-medium text-neutral-400"
-                aria-hidden
-              >
+              <th key={h} className="text-[10px] font-medium text-neutral-400" aria-hidden>
                 {hourLabels.includes(h) ? String(h).padStart(2, '0') : ''}
               </th>
             ))}
@@ -114,7 +143,6 @@ function PeakHeatmap({ peak }: { peak: number[][] }) {
               </th>
               {row.map((count, h) => {
                 const intensity = count / max
-                // Purple wash that scales with intensity.
                 const bg =
                   count === 0
                     ? 'rgb(245 245 250)'
@@ -124,9 +152,7 @@ function PeakHeatmap({ peak }: { peak: number[][] }) {
                     key={h}
                     className="h-6 w-6 rounded-sm"
                     style={{ backgroundColor: bg }}
-                    title={`${DOW_LABELS[dow]} ${String(h).padStart(2, '0')}:00 — ${count} call${
-                      count === 1 ? '' : 's'
-                    }`}
+                    title={`${DOW_LABELS[dow]} ${String(h).padStart(2, '0')}:00 — ${count} call${count === 1 ? '' : 's'}`}
                   >
                     <span className="sr-only">
                       {DOW_LABELS[dow]} {h}:00 — {count} calls
@@ -138,24 +164,106 @@ function PeakHeatmap({ peak }: { peak: number[][] }) {
           ))}
         </tbody>
       </table>
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-neutral-500">
-        <span>Less</span>
-        <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: 'rgb(245 245 250)' }} />
-        <span
-          className="h-3 w-3 rounded-sm"
-          style={{ backgroundColor: 'rgba(147 51 234 / 0.20)' }}
-        />
-        <span
-          className="h-3 w-3 rounded-sm"
-          style={{ backgroundColor: 'rgba(147 51 234 / 0.50)' }}
-        />
-        <span
-          className="h-3 w-3 rounded-sm"
-          style={{ backgroundColor: 'rgba(147 51 234 / 0.85)' }}
-        />
-        <span>More</span>
-      </div>
     </div>
+  )
+}
+
+function HourlyBars({ hourly }: { hourly: number[] }) {
+  const max = Math.max(1, ...hourly)
+  return (
+    <div className="grid grid-cols-24 gap-1" style={{ gridTemplateColumns: 'repeat(24, minmax(0, 1fr))' }}>
+      {hourly.map((count, h) => {
+        const pct = Math.round((count / max) * 100)
+        return (
+          <div key={h} className="flex flex-col items-center gap-1">
+            <div className="flex h-24 w-full items-end">
+              <div
+                className="w-full rounded-t bg-primary-500/80"
+                style={{ height: `${Math.max(2, pct)}%` }}
+                title={`${String(h).padStart(2, '0')}:00 — ${count} calls`}
+              />
+            </div>
+            <span className="text-[9px] text-neutral-400">
+              {h % 3 === 0 ? String(h).padStart(2, '0') : ''}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DurationBars({
+  buckets,
+}: {
+  buckets: ReadonlyArray<{ key: string; label: string; count: number }>
+}) {
+  const max = Math.max(1, ...buckets.map((b) => b.count))
+  return (
+    <ul className="space-y-2">
+      {buckets.map((b) => {
+        const pct = Math.round((b.count / max) * 100)
+        return (
+          <li key={b.key} className="flex items-center gap-3">
+            <span className="w-16 shrink-0 text-xs font-medium text-neutral-600">{b.label}</span>
+            <div className="h-3 flex-1 overflow-hidden rounded-full bg-neutral-100">
+              <div
+                className="h-full rounded-full bg-primary-500"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="w-10 shrink-0 text-right font-mono text-xs tabular-nums text-neutral-700">
+              {b.count}
+            </span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function TrayList({
+  rows,
+  emptyText,
+}: {
+  rows: ReadonlyArray<{
+    callId: string
+    contactId: string | null
+    name: string
+    direction: 'inbound' | 'outbound' | null
+    occurredAt: Date | string
+  }>
+  emptyText: string
+}) {
+  if (rows.length === 0) return <p className="py-6 text-center text-sm text-neutral-500">{emptyText}</p>
+  return (
+    <ul className="divide-y divide-neutral-100">
+      {rows.map((r) => (
+        <li key={r.callId} className="flex items-center gap-3 py-2.5">
+          <Avatar name={r.name} size={28} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm text-neutral-900">
+              {r.contactId ? (
+                <Link href={`/contacts/${r.contactId}`} className="hover:text-primary-700 hover:underline">
+                  {r.name}
+                </Link>
+              ) : (
+                r.name
+              )}
+            </div>
+            <div className="text-xs text-neutral-500">
+              {r.direction ? `${r.direction[0]?.toUpperCase()}${r.direction.slice(1)}` : '—'} ·{' '}
+              <time dateTime={new Date(r.occurredAt).toISOString()}>
+                {new Intl.DateTimeFormat('en-GB', {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                }).format(new Date(r.occurredAt))}
+              </time>
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -166,21 +274,51 @@ export default async function AircallReportPage({
 }) {
   const sp = await searchParams
   const period = parsePeriod(sp)
+  const direction: Direction =
+    sp.direction === 'inbound' || sp.direction === 'outbound' ? sp.direction : 'all'
   const caller = await createServerCaller()
   const data = await caller.reports.aircall.summary({
     from: period.from,
     to: period.to,
+    direction,
   })
+
+  const directionTabs: Array<{ key: Direction; label: string }> = [
+    { key: 'all', label: 'All' },
+    { key: 'inbound', label: 'Inbound' },
+    { key: 'outbound', label: 'Outbound' },
+  ]
+
+  function directionHref(d: Direction): {
+    pathname: string
+    query: Record<string, string>
+  } {
+    const q: Record<string, string> = {
+      from: period.fromIso,
+      to: period.toIso,
+    }
+    if (d !== 'all') q.direction = d
+    return { pathname: '/reports/aircall', query: q }
+  }
 
   const trendSeries = [
     {
-      key: 'calls',
-      label: 'Calls',
+      key: 'total',
+      label: 'All calls',
       color: CHART_PALETTE[0]!,
-      values: data.daily.labels.map((x, i) => ({
-        x,
-        y: data.daily.counts[i] ?? 0,
-      })),
+      values: data.daily.labels.map((x, i) => ({ x, y: data.daily.counts[i] ?? 0 })),
+    },
+    {
+      key: 'inbound',
+      label: 'Inbound',
+      color: CHART_PALETTE[2]!,
+      values: data.daily.labels.map((x, i) => ({ x, y: data.daily.inbound[i] ?? 0 })),
+    },
+    {
+      key: 'outbound',
+      label: 'Outbound',
+      color: CHART_PALETTE[4]!,
+      values: data.daily.labels.map((x, i) => ({ x, y: data.daily.outbound[i] ?? 0 })),
     },
   ]
 
@@ -188,7 +326,7 @@ export default async function AircallReportPage({
     <>
       <PageHeader
         title="Aircall analytics"
-        subtitle="Volumes, peak times, and call duration"
+        subtitle="Volumes, peak times, duration distribution, and call quality"
         breadcrumbs={[
           { label: 'Reports', href: '/reports' },
           { label: 'Aircall', href: '/reports/aircall' },
@@ -196,41 +334,89 @@ export default async function AircallReportPage({
       />
       <PageBody>
         <div className="space-y-6">
-          <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
+          <div className="flex flex-wrap items-center gap-3">
+            <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
-          {/* KPIs */}
+            <div
+              role="tablist"
+              aria-label="Call direction"
+              className="inline-flex items-center rounded-lg border border-neutral-200 bg-white p-0.5 shadow-card"
+            >
+              {directionTabs.map((t) => (
+                <Link
+                  key={t.key}
+                  role="tab"
+                  aria-selected={direction === t.key}
+                  href={directionHref(t.key)}
+                  className={
+                    direction === t.key
+                      ? 'inline-flex items-center rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm'
+                      : 'inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900'
+                  }
+                >
+                  {t.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          {/* KPIs with period-over-period deltas */}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <KpiTile label="Total calls" value={String(data.kpis.total)} tone="info" />
+            <KpiTile
+              label="Total calls"
+              value={String(data.kpis.total)}
+              delta={fmtSignedInt(data.deltas.total)}
+              tone="info"
+              deltaDir="up_is_good"
+            />
             <KpiTile
               label="Answered"
-              value={`${data.kpis.answered}`}
+              value={String(data.kpis.answered)}
               hint={fmtPct(data.kpis.answeredRate)}
+              delta={fmtSignedPct(data.deltas.answeredRate)}
               tone={data.kpis.answeredRate >= 0.7 ? 'success' : 'warn'}
+              deltaDir="up_is_good"
             />
             <KpiTile
               label="Voicemails"
               value={String(data.kpis.voicemails)}
+              delta={fmtSignedInt(data.deltas.voicemails)}
               tone={data.kpis.voicemails > 0 ? 'warn' : 'neutral'}
+              deltaDir="up_is_bad"
             />
             <KpiTile
               label="Missed"
               value={String(data.kpis.missed)}
+              delta={fmtSignedInt(data.deltas.missed)}
               tone={data.kpis.missed > 0 ? 'danger' : 'neutral'}
+              deltaDir="up_is_bad"
             />
-            <KpiTile label="Inbound" value={String(data.kpis.inbound)} />
-            <KpiTile label="Outbound" value={String(data.kpis.outbound)} />
+            <KpiTile
+              label="Inbound"
+              value={String(data.kpis.inbound)}
+              delta={fmtSignedInt(data.deltas.inbound)}
+            />
+            <KpiTile
+              label="Outbound"
+              value={String(data.kpis.outbound)}
+              delta={fmtSignedInt(data.deltas.outbound)}
+            />
             <KpiTile
               label="Avg duration"
               value={fmtDuration(data.kpis.avgDurationSec)}
               hint="Answered calls only"
+              delta={fmtDuration(data.deltas.avgDurationSec)}
+              deltaDir="neutral"
             />
             <KpiTile
               label="Total talk time"
               value={fmtDuration(data.kpis.totalTalkSec)}
+              delta={fmtDuration(data.deltas.totalTalkSec)}
+              deltaDir="up_is_good"
             />
           </div>
 
-          {/* Daily trend */}
+          {/* Daily trend with direction split */}
           <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Daily calls
@@ -238,7 +424,7 @@ export default async function AircallReportPage({
             {data.daily.counts.some((n) => n > 0) ? (
               <LineChart
                 title="Daily call volume across the selected period"
-                description="Line chart of daily call counts."
+                description="Line chart of daily call counts, split by inbound and outbound."
                 xLabels={data.daily.labels.map(shortDayLabel)}
                 series={trendSeries}
               />
@@ -249,16 +435,66 @@ export default async function AircallReportPage({
             )}
           </section>
 
-          {/* Peak time heatmap */}
+          {/* Peak heatmap + hourly throughput side-by-side on lg */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
+                Peak times
+              </h2>
+              <p className="mb-3 text-xs text-neutral-500">
+                Each cell is a day × hour bucket. Darker cells mean more calls landed there.
+              </p>
+              <PeakHeatmap peak={data.peak} />
+            </section>
+
+            <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
+                Hourly throughput
+              </h2>
+              <p className="mb-3 text-xs text-neutral-500">
+                Total calls per hour-of-day across the whole period.
+              </p>
+              <HourlyBars hourly={data.hourly} />
+            </section>
+          </div>
+
+          {/* Duration distribution */}
           <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
-              Peak times
+              Call duration distribution
             </h2>
             <p className="mb-3 text-xs text-neutral-500">
-              Each cell is a day × hour bucket. Darker cells mean more calls landed there.
+              How long answered calls actually run.
             </p>
-            <PeakHeatmap peak={data.peak} />
+            <DurationBars buckets={data.durationBuckets} />
           </section>
+
+          {/* Missed + voicemail trays side-by-side */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+              <div className="border-b border-neutral-100 bg-rose-50/60 px-4 py-3">
+                <h2 className="text-sm font-semibold text-neutral-900">
+                  Recent missed calls
+                </h2>
+                <p className="text-xs text-neutral-500">Worth a callback.</p>
+              </div>
+              <div className="px-4 py-2">
+                <TrayList rows={data.missedTray} emptyText="No missed calls in this period." />
+              </div>
+            </section>
+
+            <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+              <div className="border-b border-neutral-100 bg-amber-50/60 px-4 py-3">
+                <h2 className="text-sm font-semibold text-neutral-900">
+                  Recent voicemails
+                </h2>
+                <p className="text-xs text-neutral-500">Pending follow-up.</p>
+              </div>
+              <div className="px-4 py-2">
+                <TrayList rows={data.voicemailTray} emptyText="No voicemails in this period." />
+              </div>
+            </section>
+          </div>
 
           {/* Top contacts */}
           <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">

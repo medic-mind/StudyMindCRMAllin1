@@ -18,6 +18,13 @@ const links: Array<{ href: string; title: string; description: string; roles: st
     roles: 'CEO · Senior Manager',
   },
   {
+    href: '/settings/companies',
+    title: 'Companies',
+    description:
+      'Sister-brand tags shown across contacts (Medic Mind, Oxbridge Mind, Study Mind, anything you add).',
+    roles: 'CEO · Senior Manager',
+  },
+  {
     href: '/settings/flags',
     title: 'Feature flags',
     description: 'Effective values, env overrides, stale release flags.',

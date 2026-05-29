@@ -63,7 +63,8 @@ const ListInput = z.object({
     .nullish(),
   limit: z.number().min(1).max(100).default(25),
   q: z.string().trim().min(1).max(120).optional(),
-  company: z.enum(['medic_mind', 'oxbridge_mind', 'study_mind']).nullish(),
+  /** Filter by Company.id (now relational, not enum). */
+  companyId: z.string().nullish(),
 })
 
 function newId(): string {
@@ -77,7 +78,7 @@ export const contactRouter = router({
       const rows = await ctx.db.contact.findMany({
         where: {
           deletedAt: null,
-          ...(input.company ? { company: input.company } : {}),
+          ...(input.companyId ? { companyId: input.companyId } : {}),
           ...(input.q
             ? {
                 OR: [
@@ -115,6 +116,7 @@ export const contactRouter = router({
             take: 1,
             select: { occurredAt: true },
           },
+          company: { select: { id: true, name: true, slug: true, color: true } },
         },
       })
 
@@ -139,6 +141,7 @@ export const contactRouter = router({
             include: { family: { select: { id: true, name: true } } },
           },
           safeguardingFlags: { where: { deletedAt: null }, select: { state: true } },
+          company: { select: { id: true, name: true, slug: true, color: true } },
         },
       })
       if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -173,7 +176,7 @@ export const contactRouter = router({
           jobTitle: input.jobTitle ?? null,
           pronouns: input.pronouns ?? null,
           mailchimpEmail: input.mailchimpEmail ?? null,
-          company: input.company ?? null,
+          companyId: input.companyId ?? null,
           createdById: user.id,
           updatedById: user.id,
         },
@@ -221,7 +224,7 @@ export const contactRouter = router({
           jobTitle: pass(input.jobTitle),
           pronouns: pass(input.pronouns),
           mailchimpEmail: pass(input.mailchimpEmail),
-          company: pass(input.company),
+          companyId: pass(input.companyId),
           // Refresh isMinor from DOB whenever DOB is sent in this update.
           ...(input.dateOfBirth !== undefined
             ? { isMinor: isMinorByDob(input.dateOfBirth ?? null) }

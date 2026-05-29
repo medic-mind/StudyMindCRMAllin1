@@ -165,20 +165,9 @@ export default async function ContactDetailPage({
                 {contact.company ? (
                   <span
                     className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white"
-                    style={{
-                      backgroundColor:
-                        contact.company === 'medic_mind'
-                          ? '#e11d48'
-                          : contact.company === 'oxbridge_mind'
-                            ? '#0284c7'
-                            : '#9333ea',
-                    }}
+                    style={{ backgroundColor: contact.company.color ?? '#475569' }}
                   >
-                    {contact.company === 'medic_mind'
-                      ? 'Medic Mind'
-                      : contact.company === 'oxbridge_mind'
-                        ? 'Oxbridge Mind'
-                        : 'Study Mind'}
+                    {contact.company.name}
                   </span>
                 ) : null}
                 <Badge tone={kindTone} dot>

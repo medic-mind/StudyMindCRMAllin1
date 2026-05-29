@@ -17,7 +17,7 @@ import { trpc } from '@/lib/trpc/client'
 
 interface FormState {
   kind: 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
-  company: '' | 'medic_mind' | 'oxbridge_mind' | 'study_mind'
+  companyId: string
   firstName: string
   lastName: string
   pronouns: string
@@ -39,7 +39,7 @@ interface FormState {
 
 const EMPTY: FormState = {
   kind: 'parent',
-  company: '',
+  companyId: '',
   firstName: '',
   lastName: '',
   pronouns: '',
@@ -89,6 +89,7 @@ function Section({
 export function NewContactForm() {
   const router = useRouter()
   const [form, setForm] = useState<FormState>(EMPTY)
+  const companies = trpc.company.pickList.useQuery()
   const create = trpc.contact.create.useMutation({
     onSuccess: ({ id }) => {
       toast.success('Contact created')
@@ -109,7 +110,7 @@ export function NewContactForm() {
     const dob = form.dateOfBirth ? new Date(form.dateOfBirth) : undefined
     create.mutate({
       kind: form.kind,
-      company: form.company === '' ? undefined : form.company,
+      companyId: form.companyId === '' ? undefined : form.companyId,
       firstName: clean(form.firstName),
       lastName: clean(form.lastName),
       pronouns: clean(form.pronouns),
@@ -147,12 +148,19 @@ export function NewContactForm() {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="company">Company</Label>
-            <Select id="company" value={form.company} onChange={set('company')}>
+            <Label htmlFor="companyId">Company</Label>
+            <Select
+              id="companyId"
+              value={form.companyId}
+              onChange={set('companyId')}
+              disabled={companies.isLoading}
+            >
               <option value="">Not set</option>
-              <option value="medic_mind">Medic Mind</option>
-              <option value="oxbridge_mind">Oxbridge Mind</option>
-              <option value="study_mind">Study Mind</option>
+              {(companies.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
             </Select>
           </div>
           <div className="space-y-1.5">
