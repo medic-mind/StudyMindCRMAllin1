@@ -64,10 +64,36 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
 
   const add = trpc.contact.callSummary.add.useMutation()
   const send = trpc.contact.callSummary.send.useMutation()
+  const utils = trpc.useUtils()
+  const [drafting, setDrafting] = useState(false)
 
   function pickTemplate(t: Template) {
     setBody(t.body)
     setOutcome(t.outcome)
+  }
+
+  async function draftFromCall() {
+    setDrafting(true)
+    try {
+      const result = await utils.contact.callSummary.draftFromCall.fetch({ contactId })
+      if (result.status === 'no_call') {
+        toast('No calls recorded for this contact yet.')
+        return
+      }
+      if (result.status === 'no_transcript') {
+        toast(
+          'Latest call has no transcript yet. Enable Aircall AI Assist or wait for Whisper to finish.',
+        )
+        return
+      }
+      setBody(result.text)
+      if (result.outcomeHint) setOutcome(result.outcomeHint as Outcome)
+      toast.success('AI draft ready — edit before saving.')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not draft from call')
+    } finally {
+      setDrafting(false)
+    }
   }
 
   async function save(alsoSend: boolean) {
@@ -114,6 +140,15 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
         <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-neutral-500">
           Quick start
         </span>
+        <button
+          type="button"
+          onClick={draftFromCall}
+          disabled={drafting}
+          className="inline-flex items-center gap-1.5 rounded-full border border-primary-300 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-800 transition-colors hover:bg-primary-100 disabled:opacity-50"
+        >
+          <span aria-hidden="true">✨</span>
+          {drafting ? 'Drafting…' : 'AI draft from latest call'}
+        </button>
         {TEMPLATES.map((t) => (
           <button
             key={t.label}

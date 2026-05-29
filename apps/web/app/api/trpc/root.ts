@@ -22,6 +22,7 @@ const contactWithChannels = router({
   links: contactRouter.links,
   documents: contactRouter.documents,
   callSummary: contactRouter.callSummary,
+  mailchimp: contactRouter.mailchimp,
   channels: contactChannelsRouter,
 })
 import { costRouter } from './routers/cost'
