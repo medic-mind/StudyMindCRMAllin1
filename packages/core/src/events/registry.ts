@@ -53,6 +53,12 @@ export const EVENT_NAMES = [
   // between contacts. Reciprocal links count as one event per side.
   'contact.link_added',
   'contact.link_removed',
+  // Contact documents (small attachments stored in Postgres).
+  'contact.document_added',
+  'contact.document_removed',
+  // Call summary on a contact (not a card) + multi-channel fan-out.
+  'contact.call_summary_added',
+  'contact.call_summary_sent',
 
   // Teams (internal ops squads).
   'team.created',

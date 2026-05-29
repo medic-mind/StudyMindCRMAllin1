@@ -8,6 +8,8 @@
     ".": "./src/index.ts",
     "./branding": "./src/branding/index.ts",
     "./contact": "./src/contact/index.ts",
+    "./contact/documents": "./src/contact/documents.ts",
+    "./contact/call-summary": "./src/contact/call-summary.ts",
     "./family": "./src/family/index.ts",
     "./pipeline": "./src/pipeline/index.ts",
     "./board": "./src/board/index.ts",
