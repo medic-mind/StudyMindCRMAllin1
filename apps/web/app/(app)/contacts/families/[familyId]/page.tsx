@@ -9,6 +9,7 @@ import { notFound } from 'next/navigation'
 import { resolveStageColor } from '@/app/(app)/pipeline/stage-color'
 import { ChangeBillingContactButton } from '@/components/contact/ChangeBillingContactButton'
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
+import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { ReconcileNowButton } from '@/components/finance/ReconcileNowButton'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
@@ -160,6 +161,15 @@ export default async function FamilyDetailPage({
         </h2>
         <div className="mt-2">
           <PaymentsPanel target={{ familyId: data.id }} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">
+          Uploaded invoices
+        </h2>
+        <div className="mt-2">
+          <InvoicesPanel target={{ kind: 'family', familyId: data.id }} />
         </div>
       </section>
 

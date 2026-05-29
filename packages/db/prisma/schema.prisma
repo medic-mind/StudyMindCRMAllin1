@@ -460,6 +460,9 @@ model Contact {
   /// Many-to-many: B2B accounts (schools, partnerships) this contact is
   /// linked to with a role (e.g. "Head teacher", "SENCo", "Programme lead").
   businessAccounts  BusinessAccountContact[]
+  /// Manually uploaded invoice files attached to this contact (different
+  /// from the finance-mirrored Invoice rows, which live under Family).
+  uploadedInvoices  UploadedInvoice[]
 
   @@index([email])
   @@index([phoneE164])
@@ -625,6 +628,7 @@ model Family {
   stripeCustomers  StripeCustomer[]
   mandates         GcMandate[]
   invoices         Invoice[]
+  uploadedInvoices UploadedInvoice[]
   payments         Payment[]
   discrepancies    ReconciliationDiscrepancy[]
   tasks            Task[]
@@ -1425,7 +1429,8 @@ model BusinessAccount {
   updatedById String?
   archivedAt  DateTime?
 
-  contacts BusinessAccountContact[]
+  contacts         BusinessAccountContact[]
+  uploadedInvoices UploadedInvoice[]
 
   @@unique([kind, slug])
   @@index([kind])
@@ -1449,6 +1454,67 @@ model BusinessAccountContact {
 
   @@id([accountId, contactId])
   @@index([contactId])
+}
+
+// -----------------------------------------------------------------------------
+// Uploaded invoices — manually uploaded invoice files attached to a
+// BusinessAccount (B2B / Schools / Partners) OR a Family (normal customer)
+// OR a Contact (lead / one-off). Different from the auto-mirrored `Invoice`
+// table above which tracks Stripe / GoCardless reconciliation rows.
+//
+// The file lives inline as bytes (same trade-off as ContactDocument and
+// CallSummaryTemplate per CLAUDE.md §4 — self-hosted installs need no S3).
+// Cross-app connectivity with b2b.studymind.co.uk is a future extension;
+// today this is the canonical place to drop a PDF and tag it.
+// -----------------------------------------------------------------------------
+
+enum UploadedInvoiceStatus {
+  draft
+  sent
+  paid
+  overdue
+  void
+}
+
+model UploadedInvoice {
+  id String @id
+
+  // Polymorphic owner — exactly one of the three FKs is set. A DB check
+  // constraint enforces that in the migration; the tRPC layer enforces
+  // it at write time.
+  businessAccountId String?
+  contactId         String?
+  familyId          String?
+
+  invoiceNumber String?
+  amountMinor   Int?
+  currency      String                @default("GBP")
+  issuedAt      DateTime?
+  dueAt         DateTime?
+  status        UploadedInvoiceStatus @default(draft)
+  notes         String?
+
+  // File payload — required.
+  fileName    String
+  contentType String
+  byteSize    Int
+  data        Bytes
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  businessAccount BusinessAccount? @relation(fields: [businessAccountId], references: [id], onDelete: Cascade)
+  contact         Contact?         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  family          Family?          @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([businessAccountId])
+  @@index([contactId])
+  @@index([familyId])
+  @@index([status])
+  @@index([archivedAt])
 }
 
 // -----------------------------------------------------------------------------
