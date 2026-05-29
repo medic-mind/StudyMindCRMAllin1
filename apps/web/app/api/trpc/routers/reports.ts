@@ -323,29 +323,18 @@ export const reportsRouter = router({
 
   // Aircall analytics. Counts unique calls (deduped on aircallCallId),
   // classifies answered vs voicemail vs missed, builds a peak-time matrix,
-  // and surfaces top contacts by call volume. CLAUDE.md §10.
+  // hourly throughput, duration histogram, period-over-period deltas, and
+  // surfaces top contacts + the recent missed/voicemail trays. CLAUDE.md §10.
   aircall: router({
     summary: protectedProcedure
-      .input(PeriodInput)
+      .input(
+        PeriodInput.extend({
+          direction: z.enum(['all', 'inbound', 'outbound']).default('all'),
+        }),
+      )
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
 
-        const rows = await ctx.db.interaction.findMany({
-          where: {
-            type: 'call',
-            occurredAt: { gte: input.from, lte: input.to },
-            deletedAt: null,
-          },
-          select: {
-            occurredAt: true,
-            contactId: true,
-            payload: true,
-          },
-          take: 50_000,
-        })
-
-        // Multiple webhook events per call (created/answered/ended/etc). Keep
-        // the row with the longest duration (typically the call.ended row).
         interface NormalisedCall {
           callId: string
           contactId: string | null
@@ -354,61 +343,112 @@ export const reportsRouter = router({
           durationSec: number
           isVoicemail: boolean
         }
-        const byCall = new Map<string, NormalisedCall>()
-        for (const r of rows) {
-          const p = (r.payload ?? {}) as Record<string, unknown>
-          const callId =
-            typeof p['aircallCallId'] === 'string'
-              ? (p['aircallCallId'] as string)
-              : `unknown:${r.occurredAt.toISOString()}`
-          const directionRaw = p['direction']
-          const direction =
-            directionRaw === 'inbound' || directionRaw === 'outbound'
-              ? directionRaw
-              : null
-          const durationSec =
-            typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-          const event = p['aircallEvent']
-          const isVoicemail =
-            event === 'call.voicemail_left' ||
-            (typeof p['voicemailUrl'] === 'string' && p['voicemailUrl'].length > 0)
 
-          const prev = byCall.get(callId)
-          if (!prev) {
-            byCall.set(callId, {
-              callId,
-              contactId: r.contactId,
-              occurredAt: r.occurredAt,
-              direction,
-              durationSec,
-              isVoicemail,
-            })
-          } else {
-            if (durationSec > prev.durationSec) prev.durationSec = durationSec
-            if (prev.direction == null && direction != null) prev.direction = direction
-            if (isVoicemail) prev.isVoicemail = true
-            // Earliest occurredAt as the canonical call start.
-            if (r.occurredAt < prev.occurredAt) prev.occurredAt = r.occurredAt
+        async function loadCalls(from: Date, to: Date): Promise<NormalisedCall[]> {
+          const rows = await ctx.db.interaction.findMany({
+            where: {
+              type: 'call',
+              occurredAt: { gte: from, lte: to },
+              deletedAt: null,
+            },
+            select: { occurredAt: true, contactId: true, payload: true },
+            take: 50_000,
+          })
+          const byCall = new Map<string, NormalisedCall>()
+          for (const r of rows) {
+            const p = (r.payload ?? {}) as Record<string, unknown>
+            const callId =
+              typeof p['aircallCallId'] === 'string'
+                ? (p['aircallCallId'] as string)
+                : `unknown:${r.occurredAt.toISOString()}`
+            const directionRaw = p['direction']
+            const direction =
+              directionRaw === 'inbound' || directionRaw === 'outbound'
+                ? directionRaw
+                : null
+            const durationSec =
+              typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
+            const event = p['aircallEvent']
+            const isVoicemail =
+              event === 'call.voicemail_left' ||
+              (typeof p['voicemailUrl'] === 'string' && p['voicemailUrl'].length > 0)
+            const prev = byCall.get(callId)
+            if (!prev) {
+              byCall.set(callId, {
+                callId,
+                contactId: r.contactId,
+                occurredAt: r.occurredAt,
+                direction,
+                durationSec,
+                isVoicemail,
+              })
+            } else {
+              if (durationSec > prev.durationSec) prev.durationSec = durationSec
+              if (prev.direction == null && direction != null) prev.direction = direction
+              if (isVoicemail) prev.isVoicemail = true
+              if (r.occurredAt < prev.occurredAt) prev.occurredAt = r.occurredAt
+            }
+          }
+          return [...byCall.values()].filter((c) => {
+            if (input.direction === 'inbound') return c.direction === 'inbound'
+            if (input.direction === 'outbound') return c.direction === 'outbound'
+            return true
+          })
+        }
+
+        interface Aggregate {
+          total: number
+          answered: number
+          voicemails: number
+          missed: number
+          inbound: number
+          outbound: number
+          avgDurationSec: number
+          totalTalkSec: number
+          answeredRate: number
+        }
+
+        function aggregate(calls: NormalisedCall[]): Aggregate {
+          const total = calls.length
+          const inbound = calls.filter((c) => c.direction === 'inbound').length
+          const outbound = calls.filter((c) => c.direction === 'outbound').length
+          const voicemails = calls.filter((c) => c.isVoicemail).length
+          const missed = calls.filter((c) => !c.isVoicemail && c.durationSec === 0).length
+          const answered = total - voicemails - missed
+          const answeredCalls = calls.filter((c) => !c.isVoicemail && c.durationSec > 0)
+          const avgDurationSec =
+            answeredCalls.length === 0
+              ? 0
+              : Math.round(
+                  answeredCalls.reduce((s, c) => s + c.durationSec, 0) / answeredCalls.length,
+                )
+          const totalTalkSec = calls.reduce((s, c) => s + c.durationSec, 0)
+          return {
+            total,
+            answered,
+            voicemails,
+            missed,
+            inbound,
+            outbound,
+            avgDurationSec,
+            totalTalkSec,
+            answeredRate: total === 0 ? 0 : answered / total,
           }
         }
 
-        const calls = [...byCall.values()]
-        const total = calls.length
-        const inbound = calls.filter((c) => c.direction === 'inbound').length
-        const outbound = calls.filter((c) => c.direction === 'outbound').length
-        const voicemails = calls.filter((c) => c.isVoicemail).length
-        const missed = calls.filter((c) => !c.isVoicemail && c.durationSec === 0).length
-        const answered = total - voicemails - missed
-        const answeredCalls = calls.filter((c) => !c.isVoicemail && c.durationSec > 0)
-        const avgDurationSec =
-          answeredCalls.length === 0
-            ? 0
-            : Math.round(
-                answeredCalls.reduce((s, c) => s + c.durationSec, 0) / answeredCalls.length,
-              )
-        const totalTalkSec = calls.reduce((s, c) => s + c.durationSec, 0)
+        // Period-over-period: same-length window immediately before.
+        const periodMs = input.to.getTime() - input.from.getTime()
+        const prevFrom = new Date(input.from.getTime() - periodMs)
+        const prevTo = new Date(input.from.getTime() - 1)
 
-        // Daily series.
+        const [calls, prevCalls] = await Promise.all([
+          loadCalls(input.from, input.to),
+          loadCalls(prevFrom, prevTo),
+        ])
+        const kpis = aggregate(calls)
+        const prevKpis = aggregate(prevCalls)
+
+        // Daily series + inbound/outbound split.
         function isoDay(d: Date): string {
           const y = d.getUTCFullYear()
           const m = String(d.getUTCMonth() + 1).padStart(2, '0')
@@ -422,26 +462,44 @@ export const reportsRouter = router({
           days.push(isoDay(cursor))
           cursor.setUTCDate(cursor.getUTCDate() + 1)
         }
-        const dailyCounts = new Map<string, number>(days.map((d) => [d, 0]))
+        const dailyTotal = new Map<string, number>(days.map((d) => [d, 0]))
+        const dailyIn = new Map<string, number>(days.map((d) => [d, 0]))
+        const dailyOut = new Map<string, number>(days.map((d) => [d, 0]))
         for (const c of calls) {
           const key = isoDay(c.occurredAt)
-          if (dailyCounts.has(key)) {
-            dailyCounts.set(key, (dailyCounts.get(key) ?? 0) + 1)
-          }
+          if (!dailyTotal.has(key)) continue
+          dailyTotal.set(key, (dailyTotal.get(key) ?? 0) + 1)
+          if (c.direction === 'inbound') dailyIn.set(key, (dailyIn.get(key) ?? 0) + 1)
+          if (c.direction === 'outbound') dailyOut.set(key, (dailyOut.get(key) ?? 0) + 1)
         }
 
-        // Peak time matrix [dow Mon=0..Sun=6][hour 0..23] in the user's
-        // displayed timezone — we treat occurredAt as UTC; the front-end
-        // displays it under the assumption that calls cluster on UK business
-        // hours. CLAUDE.md §29.
+        // Peak time matrix [dow Mon=0..Sun=6][hour 0..23].
         const peak: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0))
+        // Hourly throughput (sum across the period, hour 0..23).
+        const hourly = new Array(24).fill(0) as number[]
         for (const c of calls) {
           const d = new Date(c.occurredAt)
-          // Convert Sun=0..Sat=6 → Mon=0..Sun=6 for UK-friendly ordering.
           const jsDow = d.getUTCDay()
           const dow = (jsDow + 6) % 7
           const hour = d.getUTCHours()
           ;(peak[dow] as number[])[hour] = ((peak[dow] as number[])[hour] ?? 0) + 1
+          hourly[hour] = (hourly[hour] ?? 0) + 1
+        }
+
+        // Duration distribution buckets for answered calls only.
+        const DURATION_BUCKETS = [
+          { key: 'lt_30s', label: '<30s', max: 30 },
+          { key: '30s_2m', label: '30s–2m', max: 120 },
+          { key: '2m_5m', label: '2m–5m', max: 300 },
+          { key: '5m_15m', label: '5m–15m', max: 900 },
+          { key: 'gt_15m', label: '15m+', max: Infinity },
+        ] as const
+        const durationBucketCounts = DURATION_BUCKETS.map(() => 0)
+        for (const c of calls) {
+          if (c.isVoicemail || c.durationSec === 0) continue
+          const idx = DURATION_BUCKETS.findIndex((b) => c.durationSec < b.max)
+          const safe = idx === -1 ? DURATION_BUCKETS.length - 1 : idx
+          durationBucketCounts[safe] = (durationBucketCounts[safe] ?? 0) + 1
         }
 
         // Top contacts.
@@ -482,25 +540,94 @@ export const reportsRouter = router({
           }
         })
 
+        // Recent missed + voicemail trays (last 20 each, newest first).
+        const missedRecent = calls
+          .filter((c) => !c.isVoicemail && c.durationSec === 0)
+          .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+          .slice(0, 20)
+        const voicemailRecent = calls
+          .filter((c) => c.isVoicemail)
+          .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+          .slice(0, 20)
+        const trayContactIds = Array.from(
+          new Set(
+            [...missedRecent, ...voicemailRecent]
+              .map((c) => c.contactId)
+              .filter((x): x is string => Boolean(x)),
+          ),
+        )
+        const trayContacts =
+          trayContactIds.length > 0
+            ? await ctx.db.contact.findMany({
+                where: { id: { in: trayContactIds } },
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  phoneE164: true,
+                },
+              })
+            : []
+        const trayMap = new Map(trayContacts.map((c) => [c.id, c]))
+        function fmtTrayName(contactId: string | null, fallback: string | null): string {
+          if (!contactId) return fallback ?? 'Unknown'
+          const c = trayMap.get(contactId)
+          if (!c) return fallback ?? contactId.slice(0, 8)
+          const n = `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim()
+          return n || c.email || c.phoneE164 || fallback || contactId.slice(0, 8)
+        }
+        const missedTray = missedRecent.map((c) => ({
+          callId: c.callId,
+          contactId: c.contactId,
+          name: fmtTrayName(c.contactId, c.callId),
+          direction: c.direction,
+          occurredAt: c.occurredAt,
+        }))
+        const voicemailTray = voicemailRecent.map((c) => ({
+          callId: c.callId,
+          contactId: c.contactId,
+          name: fmtTrayName(c.contactId, c.callId),
+          direction: c.direction,
+          occurredAt: c.occurredAt,
+        }))
+
+        function delta(curr: number, prev: number): number {
+          return curr - prev
+        }
+
         return {
           period: { from: input.from, to: input.to },
-          kpis: {
-            total,
-            answered,
-            voicemails,
-            missed,
-            inbound,
-            outbound,
-            avgDurationSec,
-            totalTalkSec,
-            answeredRate: total === 0 ? 0 : answered / total,
+          previousPeriod: { from: prevFrom, to: prevTo },
+          direction: input.direction,
+          kpis,
+          deltas: {
+            total: delta(kpis.total, prevKpis.total),
+            answered: delta(kpis.answered, prevKpis.answered),
+            voicemails: delta(kpis.voicemails, prevKpis.voicemails),
+            missed: delta(kpis.missed, prevKpis.missed),
+            inbound: delta(kpis.inbound, prevKpis.inbound),
+            outbound: delta(kpis.outbound, prevKpis.outbound),
+            avgDurationSec: delta(kpis.avgDurationSec, prevKpis.avgDurationSec),
+            totalTalkSec: delta(kpis.totalTalkSec, prevKpis.totalTalkSec),
+            answeredRate: kpis.answeredRate - prevKpis.answeredRate,
           },
           daily: {
             labels: days,
-            counts: days.map((d) => dailyCounts.get(d) ?? 0),
+            counts: days.map((d) => dailyTotal.get(d) ?? 0),
+            inbound: days.map((d) => dailyIn.get(d) ?? 0),
+            outbound: days.map((d) => dailyOut.get(d) ?? 0),
           },
+          hourly,
+          durationBuckets: DURATION_BUCKETS.map((b, i) => ({
+            key: b.key,
+            label: b.label,
+            count: durationBucketCounts[i] ?? 0,
+          })),
           peak,
           topContacts,
+          missedTray,
+          voicemailTray,
         }
       }),
   }),

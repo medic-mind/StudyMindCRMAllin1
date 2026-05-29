@@ -81,6 +81,7 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       children: [
         { href: '/settings/users', label: 'Users' },
         { href: '/settings/teams', label: 'Teams' },
+        { href: '/settings/companies', label: 'Companies' },
         { href: '/settings/flags', label: 'Flags' },
         { href: '/settings/branding', label: 'Branding' },
         { href: '/settings/integrations', label: 'Integrations' },

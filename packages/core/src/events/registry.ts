@@ -62,6 +62,12 @@ export const EVENT_NAMES = [
   // Mailchimp audience push (CLAUDE.md §16).
   'contact.mailchimp_pushed',
 
+  // Sister-brand companies (CLAUDE.md §4). Admin-editable from Settings.
+  'company.created',
+  'company.updated',
+  'company.archived',
+  'company.restored',
+
   // Teams (internal ops squads).
   'team.created',
   'team.updated',

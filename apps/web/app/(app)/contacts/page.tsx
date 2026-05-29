@@ -21,16 +21,12 @@ interface PageSearchParams {
   company?: string
 }
 
-type CompanyKey = 'medic_mind' | 'oxbridge_mind' | 'study_mind'
-const COMPANY_LABEL: Record<CompanyKey, string> = {
-  medic_mind: 'Medic Mind',
-  oxbridge_mind: 'Oxbridge Mind',
-  study_mind: 'Study Mind',
-}
-const COMPANY_COLOR: Record<CompanyKey, string> = {
-  medic_mind: '#e11d48',
-  oxbridge_mind: '#0284c7',
-  study_mind: '#9333ea',
+/** A row from `trpc.company.pickList`. */
+interface CompanyOption {
+  id: string
+  name: string
+  slug: string
+  color: string | null
 }
 
 const KIND_TONE: Record<string, BadgeTone> = {
@@ -64,27 +60,25 @@ export default async function ContactsPage({
     sp.cursorId && sp.cursorAt
       ? { id: sp.cursorId, createdAt: new Date(sp.cursorAt) }
       : undefined
-  const company: CompanyKey | undefined =
-    sp.company === 'medic_mind' ||
-    sp.company === 'oxbridge_mind' ||
-    sp.company === 'study_mind'
-      ? sp.company
-      : undefined
+  const companies: CompanyOption[] = await caller.company.pickList()
+  const bySlug = new Map(companies.map((c) => [c.slug, c]))
+  const activeCompany =
+    sp.company && bySlug.has(sp.company) ? (bySlug.get(sp.company) as CompanyOption) : undefined
   const data = await caller.contact.list({
     cursor,
     limit: 25,
     q: sp.q && sp.q.trim() ? sp.q.trim() : undefined,
-    company,
+    companyId: activeCompany?.id,
   })
   const now = new Date()
 
-  function chipHref(next: CompanyKey | undefined): {
+  function chipHref(next: CompanyOption | undefined): {
     pathname: string
     query: Record<string, string>
   } {
     const q: Record<string, string> = {}
     if (sp.q) q.q = sp.q
-    if (next) q.company = next
+    if (next) q.company = next.slug
     return { pathname: '/contacts', query: q }
   }
 
@@ -124,32 +118,32 @@ export default async function ContactsPage({
           <Link
             href={chipHref(undefined)}
             className={
-              !company
+              !activeCompany
                 ? 'inline-flex items-center rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
                 : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900'
             }
           >
             All companies
           </Link>
-          {(Object.keys(COMPANY_LABEL) as CompanyKey[]).map((key) => {
-            const active = company === key
+          {companies.map((c) => {
+            const active = activeCompany?.id === c.id
             return (
               <Link
-                key={key}
-                href={chipHref(key)}
+                key={c.id}
+                href={chipHref(c)}
                 className={
                   active
                     ? 'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-white'
                     : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50'
                 }
-                style={active ? { backgroundColor: COMPANY_COLOR[key] } : undefined}
+                style={active ? { backgroundColor: c.color ?? '#475569' } : undefined}
               >
                 <span
                   aria-hidden
                   className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: COMPANY_COLOR[key] }}
+                  style={{ backgroundColor: c.color ?? '#94a3b8' }}
                 />
-                {COMPANY_LABEL[key]}
+                {c.name}
               </Link>
             )
           })}
@@ -195,11 +189,9 @@ export default async function ContactsPage({
                               {c.company ? (
                                 <span
                                   aria-hidden
-                                  title={COMPANY_LABEL[c.company as CompanyKey]}
+                                  title={c.company.name}
                                   className="h-2 w-2 shrink-0 rounded-full"
-                                  style={{
-                                    backgroundColor: COMPANY_COLOR[c.company as CompanyKey],
-                                  }}
+                                  style={{ backgroundColor: c.company.color ?? '#94a3b8' }}
                                 />
                               ) : null}
                               <span className="block truncate font-medium text-neutral-900 group-hover:text-primary-700">

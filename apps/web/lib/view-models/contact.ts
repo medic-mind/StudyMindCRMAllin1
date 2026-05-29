@@ -2,7 +2,7 @@
 // See CLAUDE.md Section 26.
 
 import type {
-  Company,
+  CompanyRef,
   ContactKind,
   ContactSendStatus,
   ContactSummary,
@@ -34,7 +34,7 @@ export interface ContactDetailViewModel {
   jobTitle: string | null
   pronouns: string | null
   mailchimpEmail: string | null
-  company: Company | null
+  company: CompanyRef | null
   hasSafeguardingFlag: boolean
   isRestricted: boolean
   family: { id: string; name: string | null } | null
@@ -62,7 +62,7 @@ interface ContactRow {
   jobTitle: string | null
   pronouns: string | null
   mailchimpEmail: string | null
-  company: Company | null
+  company: CompanyRef | null
   createdAt: Date
 }
 
