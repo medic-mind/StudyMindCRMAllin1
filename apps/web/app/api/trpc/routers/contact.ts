@@ -63,6 +63,7 @@ const ListInput = z.object({
     .nullish(),
   limit: z.number().min(1).max(100).default(25),
   q: z.string().trim().min(1).max(120).optional(),
+  company: z.enum(['medic_mind', 'oxbridge_mind', 'study_mind']).nullish(),
 })
 
 function newId(): string {
@@ -76,6 +77,7 @@ export const contactRouter = router({
       const rows = await ctx.db.contact.findMany({
         where: {
           deletedAt: null,
+          ...(input.company ? { company: input.company } : {}),
           ...(input.q
             ? {
                 OR: [
@@ -171,6 +173,7 @@ export const contactRouter = router({
           jobTitle: input.jobTitle ?? null,
           pronouns: input.pronouns ?? null,
           mailchimpEmail: input.mailchimpEmail ?? null,
+          company: input.company ?? null,
           createdById: user.id,
           updatedById: user.id,
         },
@@ -218,6 +221,7 @@ export const contactRouter = router({
           jobTitle: pass(input.jobTitle),
           pronouns: pass(input.pronouns),
           mailchimpEmail: pass(input.mailchimpEmail),
+          company: pass(input.company),
           // Refresh isMinor from DOB whenever DOB is sent in this update.
           ...(input.dateOfBirth !== undefined
             ? { isMinor: isMinorByDob(input.dateOfBirth ?? null) }

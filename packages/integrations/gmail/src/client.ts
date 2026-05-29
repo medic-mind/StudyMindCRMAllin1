@@ -7,6 +7,7 @@
 // scopes only — gmail.readonly, gmail.modify, gmail.send. The returned
 // client is request-scoped and MUST NOT be cached across users.
 
+import { createId } from '@paralleldrive/cuid2'
 import { google, type gmail_v1 } from 'googleapis'
 
 import { decryptFieldById, decryptField } from '@studymind/core/safeguarding'
@@ -293,17 +294,25 @@ export async function setupWatchForUser(
   )
   const topicName = getPubSubTopic()
   const result = await client.setupWatch({ topicName })
+  // Multi-mailbox: agent may already have N mailboxes. Key on address (which
+  // is globally unique to a Google account). The first mailbox an agent
+  // connects becomes their default; subsequent ones land as additional.
+  const existingForAgent = await db.gmailMailbox.findFirst({
+    where: { agentId: userId, deletedAt: null },
+    select: { id: true },
+  })
   await db.gmailMailbox.upsert({
-    where: { agentId: userId },
+    where: { address: opts.address },
     create: {
+      id: createId(),
       agentId: userId,
       address: opts.address,
       topicName,
       historyId: result.historyId,
       watchExpiresAt: new Date(result.expirationMs),
+      isDefault: !existingForAgent,
     },
     update: {
-      address: opts.address,
       topicName,
       historyId: result.historyId,
       watchExpiresAt: new Date(result.expirationMs),

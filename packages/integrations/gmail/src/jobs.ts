@@ -147,18 +147,23 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   const ccAddrs = parseAddresses(ccHeader)
   const bccAddrs = parseAddresses(bccHeader)
 
-  // Determine direction. If the agent's address is in From, it's outbound.
-  const mailbox = await db.gmailMailbox.findUnique({
-    where: { agentId: input.agentId },
-    select: { address: true },
-  })
-  const agentAddr = mailbox?.address.toLowerCase() ?? ''
-  const direction = fromAddrs.includes(agentAddr) ? 'sent' : 'received'
+  // Determine direction. If any of the agent's addresses is in From, it's
+  // outbound. Multi-mailbox: an agent can have several connected Gmail
+  // accounts; we treat all of them as "the agent".
+  const agentAddrs = (
+    await db.gmailMailbox.findMany({
+      where: { agentId: input.agentId, deletedAt: null },
+      select: { address: true },
+    })
+  ).map((m) => m.address.toLowerCase())
+  const direction = agentAddrs.some((a) => fromAddrs.includes(a))
+    ? 'sent'
+    : 'received'
 
   // Match Contacts by every address (many-to-many — §14).
   const allAddrs = Array.from(
     new Set([...fromAddrs, ...toAddrs, ...ccAddrs, ...bccAddrs]),
-  ).filter((a) => a !== agentAddr)
+  ).filter((a) => !agentAddrs.includes(a))
   const matchedContacts = await db.contact.findMany({
     where: { email: { in: allAddrs }, deletedAt: null },
     select: { id: true, email: true },
@@ -287,7 +292,7 @@ export const gmailRefreshWatch = inngest.createFunction(
           deletedAt: null,
           OR: [{ watchExpiresAt: null }, { watchExpiresAt: { lt: cutoff } }],
         },
-        select: { agentId: true, address: true, topicName: true },
+        select: { id: true, agentId: true, address: true, topicName: true },
       }),
     )
 
@@ -296,7 +301,7 @@ export const gmailRefreshWatch = inngest.createFunction(
         logger.warn({ agentId: mb.agentId }, 'gmail mailbox has no topicName — skip')
         continue
       }
-      await step.run(`renew-${mb.agentId}`, async () => {
+      await step.run(`renew-${mb.id}`, async () => {
         try {
           const client = await createClientForAgent({
             agentId: mb.agentId,
@@ -306,7 +311,7 @@ export const gmailRefreshWatch = inngest.createFunction(
             topicName: mb.topicName as string,
           })
           await db.gmailMailbox.update({
-            where: { agentId: mb.agentId },
+            where: { id: mb.id },
             data: {
               historyId: result.historyId,
               watchExpiresAt: new Date(result.expirationMs),

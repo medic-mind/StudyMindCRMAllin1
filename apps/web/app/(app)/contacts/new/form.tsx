@@ -17,6 +17,7 @@ import { trpc } from '@/lib/trpc/client'
 
 interface FormState {
   kind: 'parent' | 'student' | 'tutor' | 'la_caseworker' | 'other'
+  company: '' | 'medic_mind' | 'oxbridge_mind' | 'study_mind'
   firstName: string
   lastName: string
   pronouns: string
@@ -38,6 +39,7 @@ interface FormState {
 
 const EMPTY: FormState = {
   kind: 'parent',
+  company: '',
   firstName: '',
   lastName: '',
   pronouns: '',
@@ -107,6 +109,7 @@ export function NewContactForm() {
     const dob = form.dateOfBirth ? new Date(form.dateOfBirth) : undefined
     create.mutate({
       kind: form.kind,
+      company: form.company === '' ? undefined : form.company,
       firstName: clean(form.firstName),
       lastName: clean(form.lastName),
       pronouns: clean(form.pronouns),
@@ -133,7 +136,7 @@ export function NewContactForm() {
     <form className="space-y-5" onSubmit={onSubmit}>
       <Section title="Identity" description="Who is this contact?">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
+          <div className="space-y-1.5">
             <Label htmlFor="kind">Role</Label>
             <Select id="kind" value={form.kind} onChange={set('kind')}>
               <option value="parent">Parent</option>
@@ -141,6 +144,15 @@ export function NewContactForm() {
               <option value="tutor">Tutor</option>
               <option value="la_caseworker">LA caseworker</option>
               <option value="other">Other</option>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="company">Company</Label>
+            <Select id="company" value={form.company} onChange={set('company')}>
+              <option value="">Not set</option>
+              <option value="medic_mind">Medic Mind</option>
+              <option value="oxbridge_mind">Oxbridge Mind</option>
+              <option value="study_mind">Study Mind</option>
             </Select>
           </div>
           <div className="space-y-1.5">

@@ -65,6 +65,7 @@ function buildNav(role: Role, totpEnabled: boolean): NavItem[] {
       children: [
         { href: '/reports/finance', label: 'Finance' },
         { href: '/reports/operations', label: 'Operations' },
+        { href: '/reports/aircall', label: 'Aircall' },
         { href: '/reports/retention', label: 'Retention' },
         { href: '/reports/cost', label: 'Cost' },
       ],

@@ -320,4 +320,188 @@ export const reportsRouter = router({
         }
       }),
   }),
+
+  // Aircall analytics. Counts unique calls (deduped on aircallCallId),
+  // classifies answered vs voicemail vs missed, builds a peak-time matrix,
+  // and surfaces top contacts by call volume. CLAUDE.md §10.
+  aircall: router({
+    summary: protectedProcedure
+      .input(PeriodInput)
+      .query(async ({ ctx, input }) => {
+        assertReports(requireUser(ctx))
+
+        const rows = await ctx.db.interaction.findMany({
+          where: {
+            type: 'call',
+            occurredAt: { gte: input.from, lte: input.to },
+            deletedAt: null,
+          },
+          select: {
+            occurredAt: true,
+            contactId: true,
+            payload: true,
+          },
+          take: 50_000,
+        })
+
+        // Multiple webhook events per call (created/answered/ended/etc). Keep
+        // the row with the longest duration (typically the call.ended row).
+        interface NormalisedCall {
+          callId: string
+          contactId: string | null
+          occurredAt: Date
+          direction: 'inbound' | 'outbound' | null
+          durationSec: number
+          isVoicemail: boolean
+        }
+        const byCall = new Map<string, NormalisedCall>()
+        for (const r of rows) {
+          const p = (r.payload ?? {}) as Record<string, unknown>
+          const callId =
+            typeof p['aircallCallId'] === 'string'
+              ? (p['aircallCallId'] as string)
+              : `unknown:${r.occurredAt.toISOString()}`
+          const directionRaw = p['direction']
+          const direction =
+            directionRaw === 'inbound' || directionRaw === 'outbound'
+              ? directionRaw
+              : null
+          const durationSec =
+            typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
+          const event = p['aircallEvent']
+          const isVoicemail =
+            event === 'call.voicemail_left' ||
+            (typeof p['voicemailUrl'] === 'string' && p['voicemailUrl'].length > 0)
+
+          const prev = byCall.get(callId)
+          if (!prev) {
+            byCall.set(callId, {
+              callId,
+              contactId: r.contactId,
+              occurredAt: r.occurredAt,
+              direction,
+              durationSec,
+              isVoicemail,
+            })
+          } else {
+            if (durationSec > prev.durationSec) prev.durationSec = durationSec
+            if (prev.direction == null && direction != null) prev.direction = direction
+            if (isVoicemail) prev.isVoicemail = true
+            // Earliest occurredAt as the canonical call start.
+            if (r.occurredAt < prev.occurredAt) prev.occurredAt = r.occurredAt
+          }
+        }
+
+        const calls = [...byCall.values()]
+        const total = calls.length
+        const inbound = calls.filter((c) => c.direction === 'inbound').length
+        const outbound = calls.filter((c) => c.direction === 'outbound').length
+        const voicemails = calls.filter((c) => c.isVoicemail).length
+        const missed = calls.filter((c) => !c.isVoicemail && c.durationSec === 0).length
+        const answered = total - voicemails - missed
+        const answeredCalls = calls.filter((c) => !c.isVoicemail && c.durationSec > 0)
+        const avgDurationSec =
+          answeredCalls.length === 0
+            ? 0
+            : Math.round(
+                answeredCalls.reduce((s, c) => s + c.durationSec, 0) / answeredCalls.length,
+              )
+        const totalTalkSec = calls.reduce((s, c) => s + c.durationSec, 0)
+
+        // Daily series.
+        function isoDay(d: Date): string {
+          const y = d.getUTCFullYear()
+          const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+          const day = String(d.getUTCDate()).padStart(2, '0')
+          return `${y}-${m}-${day}`
+        }
+        const days: string[] = []
+        const cursor = new Date(input.from)
+        cursor.setUTCHours(0, 0, 0, 0)
+        while (cursor <= input.to) {
+          days.push(isoDay(cursor))
+          cursor.setUTCDate(cursor.getUTCDate() + 1)
+        }
+        const dailyCounts = new Map<string, number>(days.map((d) => [d, 0]))
+        for (const c of calls) {
+          const key = isoDay(c.occurredAt)
+          if (dailyCounts.has(key)) {
+            dailyCounts.set(key, (dailyCounts.get(key) ?? 0) + 1)
+          }
+        }
+
+        // Peak time matrix [dow Mon=0..Sun=6][hour 0..23] in the user's
+        // displayed timezone — we treat occurredAt as UTC; the front-end
+        // displays it under the assumption that calls cluster on UK business
+        // hours. CLAUDE.md §29.
+        const peak: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0))
+        for (const c of calls) {
+          const d = new Date(c.occurredAt)
+          // Convert Sun=0..Sat=6 → Mon=0..Sun=6 for UK-friendly ordering.
+          const jsDow = d.getUTCDay()
+          const dow = (jsDow + 6) % 7
+          const hour = d.getUTCHours()
+          ;(peak[dow] as number[])[hour] = ((peak[dow] as number[])[hour] ?? 0) + 1
+        }
+
+        // Top contacts.
+        const byContact = new Map<string, number>()
+        for (const c of calls) {
+          if (!c.contactId) continue
+          byContact.set(c.contactId, (byContact.get(c.contactId) ?? 0) + 1)
+        }
+        const ranked = [...byContact.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+        const ids = ranked.map(([id]) => id)
+        const contacts =
+          ids.length > 0
+            ? await ctx.db.contact.findMany({
+                where: { id: { in: ids } },
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  phoneE164: true,
+                  kind: true,
+                },
+              })
+            : []
+        const contactMap = new Map(contacts.map((c) => [c.id, c]))
+        const topContacts = ranked.map(([id, count]) => {
+          const c = contactMap.get(id)
+          const name =
+            c && (c.firstName || c.lastName)
+              ? `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim()
+              : c?.email ?? c?.phoneE164 ?? id.slice(0, 8)
+          return {
+            id,
+            name,
+            kind: c?.kind ?? null,
+            phoneE164: c?.phoneE164 ?? null,
+            count,
+          }
+        })
+
+        return {
+          period: { from: input.from, to: input.to },
+          kpis: {
+            total,
+            answered,
+            voicemails,
+            missed,
+            inbound,
+            outbound,
+            avgDurationSec,
+            totalTalkSec,
+            answeredRate: total === 0 ? 0 : answered / total,
+          },
+          daily: {
+            labels: days,
+            counts: days.map((d) => dailyCounts.get(d) ?? 0),
+          },
+          peak,
+          topContacts,
+        }
+      }),
+  }),
 })

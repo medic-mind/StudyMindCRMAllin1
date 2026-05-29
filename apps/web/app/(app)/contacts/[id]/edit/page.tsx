@@ -42,6 +42,7 @@ export default async function EditContactPage({
           contact={{
             id: contact.id,
             kind: contact.kind,
+            company: contact.company,
             firstName: contact.firstName,
             lastName: contact.lastName,
             pronouns: contact.pronouns,
