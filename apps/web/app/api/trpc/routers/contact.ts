@@ -67,6 +67,13 @@ const ListInput = z.object({
   companyId: z.string().nullish(),
   /** Filter by Subject.id (m2m). */
   subjectId: z.string().nullish(),
+  /** Filter by contact kind (parent / student / tutor / other). */
+  kind: z.enum(['parent', 'student', 'tutor', 'other']).optional(),
+  /** Only contacts that belong to a Family (or only those who don't). */
+  hasFamily: z.boolean().optional(),
+  /** Sort field. `createdAt` (default) and `name` are supported today. */
+  sortBy: z.enum(['createdAt', 'name']).default('createdAt'),
+  sortDir: z.enum(['asc', 'desc']).default('desc'),
 })
 
 function newId(): string {
@@ -77,9 +84,24 @@ export const contactRouter = router({
   list: protectedProcedure
     .input(ListInput)
     .query(async ({ ctx, input }) => {
+      const orderBy =
+        input.sortBy === 'name'
+          ? [
+              { lastName: input.sortDir },
+              { firstName: input.sortDir },
+              { id: 'desc' as const },
+            ]
+          : [{ createdAt: input.sortDir }, { id: 'desc' as const }]
+
       const rows = await ctx.db.contact.findMany({
         where: {
           deletedAt: null,
+          ...(input.kind ? { kind: input.kind } : {}),
+          ...(input.hasFamily !== undefined
+            ? input.hasFamily
+              ? { familyMembers: { some: {} } }
+              : { familyMembers: { none: {} } }
+            : {}),
           ...(input.companyId
             ? { companies: { some: { companyId: input.companyId } } }
             : {}),
@@ -96,21 +118,33 @@ export const contactRouter = router({
                 ],
               }
             : {}),
-          ...(input.cursor
-            ? {
-                OR: [
-                  { createdAt: { lt: input.cursor.createdAt } },
-                  {
-                    AND: [
-                      { createdAt: input.cursor.createdAt },
-                      { id: { lt: input.cursor.id } },
-                    ],
-                  },
-                ],
-              }
+          ...(input.cursor && input.sortBy === 'createdAt'
+            ? input.sortDir === 'desc'
+              ? {
+                  OR: [
+                    { createdAt: { lt: input.cursor.createdAt } },
+                    {
+                      AND: [
+                        { createdAt: input.cursor.createdAt },
+                        { id: { lt: input.cursor.id } },
+                      ],
+                    },
+                  ],
+                }
+              : {
+                  OR: [
+                    { createdAt: { gt: input.cursor.createdAt } },
+                    {
+                      AND: [
+                        { createdAt: input.cursor.createdAt },
+                        { id: { gt: input.cursor.id } },
+                      ],
+                    },
+                  ],
+                }
             : {}),
         },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy,
         take: input.limit + 1,
         include: {
           familyMembers: {
@@ -782,6 +816,110 @@ export const contactRouter = router({
 
   // Mailchimp upsert. Pushes the contact (using mailchimpEmail if set, else
   // the regular email) to the configured audience. Idempotent on email hash.
+  /** Bulk soft-delete a list of contacts (Manager+). Skips ids that don't
+   * exist or are already deleted. Returns the count actually deleted. */
+  bulkSoftDelete: auditedProcedure
+    .input(
+      z.object({
+        contactIds: z.array(z.string()).min(1).max(500),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (
+        user.role !== 'ceo' &&
+        user.role !== 'senior_manager' &&
+        user.role !== 'manager'
+      ) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only Manager or above can bulk-delete contacts',
+        })
+      }
+      const result = await ctx.db.contact.updateMany({
+        where: { id: { in: input.contactIds }, deletedAt: null },
+        data: { deletedAt: new Date(), updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'soft_delete',
+        target: { type: 'ContactBulk', id: `${result.count}` },
+        before: { contactIds: input.contactIds },
+        after: { deletedCount: result.count },
+      })
+      return { deletedCount: result.count }
+    }),
+
+  /** Bulk-push a list of contacts to the Mailchimp audience. Per-id failures
+   * are collected and returned so the UI can show a per-row toast.
+   * Sales Executive+. */
+  bulkMailchimpPush: auditedProcedure
+    .input(
+      z.object({
+        contactIds: z.array(z.string()).min(1).max(200),
+        listId: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (user.role === 'virtual_assistant') {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      const rows = await ctx.db.contact.findMany({
+        where: { id: { in: input.contactIds }, deletedAt: null },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          mailchimpEmail: true,
+        },
+      })
+      const results: Array<{
+        contactId: string
+        status: 'pushed' | 'skipped' | 'failed'
+        detail?: string
+      }> = []
+      for (const c of rows) {
+        const email = (c.mailchimpEmail ?? c.email)?.trim()
+        if (!email) {
+          results.push({ contactId: c.id, status: 'skipped', detail: 'No email' })
+          continue
+        }
+        try {
+          const pushed = await pushContactToMailchimp({
+            email,
+            firstName: c.firstName,
+            lastName: c.lastName,
+            listId: input.listId,
+          })
+          results.push({
+            contactId: c.id,
+            status: 'pushed',
+            detail: pushed.status,
+          })
+        } catch (err) {
+          results.push({
+            contactId: c.id,
+            status: 'failed',
+            detail: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      const pushedCount = results.filter((r) => r.status === 'pushed').length
+      await ctx.audit({
+        action: 'contact.mailchimp_pushed',
+        target: { type: 'ContactBulk', id: `${input.contactIds.length}` },
+        after: {
+          attempted: input.contactIds.length,
+          pushed: pushedCount,
+          skipped: results.filter((r) => r.status === 'skipped').length,
+          failed: results.filter((r) => r.status === 'failed').length,
+          listId: input.listId ?? null,
+        },
+      })
+      return { pushedCount, results }
+    }),
+
   mailchimp: router({
     push: auditedProcedure
       .input(z.object({ contactId: z.string(), listId: z.string().optional() }))

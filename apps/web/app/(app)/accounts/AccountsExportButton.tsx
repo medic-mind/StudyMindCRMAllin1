@@ -8,6 +8,13 @@ import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { trpc } from '@/lib/trpc/client'
 import type { CsvColumn } from '@/lib/csv'
 
+interface RowCompany {
+  id: string
+  name: string
+  slug: string
+  color: string | null
+}
+
 interface Row {
   id: string
   kind: 'school' | 'partnership'
@@ -21,6 +28,7 @@ interface Row {
   city: string | null
   country: string | null
   contactCount: number
+  companies: ReadonlyArray<RowCompany>
   createdAt: Date | string
 }
 
@@ -36,6 +44,7 @@ const COLUMNS: CsvColumn<Row>[] = [
   { header: 'City', value: (r) => r.city ?? '' },
   { header: 'Country', value: (r) => r.country ?? '' },
   { header: 'Contacts', value: (r) => r.contactCount },
+  { header: 'Companies', value: (r) => r.companies.map((c) => c.name).join(' · ') },
   { header: 'Created at', value: (r) => (r.createdAt ? new Date(r.createdAt) : '') },
 ]
 

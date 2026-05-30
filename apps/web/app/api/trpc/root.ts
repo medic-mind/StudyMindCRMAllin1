@@ -28,6 +28,8 @@ const contactWithChannels = router({
   update: contactRouter.update,
   mergeSuggestions: contactRouter.mergeSuggestions,
   merge: contactRouter.merge,
+  bulkSoftDelete: contactRouter.bulkSoftDelete,
+  bulkMailchimpPush: contactRouter.bulkMailchimpPush,
   links: contactRouter.links,
   documents: contactRouter.documents,
   callSummary: contactRouter.callSummary,

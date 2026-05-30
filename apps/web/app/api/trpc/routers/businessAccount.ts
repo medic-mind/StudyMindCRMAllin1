@@ -410,6 +410,69 @@ const studentsRouter = router({
     }),
 })
 
+// ---------------------------------------------------------------------------
+// Companies (sister-brand tags) on a B2B account. M:N replace semantics so
+// the admin form just sends the full set on save and we diff. Mirrors the
+// pattern used on Contact.
+// ---------------------------------------------------------------------------
+
+const companiesSubRouter = router({
+  /** Replace the company set for an account. Manager+. */
+  set: auditedProcedure
+    .input(
+      z.object({
+        accountId: z.string(),
+        companyIds: z.array(z.string()).max(50),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const account = await ctx.db.businessAccount.findUnique({
+        where: { id: input.accountId },
+        select: { id: true },
+      })
+      if (!account) throw new TRPCError({ code: 'NOT_FOUND' })
+      // Validate every company id exists + is not archived.
+      const companies =
+        input.companyIds.length > 0
+          ? await ctx.db.company.findMany({
+              where: { id: { in: input.companyIds }, archivedAt: null },
+              select: { id: true },
+            })
+          : []
+      const validIds = new Set(companies.map((c) => c.id))
+      const filtered = input.companyIds.filter((id) => validIds.has(id))
+      const before = await ctx.db.businessAccountCompany.findMany({
+        where: { accountId: input.accountId },
+        select: { companyId: true },
+      })
+      await ctx.db.$transaction([
+        ctx.db.businessAccountCompany.deleteMany({
+          where: { accountId: input.accountId },
+        }),
+        ...(filtered.length > 0
+          ? [
+              ctx.db.businessAccountCompany.createMany({
+                data: filtered.map((companyId) => ({
+                  accountId: input.accountId,
+                  companyId,
+                  createdById: user.id,
+                })),
+              }),
+            ]
+          : []),
+      ])
+      await ctx.audit({
+        action: 'business_account.updated',
+        target: { type: 'BusinessAccount', id: input.accountId },
+        before: { companyIds: before.map((b) => b.companyId) },
+        after: { companyIds: filtered },
+      })
+      return { ok: true as const, companyIds: filtered }
+    }),
+})
+
 export const businessAccountRouter = router({
   list: protectedProcedure
     .input(
@@ -437,7 +500,14 @@ export const businessAccountRouter = router({
             : {}),
         },
         orderBy: [{ archivedAt: 'asc' }, { name: 'asc' }],
-        include: { _count: { select: { contacts: true } } },
+        include: {
+          _count: { select: { contacts: true } },
+          companies: {
+            include: {
+              company: { select: { id: true, name: true, slug: true, color: true } },
+            },
+          },
+        },
       })
       return rows.map((a) => ({
         id: a.id,
@@ -453,6 +523,12 @@ export const businessAccountRouter = router({
         city: a.city,
         country: a.country,
         contactCount: a._count.contacts,
+        companies: a.companies.map((link) => ({
+          id: link.company.id,
+          name: link.company.name,
+          slug: link.company.slug,
+          color: link.company.color,
+        })),
         archived: a.archivedAt != null,
         createdAt: a.createdAt,
       }))
@@ -495,6 +571,11 @@ export const businessAccountRouter = router({
             },
             orderBy: { createdAt: 'asc' },
           },
+          companies: {
+            include: {
+              company: { select: { id: true, name: true, slug: true, color: true } },
+            },
+          },
         },
       })
       if (!a) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -527,6 +608,12 @@ export const businessAccountRouter = router({
           phoneE164: link.contact.phoneE164,
           jobTitle: link.contact.jobTitle,
           kind: link.contact.kind,
+        })),
+        companies: a.companies.map((link) => ({
+          id: link.company.id,
+          name: link.company.name,
+          slug: link.company.slug,
+          color: link.company.color,
         })),
       }
     }),
@@ -663,4 +750,5 @@ export const businessAccountRouter = router({
 
   contacts: contactsRouter,
   students: studentsRouter,
+  companies: companiesSubRouter,
 })
