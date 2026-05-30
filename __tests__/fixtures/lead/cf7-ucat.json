@@ -1,0 +1,11 @@
+{
+  "_comment": "Sanitised Contact Form 7 webhook payload (ADR 0023). Raw CF7 field ids + a webhook:-mapped field, plus a hidden page-url. No real PII.",
+  "your-name": "Test Family A1",
+  "text-618": "Year 12 student",
+  "tel-146": "07700 900123",
+  "email": "a1@example.test",
+  "your-message": "Interested in UCAT preparation and medicine interview coaching.",
+  "page-url": "https://medicmind.co.uk/ucat-course/?utm_source=google&utm_medium=cpc",
+  "_wpcf7": "618",
+  "_wpcf7_unit_tag": "wpcf7-f618-p12-o1"
+}

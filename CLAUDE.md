@@ -356,7 +356,7 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 **Inbound webhook events:** new inbound message, new outbound message (so we capture replies sent from Trengo native UI), ticket assigned, ticket closed, ticket reopened, label added or removed.
 
-**Contact matching.** Phone (E.164 normalised) first, email second. If neither matches, create a `Lead` row, not a `Contact`. Leads sit in the unassigned tray for an agent to triage. Never auto-create a Contact from an unmatched Trengo conversation — we have been bitten by spam routes creating ghost Contacts.
+**Contact matching.** Phone (E.164 normalised) first, email second. If neither matches, create a `Lead` row, not a `Contact`. Leads sit in the unassigned tray for an agent to triage. Never auto-create a Contact from an unmatched Trengo conversation — we have been bitten by spam routes creating ghost Contacts. (The **web-lead funnel** `/api/leads` is a deliberate exception that *does* auto-onboard, with a 24h dedupe + email/phone gate as the anti-spam control — see §16 and ADR 0023. This Trengo rule is unchanged.)
 
 **Channels.** WhatsApp, SMS, email, web chat. Each has its own per-channel quirk (WhatsApp 24-hour window, SMS character cost, email threading via `Message-ID`). Channel-specific rules in `packages/integrations/trengo/channels/`.
 
@@ -451,13 +451,13 @@ templates, automations, analytics, calendar, unified channels.
 
 ---
 
-## 16. Zapier playbook
+## 16. Lead capture (Zapier + universal endpoint)
 
-**Endpoint.** `/api/webhooks/lead` is a stable, versioned endpoint with a JSON schema documented in `docs/api/lead-webhook.md`.
+**Universal endpoint (ADR 0023).** `POST /api/leads` is the dynamic ingestion engine for Contact Form 7 and any other source. It accepts JSON, form-encoded, multipart, and CF7 webhooks with **any** field names — never hardcode CF7 field ids (`text-618`, `tel-146`). A pure normaliser (`packages/core/src/lead/normalise.ts`) detects each field's role from `webhook:<role>` mappings → name synonyms → CF7 type prefixes → value sniffing, and lifts landing-page intelligence (domain, slug, form title, UTM). The thin handler authenticates by a per-site `LeadSource` API key (or the global fallback token), persists raw → `ProviderEvent` + `Lead`, audits, and enqueues `lead/classify.requested`. Async, the classify job classifies (brand → `Company`, products/categories from configurable `BrandDomainRule`/`UrlClassificationRule`/`ProductCatalogueItem`, score, advisory AI summary) and routes onto the Sales Pipeline. Contract: `docs/api/leads-endpoint.md`. UI: Settings → Integrations → Lead webhook (URL, API keys, test generator) + the Leads tray (`/leads`).
 
-**Auth.** Static bearer token rotated quarterly. Stored in Railway env, mirrored from 1Password.
+**Auto-onboarding + dedupe (overrides §11 for web leads).** First enquiry auto-creates a Contact (brand-tagged) + a card on the default board's "New leads" stage. A re-enquiry matched by email/phone never creates a duplicate Contact — it annotates the existing contact and adds a fresh card only if >24h since the last enquiry (within 24h is one card, anti-spam). A submission with neither email nor phone, or an ambiguous match, goes to the Leads tray instead of creating a ghost contact. Matching never auto-merges (§41.1). This is the deliberate web-lead exception to "never auto-create a Contact" (ADR 0023).
 
-**Schema discipline.** Additive only. Never remove or rename fields without bumping to `/api/webhooks/lead/v2`. Old endpoint stays alive for 12 months after a v2 ships.
+**Legacy Zapier endpoint.** `/api/webhooks/lead` (+`/v2`) is the older stable, versioned bearer-token endpoint with a fixed JSON schema (`docs/api/lead-webhook.md`). Additive only; bump to `/v2` for breaking changes; old endpoint stays alive 12 months. It remains for existing Zaps; new integrations use `/api/leads`.
 
 **Trust.** Zapier is fine for partner integrations and lead capture. It is **not** the source of truth for anything financial, safeguarding, or operational. Anything critical lives in a first-party integration with full audit and contract tests.
 
@@ -492,6 +492,8 @@ Every async unit of work is an Inngest function. Conventions:
 | `trengo/retry-pending-send` | every 5 min | Re-send outbound Trengo Interactions stuck in `pending_send` (ADR 0020 Phase 7a). Bounded at 5 attempts per row; skips TOKEN_EXPIRED (the agent must reconnect). |
 
 **Event-triggered backfill workers (ADR 0017).** Not recurring — fired once on first-connect (Gmail/Trengo) or by an admin button (Aircall/Slack). `gmail/backfill.requested`, `aircall/backfill.requested`, `trengo/backfill.requested`, `slack/backfill.requested` each pull the last 90 days of history and write retroactive Interactions for matched Contacts. Idempotent on the provider's native id; concurrency-capped (Slack 3 as it is AI-heavy, others 2). One summary audit row per job — never per imported message.
+
+**Lead classify + route (`lead/classify.requested`).** Event-triggered, not cron — fired by the universal `/api/leads` endpoint (and the legacy lead webhook path) once per submission (ADR 0023, §16). The pure orchestration is `packages/jobs/src/leads/process-lead.ts`; the worker boundary (`apps/web/app/api/inngest/_boundary/process-lead.ts`) injects the advisory AI enrichment. Normalises → classifies (rules + optional AI) → matches/onboards a Contact → routes onto the Sales Pipeline with the 24h re-enquiry dedupe. Idempotent (skips once `Lead.classifiedAt` is set); concurrency-capped at 3 (AI-touching). Pure decisions live in `packages/core/src/lead/`.
 
 **Direct Debit defaulter scan (`finance/flag-dd-defaulters`).** Event-triggered, not cron — runs on `finance/reconcile.completed` (§17.3) so it reads consistent invoice/payment state. Recomputes the GoCardless defaulter set (`listDefaulters` in `packages/core/src/finance/dd-defaulters.ts`) and raises a `direct_debit_default` `ReconciliationDiscrepancy` (idempotent on `(familyId, category, contextHash)`) for any newly-defaulted family; the pure aggregator is `packages/jobs/src/finance/flag-dd-defaulters.ts`. The worker boundary (`apps/web/app/api/inngest/_boundary/flag-dd-defaulters.ts`) posts a summary to `#crm-finops`. Read-only analysis — never auto-charges or auto-duns (§3). Surfaced at `/finance/direct-debit`; per-customer payments are surfaced on the Family and Contact pages via `finance.customerPayments.*` (`packages/core/src/finance/customer-payments.ts`).
 
@@ -567,7 +569,7 @@ OpenAI for everything AI today. Models per task:
 
 ### 19.2 Schema reference (top tables)
 
-`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018), `BrandingSetting` (custom logo, §4), `MailAccount` + `MailAccountMember` (Communications Hub multi-account foundation, ADR 0021), `ChatChannel`, `ChatChannelMember`, `ChatMessage`, `ChatMention`, `ChatMessageRef`, `ChatReaction` (internal team messaging, ADR 0022). Definitive shape: `prisma/schema.prisma`.
+`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018), `BrandingSetting` (custom logo, §4), `MailAccount` + `MailAccountMember` (Communications Hub multi-account foundation, ADR 0021), `ChatChannel`, `ChatChannelMember`, `ChatMessage`, `ChatMention`, `ChatMessageRef`, `ChatReaction` (internal team messaging, ADR 0022), `LeadSource` · `BrandDomainRule` · `UrlClassificationRule` · `ProductCatalogueItem` · `LeadClassificationCorrection` (lead ingestion + classification, ADR 0023). Definitive shape: `prisma/schema.prisma`.
 
 ---
 
@@ -1086,6 +1088,9 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a pipeline stage helper | `packages/core/src/pipeline/stages.ts` |
 | Change how Family.stageId is written | `packages/core/src/family/pipeline.ts` (`moveFamily`) |
 | Work on boards / cards / labels / subjects (ADR 0018) | `packages/core/src/board/` (domain), `apps/web/app/api/trpc/routers/board.ts` (tRPC), `apps/web/app/(app)/boards/` (UI). `/pipeline` redirects to the default board. |
+| Ingest / classify web leads (Contact Form 7) — ADR 0023 | Endpoint `apps/web/app/api/leads/route.ts` + shared `apps/web/lib/leads/ingest.ts`; pure engine `packages/core/src/lead/` (normalise / classify / score / match); job `packages/jobs/src/leads/process-lead.ts` + boundary `apps/web/app/api/inngest/_boundary/process-lead.ts`; tRPC `lead.*`; UI `apps/web/app/(app)/leads/` + Settings → Integrations → Lead webhook panel. Event `lead/classify.requested`. |
+| Add/edit a brand-domain or URL classification rule, or a product | Tables `BrandDomainRule` / `UrlClassificationRule` / `ProductCatalogueItem` (seeded in migration `20260603120000_add_lead_classification`). Editable in the DB today; a Settings UI is a fast follow. Brand detection resolves to a `Company`. |
+| Manage lead-source API keys (Contact Form 7 sites) | Settings → Integrations → Lead webhook (`LeadIngestionPanel`, Manager+). tRPC `lead.sources.*` (list / create / rotate / archive); schema `LeadSource` (sha256 key hash + last4, optional pinned brand). Raw key shown once. |
 | Card sub-tasks (Todoist-style checklist on a card) | Schema `CardSubtask` (`cardId`, `title`, `completed`, `position`). Domain `packages/core/src/board/subtasks.ts`; tRPC `card.subtasks.*` (list / add / update / delete, Sales Executive+). UI `apps/web/app/(app)/boards/[boardId]/CardSubtasks.tsx` in the card modal. Distinct from CRM `Task` + contact-synced tasks. |
 | Manage a board's quick-action buttons | `/settings/board-quick-actions` (Manager+) lists boards → links to `/boards/[boardId]/settings` where the `BoardQuickAction` catalogue is edited. Firing is `card.applyQuickAction` (Sales Executive+). |
 | Bulk-merge duplicate contacts | `/contacts` table → select 2+ → Merge (Manager+). tRPC `contact.bulkMerge` ({survivorId, loserIds}); first selected row is the survivor, the rest merge in via `mergeContacts` (`apps/web/lib/services/contact-merge.ts`) one at a time. |

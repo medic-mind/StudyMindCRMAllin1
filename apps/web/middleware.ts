@@ -30,6 +30,9 @@ const PUBLIC_PATH_PREFIXES = [
   '/auth/error',
   '/api/auth',
   '/api/webhooks',
+  // Universal lead ingestion (ADR 0020) — authenticated by a per-source API
+  // key, not a session, so WordPress / Contact-Form-7 sites can POST to it.
+  '/api/leads',
   '/api/oauth/gmail/callback',
   '/api/health',
   // Custom brand logo bytes — rendered on the unauthenticated sign-in screen.

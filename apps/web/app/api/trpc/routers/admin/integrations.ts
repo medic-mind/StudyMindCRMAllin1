@@ -242,23 +242,30 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
     providerDashboardUrl: null,
   },
   lead: {
-    label: 'Zapier lead webhook',
-    description: 'Partner integrations and lead capture only. CLAUDE.md §16.',
-    envVars: ['ZAPIER_LEAD_BEARER_TOKEN'],
+    label: 'Lead webhook',
+    description:
+      'Universal lead capture — Contact Form 7, Zapier, JSON. Auto-classified + routed (ADR 0023). CLAUDE.md §16.',
+    // The global fallback token (per-site API keys are managed in the panel
+    // below and stored hashed in the DB, so they are not env vars).
+    envVars: ['LEAD_WEBHOOK_BEARER_TOKEN'],
     cronFunctionIds: [],
     perAgentTokens: null,
     runbook: '/docs/runbooks/secret-rotation.md',
     setupSteps: [
       {
-        title: 'Generate a bearer token',
-        body: 'openssl rand -hex 32. Mirror it into 1Password and Railway as ZAPIER_LEAD_BEARER_TOKEN; rotate quarterly.',
+        title: 'Create a site API key',
+        body: 'Use the “Site API keys” panel on this page to mint a key per website. The raw key is shown once; store it in 1Password and the form’s webhook config.',
       },
       {
-        title: 'Configure the Zap',
-        body: 'Webhooks by Zapier → POST. URL is https://<your-host>/api/webhooks/lead. Header Authorization: Bearer <token>. Body shape documented in docs/api/lead-webhook.md.',
+        title: 'Paste the webhook URL into Contact Form 7',
+        body: 'URL is https://<your-host>/api/leads. Send the key as an Authorization: Bearer header, an X-API-Key header, or a ?key= query param. Any field layout works — see docs/api/leads-endpoint.md.',
+      },
+      {
+        title: '(Optional) global fallback token',
+        body: 'Set LEAD_WEBHOOK_BEARER_TOKEN in Railway for a zero-config master key (also used by the legacy /api/webhooks/lead Zapier endpoint).',
       },
     ],
-    providerDashboardUrl: 'https://zapier.com/app/zaps',
+    providerDashboardUrl: null,
   },
 }
 

@@ -176,6 +176,25 @@ export const EVENT_NAMES = [
   'lead.received',
   'trengo.message_sent',
 
+  // Dynamic lead ingestion + classification (ADR 0023). The universal
+  // /api/leads endpoint normalises any Contact-Form-7 payload; an Inngest job
+  // classifies (brand / products / categories / score) and routes onto the
+  // Sales Pipeline, deduping re-enquiries onto the existing contact.
+  'lead.classified',
+  'lead.converted',
+  'lead.reenquiry_recorded',
+  'lead.dismissed',
+  'lead.classification_corrected',
+  'lead.source_created',
+  'lead.source_updated',
+  'lead.source_archived',
+  'lead.rule_created',
+  'lead.rule_updated',
+  'lead.rule_archived',
+  'lead.product_created',
+  'lead.product_updated',
+  'lead.product_archived',
+
   // Finance
   'payment.created',
   'payment.late_failed',
@@ -374,6 +393,9 @@ export const INNGEST_EVENT_NAMES = [
   // Concurrency capped on the worker (4) so a burst of attachments doesn't
   // starve the rest of the queue.
   'trengo/download-attachments.requested',
+  // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
+  // persists a Lead then hands off async classification + pipeline routing.
+  'lead/classify.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]
@@ -428,6 +450,10 @@ export const INTERACTION_TYPES = [
   // Forwarding quick action: agent forwarded a query about this contact to
   // an internal address (AP team, CEOs, schools, partnerships, etc).
   'email_forwarded',
+  // ADR 0023: a web enquiry captured via the universal /api/leads endpoint.
+  // First contact and every re-enquiry land on the contact's timeline so the
+  // page shows how many times they have reached out.
+  'lead_enquiry',
 ] as const
 
 export type InteractionType = (typeof INTERACTION_TYPES)[number]

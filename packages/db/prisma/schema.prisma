@@ -136,6 +136,10 @@ enum InteractionType {
   // CEOs, schools, partnerships). The send is recorded here so the
   // contact's timeline shows it.
   email_forwarded
+  // ADR 0023: a web enquiry captured via the universal /api/leads endpoint.
+  // First contact and every re-enquiry land on the contact's timeline so the
+  // page shows how many times they have reached out.
+  lead_enquiry
 }
 
 enum ContactKind {
@@ -244,7 +248,7 @@ model User {
   /// ADR 0020 Phase 5 — when the user last opened the notifications bell.
   /// Rows in AuditLogEntry newer than this with this user as the target are
   /// counted as unread. Null means "never opened" (everything unread).
-  notificationsSeenAt  DateTime?
+  notificationsSeenAt DateTime?
 
   /// ADR 0020 Phase 6 — the user's numeric id on Trengo. Resolved from
   /// `/me` at token-connect time and used to map the `assignee_id` on
@@ -252,7 +256,7 @@ model User {
   /// a connected token has no Trengo identity to map. The unique index is
   /// partial (PG default for nullable `@unique`) so multiple users without
   /// the mapping coexist.
-  trengoUserId         Int?      @unique
+  trengoUserId Int? @unique
 
   // ADR 0012: per-agent Gmail OAuth. Status is free text (see migration).
   // gmailRefreshTokenCipherId references EncryptedField.id, not enforced as
@@ -465,11 +469,11 @@ model Contact {
   preferredContactMethod ContactPreferredContactMethod?
   /// IANA timezone or free-text fallback ("Europe/London", "GMT+1"). Used to
   /// pick humane call/send times.
-  timezone       String?
+  timezone               String?
   /// Where the lead came from — Google, word-of-mouth, booking site, etc.
-  referralSource String?
+  referralSource         String?
   /// "GCSE Year 11 Maths", "A-Level Biology", "11+ English"…
-  examTarget     String?
+  examTarget             String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -477,35 +481,35 @@ model Contact {
   updatedById String?
   deletedAt   DateTime?
 
-  familyMembers     FamilyMember[]
-  billingForFamily  Family[]           @relation("BillingContact")
-  interactions      Interaction[]      @relation("ContactInteractions")
+  familyMembers      FamilyMember[]
+  billingForFamily   Family[]                 @relation("BillingContact")
+  interactions       Interaction[]            @relation("ContactInteractions")
   /// Conversation heads (ADR 0020) — first-class Trengo tickets reaching
   /// this contact. The bodies of each message still live in `interactions`.
-  conversations     Conversation[]     @relation("ContactConversations")
+  conversations      Conversation[]           @relation("ContactConversations")
   /// Pending field-edit suggestions from external sources (Trengo
   /// `contact.updated`, Gmail signature parsing, …). ADR 0020 Phase 6c —
   /// surfaced for human confirmation; we never silent-merge (CLAUDE.md §3).
-  fieldSuggestions  ContactFieldSuggestion[]
-  safeguardingFlags SafeguardingFlag[]
-  encryptedFields   EncryptedField[]
-  cards             Card[]
-  linksFrom         ContactLink[]      @relation("ContactLinkFrom")
-  linksTo           ContactLink[]      @relation("ContactLinkTo")
-  documents         ContactDocument[]
+  fieldSuggestions   ContactFieldSuggestion[]
+  safeguardingFlags  SafeguardingFlag[]
+  encryptedFields    EncryptedField[]
+  cards              Card[]
+  linksFrom          ContactLink[]            @relation("ContactLinkFrom")
+  linksTo            ContactLink[]            @relation("ContactLinkTo")
+  documents          ContactDocument[]
   /// Many-to-many: a contact can be tagged with multiple sister-brand
   /// companies (Medic Mind, Oxbridge Mind, Study Mind, anything admins add).
-  companies         ContactCompany[]
+  companies          ContactCompany[]
   /// Many-to-many: academic subjects this contact is interested in
   /// (Maths, Biology, etc). Reuses the existing Subject table that boards
   /// already populate.
-  subjects          ContactSubject[]
+  subjects           ContactSubject[]
   /// Many-to-many: B2B accounts (schools, partnerships) this contact is
   /// linked to with a role (e.g. "Head teacher", "SENCo", "Programme lead").
-  businessAccounts  BusinessAccountContact[]
+  businessAccounts   BusinessAccountContact[]
   /// Manually uploaded invoice files attached to this contact (different
   /// from the finance-mirrored Invoice rows, which live under Family).
-  uploadedInvoices  UploadedInvoice[]
+  uploadedInvoices   UploadedInvoice[]
   /// Mirror of customers on the B2B Invoices Platform (b2b.studymind.co.uk)
   /// that correlate to this contact (B2C individuals). See InvoicingCustomer.
   invoicingCustomers InvoicingCustomer[]
@@ -593,14 +597,21 @@ model Company {
   description String?
   archivedAt  DateTime?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
 
   contacts         ContactCompany[]
   families         Family[]
   businessAccounts BusinessAccountCompany[]
+
+  // Lead ingestion + classification (ADR 0023).
+  leads            Lead[]                  @relation("LeadBrand")
+  leadSources      LeadSource[]            @relation("LeadSourceBrand")
+  brandDomainRules BrandDomainRule[]
+  urlRules         UrlClassificationRule[] @relation("UrlRuleBrand")
+  products         ProductCatalogueItem[]  @relation("ProductBrand")
 
   @@index([archivedAt])
 }
@@ -716,9 +727,9 @@ model PipelineStage {
   updatedAt   DateTime  @updatedAt
   createdById String?
 
-  board    Board?   @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  families Family[]
-  cards    Card[]
+  board        Board?             @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  families     Family[]
+  cards        Card[]
   quickActions BoardQuickAction[] @relation("QuickActionTargetStage")
 
   @@index([archivedAt])
@@ -729,25 +740,25 @@ model PipelineStage {
 /// PipelineStages and Cards. The single legacy pipeline (ADR 0015) becomes
 /// the default board. Board management is CEO + Senior Manager only.
 model Board {
-  id          String  @id
-  name        String
-  description String?
+  id                String    @id
+  name              String
+  description       String?
   /// 1-based ordering among active (non-archived) boards. Partial unique
   /// index on (position) WHERE archivedAt IS NULL in the migration.
-  position    Int
+  position          Int
   /// Exactly one board may be the default. Enforced in app logic
   /// (ensureSingleDefault), not by a DB constraint, so swaps are atomic.
-  isDefault   Boolean @default(false)
+  isDefault         Boolean   @default(false)
   /// DEPRECATED — superseded by the BoardQuickAction multi-row catalogue.
   /// Retained per CLAUDE.md §19 forward-only; the old single-tick / single-X
   /// fallback is no longer rendered when the board has any BoardQuickAction
   /// rows.
   tickActionStageId String?
   xActionStageId    String?
-  archivedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdById String?
+  archivedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdById       String?
 
   stages       PipelineStage[]
   cards        Card[]
@@ -846,15 +857,15 @@ model Card {
 /// real Task. Sales Executive+ manages them; the toggle is cheap and not
 /// individually audited (the card itself carries the audit trail).
 model CardSubtask {
-  id          String   @id
-  cardId      String
-  title       String
-  completed   Boolean  @default(false)
+  id        String  @id
+  cardId    String
+  title     String
+  completed Boolean @default(false)
   /// 1-based order within the card's checklist.
-  position    Int
+  position  Int
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
 
@@ -940,13 +951,13 @@ model FinancialAccount {
 // -----------------------------------------------------------------------------
 
 model Interaction {
-  id           String          @id
-  type         InteractionType
-  contactId    String?
-  familyId     String?
-  occurredAt   DateTime
-  summary      String?
-  payload      Json
+  id         String          @id
+  type       InteractionType
+  contactId  String?
+  familyId   String?
+  occurredAt DateTime
+  summary    String?
+  payload    Json
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -959,8 +970,8 @@ model Interaction {
   softDeletedAt       DateTime?
   pendingHardDeleteAt DateTime?
 
-  contact    Contact?    @relation("ContactInteractions", fields: [contactId], references: [id])
-  family     Family?     @relation("FamilyInteractions", fields: [familyId], references: [id])
+  contact Contact? @relation("ContactInteractions", fields: [contactId], references: [id])
+  family  Family?  @relation("FamilyInteractions", fields: [familyId], references: [id])
 
   @@index([contactId, occurredAt])
   @@index([familyId, occurredAt])
@@ -1044,19 +1055,19 @@ enum ConversationStatus {
 /// for the same `(contactId, field)` arrives before the first is reviewed,
 /// so the queue never shows stale proposals.
 model ContactFieldSuggestion {
-  id            String                       @id
-  contactId     String
-  source        String
-  sourceEventId String
-  field         String
-  proposedValue String?
-  currentValue  String?
-  status        ContactFieldSuggestionStatus @default(pending)
-  reviewedAt    DateTime?
-  reviewedById  String?
+  id              String                       @id
+  contactId       String
+  source          String
+  sourceEventId   String
+  field           String
+  proposedValue   String?
+  currentValue    String?
+  status          ContactFieldSuggestionStatus @default(pending)
+  reviewedAt      DateTime?
+  reviewedById    String?
   rejectionReason String?
-  createdAt     DateTime                     @default(now())
-  updatedAt     DateTime                     @updatedAt
+  createdAt       DateTime                     @default(now())
+  updatedAt       DateTime                     @updatedAt
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
@@ -1444,9 +1455,47 @@ model Lead {
   phoneE164            String?
   name                 String?
   convertedToContactId String?
-  /// Conversion timestamp — when the lead became a Contact. Marketing leads
-  /// that did not convert age out after 12 months (CLAUDE.md §21).
+  /// Conversion timestamp — when the lead became (or attached to) a Contact.
+  /// Marketing leads that did not convert age out after 12 months
+  /// (CLAUDE.md §21).
   convertedAt          DateTime?
+
+  // --- Dynamic ingestion + classification (ADR 0023) ------------------------
+  // The universal /api/leads endpoint normalises any Contact-Form-7 / JSON /
+  // form-encoded payload, then an Inngest job classifies it (brand, products,
+  // categories, score) and routes it onto the Sales Pipeline. Everything below
+  // is additive + nullable so the legacy /api/webhooks/lead path keeps working.
+
+  /// LeadSource that authenticated this submission (per-website API key), if any.
+  sourceId       String?
+  /// Detected brand (Study Mind, Medic Mind, …) resolved to a Company row.
+  brandCompanyId String?
+  /// Landing-page intelligence (CLAUDE.md §16). Often more telling than the
+  /// message body, so it drives classification first.
+  landingDomain  String?
+  landingUrl     String?
+  landingSlug    String?
+  formTitle      String?
+  formId         String?
+  referrer       String?
+  /// utm_source / utm_medium / utm_campaign / utm_term / utm_content.
+  utm            Json?
+
+  /// Multi-category by design — a lead can be UCAT *and* Medicine Application
+  /// *and* Interview at once (spec). Never force a single bucket.
+  categories     String[]  @default([])
+  /// Matched master-catalogue product handles (e.g. ucat-course, mmi-interview).
+  productTags    String[]  @default([])
+  /// AI/heuristic lead score 0-100. Recomputed by the classify job.
+  score          Int?
+  /// Full classifier output (brand reason, per-rule hits, confidence, AI notes).
+  classification Json?
+  classifiedAt   DateTime?
+  /// Lightweight lifecycle: received → classified → onboarded | reenquiry |
+  /// needs_triage | dismissed. Drives the Leads tray + dedupe (ADR 0023).
+  status         String    @default("received")
+  /// Card created on the pipeline for this submission, when one was made.
+  cardId         String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -1459,9 +1508,138 @@ model Lead {
   softDeletedAt       DateTime?
   pendingHardDeleteAt DateTime?
 
+  source_     LeadSource?                    @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  brand       Company?                       @relation("LeadBrand", fields: [brandCompanyId], references: [id], onDelete: SetNull)
+  corrections LeadClassificationCorrection[]
+
   @@index([email])
   @@index([phoneE164])
   @@index([pendingHardDeleteAt])
+  @@index([status])
+  @@index([sourceId])
+  @@index([brandCompanyId])
+  @@index([createdAt])
+}
+
+/// Per-website / per-form API key for the universal POST /api/leads endpoint.
+/// Lets ops onboard a new Contact-Form-7 site from the Integrations page
+/// without a developer (CLAUDE.md §16). The raw key is shown once; we store
+/// only its sha256 + last 4 chars.
+model LeadSource {
+  id             String    @id
+  name           String
+  slug           String    @unique
+  keyHash        String    @unique
+  keyLast4       String
+  /// Forces this brand regardless of domain detection (optional override).
+  defaultBrandId String?
+  active         Boolean   @default(true)
+  /// Denormalised counter for the Integrations dashboard.
+  leadCount      Int       @default(0)
+  lastLeadAt     DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  defaultBrand Company? @relation("LeadSourceBrand", fields: [defaultBrandId], references: [id], onDelete: SetNull)
+  leads        Lead[]
+
+  @@index([active])
+  @@index([defaultBrandId])
+}
+
+/// domain → Company. Editable from the CRM so a new sister brand routes
+/// without code (spec: "no developer involvement to add new rules").
+model BrandDomainRule {
+  id        String  @id
+  /// Host suffix, e.g. "medicmind.co.uk". Matched as host === pattern or
+  /// host endsWith "." + pattern.
+  pattern   String
+  companyId String
+  priority  Int     @default(100)
+  active    Boolean @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([active])
+  @@index([companyId])
+}
+
+/// URL / slug / form-title pattern → product tags + categories (+ optional
+/// brand). The configurable heart of the URL intelligence engine.
+model UrlClassificationRule {
+  id          String   @id
+  label       String
+  /// Lower-cased token matched against slug + URL + form title.
+  pattern     String
+  /// contains | equals | regex.
+  matchType   String   @default("contains")
+  productTags String[] @default([])
+  categories  String[] @default([])
+  brandId     String?
+  priority    Int      @default(100)
+  active      Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  brand Company? @relation("UrlRuleBrand", fields: [brandId], references: [id], onDelete: SetNull)
+
+  @@index([active])
+  @@index([brandId])
+}
+
+/// Master product catalogue (UCAT Course, MMI Interview, A-Level Biology, …).
+/// Drives recognised product tags + the future recommendation engine.
+model ProductCatalogueItem {
+  id       String   @id
+  brandId  String?
+  /// Stable handle used in Lead.productTags (e.g. "ucat-course").
+  handle   String   @unique
+  name     String
+  category String
+  /// Synonyms / spellings that should match this product.
+  aliases  String[] @default([])
+  active   Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  brand Company? @relation("ProductBrand", fields: [brandId], references: [id], onDelete: SetNull)
+
+  @@index([active])
+  @@index([brandId])
+  @@index([category])
+}
+
+/// Staff corrections to a lead's classification — the learning substrate.
+/// Future passes use these to tune rules / few-shot the AI classifier.
+model LeadClassificationCorrection {
+  id        String   @id
+  leadId    String
+  /// brand | categories | productTags | score.
+  field     String
+  fromValue Json?
+  toValue   Json
+  actorId   String?
+  createdAt DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([field])
 }
 
 model Task {
@@ -1512,8 +1690,8 @@ model Team {
   color       String?
   description String?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
   createdById String?
   updatedById String?
   archivedAt  DateTime?
@@ -1528,9 +1706,9 @@ model Team {
 }
 
 model TeamMember {
-  id        String @id
-  teamId    String
-  userId    String
+  id     String @id
+  teamId String
+  userId String
 
   createdAt   DateTime @default(now())
   createdById String?
@@ -1582,14 +1760,14 @@ model ForwardingRule {
 // -----------------------------------------------------------------------------
 
 model CallSummaryTemplate {
-  id          String   @id
-  name        String   @unique
+  id          String  @id
+  name        String  @unique
   description String?
   /// The body shown in the textarea when the agent picks this template.
   /// Free-form markdown-ish text — same shape as the existing hardcoded
   /// quick-start fragments.
   body        String
-  sortOrder   Int      @default(0)
+  sortOrder   Int     @default(0)
 
   // Optional attached PDF. Same byte-storage approach as ContactDocument
   // and BrandingSetting — keeps self-hosted deploys S3-free. `pdfData` is
@@ -1633,7 +1811,7 @@ enum BusinessAccountStatus {
 }
 
 model BusinessAccount {
-  id          String              @id
+  id          String                @id
   kind        BusinessAccountKind
   name        String
   /// URL-safe handle (e.g. `oakwood-primary`, `acme-tutors`). Unique per kind.
@@ -1665,10 +1843,10 @@ model BusinessAccount {
   updatedById String?
   archivedAt  DateTime?
 
-  contacts         BusinessAccountContact[]
-  students         BusinessAccountStudent[]
-  uploadedInvoices UploadedInvoice[]
-  companies        BusinessAccountCompany[]
+  contacts           BusinessAccountContact[]
+  students           BusinessAccountStudent[]
+  uploadedInvoices   UploadedInvoice[]
+  companies          BusinessAccountCompany[]
   /// Mirror of customers on the B2B Invoices Platform (b2b.studymind.co.uk)
   /// that correlate to this account (schools, partnerships, AP/council).
   invoicingCustomers InvoicingCustomer[]
@@ -1724,22 +1902,22 @@ model BusinessAccountStudent {
   id        String @id
   accountId String
 
-  firstName  String
-  lastName   String?
-  yearGroup  String?
+  firstName   String
+  lastName    String?
+  yearGroup   String?
   dateOfBirth DateTime?
 
   /// What the student is getting — free-form text (e.g. "UCAT prep — 10
   /// sessions", "Medical interview package", "Maths weekly tutoring").
-  program            String?
+  program         String?
   /// Hours contracted under the current programme.
-  hoursContracted    Int?
+  hoursContracted Int?
   /// Hours delivered — synced from booking.studymind.co.uk when the
   /// integration is live. Manually editable until then.
-  hoursDelivered     Int?
-  startDate          DateTime?
-  endDate            DateTime?
-  status             BusinessAccountStudentStatus @default(active)
+  hoursDelivered  Int?
+  startDate       DateTime?
+  endDate         DateTime?
+  status          BusinessAccountStudentStatus @default(active)
 
   /// Free-form text. Subjects + notes for at-a-glance triage.
   subjects String?
@@ -1748,8 +1926,8 @@ model BusinessAccountStudent {
   /// Booking site cross-reference. Populated once we hook up the
   /// booking.studymind.co.uk pull (CLAUDE.md §15). Sync writes
   /// `hoursDelivered` + `bookingLastSyncAt`; manual edits remain possible.
-  bookingStudentId   String?
-  bookingLastSyncAt  DateTime?
+  bookingStudentId  String?
+  bookingLastSyncAt DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -2126,29 +2304,29 @@ enum BackfillJobStatus {
 }
 
 model BackfillJob {
-  id              String            @id
-  provider        BackfillProvider
+  id             String            @id
+  provider       BackfillProvider
   /// Null for shared-token providers (Aircall, Slack). For per-agent
   /// providers (Gmail, Trengo) this is the User.id whose token drives the
   /// backfill.
-  agentId         String?
-  windowFrom      DateTime
-  windowTo        DateTime
-  status          BackfillJobStatus @default(pending)
+  agentId        String?
+  windowFrom     DateTime
+  windowTo       DateTime
+  status         BackfillJobStatus @default(pending)
   /// Optional grand-total (set by the worker once it has a count from the
   /// provider — `null` while we are still discovering pages).
-  totalCount      Int?
-  processedCount  Int               @default(0)
-  matchedCount    Int               @default(0)
-  skippedCount    Int               @default(0)
+  totalCount     Int?
+  processedCount Int               @default(0)
+  matchedCount   Int               @default(0)
+  skippedCount   Int               @default(0)
   /// Provider-side cursor for resumability across step retries.
-  lastEventId     String?
-  error           String?
-  startedAt       DateTime?
-  completedAt     DateTime?
+  lastEventId    String?
+  error          String?
+  startedAt      DateTime?
+  completedAt    DateTime?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
 
@@ -2334,7 +2512,7 @@ model InvoicingCustomer {
   country        String?
   vatNumber      String?
   service        String?
-  tags           String[] @default([])
+  tags           String[]                  @default([])
   notes          String?
 
   /// CRM correlation — at most one is set. Set on lookup-or-create so the two
@@ -2453,7 +2631,7 @@ model InvoicingPayment {
   invoiceId   String
 
   amountMinor Int
-  currency    String  @default("GBP")
+  currency    String    @default("GBP")
   method      String?
   reference   String?
   paidAt      DateTime?

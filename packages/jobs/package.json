@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./cost-summary": "./src/cost-summary.ts",
     "./finance/flag-dd-defaulters": "./src/finance/flag-dd-defaulters.ts",
+    "./leads/process-lead": "./src/leads/process-lead.ts",
     "./compliance/audit-log-archive": "./src/compliance/audit-log-archive.ts",
     "./compliance/enforce-retention": "./src/compliance/enforce-retention.ts",
     "./security/safeguarding-sla": "./src/security/safeguarding-sla.ts",

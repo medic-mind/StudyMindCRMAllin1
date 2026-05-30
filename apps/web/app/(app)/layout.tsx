@@ -43,6 +43,7 @@ function buildNav(role: Role): NavItem[] {
     { href: '/', label: 'Dashboard' },
     { href: '/inbox', label: 'Inbox' },
     { href: '/messages', label: 'Messages' },
+    { href: '/leads', label: 'Leads' },
     { href: '/contacts', label: 'Contacts' },
     {
       href: '/accounts',
