@@ -38,11 +38,46 @@ export function CallSummarySection({ cardId, canWrite }: Props) {
     email: false,
   })
   const [slackChannelId, setSlackChannelId] = useState('')
+  const [drafting, setDrafting] = useState(false)
 
   const availability = trpc.card.callSummary.availability.useQuery(
     { cardId },
     { enabled: canWrite },
   )
+  const utils = trpc.useUtils()
+
+  // Per-channel preview — resolves what address / thread / channel each
+  // channel would send to, given the current body. Loaded lazily when the
+  // send popover opens so we don't fan out queries for every card.
+  const previewQuery = trpc.card.callSummary.preview.useQuery(
+    { cardId, body: body.trim().length > 0 ? body : 'preview' },
+    { enabled: canWrite && showSend && body.trim().length > 0 },
+  )
+
+  async function draftFromCall() {
+    setDrafting(true)
+    try {
+      const result = await utils.card.callSummary.draftFromCall.fetch({ cardId })
+      if (result.status === 'no_call') {
+        toast.message('No calls recorded for this contact yet.')
+        return
+      }
+      if (result.status === 'no_transcript') {
+        toast.message(
+          'Latest call has no transcript yet. Enable Aircall AI Assist or wait for Whisper to finish.',
+        )
+        return
+      }
+      setBody(result.text)
+      if (result.outcomeHint) setOutcome(result.outcomeHint as Outcome)
+      setSavedSummaryId(null)
+      toast.success('AI draft ready — edit before saving.')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not draft from call')
+    } finally {
+      setDrafting(false)
+    }
+  }
 
   const add = trpc.card.callSummary.add.useMutation({
     onSuccess: (data) => {
@@ -142,7 +177,17 @@ export function CallSummarySection({ cardId, canWrite }: Props) {
           className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"
           aria-label="Call summary notes"
         />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={drafting}
+            onClick={draftFromCall}
+            title="3-4 line summary from the latest Aircall transcript"
+          >
+            ✨ {drafting ? 'Drafting…' : 'AI draft from call'}
+          </Button>
           <Button
             type="button"
             size="sm"
@@ -171,8 +216,30 @@ export function CallSummarySection({ cardId, canWrite }: Props) {
                   <p className="mb-2 text-xs font-medium text-neutral-500">Send to</p>
                   <div className="flex flex-col gap-1.5">
                     {channelRow('slack', 'Slack', slackReason)}
+                    {previewQuery.data?.slack && !slackReason ? (
+                      <p className="-mt-1 ml-6 text-[10px] text-neutral-500">
+                        → Slack channel{' '}
+                        <code className="font-mono">{previewQuery.data.slack.channelId}</code>
+                      </p>
+                    ) : null}
                     {channelRow('trengo', 'Trengo', trengoReason)}
+                    {previewQuery.data?.trengo && !trengoReason ? (
+                      <p className="-mt-1 ml-6 text-[10px] text-neutral-500">
+                        → {previewQuery.data.trengo.channel} ·{' '}
+                        <span className="font-mono">{previewQuery.data.trengo.phoneE164}</span>
+                      </p>
+                    ) : null}
                     {channelRow('email', 'Email', emailReason)}
+                    {previewQuery.data?.email && !emailReason ? (
+                      <p className="-mt-1 ml-6 text-[10px] text-neutral-500">
+                        →{' '}
+                        <span className="font-mono">{previewQuery.data.email.toAddress}</span>{' '}
+                        from{' '}
+                        <span className="font-mono">{previewQuery.data.email.fromAddress}</span>
+                        <br />
+                        Subject: {previewQuery.data.email.subject}
+                      </p>
+                    ) : null}
                   </div>
                   {!slackReason && channels.slack ? (
                     <label className="mt-2 block text-xs text-neutral-600">
