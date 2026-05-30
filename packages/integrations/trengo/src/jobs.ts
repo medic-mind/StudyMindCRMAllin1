@@ -169,10 +169,13 @@ export const trengoEventReceived = inngest.createFunction(
     }
 
     // Persist Interaction (idempotent on the Trengo eventId).
+    // From here on we know eventName is NOT 'contact.updated' (it returned
+    // above), so we can safely narrow for the helpers that don't model it.
+    const interactionEventName = eventName as InteractionEventName
     const interaction = await step.run('upsert-interaction', async () => {
       return upsertTrengoInteraction({
         eventId,
-        eventName,
+        eventName: interactionEventName,
         envelope,
         occurredAt,
         match,
@@ -207,6 +210,24 @@ export const trengoEventReceived = inngest.createFunction(
           requestId: eventId,
           after: { interactionId: interaction.id, eventName },
         })
+      })
+    }
+
+    // ADR 0020 Phase 6d — when a message arrived with attachments, fan
+    // out to the download worker. We do NOT download inline because the
+    // webhook handler must return 200 fast (CLAUDE.md §7.1). The worker
+    // is idempotent on (interactionId, attachmentId).
+    if (
+      (eventName === 'message.inbound' || eventName === 'message.outbound') &&
+      Array.isArray(envelope.data.attachments) &&
+      envelope.data.attachments.length > 0
+    ) {
+      await step.sendEvent('enqueue-attachment-download', {
+        name: 'trengo/download-attachments.requested',
+        data: {
+          interactionId: interaction.id,
+          attachments: envelope.data.attachments,
+        },
       })
     }
 
@@ -599,10 +620,15 @@ import { backfillConversationHeads } from './backfill-conversation-heads'
 // Interaction still in `pending_send` and re-attempts via the same audited
 // outbound. TOKEN_EXPIRED rows are not retried — the agent must reconnect.
 import { trengoRetryPendingSend } from './retry-pending'
+// ADR 0020 Phase 6d: attachment download worker. Fired when a message
+// webhook carries an attachments array; idempotent on (interactionId,
+// attachmentId). Uploads via SSE:KMS to S3.
+import { trengoDownloadAttachments } from './attachments'
 
 export const FUNCTIONS = [
   trengoEventReceived,
   backfillConversationHeads,
   trengoRetryPendingSend,
+  trengoDownloadAttachments,
   ...TRENGO_BACKFILL_FUNCTIONS,
 ] as const

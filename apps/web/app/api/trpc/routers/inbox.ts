@@ -305,12 +305,36 @@ export const inboxRouter = router({
                 : 'unknown'
           const body =
             typeof payload['body'] === 'string' ? (payload['body'] as string) : null
+          // ADR 0020 Phase 6d — attachments are written by the download
+          // worker as payload.attachments[]; surface enough for the UI to
+          // render chips + link to the internal stream route.
+          const rawAttachments = Array.isArray(payload['attachments'])
+            ? (payload['attachments'] as Array<Record<string, unknown>>)
+            : []
+          const attachments = rawAttachments
+            .filter((a) => a && typeof a === 'object')
+            .map((a) => ({
+              attachmentId:
+                typeof a['attachmentId'] === 'string' ? (a['attachmentId'] as string) : '',
+              filename:
+                typeof a['filename'] === 'string' ? (a['filename'] as string) : 'file',
+              mimeType:
+                typeof a['mimeType'] === 'string'
+                  ? (a['mimeType'] as string)
+                  : 'application/octet-stream',
+              sizeBytes:
+                typeof a['sizeBytes'] === 'number' ? (a['sizeBytes'] as number) : null,
+              status:
+                typeof a['status'] === 'string' ? (a['status'] as string) : 'pending',
+            }))
+            .filter((a) => a.attachmentId !== '')
           return {
             id: r.id,
             occurredAt: r.occurredAt,
             direction,
             body: body ?? r.summary,
             authorId: r.createdById,
+            attachments,
           }
         })
 

@@ -72,6 +72,19 @@ export interface TrengoWebhookEnvelope {
   data: TrengoEventData
 }
 
+export interface TrengoAttachment {
+  /** Trengo's id (numeric) so the S3 key can dedupe across deliveries. */
+  id?: number | string
+  /** Direct download URL Trengo provides. We fetch through `safeFetch`
+   *  so the host is allowlisted (CLAUDE.md §44.2). */
+  url?: string
+  filename?: string
+  /** `mime_type` is the Trengo field name; we also accept `content_type`. */
+  mime_type?: string
+  content_type?: string
+  size?: number
+}
+
 export interface TrengoEventData {
   /** Ticket / conversation id. */
   ticket_id?: number
@@ -87,6 +100,10 @@ export interface TrengoEventData {
     name?: string
   }
   body?: string
+  /** ADR 0020 Phase 6d — message attachments. Trengo's exact shape varies
+   *  by channel; we read both common spellings and normalise in
+   *  `normaliseTrengoAttachment`. */
+  attachments?: TrengoAttachment[]
   /** Outbound metadata we attached on send (CLAUDE.md §11). */
   custom_fields?: {
     interactionId?: string
@@ -97,4 +114,64 @@ export interface TrengoEventData {
   label?: { id: number; name: string }
   // Catch-all so we never silently drop information into the timeline.
   [key: string]: unknown
+}
+
+/**
+ * Normalise an attachment that arrived on a Trengo webhook to a consistent
+ * shape. Returns `null` when the row is missing essentials (url + a name
+ * we can sanitise). Exported for tests.
+ */
+export interface NormalisedTrengoAttachment {
+  /** Stable id used to dedupe on the S3 key. Falls back to a hash of the
+   *  url when Trengo did not include an id. */
+  id: string
+  url: string
+  filename: string
+  mimeType: string
+  sizeBytes: number | null
+}
+
+export function normaliseTrengoAttachment(
+  raw: TrengoAttachment,
+): NormalisedTrengoAttachment | null {
+  if (typeof raw.url !== 'string' || raw.url.trim() === '') return null
+  const filename =
+    typeof raw.filename === 'string' && raw.filename.trim() !== ''
+      ? raw.filename.trim()
+      : deriveFilenameFromUrl(raw.url)
+  if (!filename) return null
+  const id =
+    typeof raw.id === 'string'
+      ? raw.id
+      : typeof raw.id === 'number'
+        ? String(raw.id)
+        : simpleHash(raw.url)
+  const mimeType =
+    typeof raw.mime_type === 'string' && raw.mime_type !== ''
+      ? raw.mime_type
+      : typeof raw.content_type === 'string' && raw.content_type !== ''
+        ? raw.content_type
+        : 'application/octet-stream'
+  const sizeBytes = typeof raw.size === 'number' && raw.size >= 0 ? raw.size : null
+  return { id, url: raw.url, filename, mimeType, sizeBytes }
+}
+
+function deriveFilenameFromUrl(url: string): string | null {
+  try {
+    const u = new URL(url)
+    const tail = u.pathname.split('/').filter(Boolean).pop() ?? null
+    return tail && tail.length > 0 ? decodeURIComponent(tail) : null
+  } catch {
+    return null
+  }
+}
+
+/** Non-cryptographic stable id derived from a URL — enough to dedupe a
+ *  retry of the same delivery onto the same S3 key. */
+function simpleHash(input: string): string {
+  let h = 5381
+  for (let i = 0; i < input.length; i += 1) {
+    h = (h * 33) ^ input.charCodeAt(i)
+  }
+  return (h >>> 0).toString(36)
 }

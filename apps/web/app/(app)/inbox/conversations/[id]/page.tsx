@@ -165,6 +165,47 @@ export default async function ConversationDetailPage({
                   <p className="whitespace-pre-wrap break-words">
                     {m.body ?? '(no body)'}
                   </p>
+                  {m.attachments.length > 0 ? (
+                    <ul className="mt-2 flex flex-wrap gap-1.5">
+                      {m.attachments.map((a) => {
+                        const stored = a.status === 'stored'
+                        const href = stored
+                          ? `/api/internal/trengo-attachments/${m.id}/${encodeURIComponent(a.attachmentId)}`
+                          : null
+                        const label = `${a.filename}${
+                          a.sizeBytes
+                            ? ` · ${Math.round(a.sizeBytes / 1024)} KB`
+                            : ''
+                        }`
+                        if (!href) {
+                          return (
+                            <li
+                              key={a.attachmentId}
+                              className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600"
+                              title={`Attachment ${a.status}`}
+                            >
+                              {label}
+                              <span className="font-mono text-[10px] text-neutral-500">
+                                ({a.status})
+                              </span>
+                            </li>
+                          )
+                        }
+                        return (
+                          <li key={a.attachmentId}>
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-xs text-primary-800 hover:bg-primary-100"
+                            >
+                              {label}
+                            </a>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : null}
                 </li>
               )
             })}
