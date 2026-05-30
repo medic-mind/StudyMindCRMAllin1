@@ -255,6 +255,15 @@ export const EVENT_NAMES = [
   'gmail.reply_requested',
   'trengo.token_connected',
   'trengo.token_connect_requested',
+  // CRM → Trengo outbound reply (procedure-level record; the integration
+  // additionally writes `trengo.message_sent` on success). Mirrors the Gmail
+  // `*.reply_requested` shape.
+  'trengo.reply_requested',
+  // CRM → Trengo ticket state changes. Audited at the integration layer once
+  // the PATCH succeeds; the webhook echo is then linked onto the same
+  // Interaction (jobs.ts linkCrmOutboundEcho) rather than duplicated.
+  'trengo.ticket_close_requested',
+  'trengo.ticket_reopen_requested',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',
@@ -338,6 +347,15 @@ export const INTERACTION_TYPES = [
   'payment',
   'system',
   'slack_summary',
+  // Trengo ticket / label lifecycle (CLAUDE.md §11). These are written by the
+  // Trengo webhook job (packages/integrations/trengo/src/jobs.ts) and exist in
+  // the Prisma InteractionType enum; registered here so the taxonomy and the
+  // schema agree.
+  'ticket_assigned',
+  'ticket_closed',
+  'ticket_reopened',
+  'label_added',
+  'label_removed',
   'family_state_changed',
   'family_pipeline_moved',
   'card_moved',

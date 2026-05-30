@@ -320,7 +320,7 @@ export default async function ContactDetailPage({
             title="Trengo conversations"
             icon={<SmartphoneIcon size={16} />}
           >
-            <TrengoSection conversations={trengo.items} />
+            <TrengoSection contactId={contact.id} conversations={trengo.items} />
           </SectionCard>
 
           {contact.family && (

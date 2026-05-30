@@ -1,11 +1,15 @@
 // Trengo conversations section. RSC card list; the WhatsApp 24h reply
 // deadline is surfaced as an inline pill so agents know when the window
-// closes. (Outbound reply itself goes through the existing inbox flow; we
-// link there rather than duplicate the composer.)
+// closes. Per-card Close / Reopen actions are mounted as a client island
+// (TrengoConversationActions) so the state change PATCHes Trengo via the
+// audited outbound and updates immediately on success.
 
 import type { TrengoConversation } from '@/lib/view-models/contact-channels'
 
+import { TrengoConversationActions } from './TrengoConversationActions'
+
 interface Props {
+  contactId: string
   conversations: TrengoConversation[]
 }
 
@@ -16,7 +20,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   web_chat: 'Web chat',
 }
 
-export function TrengoSection({ conversations }: Props): JSX.Element {
+export function TrengoSection({ contactId, conversations }: Props): JSX.Element {
   if (conversations.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-neutral-300 p-4 text-sm text-neutral-600">
@@ -68,6 +72,11 @@ export function TrengoSection({ conversations }: Props): JSX.Element {
             {c.latestSnippet && (
               <p className="mt-1 text-sm text-neutral-800">{c.latestSnippet}</p>
             )}
+            <TrengoConversationActions
+              contactId={contactId}
+              conversationId={c.conversationId}
+              ticketStatus={c.ticketStatus}
+            />
           </li>
         )
       })}

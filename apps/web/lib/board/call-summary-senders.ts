@@ -53,38 +53,24 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
     },
 
     async trengo({ body, contactId }): Promise<ChannelResult> {
-      // Resolve the most recent Trengo conversation for this contact: the
-      // latest message Interaction carrying a ticketId + channel.
-      const contact = await db.contact.findFirst({
-        where: { id: contactId, deletedAt: null },
-        select: { phoneE164: true },
-      })
-      if (!contact?.phoneE164) {
-        return { status: 'skipped', detail: 'Contact has no phone number' }
-      }
-      const recent = await db.interaction.findFirst({
-        where: { contactId, type: 'message', deletedAt: null },
-        orderBy: { occurredAt: 'desc' },
-        select: { payload: true },
-      })
-      const payload = (recent?.payload ?? {}) as Record<string, unknown>
-      const ticketId = typeof payload['ticketId'] === 'number' ? payload['ticketId'] : null
-      const channel = typeof payload['channel'] === 'string' ? payload['channel'] : null
-      if (!ticketId || !channel) {
+      // Resolve the contact's most recent Trengo conversation (ticket +
+      // channel). Shared with the inbox / contact reply path so the lookup
+      // lives in one place (packages/integrations/trengo/src/conversations.ts).
+      const { resolveActiveTrengoConversation } = await import(
+        '@studymind/integration-trengo/conversations'
+      )
+      const conv = await resolveActiveTrengoConversation(db, contactId)
+      if (!conv) {
         return { status: 'skipped', detail: 'No Trengo conversation for this contact' }
       }
 
       const { sendMessage } = await import('@studymind/integration-trengo/outbound')
-      const { isTrengoChannel } = await import('@studymind/integration-trengo/types')
-      if (!isTrengoChannel(channel)) {
-        return { status: 'skipped', detail: 'Unknown Trengo channel' }
-      }
       try {
         const result = await sendMessage({
           contactId,
           agentId,
-          ticketId,
-          channel,
+          ticketId: conv.ticketId,
+          channel: conv.channel,
           body,
           requestId,
         })

@@ -1,9 +1,10 @@
 // AI reply draft panel. CLAUDE.md §4 (drafts are clearly labelled), §18.
 //
 // Mounted on Contact detail timeline as an inline client island. Agents
-// pick a channel and a goal, generate a draft, edit, then confirm. Send
-// itself goes through the existing per-channel outbound path (Trengo,
-// Gmail) — this component never sends; it produces an editable draft.
+// pick a channel and a goal, generate a draft, edit, then send. Sending a
+// Trengo channel (WhatsApp / SMS / web-chat) goes through the existing
+// audited outbound path via `interaction.trengo.reply`; email keeps its own
+// dedicated reply composer (EmailReplyPanel) so it is omitted here.
 
 'use client'
 
@@ -13,6 +14,13 @@ import { toast } from 'sonner'
 import { trpc } from '@/lib/trpc/client'
 
 type Channel = 'email' | 'whatsapp' | 'sms' | 'web_chat'
+
+const CHANNEL_LABEL: Record<Channel, string> = {
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+  sms: 'SMS',
+  web_chat: 'Web chat',
+}
 
 export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
   const [channel, setChannel] = useState<Channel>('email')
@@ -34,12 +42,32 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
     },
   })
 
+  const send = trpc.interaction.trengo.reply.useMutation({
+    onSuccess: (out) => {
+      setDraft('')
+      setError(null)
+      toast.success(`Reply sent via ${CHANNEL_LABEL[out.channel as Channel] ?? 'Trengo'}`)
+    },
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not send reply')
+    },
+  })
+
   const handleGenerate = () => {
     if (!goal.trim()) {
       setError('Describe the goal of the reply.')
       return
     }
     generate.mutate({ interactionId, goal, channel })
+  }
+
+  const handleSend = () => {
+    if (!draft.trim()) {
+      setError('Nothing to send — generate or write a draft first.')
+      return
+    }
+    send.mutate({ interactionId, body: draft })
   }
 
   return (
@@ -97,13 +125,34 @@ export function DraftReplyPanel({ interactionId }: { interactionId: string }) {
       )}
 
       {draft && (
-        <textarea
-          aria-label="Draft reply"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={8}
-          className="mt-3 w-full rounded border border-neutral-300 bg-white p-2 font-mono text-sm"
-        />
+        <>
+          <textarea
+            aria-label="Draft reply"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={8}
+            className="mt-3 w-full rounded border border-neutral-300 bg-white p-2 font-mono text-sm"
+          />
+          {channel === 'email' ? (
+            <p className="mt-2 text-xs text-neutral-500">
+              Send this email from the contact’s email composer above.
+            </p>
+          ) : (
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={send.isPending}
+                className="rounded bg-primary-600 px-3 py-1 text-white hover:bg-primary-700 disabled:opacity-50"
+              >
+                {send.isPending ? 'Sending…' : `Send via ${CHANNEL_LABEL[channel]}`}
+              </button>
+              <span className="text-xs text-neutral-500">
+                Replies to the contact’s most recent Trengo conversation.
+              </span>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

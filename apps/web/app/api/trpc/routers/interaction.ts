@@ -11,6 +11,7 @@ import {
   runDraft,
   type ReplyChannel,
 } from '@studymind/ai'
+import { BusinessError } from '@studymind/core/errors'
 import {
   InteractionCreateInput,
   type InteractionListItem,
@@ -459,7 +460,217 @@ export const interactionRouter = router({
         return result
       }),
   }),
+
+  // CLAUDE.md §11 — Trengo outbound reply (WhatsApp / SMS / web-chat / email
+  // via Trengo). Reuses the existing audited `sendMessage` outbound, which is
+  // two-phase (pending_send → sent) and idempotent on requestId. The agent
+  // never has to know the Trengo ticket id — we resolve the contact's active
+  // conversation. Virtual Assistants draft but cannot send (ADR 0014 / §20.1).
+  trengo: router({
+    reply: auditedProcedure
+      .input(
+        z.object({
+          interactionId: z.string(),
+          body: z.string().trim().min(1).max(4_000),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (
+          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+        ) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send messages' })
+        }
+
+        const seed = await ctx.db.interaction.findFirst({
+          where: { id: input.interactionId, deletedAt: null },
+          select: { id: true, contactId: true },
+        })
+        if (!seed?.contactId) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'No contact is linked to this message; cannot reply.',
+          })
+        }
+        await enforceRestrictedAccess(ctx, seed.contactId, 'trengo-reply')
+
+        // Lazy imports keep the integration out of the unrelated tRPC bundle.
+        const { resolveActiveTrengoConversation } = await import(
+          '@studymind/integration-trengo/conversations'
+        )
+        const conv = await resolveActiveTrengoConversation(ctx.db, seed.contactId)
+        if (!conv) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'No open Trengo conversation for this contact to reply on.',
+          })
+        }
+
+        const { sendMessage } = await import('@studymind/integration-trengo/outbound')
+        try {
+          const result = await sendMessage({
+            contactId: seed.contactId,
+            agentId: user.id,
+            ticketId: conv.ticketId,
+            channel: conv.channel,
+            body: input.body,
+            requestId: ctx.requestId,
+          })
+
+          await ctx.audit({
+            action: 'trengo.reply_requested',
+            target: { type: 'Contact', id: seed.contactId },
+            after: {
+              interactionId: result.interactionId,
+              trengoMessageId: result.trengoMessageId,
+              channel: conv.channel,
+            },
+          })
+
+          return {
+            interactionId: result.interactionId,
+            trengoMessageId: result.trengoMessageId,
+            channel: conv.channel,
+          }
+        } catch (err) {
+          // The Interaction stays in `pending_send` (handled inside
+          // sendMessage) so the reply is recoverable. Surface a clean,
+          // non-paging error to the agent (a Trengo hiccup is not our bug).
+          if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message:
+                'Your Trengo token has expired — reconnect it in Account → Trengo to send.',
+            })
+          }
+          const name = err instanceof Error ? err.name : ''
+          if (err instanceof BusinessError || name === 'TrengoApiError') {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message:
+                'Trengo could not accept the reply right now. It is saved — try again shortly.',
+            })
+          }
+          throw err
+        }
+      }),
+
+    // CLAUDE.md §11 — close / reopen a Trengo conversation from the CRM.
+    // Reuses the new audited `closeConversation` / `reopenConversation`
+    // outbound, which writes a CRM-sourced Interaction the inbound webhook
+    // echo then links to (no duplicate Interactions). Virtual Assistants
+    // cannot trigger state changes.
+    close: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          ticketId: z.number().int().positive(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        gateTrengoStateChange(user.role)
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-close')
+        const { closeConversation } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        return runTrengoStateChange({
+          action: 'close',
+          run: () =>
+            closeConversation({
+              contactId: input.contactId,
+              agentId: user.id,
+              ticketId: input.ticketId,
+              requestId: ctx.requestId,
+            }),
+          audit: (interactionId) =>
+            ctx.audit({
+              action: 'trengo.ticket_close_requested',
+              target: { type: 'Contact', id: input.contactId },
+              after: { interactionId, ticketId: input.ticketId },
+            }),
+        })
+      }),
+
+    reopen: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          ticketId: z.number().int().positive(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        gateTrengoStateChange(user.role)
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-reopen')
+        const { reopenConversation } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        return runTrengoStateChange({
+          action: 'reopen',
+          run: () =>
+            reopenConversation({
+              contactId: input.contactId,
+              agentId: user.id,
+              ticketId: input.ticketId,
+              requestId: ctx.requestId,
+            }),
+          audit: (interactionId) =>
+            ctx.audit({
+              action: 'trengo.ticket_reopen_requested',
+              target: { type: 'Contact', id: input.contactId },
+              after: { interactionId, ticketId: input.ticketId },
+            }),
+        })
+      }),
+  }),
 })
+
+function gateTrengoStateChange(role: string): void {
+  if (
+    !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(role)
+  ) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'role cannot change conversation state',
+    })
+  }
+}
+
+interface RunTrengoStateChangeInput<R extends { interactionId: string }> {
+  action: 'close' | 'reopen'
+  run: () => Promise<R>
+  audit: (interactionId: string) => Promise<string>
+}
+
+async function runTrengoStateChange<R extends { interactionId: string }>(
+  input: RunTrengoStateChangeInput<R>,
+): Promise<R> {
+  try {
+    const result = await input.run()
+    await input.audit(result.interactionId)
+    return result
+  } catch (err) {
+    if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message:
+          'Your Trengo token has expired — reconnect it in Account → Trengo to act on conversations.',
+      })
+    }
+    const name = err instanceof Error ? err.name : ''
+    if (err instanceof BusinessError || name === 'TrengoApiError') {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          input.action === 'close'
+            ? 'Trengo could not close the conversation right now. Try again shortly.'
+            : 'Trengo could not reopen the conversation right now. Try again shortly.',
+      })
+    }
+    throw err
+  }
+}
 
 /**
  * For a family-scoped list, return the contact ids whose timeline rows must
