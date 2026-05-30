@@ -5,8 +5,14 @@ import { describe, expect, it } from 'vitest'
 import {
   ACTIONS,
   ROLES,
+  canCreateUsers,
+  canDeactivateUsers,
   canGrantRole,
+  canGrantUserManage,
+  canManageUsers,
   canRevokeRole,
+  hasAction,
+  isGrantableAction,
   normaliseRole,
   pickPrimaryRole,
   roleCan,
@@ -35,13 +41,17 @@ describe('roleCan', () => {
     expect(roleCan('senior_manager', 'tenant.config.write')).toBe(false)
   })
 
-  it('manager runs sales + finance ops; no deactivation, no settings write', () => {
+  it('manager runs sales + finance ops; manages users but cannot create or deactivate them', () => {
     expect(roleCan('manager', 'contact.write')).toBe(true)
     expect(roleCan('manager', 'family.merge')).toBe(true)
     expect(roleCan('manager', 'charge.create_link')).toBe(true)
     expect(roleCan('manager', 'charge.refund')).toBe(true)
     expect(roleCan('manager', 'subscription.cancel')).toBe(true)
-    expect(roleCan('manager', 'user.invite')).toBe(true)
+    // ADR 0021: managers can edit details + reset passwords and delegate that
+    // right, but cannot create accounts or deactivate users.
+    expect(roleCan('manager', 'user.manage')).toBe(true)
+    expect(roleCan('manager', 'user.grant_manage')).toBe(true)
+    expect(roleCan('manager', 'user.invite')).toBe(false)
     expect(roleCan('manager', 'user.deactivate')).toBe(false)
     expect(roleCan('manager', 'settings.write')).toBe(false)
     expect(roleCan('manager', 'dsar.export')).toBe(false)
@@ -122,6 +132,51 @@ describe('normaliseRole', () => {
   it('returns null for unknown values', () => {
     expect(normaliseRole('intern')).toBe(null)
     expect(normaliseRole('')).toBe(null)
+  })
+})
+
+describe('user-management capabilities (ADR 0021)', () => {
+  it('only CEO and Senior Manager can create accounts', () => {
+    expect(canCreateUsers('ceo')).toBe(true)
+    expect(canCreateUsers('senior_manager')).toBe(true)
+    expect(canCreateUsers('manager')).toBe(false)
+    expect(canCreateUsers('sales_executive')).toBe(false)
+    expect(canCreateUsers('virtual_assistant')).toBe(false)
+  })
+
+  it('CEO, Senior Manager and Manager can manage users by role', () => {
+    for (const r of ['ceo', 'senior_manager', 'manager'] as Role[]) {
+      expect(canManageUsers(r, [])).toBe(true)
+    }
+    expect(canManageUsers('sales_executive', [])).toBe(false)
+    expect(canManageUsers('virtual_assistant', [])).toBe(false)
+  })
+
+  it('a granted user.manage permission lifts a lower role into managing users', () => {
+    expect(canManageUsers('sales_executive', ['user.manage'])).toBe(true)
+    expect(canManageUsers('virtual_assistant', ['user.manage'])).toBe(true)
+    // An unrelated grant does not help.
+    expect(canManageUsers('sales_executive', ['something.else'])).toBe(false)
+  })
+
+  it('only grantable actions can be lifted by a grant', () => {
+    expect(isGrantableAction('user.manage')).toBe(true)
+    expect(isGrantableAction('user.invite')).toBe(false)
+    // user.invite is never grantable — a grant string cannot create accounts.
+    expect(hasAction('sales_executive', ['user.invite'], 'user.invite')).toBe(false)
+  })
+
+  it('CEO, Senior Manager and Manager can delegate the manage permission', () => {
+    expect(canGrantUserManage('ceo')).toBe(true)
+    expect(canGrantUserManage('senior_manager')).toBe(true)
+    expect(canGrantUserManage('manager')).toBe(true)
+    expect(canGrantUserManage('sales_executive')).toBe(false)
+  })
+
+  it('only CEO and Senior Manager can deactivate users', () => {
+    expect(canDeactivateUsers('ceo')).toBe(true)
+    expect(canDeactivateUsers('senior_manager')).toBe(true)
+    expect(canDeactivateUsers('manager')).toBe(false)
   })
 })
 

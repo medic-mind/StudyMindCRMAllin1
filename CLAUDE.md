@@ -560,7 +560,9 @@ Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `
 | `dsar.export` | ✓ | ✓ | — | — | — |
 | `audit.read` | ✓ | ✓ | ✓ | — | — |
 | `settings.write` | ✓ | ✓ | — | — | — |
-| `user.invite` | ✓ | ✓ | ✓ | — | — |
+| `user.invite` | ✓ | ✓ | — | — | — |
+| `user.manage` | ✓ | ✓ | ✓ | — | — |
+| `user.grant_manage` | ✓ | ✓ | ✓ | — | — |
 | `user.deactivate` | ✓ | ✓ | — | — | — |
 | `user.role.grant_senior_manager` | ✓ | — | — | — | — |
 | `user.role.grant_ceo` | ✓ | — | — | — | — |
@@ -569,6 +571,8 @@ Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `
 | `tenant.config.write` | ✓ | — | — | — | — |
 
 The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch (`pnpm policy:check`).
+
+**User management (ADR 0021).** Account **creation** is CEO + Senior Manager only (`user.invite`; public self-service sign-up is disabled). **Editing** details, changing email, and **resetting passwords** require `user.manage` — held by role by CEO/Senior Manager/Manager, and additionally **grantable to any individual** via a `UserPermission` row (the only member of `GRANTABLE_ACTIONS`). `user.grant_manage` (CEO/Senior Manager/Manager) governs who may delegate that permission. Deactivation and role changes stay CEO + Senior Manager. A non-(CEO/Senior Manager) actor may never act on a CEO or Senior Manager account. New accounts and admin resets issue a **temporary password** (forced reset on first login via `mustResetPassword`) delivered in a branded welcome email plus a credentials PDF (`packages/core/src/email/`, Resend with HTML + attachments).
 
 ---
 
@@ -1004,6 +1008,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a new background job | `packages/jobs/` |
 | Change reconciliation logic | `packages/core/finance/reconcile.ts` |
 | Update RBAC rules | `packages/core/auth/policies.ts` |
+| Manage staff users (create / edit / reset password / delegate `user.manage`) | Settings → Users (`/settings/users`). tRPC `admin.users.*` (`apps/web/app/api/trpc/routers/admin/users.ts`); welcome email + credentials PDF in `packages/core/src/email/`; ADR 0021. Account creation is CEO + Senior Manager only; self-service sign-up is disabled. |
 | Add a runbook | `docs/runbooks/` |
 | Record an architecture decision | `docs/adr/` |
 | Adjust a brand token | `packages/ui/tokens/` |

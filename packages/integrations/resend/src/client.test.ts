@@ -31,5 +31,34 @@ describe('resend.sendEmail', () => {
     expect(body.subject).toBe('test')
     expect(body.text).toBe('hello')
     expect(body.to).toEqual(['dpo@studymind.co.uk'])
+    // Optional keys are omitted when not supplied.
+    expect(body.html).toBeUndefined()
+    expect(body.attachments).toBeUndefined()
+  })
+
+  it('includes html and base64 attachments when supplied', async () => {
+    let captured: { init?: RequestInit } = {}
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      captured = { init }
+      return new Response(JSON.stringify({ id: 'r-2' }), { status: 200 })
+    }) as unknown as typeof fetch
+    const r = await sendEmail({
+      to: 'newbie@studymind.co.uk',
+      subject: 'Welcome',
+      body: 'plain fallback',
+      html: '<p>Welcome</p>',
+      attachments: [
+        { filename: 'welcome.pdf', content: 'JVBERi0=', contentType: 'application/pdf' },
+      ],
+      apiKey: 'rs_xxx',
+      fetchImpl,
+    })
+    expect(r.status).toBe('sent')
+    const body = JSON.parse((captured.init?.body as string) ?? '{}')
+    expect(body.html).toBe('<p>Welcome</p>')
+    expect(body.text).toBe('plain fallback')
+    expect(body.attachments).toEqual([
+      { filename: 'welcome.pdf', content: 'JVBERi0=', content_type: 'application/pdf' },
+    ])
   })
 })

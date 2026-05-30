@@ -146,49 +146,18 @@ beforeEach(() => {
   _resetAuthRateLimit()
 })
 
-describe('signUp', () => {
-  it('creates a user, an email token, and sends a verification email', async () => {
+describe('signUp (disabled — ADR 0021)', () => {
+  it('never creates an account, sends mail, or writes an audit entry', async () => {
     const res = await signUp({
       email: 'New@Example.COM',
       password: 'CorrectHorse-Battery-1',
       name: 'New User',
     })
-    expect(res).toEqual({ ok: true })
-    expect(state.users).toHaveLength(1)
-    expect(state.users[0]!.email).toBe('new@example.com')
-    expect(state.users[0]!.passwordHash).toBeTruthy()
-    expect(state.users[0]!.emailVerifiedAt).toBeNull()
-    expect(state.evt).toHaveLength(1)
-    expect(mocks.sendEmail).toHaveBeenCalledOnce()
-    expect(mocks.writeAudit).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ action: 'auth.signup_started' }),
-    )
-  })
-
-  it('returns the generic error when an account with a password already exists', async () => {
-    state.users.push({
-      id: 'u1',
-      email: 'taken@example.com',
-      name: 'Existing',
-      passwordHash: 'hash',
-      emailVerifiedAt: new Date(),
-      failedSignInAttempts: 0,
-      lockedUntil: null,
-      mustResetPassword: false,
-    })
-    const res = await signUp({
-      email: 'taken@example.com',
-      password: 'CorrectHorse-Battery-1',
-      name: 'Other',
-    })
     expect(res.ok).toBe(false)
+    expect(state.users).toHaveLength(0)
+    expect(state.evt).toHaveLength(0)
     expect(mocks.sendEmail).not.toHaveBeenCalled()
-  })
-
-  it('rejects weak passwords', async () => {
-    const res = await signUp({ email: 'a@b.com', password: 'short', name: 'X' })
-    expect(res.ok).toBe(false)
+    expect(mocks.writeAudit).not.toHaveBeenCalled()
   })
 })
 

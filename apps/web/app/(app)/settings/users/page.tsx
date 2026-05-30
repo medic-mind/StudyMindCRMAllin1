@@ -1,8 +1,9 @@
-// Settings → Users + Roles. RSC, ceo / senior_manager only. CLAUDE.md §20, ADR 0014.
+// Settings → Users. RSC. Visible to anyone who can manage users (ADR 0021):
+// CEO, Senior Manager, Manager, or an individual granted `user.manage`.
 //
 // Lists users with their roles, last sign-in, and status. Pending invites
-// surface in their own section. Action buttons are filtered by what the
-// caller can grant or revoke.
+// surface in their own section. Per-row actions are filtered by the caller's
+// capabilities; the server re-checks each one.
 
 import { PageHeader } from '@/components/shell/page-header'
 import { Button } from '@/components/ui/button'
@@ -13,7 +14,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { formatRoleLabel } from '@/lib/format/role-label'
 
-import { InviteDialog, UserRoleControls } from './controls'
+import { CreateUserDialog, UserRowControls, type AccessFlags } from './controls'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,8 @@ interface PageSearchParams {
   cursor?: string
 }
 
+const MANAGE_BY_ROLE = new Set(['ceo', 'senior_manager', 'manager'])
+
 export default async function UsersSettingsPage({
   searchParams,
 }: {
@@ -29,8 +32,10 @@ export default async function UsersSettingsPage({
 }) {
   const sp = await searchParams
   const me = await getCurrentUser()
-  const role = me?.role ?? 'virtual_assistant'
-  if (role !== 'ceo' && role !== 'senior_manager') {
+  const caller = await createServerCaller()
+  const access = (await caller.admin.users.myAccess()) as AccessFlags
+
+  if (!access.canManage) {
     return (
       <>
         <PageHeader
@@ -41,13 +46,13 @@ export default async function UsersSettingsPage({
           ]}
         />
         <p className="text-sm text-neutral-600">
-          Restricted to administrators.
+          You do not have permission to manage users. Ask a CEO, Senior Manager, or Manager to grant
+          you access.
         </p>
       </>
     )
   }
 
-  const caller = await createServerCaller()
   const data = await caller.admin.users.list({
     search: sp.q && sp.q.trim() ? sp.q.trim() : undefined,
     cursor: sp.cursor,
@@ -57,13 +62,9 @@ export default async function UsersSettingsPage({
   const pending = data.items.filter((u) => u.status === 'invited')
   const active = data.items.filter((u) => u.status !== 'invited')
 
-  // A CEO is allowed to step down only once another CEO exists. Surface a
-  // friendly warning if they are the only one. The router normalises legacy
-  // role values to canonical before returning, so a check on `'ceo'` covers
-  // both freshly-migrated and legacy rows.
   const ceos = data.items.filter((u) => u.roles.some((r) => r.role === 'ceo'))
   const lastCeoWarning =
-    role === 'ceo' && ceos.length <= 1
+    access.role === 'ceo' && ceos.length <= 1
       ? 'You are the only CEO. Add another before stepping down.'
       : null
 
@@ -100,9 +101,16 @@ export default async function UsersSettingsPage({
           </Button>
         </form>
         <div className="ml-auto">
-          <InviteDialog actorRole={role} />
+          <CreateUserDialog access={access} />
         </div>
       </div>
+
+      {!access.canCreate && (
+        <p className="mt-2 text-xs text-neutral-500">
+          Only a CEO or Senior Manager can create accounts. You can edit details and reset passwords
+          for the users you manage.
+        </p>
+      )}
 
       {pending.length > 0 && (
         <div className="mt-6 rounded-md border border-neutral-200 bg-white">
@@ -124,15 +132,18 @@ export default async function UsersSettingsPage({
                   <Td className="font-mono text-xs">{u.email}</Td>
                   <Td>{u.name ?? '—'}</Td>
                   <Td>
-                    <RoleChips roles={u.roles.map((r) => r.role)} />
+                    <RoleChips roles={u.roles.map((r) => r.role)} extraPermissions={u.extraPermissions} />
                   </Td>
                   <Td>
-                    <UserRoleControls
+                    <UserRowControls
                       userId={u.id}
+                      email={u.email}
+                      name={u.name}
                       currentRoles={u.roles.map((r) => r.role)}
+                      extraPermissions={u.extraPermissions}
                       status={u.status}
-                      actorRole={role}
                       isSelf={u.id === me?.id}
+                      access={access}
                     />
                   </Td>
                 </Tr>
@@ -145,7 +156,7 @@ export default async function UsersSettingsPage({
       <div className="mt-6 rounded-md border border-neutral-200 bg-white">
         {active.length === 0 ? (
           <div className="p-6 text-sm text-neutral-600">
-            No users found — invite a colleague to get started.
+            No users found — {access.canCreate ? 'add a colleague to get started.' : 'nothing to show.'}
           </div>
         ) : (
           <Table>
@@ -165,7 +176,7 @@ export default async function UsersSettingsPage({
                   <Td className="font-mono text-xs">{u.email}</Td>
                   <Td>{u.name ?? '—'}</Td>
                   <Td>
-                    <RoleChips roles={u.roles.map((r) => r.role)} />
+                    <RoleChips roles={u.roles.map((r) => r.role)} extraPermissions={u.extraPermissions} />
                   </Td>
                   <Td className="text-xs text-neutral-600">
                     {u.lastSignInAt
@@ -173,15 +184,18 @@ export default async function UsersSettingsPage({
                       : '—'}
                   </Td>
                   <Td>
-                    <StatusChip status={u.status} />
+                    <StatusChip status={u.status} awaitingFirstSignIn={u.awaitingFirstSignIn} />
                   </Td>
                   <Td>
-                    <UserRoleControls
+                    <UserRowControls
                       userId={u.id}
+                      email={u.email}
+                      name={u.name}
                       currentRoles={u.roles.map((r) => r.role)}
+                      extraPermissions={u.extraPermissions}
                       status={u.status}
-                      actorRole={role}
                       isSelf={u.id === me?.id}
+                      access={access}
                     />
                   </Td>
                 </Tr>
@@ -194,23 +208,54 @@ export default async function UsersSettingsPage({
   )
 }
 
-function RoleChips({ roles }: { roles: string[] }) {
-  if (roles.length === 0) return <span className="text-neutral-400">none</span>
+function RoleChips({
+  roles,
+  extraPermissions,
+}: {
+  roles: string[]
+  extraPermissions: string[]
+}) {
+  const showManagerBadge =
+    extraPermissions.includes('user.manage') && !roles.some((r) => MANAGE_BY_ROLE.has(r))
+  if (roles.length === 0 && !showManagerBadge) {
+    return <span className="text-neutral-400">none</span>
+  }
   return (
     <span className="space-x-1">
       {roles.map((r) => (
-        <span
-          key={r}
-          className="inline-block rounded bg-neutral-100 px-2 py-0.5 text-xs"
-        >
+        <span key={r} className="inline-block rounded bg-neutral-100 px-2 py-0.5 text-xs">
           {formatRoleLabel(r)}
         </span>
       ))}
+      {showManagerBadge && (
+        <span
+          className="inline-block rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-900"
+          title="Granted permission to manage users"
+        >
+          User manager
+        </span>
+      )}
     </span>
   )
 }
 
-function StatusChip({ status }: { status: string }) {
+function StatusChip({
+  status,
+  awaitingFirstSignIn,
+}: {
+  status: string
+  awaitingFirstSignIn?: boolean
+}) {
+  if (status === 'active' && awaitingFirstSignIn) {
+    return (
+      <span
+        className="inline-block rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800"
+        title="Created — awaiting first sign-in and password reset"
+      >
+        awaiting first sign-in
+      </span>
+    )
+  }
   const tone =
     status === 'active'
       ? 'bg-green-100 text-green-800'

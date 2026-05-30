@@ -16,7 +16,8 @@ describe('sign-in page surface', () => {
     expect(formSrc).toMatch(/id="email"/)
     expect(formSrc).toMatch(/id="password"/)
     expect(formSrc).toMatch(/\/forgot/)
-    expect(formSrc).toMatch(/\/sign-up/)
+    // Public sign-up is disabled (ADR 0021) — the form must not link to it.
+    expect(formSrc).not.toMatch(/\/sign-up/)
   })
 
   it('maps known NextAuth error codes to friendly copy', () => {

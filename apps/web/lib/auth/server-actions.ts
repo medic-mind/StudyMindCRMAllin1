@@ -72,91 +72,18 @@ export interface SignUpInput {
   name: string
 }
 
-export async function signUp(input: SignUpInput): Promise<ActionResult> {
-  const email = input.email.trim().toLowerCase()
-  const name = input.name.trim()
-  const password = input.password
-  if (!email || !name || !password) {
-    return { ok: false, error: 'Email, name and password are required.' }
+/**
+ * Public self-service sign-up is DISABLED (ADR 0021). Accounts are created
+ * only by a CEO or Senior Manager through `admin.users.create`, which issues a
+ * temporary password and a welcome email + PDF. This stub remains so the
+ * contract is explicit and a regression test can assert sign-up stays closed.
+ */
+export async function signUp(_input: SignUpInput): Promise<ActionResult> {
+  return {
+    ok: false,
+    error:
+      'Self-service sign-up is disabled. Please ask a CEO or Senior Manager to create your account.',
   }
-
-  const ip = await clientIp()
-  const okIp = await requireRateLimit('signup:ip', ip)
-  const okEmail = await requireRateLimit('signup:email', email)
-  if (!okIp || !okEmail) {
-    return { ok: false, error: 'Too many attempts. Please wait a few minutes and try again.' }
-  }
-
-  try {
-    assertStrongPassword(password)
-  } catch (e) {
-    if (e instanceof BusinessError) return { ok: false, error: e.message }
-    throw e
-  }
-
-  // Idempotent: if a User row already exists with a passwordHash, return the
-  // generic error. If a row exists without one (e.g. seeded super_admin
-  // pending first sign-up) we attach the password.
-  const existing = await db.user.findUnique({ where: { email } })
-  if (existing?.passwordHash) {
-    return {
-      ok: false,
-      error: 'If that email is available, a verification message has been sent.',
-    }
-  }
-
-  const passwordHash = await hashPassword(password)
-  const userId = existing?.id ?? createId()
-
-  if (existing) {
-    await db.user.update({
-      where: { id: existing.id },
-      data: { passwordHash, name: existing.name ?? name, mustResetPassword: false },
-    })
-  } else {
-    await db.user.create({
-      data: {
-        id: userId,
-        email,
-        name,
-        passwordHash,
-        emailVerifiedAt: null,
-        mustResetPassword: false,
-      },
-    })
-  }
-
-  const rawToken = generateToken()
-  await db.emailVerificationToken.create({
-    data: {
-      id: createId(),
-      userId,
-      tokenHash: hashToken(rawToken),
-      expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
-    },
-  })
-
-  const link = `${appUrl()}/verify?token=${encodeURIComponent(rawToken)}`
-  await sendEmail({
-    to: email,
-    subject: 'Verify your StudyMind CRM account',
-    body:
-      `Hello ${name},\n\n` +
-      `Please verify your StudyMind CRM email by following the link below. ` +
-      `It expires in 24 hours.\n\n${link}\n\n` +
-      `If you did not request this, you can ignore this email.\n\n— StudyMind CRM`,
-  }).catch((err) => {
-    logger.error({ err }, 'auth.signup.email_send_failed')
-  })
-
-  await writeAuditLogEntry(db, {
-    actorId: userId,
-    action: 'auth.signup_started',
-    target: { type: 'User', id: userId },
-    after: { email },
-  })
-
-  return { ok: true }
 }
 
 /* -------------------------------------------------------------------------- */

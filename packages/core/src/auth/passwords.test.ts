@@ -4,6 +4,7 @@ import { BusinessError } from '../errors'
 
 import {
   assertStrongPassword,
+  generateTemporaryPassword,
   generateToken,
   hashPassword,
   hashToken,
@@ -51,6 +52,23 @@ describe('passwords', () => {
     it('accepts a strong password', () => {
       expect(() => assertStrongPassword('GoodPassword123')).not.toThrow()
       expect(() => assertStrongPassword('another-Strong-1')).not.toThrow()
+    })
+  })
+
+  describe('generateTemporaryPassword', () => {
+    it('always produces a value that passes the strength policy', () => {
+      for (let i = 0; i < 200; i += 1) {
+        const pw = generateTemporaryPassword()
+        expect(pw.length).toBe(16)
+        expect(() => assertStrongPassword(pw)).not.toThrow()
+      }
+    })
+
+    it('avoids ambiguous characters and is unique per call', () => {
+      const a = generateTemporaryPassword()
+      const b = generateTemporaryPassword()
+      expect(a).not.toEqual(b)
+      expect(a).not.toMatch(/[0O1lI]/)
     })
   })
 })

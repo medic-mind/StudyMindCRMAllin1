@@ -20,11 +20,28 @@ export class ResendApiError extends Error {
   }
 }
 
+/**
+ * A file to attach to an outbound email. `content` is the raw bytes
+ * base64-encoded — Resend's documented attachment shape. Used by the user
+ * welcome / password-reset flows to carry the credentials PDF (ADR 0021).
+ */
+export interface SendEmailAttachment {
+  filename: string
+  /** Base64-encoded file bytes. */
+  content: string
+  /** Optional MIME type, e.g. 'application/pdf'. */
+  contentType?: string
+}
+
 export interface SendEmailInput {
   to: string | string[]
   subject: string
-  /** Plaintext body. HTML is not used by the system-email paths today. */
+  /** Plaintext body. Always set so every message has a text/plain part. */
   body: string
+  /** Optional HTML body. When present Resend renders this and keeps `body` as the text fallback. */
+  html?: string
+  /** Optional file attachments (e.g. the welcome-credentials PDF). */
+  attachments?: SendEmailAttachment[]
   /** From override. Defaults to RESEND_FROM_ADDRESS. */
   from?: string
   /** Test seam. */
@@ -46,7 +63,26 @@ export interface SendEmailResult {
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const apiKey = input.apiKey ?? process.env['RESEND_API_KEY']
   if (!apiKey) return { status: 'skipped', id: null }
-  const from = input.from ?? process.env['RESEND_FROM_ADDRESS'] ?? 'crm@studymind.co.uk'
+  const from =
+    input.from ?? process.env['RESEND_FROM_ADDRESS'] ?? 'StudyMind CRM <info@studymind.co.uk>'
+
+  // Resend accepts `text` and/or `html`, plus an optional `attachments` array
+  // of { filename, content (base64) }. We only include the optional keys when
+  // present so the existing plaintext-only callers are unaffected.
+  const payload: Record<string, unknown> = {
+    from,
+    to: Array.isArray(input.to) ? input.to : [input.to],
+    subject: input.subject,
+    text: input.body,
+  }
+  if (input.html) payload['html'] = input.html
+  if (input.attachments && input.attachments.length > 0) {
+    payload['attachments'] = input.attachments.map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      ...(a.contentType ? { content_type: a.contentType } : {}),
+    }))
+  }
 
   const fetchImpl = input.fetchImpl ?? safeFetch
   const res = await fetchImpl(RESEND_API_URL, {
@@ -55,12 +91,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({
-      from,
-      to: Array.isArray(input.to) ? input.to : [input.to],
-      subject: input.subject,
-      text: input.body,
-    }),
+    body: JSON.stringify(payload),
   })
 
   if (!res.ok) {
