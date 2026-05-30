@@ -11,6 +11,7 @@
     "./jobs": "./src/jobs.ts",
     "./outbound": "./src/outbound.ts",
     "./connect": "./src/connect.ts",
+    "./conversations": "./src/conversations.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {

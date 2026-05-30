@@ -341,7 +341,7 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 **Channels.** WhatsApp, SMS, email, web chat. Each has its own per-channel quirk (WhatsApp 24-hour window, SMS character cost, email threading via `Message-ID`). Channel-specific rules in `packages/integrations/trengo/channels/`.
 
-**Outbound.** Always go through `outbound.ts` so we attach metadata (Interaction id, agent id) to the Trengo message custom fields. This lets us reconcile Trengo events back to our timeline without ambiguity.
+**Outbound.** Always go through `outbound.ts` so we attach metadata (Interaction id, agent id) to the Trengo message custom fields. This lets us reconcile Trengo events back to our timeline without ambiguity. Agents reply to a conversation from the CRM via `interaction.trengo.reply` (Sales Executive+; Virtual Assistant cannot send), which resolves the contact's active ticket+channel via the shared `resolveActiveTrengoConversation` helper (`packages/integrations/trengo/src/conversations.ts`) and calls `sendMessage`. The roadmap to a full two-way operational layer (conversation head, real-time SSE, Communication Centre, assign/close/tag sync) is ADR 0020 + `docs/audit/trengo-operational-layer-audit.md`.
 
 **Token rotation.** Per-agent tokens rotate every 90 days. Renewal flow lives in agent settings; we surface a banner 14 days before expiry. **Expired tokens fail closed:** outbound aborts with a `TOKEN_EXPIRED` BusinessError, the Interaction stays in `pending_send`, and the agent sees an inline banner. We never fall back to a shared service token — it would break agent attribution.
 
@@ -995,6 +995,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a field to Contact | `prisma/schema.prisma`, then `packages/core/contact/types.ts` |
 | Change the timeline display | `apps/web/components/timeline/` |
 | Change a per-channel customer view | `apps/web/lib/view-models/contact-channels.ts` (ADR 0017) |
+| Reply to a Trengo conversation from the CRM | tRPC `interaction.trengo.reply`; resolver `resolveActiveTrengoConversation` in `packages/integrations/trengo/src/conversations.ts`; reuses `outbound.ts` `sendMessage`. Send button on `components/contact/draft-reply-panel.tsx`. Roadmap: ADR 0020. |
 | Start a backfill | `packages/core/src/backfill/index.ts` (workers in `packages/integrations/<svc>/backfill.ts`) |
 | Tweak an AI prompt | `packages/ai/prompts/<task>.ts` |
 | Add a new background job | `packages/jobs/` |
