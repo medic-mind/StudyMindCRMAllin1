@@ -21,12 +21,11 @@
 > | 7a | Outbound retry queue (`trengo/retry-pending-send`, 5-min cron, capped attempts, TOKEN_EXPIRED skip) | #97 | `3bb028e` |
 >
 > **Open follow-ups**:
-> - **6c** — contact-field suggestions on inbound `contact.updated` events
->   (must never silent-merge per §3 — surface for human confirmation).
 > - **6d** — message attachments to S3, reusing the `packages/integrations/gmail/src/s3.ts` pattern.
 >
 > **Newly landed (post-PR #98):**
 > - **6b** — contact-level tag aggregation derived from the Conversation head; chip row on the contact detail page.
+> - **6c** — contact-field suggestions from inbound `contact.updated`; `ContactFieldSuggestion` table; review queue at `/inbox/suggestions` (Manager+ accepts/rejects, never silent-merge per §3).
 > - **7b** — Redis pub/sub fan-out for multi-instance SSE (lazy-init, falls back to in-process when `REDIS_URL` is unset).
 
 This is a full audit of the StudyMind CRM as it relates to Trengo, plus the

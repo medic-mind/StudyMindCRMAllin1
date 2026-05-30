@@ -283,6 +283,12 @@ export const EVENT_NAMES = [
   'migration.conversation_head_backfill_requested',
   'migration.conversation_head_backfill_started',
   'migration.conversation_head_backfill_completed',
+  // ADR 0020 Phase 6c — contact-field suggestions from upstream providers.
+  // We NEVER silent-merge (CLAUDE.md §3); these events track the human
+  // review of a Trengo `contact.updated` (or other source).
+  'contact.suggestion_created',
+  'contact.suggestion_accepted',
+  'contact.suggestion_rejected',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

@@ -12,6 +12,10 @@ import { inngest } from '@studymind/jobs'
 
 import { applyEventToConversation } from './conversation-head'
 import {
+  buildContactSuggestionWrites,
+  type TrengoContactProposal,
+} from './contact-suggestions'
+import {
   isTrengoChannel,
   normaliseTrengoEvent,
   type TrengoChannel,
@@ -107,6 +111,60 @@ export const trengoEventReceived = inngest.createFunction(
           })
           return { skipped: true, reason: 'crm_outbound_echo', linkedTo: linked }
         }
+      }
+    }
+
+    // ADR 0020 Phase 6c — `contact.updated` from Trengo. NEVER silently
+    // applied to the Contact (CLAUDE.md §3). We write
+    // ContactFieldSuggestion rows for any field that differs and let the
+    // staff review queue surface them. Idempotent on (source, sourceEventId,
+    // field). The event is its own terminal — it does NOT also become an
+    // Interaction (the merger has no concept of contact-meta events).
+    if (eventName === 'contact.updated') {
+      let suggestionResult: { written: number; superseded: number } = {
+        written: 0,
+        superseded: 0,
+      }
+      if (match.contactId) {
+        suggestionResult = await step.run('persist-suggestions', async () =>
+          persistContactSuggestions({
+            contactId: match.contactId as string,
+            sourceEventId: eventId,
+            proposal: {
+              name: envelope.data.contact?.name ?? null,
+              email: envelope.data.contact?.email ?? null,
+              phone: envelope.data.contact?.phone ?? null,
+            },
+          }),
+        )
+        if (suggestionResult.written > 0) {
+          await step.run('audit-suggestions', async () =>
+            writeAuditLogEntry(db, {
+              actorId: null,
+              action: 'contact.suggestion_created',
+              target: { type: 'Contact', id: match.contactId as string },
+              requestId: eventId,
+              after: {
+                source: 'trengo',
+                sourceEventId: eventId,
+                written: suggestionResult.written,
+                superseded: suggestionResult.superseded,
+              },
+            }),
+          )
+        }
+      }
+      await step.run('mark-processed', async () => {
+        await db.providerEvent.update({
+          where: { id: providerEventRowId },
+          data: { processedAt: new Date() },
+        })
+      })
+      return {
+        ok: true,
+        contactUpdatedSuggestions: suggestionResult.written,
+        superseded: suggestionResult.superseded,
+        matched: !!match.contactId,
       }
     }
 
@@ -255,6 +313,89 @@ async function linkCrmOutboundEcho(input: LinkEchoInput): Promise<string | null>
   return candidate.id
 }
 
+interface PersistContactSuggestionsInput {
+  contactId: string
+  sourceEventId: string
+  proposal: TrengoContactProposal
+}
+
+/**
+ * Diff the proposal against the current Contact and persist a row per
+ * differing field. Marks any previously-pending suggestion for the same
+ * (contactId, field) as `superseded` so the queue never shows stale
+ * proposals against a newer one. Idempotent on (source, sourceEventId,
+ * field) — a webhook replay returns the same set of rows.
+ */
+async function persistContactSuggestions(
+  input: PersistContactSuggestionsInput,
+): Promise<{ written: number; superseded: number }> {
+  const current = await db.contact.findUnique({
+    where: { id: input.contactId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phoneE164: true,
+    },
+  })
+  if (!current) return { written: 0, superseded: 0 }
+
+  const writes = buildContactSuggestionWrites({
+    current,
+    proposal: input.proposal,
+    sourceEventId: input.sourceEventId,
+  })
+  if (writes.length === 0) return { written: 0, superseded: 0 }
+
+  // Supersede older pending suggestions for the same (contactId, field).
+  // We do this BEFORE the upsert so the queue never briefly shows two
+  // pending rows for the same field.
+  const supersede = await db.contactFieldSuggestion.updateMany({
+    where: {
+      contactId: input.contactId,
+      field: { in: writes.map((w) => w.field) },
+      status: 'pending',
+      // Don't touch the rows we are about to upsert (idempotent replay).
+      NOT: {
+        AND: [
+          { source: 'trengo' },
+          { sourceEventId: input.sourceEventId },
+        ],
+      },
+    },
+    data: { status: 'superseded', updatedAt: new Date() },
+  })
+
+  // Upsert each write idempotently on the unique key.
+  for (const w of writes) {
+    await db.contactFieldSuggestion.upsert({
+      where: {
+        source_sourceEventId_field: {
+          source: w.source,
+          sourceEventId: w.sourceEventId,
+          field: w.field,
+        },
+      },
+      create: {
+        id: w.id,
+        contactId: w.contactId,
+        source: w.source,
+        sourceEventId: w.sourceEventId,
+        field: w.field,
+        proposedValue: w.proposedValue,
+        currentValue: w.currentValue,
+      },
+      // A replay should NOT change `currentValue` — that was captured at
+      // first sight. The proposed value is also stable for a given event,
+      // so the update is effectively a no-op touch of `updatedAt`.
+      update: { updatedAt: new Date() },
+    })
+  }
+
+  return { written: writes.length, superseded: supersede.count }
+}
+
 interface TrengoMatch {
   contactId: string | null
   familyId: string | null
@@ -297,7 +438,10 @@ async function matchTrengoEvent(envelope: TrengoWebhookEnvelope): Promise<Trengo
 
 interface UpsertTrengoInteractionInput {
   eventId: string
-  eventName: TrengoEventName
+  /** `contact.updated` is its own terminal branch above and never reaches
+   *  this upsert, so we narrow the type to make the downstream switches
+   *  exhaustive at compile time. */
+  eventName: InteractionEventName
   envelope: TrengoWebhookEnvelope
   occurredAt: Date
   match: TrengoMatch
@@ -394,8 +538,13 @@ async function upsertTrengoInteraction(
   }
 }
 
+// `contact.updated` is handled in its own branch (it never becomes an
+// Interaction), so these helpers narrow the input to the Interaction-bound
+// subset of event names — the switch stays exhaustive at compile time.
+type InteractionEventName = Exclude<TrengoEventName, 'contact.updated'>
+
 function mapTrengoEventToDbType(
-  name: TrengoEventName,
+  name: InteractionEventName,
 ):
   | 'message'
   | 'ticket_assigned'
@@ -420,7 +569,7 @@ function mapTrengoEventToDbType(
   }
 }
 
-function buildSummary(name: TrengoEventName, channel: TrengoChannel | null): string {
+function buildSummary(name: InteractionEventName, channel: TrengoChannel | null): string {
   const ch = channel ?? 'message'
   switch (name) {
     case 'message.inbound':
