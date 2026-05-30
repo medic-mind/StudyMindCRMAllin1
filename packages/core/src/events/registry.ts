@@ -277,6 +277,12 @@ export const EVENT_NAMES = [
   'backfill.failed',
   'backfill.cancelled',
   'interaction.recording_streamed',
+  // ADR 0020 Phase 2c: one-shot Conversation-head backfill. Distinct from
+  // provider backfills (which fill Interaction) — this re-derives queryable
+  // state from rows we already have.
+  'migration.conversation_head_backfill_requested',
+  'migration.conversation_head_backfill_started',
+  'migration.conversation_head_backfill_completed',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
@@ -324,6 +330,10 @@ export const INNGEST_EVENT_NAMES = [
   // async like every other provider), plus the nightly events-feed reconcile.
   'invoicing/event.received',
   'invoicing/reconcile.requested',
+  // ADR 0020 Phase 2c — one-shot conversation-head backfill. Self-recursive
+  // (the function reschedules with a cursor) so a single Inngest event name
+  // covers the initial trigger and every continuation.
+  'migration/backfill-conversation-heads.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]

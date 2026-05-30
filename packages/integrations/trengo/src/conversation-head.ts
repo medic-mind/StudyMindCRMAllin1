@@ -12,6 +12,8 @@
 
 import { createId } from '@paralleldrive/cuid2'
 
+import { publishConversationUpdate } from '@studymind/core/realtime'
+
 import { isTrengoChannel, type TrengoChannel, type TrengoEventName } from './types'
 
 /** Subset of PrismaClient used here — keeps this file unit-testable. */
@@ -118,17 +120,36 @@ export async function applyEventToConversation(
   const existing = await db.conversation.findUnique({
     where: { trengoTicketId: input.ticketId },
   })
+  let row: ConversationRow
+  let changed = true
   if (!existing) {
-    return db.conversation.create({
-      data: buildCreateForEvent(input),
+    row = await db.conversation.create({ data: buildCreateForEvent(input) })
+  } else {
+    const patch = mergeEvent(existing, input)
+    if (Object.keys(patch).length === 0) {
+      row = existing
+      changed = false
+    } else {
+      row = await db.conversation.update({
+        where: { trengoTicketId: input.ticketId },
+        data: patch,
+      })
+    }
+  }
+  // ADR 0020 Phase 3 — fan out to in-process SSE subscribers when anything
+  // about the head changed. Skip no-op merges so we do not nudge the UI for
+  // a duplicate webhook that already converged.
+  if (changed) {
+    publishConversationUpdate({
+      id: row.id,
+      trengoTicketId: row.trengoTicketId,
+      lastMessageAt: row.lastMessageAt
+        ? row.lastMessageAt.toISOString()
+        : null,
+      contactId: row.contactId,
     })
   }
-  const patch = mergeEvent(existing, input)
-  if (Object.keys(patch).length === 0) return existing
-  return db.conversation.update({
-    where: { trengoTicketId: input.ticketId },
-    data: patch,
-  })
+  return row
 }
 
 function buildCreateForEvent(input: ApplyEventInput): ConversationCreateInput {
