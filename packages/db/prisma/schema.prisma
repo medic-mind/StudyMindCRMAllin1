@@ -259,6 +259,7 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   oauthStates             OAuthState[]
   totpRecoveryCodes       TotpRecoveryCode[]
+  assignedCards           Card[]                   @relation("CardAssignee")
 
   @@index([email])
 }
@@ -761,6 +762,15 @@ model Card {
   /// (sales_executive+). A change writes a `card_description_changed`
   /// Interaction on the backing Contact.
   description String?
+  /// Optional CRM user assigned to the card. Surfaced as an avatar on
+  /// the board and a picker in the modal side rail. Sales Executive+.
+  assigneeId  String?
+  /// Optional due date. Surfaced as a chip on the board (red when
+  /// overdue) and editable from the modal side rail.
+  dueAt       DateTime?
+  /// Priority 1 (highest) – 4. Null when unset. Surfaced as a P-chip on
+  /// the board and selectable from the modal side rail.
+  priority    Int?
   /// 1-based order within (boardId, stageId).
   position    Int
   archivedAt  DateTime?
@@ -768,14 +778,17 @@ model Card {
   updatedAt   DateTime  @updatedAt
   createdById String?
 
-  board   Board         @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  stage   PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
-  contact Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  subject Subject?      @relation(fields: [subjectId], references: [id])
-  labels  CardLabel[]
+  board    Board         @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  stage    PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  contact  Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  subject  Subject?      @relation(fields: [subjectId], references: [id])
+  assignee User?         @relation("CardAssignee", fields: [assigneeId], references: [id])
+  labels   CardLabel[]
 
   @@index([boardId, stageId, position])
   @@index([contactId])
+  @@index([assigneeId])
+  @@index([dueAt])
 }
 
 /// Coloured label that can be attached to cards (ADR 0018). Three defaults

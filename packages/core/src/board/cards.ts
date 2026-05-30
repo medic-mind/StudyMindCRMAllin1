@@ -35,6 +35,9 @@ const cardSelect = {
   stageId: true,
   contactId: true,
   subjectId: true,
+  assigneeId: true,
+  dueAt: true,
+  priority: true,
   position: true,
 } as const
 
@@ -309,7 +312,13 @@ export async function moveCard(
 
 export async function updateCard(
   db: Db,
-  input: { id: string; subjectId?: string | null },
+  input: {
+    id: string
+    subjectId?: string | null
+    assigneeId?: string | null
+    dueAt?: Date | null
+    priority?: number | null
+  },
   ctx: ActorCtx,
 ): Promise<CardSummary> {
   const existing = await db.card.findFirst({
@@ -325,11 +334,23 @@ export async function updateCard(
     })
     if (!subject) throw new BusinessError('SUBJECT_NOT_FOUND', 'Subject not found')
   }
+  if (input.assigneeId) {
+    const user = await db.user.findFirst({
+      where: { id: input.assigneeId, deletedAt: null, isActive: true },
+      select: { id: true },
+    })
+    if (!user) {
+      throw new BusinessError('CARD_NOT_FOUND', 'Assignee not found or inactive')
+    }
+  }
 
   const updated = await db.card.update({
     where: { id: input.id },
     data: {
       ...(input.subjectId !== undefined ? { subjectId: input.subjectId } : {}),
+      ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+      ...(input.dueAt !== undefined ? { dueAt: input.dueAt } : {}),
+      ...(input.priority !== undefined ? { priority: input.priority } : {}),
     },
     select: cardSelect,
   })

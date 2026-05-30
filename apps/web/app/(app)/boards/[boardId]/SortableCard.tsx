@@ -34,6 +34,11 @@ interface CardData {
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
+  dueAt?: Date | string | null
+  priority?: number | null
+  assigneeId?: string | null
+  assigneeName?: string | null
+  assigneeEmail?: string | null
 }
 interface QuickAction {
   id: string

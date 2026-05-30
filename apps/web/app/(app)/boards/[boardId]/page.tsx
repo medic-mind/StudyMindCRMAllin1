@@ -76,6 +76,11 @@ export default async function BoardPage({ params }: PageProps) {
     subject: c.subject,
     labels: c.labels,
     lastActivityAt: c.lastActivityAt,
+    dueAt: c.dueAt,
+    priority: c.priority,
+    assigneeId: c.assigneeId,
+    assigneeName: c.assigneeName,
+    assigneeEmail: c.assigneeEmail,
   }))
   const dndStages = stages.map((s) => ({
     id: s.id,

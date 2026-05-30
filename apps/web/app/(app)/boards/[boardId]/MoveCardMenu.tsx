@@ -76,6 +76,7 @@ export function MoveCardMenu({
       stages: g.stages.filter((s) => s.id !== currentStageId),
     }))
     .filter((g) => g.stages.length > 0)
+  const noOtherBoards = crossBoardStages.length === 0
   if (sameBoardTargets.length === 0 && crossBoardTargets.length === 0) return null
 
   return (
@@ -112,6 +113,11 @@ export function MoveCardMenu({
             ))}
           </optgroup>
         ))}
+        {noOtherBoards && (
+          <option disabled value="">
+            ─ Create another board to enable cross-pipeline moves
+          </option>
+        )}
       </select>
     </label>
   )

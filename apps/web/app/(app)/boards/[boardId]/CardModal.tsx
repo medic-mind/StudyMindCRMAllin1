@@ -24,6 +24,7 @@ import { trpc } from '@/lib/trpc/client'
 import { resolveStageColor } from '../../pipeline/stage-color'
 import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 import { CallSummarySection } from './CallSummarySection'
+import { CardSidebar } from './CardSidebar'
 import { MoveCardMenu } from './MoveCardMenu'
 import { QuickActionButtons } from './QuickActionButtons'
 
@@ -118,10 +119,10 @@ export function CardModal({
         role="dialog"
         aria-modal="true"
         aria-label="Card detail"
-        className="w-full max-w-2xl rounded-lg border border-neutral-200 bg-white shadow-xl"
+        className="grid w-full max-w-4xl overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl lg:grid-cols-[minmax(0,1fr)_18rem]"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-start justify-between gap-3 border-b border-neutral-100 px-5 py-3">
+        <header className="col-span-full flex items-start justify-between gap-3 border-b border-neutral-100 px-5 py-3">
           <div className="min-w-0">
             {card ? (
               <>
@@ -275,6 +276,27 @@ export function CardModal({
               />
             </section>
           </div>
+        ) : null}
+
+        {card ? (
+          <CardSidebar
+            card={{
+              id: card.id,
+              contactId: card.contactId,
+              contactName: card.contactName,
+              contactEmail: card.contactEmail,
+              contactPhone: card.contactPhone,
+              stage: card.stage,
+              board: card.board,
+              assigneeId: card.assigneeId,
+              assigneeName: card.assigneeName,
+              assigneeEmail: card.assigneeEmail,
+              dueAt: card.dueAt,
+              priority: card.priority,
+              labels: card.labels,
+            }}
+            canWrite={canWrite}
+          />
         ) : null}
       </div>
     </div>

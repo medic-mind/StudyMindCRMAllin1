@@ -51,6 +51,27 @@ interface CardData {
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
+  dueAt?: Date | string | null
+  priority?: number | null
+  assigneeId?: string | null
+  assigneeName?: string | null
+  assigneeEmail?: string | null
+}
+
+const PRIORITY_CHIP_TONE: Record<number, string> = {
+  1: 'bg-red-600 text-white',
+  2: 'bg-orange-500 text-white',
+  3: 'bg-amber-500 text-white',
+  4: 'bg-neutral-400 text-white',
+}
+
+function initialsOf(name: string | null | undefined, email: string | null | undefined) {
+  const s = (name ?? email ?? '?').trim()
+  if (!s) return '?'
+  const parts = s.split(/[\s@]+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase()
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase()
 }
 
 interface Props {
@@ -107,8 +128,18 @@ export function BoardCard({
         className="absolute inset-0 z-0 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
       />
       <div className="relative z-10 pointer-events-none">
-        <div className="min-w-0 truncate font-medium text-neutral-900 group-hover:text-primary-700">
-          {card.contactName}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 truncate font-medium text-neutral-900 group-hover:text-primary-700">
+            {card.contactName}
+          </div>
+          {card.priority != null && PRIORITY_CHIP_TONE[card.priority] && (
+            <span
+              className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${PRIORITY_CHIP_TONE[card.priority]}`}
+              title={`Priority P${card.priority}`}
+            >
+              P{card.priority}
+            </span>
+          )}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           {card.subject ? <Badge tone="info">{card.subject.name}</Badge> : null}
@@ -122,11 +153,36 @@ export function BoardCard({
             </span>
           ))}
         </div>
-        {card.lastActivityAt ? (
-          <p className="mt-1.5 font-mono text-[10px] tabular-nums text-neutral-500">
-            {formatRelativeTime(new Date(card.lastActivityAt), now)}
-          </p>
-        ) : null}
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-neutral-500">
+          {card.assigneeId && (
+            <span
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary-100 text-[9px] font-semibold text-primary-800"
+              title={card.assigneeName ?? card.assigneeEmail ?? 'Assigned'}
+            >
+              {initialsOf(card.assigneeName, card.assigneeEmail)}
+            </span>
+          )}
+          {card.dueAt && (
+            <span
+              className={
+                new Date(card.dueAt).getTime() < now.getTime()
+                  ? 'font-semibold text-red-700'
+                  : 'text-neutral-600'
+              }
+              title="Due date"
+            >
+              ⏱{' '}
+              {new Intl.DateTimeFormat('en-GB', { dateStyle: 'short' }).format(
+                new Date(card.dueAt),
+              )}
+            </span>
+          )}
+          {card.lastActivityAt ? (
+            <span className="font-mono tabular-nums">
+              {formatRelativeTime(new Date(card.lastActivityAt), now)}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {/* Per-card interactive controls — sit on top of the click target. */}
