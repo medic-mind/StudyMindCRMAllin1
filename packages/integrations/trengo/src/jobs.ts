@@ -158,6 +158,23 @@ export const trengoEventReceived = inngest.createFunction(
     // the queryable state. We only upsert when the event carries a numeric
     // ticket id; otherwise there is nothing to key on.
     if (typeof envelope.data.ticket_id === 'number') {
+      // Phase 6: resolve the raw Trengo assignee id to a CRM User if we have
+      // the mapping (User.trengoUserId — stamped at token-connect time).
+      const rawAssignee =
+        typeof envelope.data.assignee_id === 'number'
+          ? envelope.data.assignee_id
+          : null
+      let assigneeUserId: string | null = null
+      if (rawAssignee !== null) {
+        const u = await step.run('resolve-assignee', async () =>
+          db.user.findUnique({
+            where: { trengoUserId: rawAssignee },
+            select: { id: true },
+          }),
+        )
+        assigneeUserId = u?.id ?? null
+      }
+
       await step.run('upsert-conversation-head', async () =>
         applyEventToConversation(db, {
           ticketId: envelope.data.ticket_id as number,
@@ -166,10 +183,8 @@ export const trengoEventReceived = inngest.createFunction(
           channel: envelope.data.channel ?? null,
           contactId: match.contactId,
           familyId: match.familyId,
-          trengoAssigneeId:
-            typeof envelope.data.assignee_id === 'number'
-              ? envelope.data.assignee_id
-              : null,
+          trengoAssigneeId: rawAssignee,
+          assigneeUserId,
           subject:
             typeof envelope.data['subject'] === 'string'
               ? (envelope.data['subject'] as string)

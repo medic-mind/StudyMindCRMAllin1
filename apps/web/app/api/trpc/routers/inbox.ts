@@ -416,6 +416,27 @@ export const inboxRouter = router({
           },
         })
 
+        // ADR 0020 Phase 6 — resolve assignee user ids to display names in
+        // one round-trip rather than N+1 joins. Empty when no row carries an
+        // assignee.
+        const assigneeIds = Array.from(
+          new Set(
+            rows
+              .map((r) => r.assigneeUserId)
+              .filter((id): id is string => typeof id === 'string'),
+          ),
+        )
+        const assignees =
+          assigneeIds.length > 0
+            ? await ctx.db.user.findMany({
+                where: { id: { in: assigneeIds } },
+                select: { id: true, name: true, email: true },
+              })
+            : []
+        const assigneeNameById = new Map(
+          assignees.map((u) => [u.id, u.name ?? u.email] as const),
+        )
+
         const hasMore = rows.length > input.limit
         const sliced = hasMore ? rows.slice(0, input.limit) : rows
         const items = sliced.map((r) => ({
@@ -426,6 +447,9 @@ export const inboxRouter = router({
           channel: r.channel,
           status: r.status,
           assigneeUserId: r.assigneeUserId,
+          assigneeName: r.assigneeUserId
+            ? (assigneeNameById.get(r.assigneeUserId) ?? null)
+            : null,
           lastMessageAt: r.lastMessageAt,
           unreadCount: r.unreadCount,
           subject: r.subject,

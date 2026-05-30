@@ -228,6 +228,9 @@ export default async function ConversationsPage({
                             {replyWindowOpen ? '24h window open' : '24h window closed'}
                           </span>
                         ) : null}
+{c.assigneeName ? (
+                          <Badge tone="neutral">{c.assigneeName}</Badge>
+                        ) : null}
                         {c.tags.slice(0, 3).map((t) => (
                           <Badge key={t} tone="neutral">
                             {t}
