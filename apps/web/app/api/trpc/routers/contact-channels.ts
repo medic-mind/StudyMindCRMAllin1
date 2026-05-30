@@ -20,6 +20,7 @@ import {
   slackMentionsForContact,
   tasksForContact,
   trengoConversationsForContact,
+  trengoTagsForContact,
 } from '@/lib/view-models/contact-channels'
 
 import { protectedProcedure, router } from '@/lib/trpc/builders'
@@ -79,6 +80,14 @@ export const contactChannelsRouter = router({
         cursor: input.cursor ?? null,
       }),
     ),
+
+  // ADR 0020 Phase 6b — aggregate the contact's Trengo conversation tags
+  // into a single, frequency-ordered list. Read-only; no mutation surface
+  // here (label updates land on the Conversation head, which propagates
+  // through this view automatically).
+  trengoTags: protectedProcedure
+    .input(ContactOnlyInput)
+    .query(({ ctx, input }) => trengoTagsForContact(ctx.db, input.contactId)),
 
   tasks: protectedProcedure
     .input(ContactOnlyInput)

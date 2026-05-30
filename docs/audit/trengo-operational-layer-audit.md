@@ -21,15 +21,13 @@
 > | 7a | Outbound retry queue (`trengo/retry-pending-send`, 5-min cron, capped attempts, TOKEN_EXPIRED skip) | #97 | `3bb028e` |
 >
 > **Open follow-ups**:
-> - **6b** — contact-level tag sync from Trengo labels. Per-conversation tags
->   are already on the `Conversation` head; the design decision pending is
->   whether to introduce a contact-level `Tag` model or keep tagging at the
->   conversation level only.
 > - **6c** — contact-field suggestions on inbound `contact.updated` events
 >   (must never silent-merge per §3 — surface for human confirmation).
 > - **6d** — message attachments to S3, reusing the `packages/integrations/gmail/src/s3.ts` pattern.
-> - **7b** — Redis pub/sub for multi-instance SSE fan-out (single-instance
->   Railway today; the in-process bus suffices until horizontal scale).
+>
+> **Newly landed (post-PR #98):**
+> - **6b** — contact-level tag aggregation derived from the Conversation head; chip row on the contact detail page.
+> - **7b** — Redis pub/sub fan-out for multi-instance SSE (lazy-init, falls back to in-process when `REDIS_URL` is unset).
 
 This is a full audit of the StudyMind CRM as it relates to Trengo, plus the
 architecture and phased plan to make the CRM a complete operational layer on
