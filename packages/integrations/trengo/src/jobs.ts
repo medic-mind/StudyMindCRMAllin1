@@ -10,6 +10,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { applyEventToConversation } from './conversation-head'
 import {
   isTrengoChannel,
   normaliseTrengoEvent,
@@ -149,6 +150,33 @@ export const trengoEventReceived = inngest.createFunction(
           after: { interactionId: interaction.id, eventName },
         })
       })
+    }
+
+    // ADR 0020 Phase 2 — upsert the conversation head so the inbox and the
+    // comms centre can answer "all unassigned open WhatsApp conversations"
+    // with a single indexed query. Bodies stay in `Interaction`; this row is
+    // the queryable state. We only upsert when the event carries a numeric
+    // ticket id; otherwise there is nothing to key on.
+    if (typeof envelope.data.ticket_id === 'number') {
+      await step.run('upsert-conversation-head', async () =>
+        applyEventToConversation(db, {
+          ticketId: envelope.data.ticket_id as number,
+          eventName,
+          occurredAt,
+          channel: envelope.data.channel ?? null,
+          contactId: match.contactId,
+          familyId: match.familyId,
+          trengoAssigneeId:
+            typeof envelope.data.assignee_id === 'number'
+              ? envelope.data.assignee_id
+              : null,
+          subject:
+            typeof envelope.data['subject'] === 'string'
+              ? (envelope.data['subject'] as string)
+              : null,
+          label: envelope.data.label?.name ?? null,
+        }),
+      )
     }
 
     await step.run('mark-processed', async () => {

@@ -12,6 +12,7 @@
     "./outbound": "./src/outbound.ts",
     "./connect": "./src/connect.ts",
     "./conversations": "./src/conversations.ts",
+    "./conversation-head": "./src/conversation-head.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {

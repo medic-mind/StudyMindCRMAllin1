@@ -445,6 +445,9 @@ model Contact {
   familyMembers     FamilyMember[]
   billingForFamily  Family[]           @relation("BillingContact")
   interactions      Interaction[]      @relation("ContactInteractions")
+  /// Conversation heads (ADR 0020) — first-class Trengo tickets reaching
+  /// this contact. The bodies of each message still live in `interactions`.
+  conversations     Conversation[]     @relation("ContactConversations")
   safeguardingFlags SafeguardingFlag[]
   encryptedFields   EncryptedField[]
   cards             Card[]
@@ -625,6 +628,8 @@ model Family {
   members          FamilyMember[]
   financialAccount FinancialAccount?
   interactions     Interaction[]               @relation("FamilyInteractions")
+  /// Conversation heads (ADR 0020).
+  conversations    Conversation[]              @relation("FamilyConversations")
   bookings         Booking[]
   subscriptions    StripeSubscription[]
   stripeCustomers  StripeCustomer[]
@@ -919,6 +924,72 @@ model Interaction {
   @@index([familyId, occurredAt])
   @@index([type, occurredAt])
   @@index([pendingHardDeleteAt])
+}
+
+/// First-class conversation head for Trengo tickets (ADR 0020, Phase 2).
+///
+/// The polymorphic `Interaction` table stays the source of truth for
+/// individual message bodies; this row carries the conversation's *current*
+/// state as indexed columns so the inbox can answer "all unassigned open
+/// WhatsApp conversations" with a single index hit. Upserted by the Trengo
+/// webhook job on every event, and by the audited outbound when the CRM
+/// initiates an action.
+///
+/// CLAUDE.md §11. Phase-2-additive — Phase 1 surfaces continue to derive
+/// state from Interaction grouping until the comms-centre cutover.
+model Conversation {
+  id               String             @id
+  /// Trengo's ticket id (conversation thread). Unique — one head per ticket.
+  trengoTicketId   Int                @unique
+  /// CRM Contact we resolved this conversation to (phone first, email
+  /// second). Null when the inbound didn't match any contact yet.
+  contactId        String?
+  familyId         String?
+  /// whatsapp | sms | email | web_chat. Null until the first event with a
+  /// recognised channel arrives.
+  channel          String?
+  status           ConversationStatus @default(open)
+  /// CRM user the conversation is assigned to (resolved from trengoAssigneeId
+  /// once we add User.trengoUserId; null otherwise).
+  assigneeUserId   String?
+  /// Raw Trengo user id from `ticket.assigned` events. Retained even when we
+  /// can resolve to a CRM user so the mapping is auditable.
+  trengoAssigneeId Int?
+  /// Newest of lastInboundAt / lastOutboundAt. Drives inbox ordering.
+  lastMessageAt    DateTime
+  lastInboundAt    DateTime?
+  lastOutboundAt   DateTime?
+  /// Cleared to 0 by any outbound; incremented by inbound. Bounded by the
+  /// agent marking the conversation read in the comms centre.
+  unreadCount      Int                @default(0)
+  /// Optional subject from email channels; null otherwise.
+  subject          String?
+  /// Trengo labels as a flat string array. Maintained by label.added /
+  /// label.removed webhooks.
+  tags             String[]           @default([])
+  /// WhatsApp 24-hour reply window deadline derived from the most recent
+  /// inbound on a whatsapp conversation. Null otherwise.
+  replyDeadlineAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contact Contact? @relation("ContactConversations", fields: [contactId], references: [id])
+  family  Family?  @relation("FamilyConversations", fields: [familyId], references: [id])
+
+  @@index([status, lastMessageAt])
+  @@index([assigneeUserId, status])
+  @@index([channel, status])
+  @@index([contactId])
+  @@index([familyId])
+  @@index([unreadCount])
+}
+
+enum ConversationStatus {
+  open
+  closed
+  snoozed
+  archived
 }
 
 // -----------------------------------------------------------------------------

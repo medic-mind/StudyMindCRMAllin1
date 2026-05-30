@@ -13,6 +13,7 @@ import { BusinessError } from '@studymind/core'
 import { db } from '@studymind/db'
 
 import { createClientForAgent, TrengoApiError } from './client'
+import { applyEventToConversation } from './conversation-head'
 import type { TrengoChannel } from './types'
 
 export interface SendMessageInput {
@@ -127,6 +128,18 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
         trengoMessageId: message.id,
         channel: input.channel,
       },
+    })
+
+    // ADR 0020 Phase 2 — mirror the outbound onto the conversation head
+    // immediately. The Trengo webhook for our own outbound is echo-skipped
+    // (jobs.ts self_sent_mirror) so without this the head would never see
+    // our clear-unread / lastOutboundAt update.
+    await applyEventToConversation(db, {
+      ticketId: input.ticketId,
+      eventName: 'message.outbound',
+      occurredAt: new Date(),
+      channel: input.channel,
+      contactId: input.contactId,
     })
 
     return { interactionId, trengoMessageId: message.id }
@@ -269,6 +282,16 @@ async function changeTicketState(
       target: { type: 'Contact', id: input.contactId },
       requestId: input.requestId,
       after: { interactionId, ticketId: input.ticketId, trengoStatus: ticket.status },
+    })
+
+    // ADR 0020 Phase 2 — mirror onto the conversation head. The webhook for
+    // this state change is echo-skipped (jobs.ts linkCrmOutboundEcho) so the
+    // head would otherwise miss our action.
+    await applyEventToConversation(db, {
+      ticketId: input.ticketId,
+      eventName: eventName,
+      occurredAt: new Date(),
+      contactId: input.contactId,
     })
 
     return { interactionId, ticketId: input.ticketId, action: input.action }

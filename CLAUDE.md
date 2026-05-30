@@ -996,6 +996,9 @@ When asked something that touches money, safeguarding, or external mutation:
 | Change the timeline display | `apps/web/components/timeline/` |
 | Change a per-channel customer view | `apps/web/lib/view-models/contact-channels.ts` (ADR 0017) |
 | Reply to a Trengo conversation from the CRM | tRPC `interaction.trengo.reply`; resolver `resolveActiveTrengoConversation` in `packages/integrations/trengo/src/conversations.ts`; reuses `outbound.ts` `sendMessage`. Send button on `components/contact/draft-reply-panel.tsx`. Roadmap: ADR 0020. |
+| Close / reopen a Trengo conversation from the CRM | tRPC `interaction.trengo.{close,reopen}`; outbound `closeConversation` / `reopenConversation` write a `ticket_closed` / `ticket_reopened` Interaction with `payload.source = 'crm_outbound'`; the webhook job's `linkCrmOutboundEcho` (`packages/integrations/trengo/src/jobs.ts`) stamps the trengoEventId onto that row so the echo never duplicates. Per-card buttons live in `apps/web/app/(app)/contacts/[id]/sections/TrengoConversationActions.tsx`. |
+| Triage the inbox | tRPC `inbox.list` takes `filter: all \| mine \| unassigned \| snoozed` and respects `inboxAssigneeId` / `inboxSnoozedUntil` on the Interaction payload. UI chips at `/inbox` (`apps/web/app/(app)/inbox/page.tsx`). |
+| Read the current state of a Trengo conversation | `Conversation` table (ADR 0020 Phase 2). Upserted by the webhook job and the CRM outbound (`packages/integrations/trengo/src/conversation-head.ts`). Indexed columns: status, lastMessageAt, assigneeUserId, channel, unreadCount, tags. Message bodies stay in `Interaction` — the head is a queryable state layer, not a copy. |
 | Start a backfill | `packages/core/src/backfill/index.ts` (workers in `packages/integrations/<svc>/backfill.ts`) |
 | Tweak an AI prompt | `packages/ai/prompts/<task>.ts` |
 | Add a new background job | `packages/jobs/` |
