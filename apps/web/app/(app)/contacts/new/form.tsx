@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { CountrySelect } from '@/components/ui/country-select'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -410,11 +411,10 @@ export function NewContactForm() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="country">Country</Label>
-            <Input
+            <CountrySelect
               id="country"
               value={form.country}
-              onChange={set('country')}
-              placeholder="United Kingdom"
+              onChange={(v) => setForm((f) => ({ ...f, country: v }))}
             />
           </div>
         </div>

@@ -27,16 +27,23 @@ export function BrandLogo({
   customLogoVersion = null,
 }: Props) {
   if (customLogoVersion != null) {
-    // Hard-clip the uploaded logo to the requested box so a large source PNG
-    // can never blow out the top bar or the sign-in hero. The container
-    // owns the height + width budget; the img scales to fit via
-    // object-contain.
+    // Hard-clip the uploaded logo to a fixed box so an oversized PNG can
+    // never blow out the top bar or the sign-in hero. The wrapper owns
+    // both width AND height (height === size, width === size * 6) plus a
+    // matching maxHeight so flex parents can't stretch it. The img fills
+    // the box with object-contain so the logo's natural aspect ratio is
+    // preserved without overflowing. CLAUDE.md §4.
     const boxHeight = `${size}px`
-    const boxMaxWidth = `${size * 6}px`
+    const boxWidth = `${size * 6}px`
     return (
       <span
-        className={`inline-flex shrink-0 items-center overflow-hidden align-middle ${className ?? ''}`}
-        style={{ height: boxHeight, maxWidth: boxMaxWidth }}
+        className={`inline-flex shrink-0 items-center justify-start overflow-hidden align-middle ${className ?? ''}`}
+        style={{
+          height: boxHeight,
+          maxHeight: boxHeight,
+          width: boxWidth,
+          maxWidth: boxWidth,
+        }}
       >
         <img
           src={`/api/branding/logo?v=${customLogoVersion}`}
@@ -47,9 +54,10 @@ export function BrandLogo({
           style={{
             height: boxHeight,
             maxHeight: boxHeight,
-            width: 'auto',
-            maxWidth: boxMaxWidth,
+            width: '100%',
+            maxWidth: boxWidth,
             objectFit: 'contain',
+            objectPosition: 'left center',
           }}
         />
       </span>

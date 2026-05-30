@@ -94,6 +94,10 @@ export const EVENT_NAMES = [
   'business_account.restored',
   'business_account.contact_linked',
   'business_account.contact_unlinked',
+  // Students enrolled at a BusinessAccount.
+  'business_account.student_added',
+  'business_account.student_updated',
+  'business_account.student_archived',
 
   // Call summary templates (Settings → Call summary templates). Admin
   // catalogue used to prefill the contact page Call Summary panel.

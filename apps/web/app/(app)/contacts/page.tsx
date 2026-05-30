@@ -14,6 +14,8 @@ import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { ContactsExportButton } from './ContactsExportButton'
+
 interface PageSearchParams {
   q?: string
   cursorId?: string
@@ -86,9 +88,12 @@ export default async function ContactsPage({
         title="Contacts"
         subtitle={`${data.items.length} on this page${sp.q ? ` matching “${sp.q}”` : ''}`}
         actions={
-          <Link href="/contacts/new">
-            <Button>New contact</Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <ContactsExportButton q={sp.q} companyId={activeCompany?.id} />
+            <Link href="/contacts/new">
+              <Button>New contact</Button>
+            </Link>
+          </div>
         }
       />
       <PageBody>

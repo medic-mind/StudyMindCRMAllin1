@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
+import { AccountsExportButton } from './AccountsExportButton'
 import { AccountsList } from './AccountsList'
 
 export const dynamic = 'force-dynamic'
@@ -42,6 +43,20 @@ export default async function AccountsPage({ searchParams }: Props) {
         title="Accounts"
         subtitle="B2B partnerships and schools we work with"
         breadcrumbs={[{ label: 'Accounts', href: '/accounts' }]}
+        actions={
+          <AccountsExportButton
+            kind={kind}
+            q={params.q?.trim() ? params.q.trim() : undefined}
+            status={
+              params.status === 'prospect' ||
+              params.status === 'active' ||
+              params.status === 'paused' ||
+              params.status === 'churned'
+                ? params.status
+                : undefined
+            }
+          />
+        }
       />
       <PageBody>
         <div className="mb-4 flex flex-wrap items-center gap-3">
