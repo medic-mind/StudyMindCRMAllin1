@@ -16,3 +16,10 @@ export {
   listQuickActions,
   type QuickActionSummary,
 } from './quick-actions'
+export {
+  addCardSubtask,
+  deleteCardSubtask,
+  listCardSubtasks,
+  updateCardSubtask,
+  type CardSubtaskSummary,
+} from './subtasks'

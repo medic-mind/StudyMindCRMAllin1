@@ -870,6 +870,73 @@ export const contactRouter = router({
   // the regular email) to the configured audience. Idempotent on email hash.
   /** Bulk soft-delete a list of contacts (Manager+). Skips ids that don't
    * exist or are already deleted. Returns the count actually deleted. */
+  /** Merge a set of duplicate contacts into one survivor. The survivor is
+   * kept; every other id is merged into it (interactions / family / billing
+   * re-parented, loser soft-deleted) one at a time so a single bad row
+   * doesn't abort the batch. Manager+ only — same gate as single merge. */
+  bulkMerge: auditedProcedure
+    .input(
+      z.object({
+        survivorId: z.string(),
+        loserIds: z.array(z.string()).min(1).max(50),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only Manager or above can merge contacts',
+        })
+      }
+      // Guard: survivor can't be in the loser set.
+      const losers = input.loserIds.filter((id) => id !== input.survivorId)
+      if (losers.length === 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Pick at least one other contact to merge into the survivor.',
+        })
+      }
+      const results: Array<{
+        loserId: string
+        status: 'merged' | 'failed'
+        detail?: string
+        movedInteractions?: number
+      }> = []
+      for (const loserId of losers) {
+        try {
+          const r = await mergeContacts(ctx.db, {
+            survivorId: input.survivorId,
+            loserId,
+            actorUserId: user.id,
+          })
+          results.push({
+            loserId,
+            status: 'merged',
+            movedInteractions: r.movedInteractions,
+          })
+        } catch (err) {
+          results.push({
+            loserId,
+            status: 'failed',
+            detail: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      const mergedCount = results.filter((r) => r.status === 'merged').length
+      await ctx.audit({
+        action: 'contact.merged',
+        target: { type: 'Contact', id: input.survivorId },
+        after: {
+          survivorId: input.survivorId,
+          attempted: losers.length,
+          merged: mergedCount,
+          failed: losers.length - mergedCount,
+        },
+      })
+      return { survivorId: input.survivorId, mergedCount, results }
+    }),
+
   bulkSoftDelete: auditedProcedure
     .input(
       z.object({

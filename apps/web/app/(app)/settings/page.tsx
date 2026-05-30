@@ -8,6 +8,7 @@ import { PageHeader } from '@/components/shell/page-header'
 import {
   BarChartIcon,
   CoinsIcon,
+  GitBranchIcon,
   MailIcon,
   SettingsIcon,
   ShieldAlertIcon,
@@ -89,6 +90,14 @@ const GROUPS: Group[] = [
           'Prefill templates for the contact page Call Summary panel (UCAT, Medical Interview, Dental Interview…). Optionally carries an attached PDF.',
         roles: 'Manager+',
         icon: <MailIcon size={16} />,
+      },
+      {
+        href: '/settings/board-quick-actions',
+        title: 'Board quick actions',
+        description:
+          'Configure the per-card buttons on each board (Called once, Called twice, Invalid number…). Pick a board to manage its buttons.',
+        roles: 'Manager+',
+        icon: <GitBranchIcon size={16} />,
       },
     ],
   },

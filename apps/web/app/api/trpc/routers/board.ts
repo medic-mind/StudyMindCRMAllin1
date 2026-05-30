@@ -19,6 +19,7 @@ import { z } from 'zod'
 import {
   addCallSummary,
   addCardComment,
+  addCardSubtask,
   applyQuickAction,
   archiveBoard,
   archiveCard,
@@ -38,10 +39,12 @@ import {
   createBoard,
   createCard,
   createLabel,
+  deleteCardSubtask,
   deleteLabel,
   findOrCreateSubject,
   LabelCreateInput,
   listCardComments,
+  listCardSubtasks,
   listQuickActions,
   setCardDescription,
   LabelUpdateInput,
@@ -57,6 +60,7 @@ import {
   SubjectQueryInput,
   updateBoard,
   updateCard,
+  updateCardSubtask,
   updateLabel,
 } from '@studymind/core/board'
 import {
@@ -161,6 +165,8 @@ function mapBusinessError(err: unknown): never {
         throw new TRPCError({ code: 'CONFLICT', message: err.message })
       case 'COMMENT_EMPTY':
       case 'CALL_SUMMARY_EMPTY':
+      case 'SUBTASK_EMPTY':
+      case 'SUBTASK_TOO_LONG':
         throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
       case 'BOARD_NOT_FOUND':
       case 'CARD_NOT_FOUND':
@@ -170,6 +176,7 @@ function mapBusinessError(err: unknown): never {
       case 'CONTACT_NOT_FOUND':
       case 'PIPELINE_STAGE_NOT_FOUND':
       case 'QUICK_ACTION_NOT_FOUND':
+      case 'SUBTASK_NOT_FOUND':
         throw new TRPCError({ code: 'NOT_FOUND', message: err.message })
       default:
         throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
@@ -1158,6 +1165,83 @@ const cardRouter = router({
         mapBusinessError(err)
       }
     }),
+
+  // Card sub-tasks (Todoist-style checklist on the card). Listing is open
+  // to any authenticated reader; mutations require card-write.
+  subtasks: router({
+    list: protectedProcedure
+      .input(z.object({ cardId: z.string() }))
+      .query(async ({ ctx, input }) => listCardSubtasks(ctx.db, input.cardId)),
+
+    add: auditedProcedure
+      .input(z.object({ cardId: z.string(), title: z.string().trim().min(1).max(280) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCardWrite(user.role)
+        try {
+          const result = await addCardSubtask(ctx.db, {
+            cardId: input.cardId,
+            title: input.title,
+            actorId: user.id,
+          })
+          await ctx.audit({
+            action: 'card.updated',
+            target: { type: 'Card', id: input.cardId },
+            after: { subtaskAdded: result.id, title: result.title },
+          })
+          return result
+        } catch (err) {
+          mapBusinessError(err)
+        }
+      }),
+
+    update: auditedProcedure
+      .input(
+        z.object({
+          id: z.string(),
+          title: z.string().trim().min(1).max(280).optional(),
+          completed: z.boolean().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCardWrite(user.role)
+        try {
+          const result = await updateCardSubtask(ctx.db, {
+            id: input.id,
+            title: input.title,
+            completed: input.completed,
+            actorId: user.id,
+          })
+          await ctx.audit({
+            action: 'card.updated',
+            target: { type: 'CardSubtask', id: input.id },
+            after: { completed: result.completed, title: result.title },
+          })
+          return result
+        } catch (err) {
+          mapBusinessError(err)
+        }
+      }),
+
+    delete: auditedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCardWrite(user.role)
+        try {
+          await deleteCardSubtask(ctx.db, input.id)
+          await ctx.audit({
+            action: 'card.updated',
+            target: { type: 'CardSubtask', id: input.id },
+            before: { subtaskDeleted: input.id },
+          })
+          return { id: input.id }
+        } catch (err) {
+          mapBusinessError(err)
+        }
+      }),
+  }),
 })
 
 // --- Label sub-router ------------------------------------------------------

@@ -1,16 +1,14 @@
-// Per-card "Move to…" dropdown. ADR 0018. Supports both same-board and
-// cross-board moves: when `crossBoardStages` is provided, those stages
-// appear in a second `<optgroup>` so the agent can jump a card off to
-// a different pipeline in one click. CLAUDE.md §20.
-//
-// Cache: we invalidate the card list + the card detail query directly on
-// success so the kanban updates live; the user reported the legacy
-// `router.refresh()` alone wasn't always refreshing the kanban view.
+// Per-card "Move to…" popover. ADR 0018. A button opens a small panel of
+// grouped stage buttons — "This board" first, then one section per other
+// board so cross-pipeline targets are obvious at a glance (the native
+// <select> hid them behind optgroups the user couldn't scan). Click a
+// target to move; the card shifts optimistically via onLocalMove and the
+// audited card.move mutation runs in the background. CLAUDE.md §20, §28.
 
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
@@ -31,7 +29,7 @@ interface Props {
   currentStageId: string
   /** Same-board stages — primary options. */
   stages: ReadonlyArray<StageOption>
-  /** Other boards' stages — rendered under a "Move to other board" optgroup. */
+  /** Other boards' stages — rendered under a per-board section. */
   crossBoardStages?: ReadonlyArray<CrossBoardGroup>
   /** Optimistic local-state shift so the card jumps the instant the
    * user picks a target. */
@@ -47,7 +45,31 @@ export function MoveCardMenu({
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
-  const [pending, setPending] = useState(false)
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node
+      if (panelRef.current?.contains(t) || triggerRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
   const move = trpc.card.move.useMutation({
     onSuccess: async (_data, vars) => {
       const dest =
@@ -56,10 +78,6 @@ export function MoveCardMenu({
           .flatMap((g) => g.stages)
           .find((s) => s.id === vars.toStageId)
       toast.success(`Moved to ${dest?.name ?? 'new stage'}`)
-      setPending(false)
-      // Invalidate everything the kanban shows — the user reported the
-      // dropdown sometimes only updated on full refresh. Invalidate the
-      // list for every board we may have touched (source + target).
       await Promise.all([
         utils.card.list.invalidate(),
         utils.card.get.invalidate({ id: cardId }),
@@ -67,10 +85,7 @@ export function MoveCardMenu({
       ])
       router.refresh()
     },
-    onError: (e) => {
-      setPending(false)
-      toast.error(e.message ?? 'Could not move card')
-    },
+    onError: (e) => toast.error(e.message ?? 'Could not move card'),
   })
 
   const sameBoardTargets = stages.filter((s) => s.id !== currentStageId)
@@ -80,51 +95,94 @@ export function MoveCardMenu({
       stages: g.stages.filter((s) => s.id !== currentStageId),
     }))
     .filter((g) => g.stages.length > 0)
-  const noOtherBoards = crossBoardStages.length === 0
   if (sameBoardTargets.length === 0 && crossBoardTargets.length === 0) return null
 
+  function pick(toStageId: string) {
+    setOpen(false)
+    if (onLocalMove) onLocalMove(cardId, toStageId)
+    move.mutate({ cardId, toStageId })
+  }
+
   return (
-    <label className="block">
-      <span className="sr-only">Move card</span>
-      <select
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
         disabled={move.isPending}
-        value=""
-        onChange={(e) => {
-          const next = e.target.value
-          if (!next) return
-          setPending(true)
-          // Optimistic local move first so the column jump is instant.
-          if (onLocalMove) onLocalMove(cardId, next)
-          move.mutate({ cardId, toStageId: next })
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((v) => !v)
         }}
-        className="w-full rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-[11px] text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
-        aria-label="Move card to another stage"
+        className="inline-flex w-full items-center justify-between gap-1 rounded border border-neutral-300 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
       >
-        <option value="">{pending ? 'Moving…' : 'Move to…'}</option>
-        {sameBoardTargets.length > 0 && (
-          <optgroup label="This board">
-            {sameBoardTargets.map((s) => (
-              <option key={s.id} value={s.id}>
-                → {s.name}
-              </option>
-            ))}
-          </optgroup>
-        )}
-        {crossBoardTargets.map((g) => (
-          <optgroup key={g.boardName} label={`→ ${g.boardName}`}>
-            {g.stages.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-        {noOtherBoards && (
-          <option disabled value="">
-            ─ Create another board to enable cross-pipeline moves
-          </option>
-        )}
-      </select>
-    </label>
+        <span>{move.isPending ? 'Moving…' : 'Move to…'}</span>
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          ref={panelRef}
+          role="menu"
+          aria-label="Move card to"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute left-0 z-50 mt-1 max-h-72 w-60 overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-lg"
+        >
+          {sameBoardTargets.length > 0 && (
+            <>
+              <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                This board
+              </p>
+              {sameBoardTargets.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => pick(s.id)}
+                  className="block w-full px-3 py-1.5 text-left text-sm text-neutral-800 hover:bg-primary-50 hover:text-primary-800"
+                >
+                  {s.name}
+                </button>
+              ))}
+            </>
+          )}
+          {crossBoardTargets.map((g) => (
+            <div key={g.boardName}>
+              <p className="mt-1 border-t border-neutral-100 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                {g.boardName}
+              </p>
+              {g.stages.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => pick(s.id)}
+                  className="block w-full px-3 py-1.5 text-left text-sm text-neutral-800 hover:bg-primary-50 hover:text-primary-800"
+                >
+                  → {s.name}
+                </button>
+              ))}
+            </div>
+          ))}
+          {crossBoardTargets.length === 0 && crossBoardStages.length === 0 && (
+            <p className="border-t border-neutral-100 px-3 pt-2 text-[10px] text-neutral-400">
+              Create another board to enable cross-pipeline moves.
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
   )
 }

@@ -108,20 +108,35 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       role="dialog"
       aria-modal="true"
       aria-label="Global search"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 px-4 pt-24"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-neutral-900/40 px-4 pt-[15vh] backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onOpenChange(false)
       }}
     >
-      <div className="w-full max-w-xl overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg">
-        <div className="border-b border-neutral-200 p-2">
+      <div className="w-full max-w-xl overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-2xl ring-1 ring-black/5">
+        <div className="flex items-center gap-2.5 border-b border-neutral-100 px-3.5 py-2.5">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="shrink-0 text-neutral-400"
+            aria-hidden
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
           <input
             ref={inputRef}
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Search contacts and families…"
-            className="w-full bg-transparent px-2 py-2 text-sm outline-none placeholder:text-neutral-400"
+            className="w-full bg-transparent py-1 text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
             aria-label="Search query"
             autoComplete="off"
           />

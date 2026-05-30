@@ -75,6 +75,54 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
 
   const canDelete = CAN_DELETE.has(role)
   const canPush = CAN_PUSH.has(role)
+  const canMerge = CAN_DELETE.has(role) // same tier as delete: Manager+
+
+  const bulkMerge = trpc.contact.bulkMerge.useMutation()
+
+  async function onBulkMerge() {
+    const ids = Array.from(selected)
+    if (ids.length < 2) {
+      toast.error('Select at least two contacts to merge.')
+      return
+    }
+    // Survivor = the first selected row in display order; the rest merge
+    // into it. We confirm by name so the agent knows what survives.
+    const orderedSelected = rows.filter((r) => selected.has(r.id))
+    const survivor = orderedSelected[0]
+    if (!survivor) {
+      toast.error('Could not resolve a survivor on this page.')
+      return
+    }
+    const loserIds = ids.filter((id) => id !== survivor.id)
+    if (
+      !confirm(
+        `Merge ${loserIds.length} contact${loserIds.length === 1 ? '' : 's'} into ` +
+          `"${survivor.displayName}"? The others are soft-deleted and their ` +
+          `history is re-parented onto ${survivor.displayName}. This cannot be ` +
+          `auto-undone.`,
+      )
+    )
+      return
+    setBusy(true)
+    try {
+      const result = await bulkMerge.mutateAsync({
+        survivorId: survivor.id,
+        loserIds,
+      })
+      const failed = result.results.filter((r) => r.status === 'failed').length
+      toast.success(
+        `Merged ${result.mergedCount} into ${survivor.displayName}` +
+          (failed > 0 ? ` · ${failed} failed` : ''),
+      )
+      setSelected(new Set())
+      await utils.contact.list.invalidate()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Merge failed')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const allOnPage = useMemo(() => rows.map((r) => r.id), [rows])
   const allSelected = allOnPage.length > 0 && allOnPage.every((id) => selected.has(id))
@@ -183,6 +231,22 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
               onClick={onBulkPush}
             >
               Push to Mailchimp
+            </Button>
+          )}
+          {canMerge && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={busy || selected.size < 2}
+              onClick={onBulkMerge}
+              title={
+                selected.size < 2
+                  ? 'Select two or more to merge'
+                  : 'Merge into the first selected contact'
+              }
+            >
+              Merge
             </Button>
           )}
           {canDelete && (

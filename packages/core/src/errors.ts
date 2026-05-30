@@ -44,6 +44,10 @@ export type BusinessErrorCode =
   // Board quick actions (per-board configurable buttons that move a card +
   // add a comment in one click).
   | 'QUICK_ACTION_NOT_FOUND'
+  // Card sub-tasks (Todoist-style checklist on a card).
+  | 'SUBTASK_EMPTY'
+  | 'SUBTASK_TOO_LONG'
+  | 'SUBTASK_NOT_FOUND'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {
