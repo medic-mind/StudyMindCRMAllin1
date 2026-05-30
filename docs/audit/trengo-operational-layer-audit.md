@@ -20,12 +20,12 @@
 > | 6a | `User.trengoUserId` mapping; assignee name surfaces in the list | #97 | `7173702` |
 > | 7a | Outbound retry queue (`trengo/retry-pending-send`, 5-min cron, capped attempts, TOKEN_EXPIRED skip) | #97 | `3bb028e` |
 >
-> **Open follow-ups**:
-> - **6d** — message attachments to S3, reusing the `packages/integrations/gmail/src/s3.ts` pattern.
+> **Open follow-ups**: none — every phase from the original roadmap is on `main`.
 >
 > **Newly landed (post-PR #98):**
 > - **6b** — contact-level tag aggregation derived from the Conversation head; chip row on the contact detail page.
 > - **6c** — contact-field suggestions from inbound `contact.updated`; `ContactFieldSuggestion` table; review queue at `/inbox/suggestions` (Manager+ accepts/rejects, never silent-merge per §3).
+> - **6d** — Trengo message attachments persisted to S3 (SSE:KMS), surfaced as inline chips with download links in the comms-centre thread view.
 > - **7b** — Redis pub/sub fan-out for multi-instance SSE (lazy-init, falls back to in-process when `REDIS_URL` is unset).
 
 This is a full audit of the StudyMind CRM as it relates to Trengo, plus the

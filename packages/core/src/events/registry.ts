@@ -340,6 +340,10 @@ export const INNGEST_EVENT_NAMES = [
   // (the function reschedules with a cursor) so a single Inngest event name
   // covers the initial trigger and every continuation.
   'migration/backfill-conversation-heads.requested',
+  // ADR 0020 Phase 6d — fan out attachment downloads off the webhook.
+  // Concurrency capped on the worker (4) so a burst of attachments doesn't
+  // starve the rest of the queue.
+  'trengo/download-attachments.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]
