@@ -41,6 +41,7 @@
     "./observability/sentry": "./src/observability/sentry.ts",
     "./observability/trace": "./src/observability/trace.ts",
     "./provider-events": "./src/provider-events/index.ts",
+    "./realtime": "./src/realtime/index.ts",
     "./retention/policies": "./src/retention/policies.ts"
   },
   "scripts": {

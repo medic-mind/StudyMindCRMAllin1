@@ -23,6 +23,8 @@ import {
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { LiveUpdates } from './LiveUpdates'
+
 const CHANNEL_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
   sms: 'SMS',
@@ -104,6 +106,10 @@ export default async function ConversationsPage({
         subtitle="Every Trengo conversation, with its current status, assignee, and unread count — kept in sync as messages land."
       />
       <PageBody>
+        {/* Live SSE subscription — refreshes the list without polling
+            whenever a webhook lands or the CRM itself updates the head.
+            Renders nothing visible. */}
+        <LiveUpdates />
         {/* Sub-nav between Messages list and Conversations head list. Keeps
             the existing /inbox stable and makes the new head discoverable. */}
         <nav
