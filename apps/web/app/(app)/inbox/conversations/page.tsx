@@ -23,6 +23,8 @@ import {
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { LiveUpdates } from './LiveUpdates'
+
 const CHANNEL_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
   sms: 'SMS',
@@ -104,6 +106,10 @@ export default async function ConversationsPage({
         subtitle="Every Trengo conversation, with its current status, assignee, and unread count — kept in sync as messages land."
       />
       <PageBody>
+        {/* Live SSE subscription — refreshes the list without polling
+            whenever a webhook lands or the CRM itself updates the head.
+            Renders nothing visible. */}
+        <LiveUpdates />
         {/* Sub-nav between Messages list and Conversations head list. Keeps
             the existing /inbox stable and makes the new head discoverable. */}
         <nav
@@ -122,6 +128,12 @@ export default async function ConversationsPage({
             className="rounded-md bg-primary-600 px-2.5 py-1 text-xs font-medium text-white"
           >
             Conversations
+          </Link>
+          <Link
+            href="/inbox/suggestions"
+            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
+          >
+            Suggestions
           </Link>
         </nav>
 
@@ -178,7 +190,9 @@ export default async function ConversationsPage({
                 c.channel && CHANNEL_LABEL[c.channel]
                   ? CHANNEL_LABEL[c.channel]
                   : (c.channel ?? 'Conversation')
-              const href = c.contactId ? `/contacts/${c.contactId}` : '/inbox/conversations'
+              // ADR 0020 Phase 4 — rows now open the in-CRM thread view.
+              // The contact page is reachable from there via "Open contact".
+              const href = `/inbox/conversations/${c.id}`
               const replyWindowOpen =
                 c.replyDeadlineAt &&
                 new Date(c.replyDeadlineAt).getTime() > now.getTime()
@@ -219,6 +233,9 @@ export default async function ConversationsPage({
                           >
                             {replyWindowOpen ? '24h window open' : '24h window closed'}
                           </span>
+                        ) : null}
+{c.assigneeName ? (
+                          <Badge tone="neutral">{c.assigneeName}</Badge>
                         ) : null}
                         {c.tags.slice(0, 3).map((t) => (
                           <Badge key={t} tone="neutral">

@@ -12,6 +12,10 @@ import { inngest } from '@studymind/jobs'
 
 import { applyEventToConversation } from './conversation-head'
 import {
+  buildContactSuggestionWrites,
+  type TrengoContactProposal,
+} from './contact-suggestions'
+import {
   isTrengoChannel,
   normaliseTrengoEvent,
   type TrengoChannel,
@@ -110,11 +114,68 @@ export const trengoEventReceived = inngest.createFunction(
       }
     }
 
+    // ADR 0020 Phase 6c — `contact.updated` from Trengo. NEVER silently
+    // applied to the Contact (CLAUDE.md §3). We write
+    // ContactFieldSuggestion rows for any field that differs and let the
+    // staff review queue surface them. Idempotent on (source, sourceEventId,
+    // field). The event is its own terminal — it does NOT also become an
+    // Interaction (the merger has no concept of contact-meta events).
+    if (eventName === 'contact.updated') {
+      let suggestionResult: { written: number; superseded: number } = {
+        written: 0,
+        superseded: 0,
+      }
+      if (match.contactId) {
+        suggestionResult = await step.run('persist-suggestions', async () =>
+          persistContactSuggestions({
+            contactId: match.contactId as string,
+            sourceEventId: eventId,
+            proposal: {
+              name: envelope.data.contact?.name ?? null,
+              email: envelope.data.contact?.email ?? null,
+              phone: envelope.data.contact?.phone ?? null,
+            },
+          }),
+        )
+        if (suggestionResult.written > 0) {
+          await step.run('audit-suggestions', async () =>
+            writeAuditLogEntry(db, {
+              actorId: null,
+              action: 'contact.suggestion_created',
+              target: { type: 'Contact', id: match.contactId as string },
+              requestId: eventId,
+              after: {
+                source: 'trengo',
+                sourceEventId: eventId,
+                written: suggestionResult.written,
+                superseded: suggestionResult.superseded,
+              },
+            }),
+          )
+        }
+      }
+      await step.run('mark-processed', async () => {
+        await db.providerEvent.update({
+          where: { id: providerEventRowId },
+          data: { processedAt: new Date() },
+        })
+      })
+      return {
+        ok: true,
+        contactUpdatedSuggestions: suggestionResult.written,
+        superseded: suggestionResult.superseded,
+        matched: !!match.contactId,
+      }
+    }
+
     // Persist Interaction (idempotent on the Trengo eventId).
+    // From here on we know eventName is NOT 'contact.updated' (it returned
+    // above), so we can safely narrow for the helpers that don't model it.
+    const interactionEventName = eventName as InteractionEventName
     const interaction = await step.run('upsert-interaction', async () => {
       return upsertTrengoInteraction({
         eventId,
-        eventName,
+        eventName: interactionEventName,
         envelope,
         occurredAt,
         match,
@@ -152,12 +213,47 @@ export const trengoEventReceived = inngest.createFunction(
       })
     }
 
+    // ADR 0020 Phase 6d — when a message arrived with attachments, fan
+    // out to the download worker. We do NOT download inline because the
+    // webhook handler must return 200 fast (CLAUDE.md §7.1). The worker
+    // is idempotent on (interactionId, attachmentId).
+    if (
+      (eventName === 'message.inbound' || eventName === 'message.outbound') &&
+      Array.isArray(envelope.data.attachments) &&
+      envelope.data.attachments.length > 0
+    ) {
+      await step.sendEvent('enqueue-attachment-download', {
+        name: 'trengo/download-attachments.requested',
+        data: {
+          interactionId: interaction.id,
+          attachments: envelope.data.attachments,
+        },
+      })
+    }
+
     // ADR 0020 Phase 2 — upsert the conversation head so the inbox and the
     // comms centre can answer "all unassigned open WhatsApp conversations"
     // with a single indexed query. Bodies stay in `Interaction`; this row is
     // the queryable state. We only upsert when the event carries a numeric
     // ticket id; otherwise there is nothing to key on.
     if (typeof envelope.data.ticket_id === 'number') {
+      // Phase 6: resolve the raw Trengo assignee id to a CRM User if we have
+      // the mapping (User.trengoUserId — stamped at token-connect time).
+      const rawAssignee =
+        typeof envelope.data.assignee_id === 'number'
+          ? envelope.data.assignee_id
+          : null
+      let assigneeUserId: string | null = null
+      if (rawAssignee !== null) {
+        const u = await step.run('resolve-assignee', async () =>
+          db.user.findUnique({
+            where: { trengoUserId: rawAssignee },
+            select: { id: true },
+          }),
+        )
+        assigneeUserId = u?.id ?? null
+      }
+
       await step.run('upsert-conversation-head', async () =>
         applyEventToConversation(db, {
           ticketId: envelope.data.ticket_id as number,
@@ -166,10 +262,8 @@ export const trengoEventReceived = inngest.createFunction(
           channel: envelope.data.channel ?? null,
           contactId: match.contactId,
           familyId: match.familyId,
-          trengoAssigneeId:
-            typeof envelope.data.assignee_id === 'number'
-              ? envelope.data.assignee_id
-              : null,
+          trengoAssigneeId: rawAssignee,
+          assigneeUserId,
           subject:
             typeof envelope.data['subject'] === 'string'
               ? (envelope.data['subject'] as string)
@@ -240,6 +334,89 @@ async function linkCrmOutboundEcho(input: LinkEchoInput): Promise<string | null>
   return candidate.id
 }
 
+interface PersistContactSuggestionsInput {
+  contactId: string
+  sourceEventId: string
+  proposal: TrengoContactProposal
+}
+
+/**
+ * Diff the proposal against the current Contact and persist a row per
+ * differing field. Marks any previously-pending suggestion for the same
+ * (contactId, field) as `superseded` so the queue never shows stale
+ * proposals against a newer one. Idempotent on (source, sourceEventId,
+ * field) — a webhook replay returns the same set of rows.
+ */
+async function persistContactSuggestions(
+  input: PersistContactSuggestionsInput,
+): Promise<{ written: number; superseded: number }> {
+  const current = await db.contact.findUnique({
+    where: { id: input.contactId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phoneE164: true,
+    },
+  })
+  if (!current) return { written: 0, superseded: 0 }
+
+  const writes = buildContactSuggestionWrites({
+    current,
+    proposal: input.proposal,
+    sourceEventId: input.sourceEventId,
+  })
+  if (writes.length === 0) return { written: 0, superseded: 0 }
+
+  // Supersede older pending suggestions for the same (contactId, field).
+  // We do this BEFORE the upsert so the queue never briefly shows two
+  // pending rows for the same field.
+  const supersede = await db.contactFieldSuggestion.updateMany({
+    where: {
+      contactId: input.contactId,
+      field: { in: writes.map((w) => w.field) },
+      status: 'pending',
+      // Don't touch the rows we are about to upsert (idempotent replay).
+      NOT: {
+        AND: [
+          { source: 'trengo' },
+          { sourceEventId: input.sourceEventId },
+        ],
+      },
+    },
+    data: { status: 'superseded', updatedAt: new Date() },
+  })
+
+  // Upsert each write idempotently on the unique key.
+  for (const w of writes) {
+    await db.contactFieldSuggestion.upsert({
+      where: {
+        source_sourceEventId_field: {
+          source: w.source,
+          sourceEventId: w.sourceEventId,
+          field: w.field,
+        },
+      },
+      create: {
+        id: w.id,
+        contactId: w.contactId,
+        source: w.source,
+        sourceEventId: w.sourceEventId,
+        field: w.field,
+        proposedValue: w.proposedValue,
+        currentValue: w.currentValue,
+      },
+      // A replay should NOT change `currentValue` — that was captured at
+      // first sight. The proposed value is also stable for a given event,
+      // so the update is effectively a no-op touch of `updatedAt`.
+      update: { updatedAt: new Date() },
+    })
+  }
+
+  return { written: writes.length, superseded: supersede.count }
+}
+
 interface TrengoMatch {
   contactId: string | null
   familyId: string | null
@@ -282,7 +459,10 @@ async function matchTrengoEvent(envelope: TrengoWebhookEnvelope): Promise<Trengo
 
 interface UpsertTrengoInteractionInput {
   eventId: string
-  eventName: TrengoEventName
+  /** `contact.updated` is its own terminal branch above and never reaches
+   *  this upsert, so we narrow the type to make the downstream switches
+   *  exhaustive at compile time. */
+  eventName: InteractionEventName
   envelope: TrengoWebhookEnvelope
   occurredAt: Date
   match: TrengoMatch
@@ -379,8 +559,13 @@ async function upsertTrengoInteraction(
   }
 }
 
+// `contact.updated` is handled in its own branch (it never becomes an
+// Interaction), so these helpers narrow the input to the Interaction-bound
+// subset of event names — the switch stays exhaustive at compile time.
+type InteractionEventName = Exclude<TrengoEventName, 'contact.updated'>
+
 function mapTrengoEventToDbType(
-  name: TrengoEventName,
+  name: InteractionEventName,
 ):
   | 'message'
   | 'ticket_assigned'
@@ -405,7 +590,7 @@ function mapTrengoEventToDbType(
   }
 }
 
-function buildSummary(name: TrengoEventName, channel: TrengoChannel | null): string {
+function buildSummary(name: InteractionEventName, channel: TrengoChannel | null): string {
   const ch = channel ?? 'message'
   switch (name) {
     case 'message.inbound':
@@ -427,5 +612,23 @@ function buildSummary(name: TrengoEventName, channel: TrengoChannel | null): str
 
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as TRENGO_BACKFILL_FUNCTIONS } from './backfill'
+// ADR 0020 Phase 2c: one-shot Conversation-head backfill from existing
+// Interactions. Triggered via admin.backfill.conversationHeads.start; runs
+// once per environment.
+import { backfillConversationHeads } from './backfill-conversation-heads'
+// ADR 0020 Phase 7a: outbound retry queue. 5-minute cron sweeps any
+// Interaction still in `pending_send` and re-attempts via the same audited
+// outbound. TOKEN_EXPIRED rows are not retried — the agent must reconnect.
+import { trengoRetryPendingSend } from './retry-pending'
+// ADR 0020 Phase 6d: attachment download worker. Fired when a message
+// webhook carries an attachments array; idempotent on (interactionId,
+// attachmentId). Uploads via SSE:KMS to S3.
+import { trengoDownloadAttachments } from './attachments'
 
-export const FUNCTIONS = [trengoEventReceived, ...TRENGO_BACKFILL_FUNCTIONS] as const
+export const FUNCTIONS = [
+  trengoEventReceived,
+  backfillConversationHeads,
+  trengoRetryPendingSend,
+  trengoDownloadAttachments,
+  ...TRENGO_BACKFILL_FUNCTIONS,
+] as const

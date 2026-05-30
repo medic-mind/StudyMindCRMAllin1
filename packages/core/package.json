@@ -43,6 +43,7 @@
     "./observability/sentry": "./src/observability/sentry.ts",
     "./observability/trace": "./src/observability/trace.ts",
     "./provider-events": "./src/provider-events/index.ts",
+    "./realtime": "./src/realtime/index.ts",
     "./retention/policies": "./src/retention/policies.ts"
   },
   "scripts": {
@@ -63,6 +64,7 @@
     "@studymind/audit": "workspace:*",
     "archiver": "^7.0.0",
     "bcryptjs": "^2.4.3",
+    "ioredis": "^5.4.1",
     "pino": "^9.5.0",
     "zod": "^3.23.8"
   },

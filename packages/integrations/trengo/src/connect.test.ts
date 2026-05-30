@@ -52,6 +52,14 @@ function makeStubDb() {
         return row
       }),
     },
+    // Phase 6: connect now stamps User.trengoUserId from `/me`. The stub
+    // accepts the update and records it on a side map so tests can assert
+    // the mapping when relevant.
+    user: {
+      update: vi.fn(async (args: { where: { id: string }; data: { trengoUserId?: number } }) => {
+        return { id: args.where.id, trengoUserId: args.data.trengoUserId ?? null }
+      }),
+    },
     auditLogEntry: { create: vi.fn(), findFirst: vi.fn() },
   }
 }
@@ -108,6 +116,36 @@ describe('connectTrengoToken', () => {
     expect(ROWS[0]?.tokenCiphertext.length).toBeGreaterThan(0)
     expect(ROWS[0]?.tokenCiphertext.toString('utf8')).not.toContain('tok_valid_abc123')
     expect(ROWS[0]?.aad.toString('utf8')).toBe('User|u_2|trengo.api_token|1')
+  })
+
+  it('stamps User.trengoUserId from /me on connect (Phase 6 mapping)', async () => {
+    mockTrengoMe(200, { data: { id: 555, email: 'agent@example.com' } })
+    const { db } = await import('@studymind/db')
+    const userUpdate = vi.mocked(db.user.update)
+    userUpdate.mockClear()
+    await connectTrengoToken({
+      agentId: 'u_phase6',
+      token: 'tok_phase6_abc',
+      requestId: 'req_phase6',
+    })
+    expect(userUpdate).toHaveBeenCalledTimes(1)
+    expect(userUpdate.mock.calls[0]?.[0]).toEqual({
+      where: { id: 'u_phase6' },
+      data: { trengoUserId: 555 },
+    })
+  })
+
+  it('skips the User.trengoUserId stamp when /me omits the id', async () => {
+    mockTrengoMe(200, {})
+    const { db } = await import('@studymind/db')
+    const userUpdate = vi.mocked(db.user.update)
+    userUpdate.mockClear()
+    await connectTrengoToken({
+      agentId: 'u_no_id',
+      token: 'tok_no_id_xyz',
+      requestId: 'req_no_id',
+    })
+    expect(userUpdate).not.toHaveBeenCalled()
   })
 
   it('overwrites the existing row on reconnect (deletedAt cleared)', async () => {

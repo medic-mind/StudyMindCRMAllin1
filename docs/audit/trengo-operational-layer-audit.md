@@ -2,6 +2,31 @@
 
 > Status: living document. Authored 2026-05-30. Owner: see `OWNERS.md`.
 > Companion ADR: `docs/adr/0020-trengo-operational-layer.md`.
+>
+> **Implementation status (as of 2026-06-03)** — every phase below has a
+> verified `main` landing referenced in the table:
+>
+> | Phase | What it ships | PR | Main commit |
+> |---|---|---|---|
+> | 1 | `interaction.trengo.reply`; shared resolver; draft panel sends; full audit + ADR 0020 | #93 | `f86fe77` |
+> | 1+ | Close / reopen from CRM; webhook echo-skip via `linkCrmOutboundEcho`; per-card actions | #93 | `bd8198a` |
+> | 1++ | Inbox honors snooze + assign; Active / Mine / Unassigned / Snoozed chips | #93 | `2254e9c` |
+> | 2 | `Conversation` head model + migration; pure `applyEventToConversation` merger; webhook + outbound both write | #93 | `b6ddbfc` |
+> | 2b | Comms Centre seed `/inbox/conversations` reading the head | #93 | `acdce79` |
+> | 2c | One-shot Inngest backfill from existing Interactions; admin trigger | #94 | `8a2ff75` |
+> | 3 | SSE endpoint + in-process bus + client hook; live list updates | #94 | `5c2edec` |
+> | 4 | Comms Centre **thread view** at `/inbox/conversations/[id]` with inline reply / close / reopen | #96 | `3649822` |
+> | 5 | `User.notificationsSeenAt` + `notifications.markSeen`; bell fires on open | #96 | `4b9ed88` |
+> | 6a | `User.trengoUserId` mapping; assignee name surfaces in the list | #97 | `7173702` |
+> | 7a | Outbound retry queue (`trengo/retry-pending-send`, 5-min cron, capped attempts, TOKEN_EXPIRED skip) | #97 | `3bb028e` |
+>
+> **Open follow-ups**: none — every phase from the original roadmap is on `main`.
+>
+> **Newly landed (post-PR #98):**
+> - **6b** — contact-level tag aggregation derived from the Conversation head; chip row on the contact detail page.
+> - **6c** — contact-field suggestions from inbound `contact.updated`; `ContactFieldSuggestion` table; review queue at `/inbox/suggestions` (Manager+ accepts/rejects, never silent-merge per §3).
+> - **6d** — Trengo message attachments persisted to S3 (SSE:KMS), surfaced as inline chips with download links in the comms-centre thread view.
+> - **7b** — Redis pub/sub fan-out for multi-instance SSE (lazy-init, falls back to in-process when `REDIS_URL` is unset).
 
 This is a full audit of the StudyMind CRM as it relates to Trengo, plus the
 architecture and phased plan to make the CRM a complete operational layer on

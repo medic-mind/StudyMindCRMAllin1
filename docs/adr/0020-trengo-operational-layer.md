@@ -1,7 +1,7 @@
 # ADR 0020 — CRM as the operational layer on top of Trengo
 
-- Status: Proposed (Phase 1 outbound foundation: Accepted & implemented)
-- Date: 2026-05-30
+- Status: Accepted — every phase from the original roadmap (1, 1+, 1++, 2, 2b, 2c, 3, 4, 5, 6a, 6b, 6c, 6d, 7a, 7b) is on `main`. Future work tracked in `docs/audit/trengo-operational-layer-audit.md`.
+- Date: 2026-05-30 (updated 2026-06-03)
 - Supersedes: none
 - Related: ADR 0017 (comprehensive customer view + backfill), CLAUDE.md §11
 

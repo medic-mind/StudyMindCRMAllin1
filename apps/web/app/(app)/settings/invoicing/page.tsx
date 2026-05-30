@@ -34,7 +34,25 @@ export default async function InvoicingSettingsPage() {
   }
 
   const caller = await createServerCaller()
-  const status = await caller.invoicing.config.status()
+  // Never let a status lookup failure 500 the whole page — fall back to a
+  // safe "not configured" view so the credential form still renders.
+  let status
+  try {
+    status = await caller.invoicing.config.status()
+  } catch {
+    status = {
+      baseUrl: 'https://b2b.studymind.co.uk',
+      configured: false,
+      webhookSecretConfigured: false,
+      apiKeyLast4: null,
+      eventsCursor: null,
+      streamCursor: null,
+      customerCount: 0,
+      invoiceCount: 0,
+      lastEventAt: null,
+      lastEventType: null,
+    }
+  }
 
   return (
     <>

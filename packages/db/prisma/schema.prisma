@@ -241,6 +241,19 @@ model User {
   failedSignInAttempts Int       @default(0)
   lockedUntil          DateTime?
 
+  /// ADR 0020 Phase 5 — when the user last opened the notifications bell.
+  /// Rows in AuditLogEntry newer than this with this user as the target are
+  /// counted as unread. Null means "never opened" (everything unread).
+  notificationsSeenAt  DateTime?
+
+  /// ADR 0020 Phase 6 — the user's numeric id on Trengo. Resolved from
+  /// `/me` at token-connect time and used to map the `assignee_id` on
+  /// `ticket.assigned` webhooks to the CRM `User`. Nullable: a user without
+  /// a connected token has no Trengo identity to map. The unique index is
+  /// partial (PG default for nullable `@unique`) so multiple users without
+  /// the mapping coexist.
+  trengoUserId         Int?      @unique
+
   // ADR 0012: per-agent Gmail OAuth. Status is free text (see migration).
   // gmailRefreshTokenCipherId references EncryptedField.id, not enforced as
   // a foreign key — lifecycle is lock-stepped in the OAuth route handlers.
@@ -448,6 +461,10 @@ model Contact {
   /// Conversation heads (ADR 0020) — first-class Trengo tickets reaching
   /// this contact. The bodies of each message still live in `interactions`.
   conversations     Conversation[]     @relation("ContactConversations")
+  /// Pending field-edit suggestions from external sources (Trengo
+  /// `contact.updated`, Gmail signature parsing, …). ADR 0020 Phase 6c —
+  /// surfaced for human confirmation; we never silent-merge (CLAUDE.md §3).
+  fieldSuggestions  ContactFieldSuggestion[]
   safeguardingFlags SafeguardingFlag[]
   encryptedFields   EncryptedField[]
   cards             Card[]
@@ -993,6 +1010,44 @@ enum ConversationStatus {
   closed
   snoozed
   archived
+}
+
+/// Pending contact-field edit suggested by an upstream provider.
+/// ADR 0020 Phase 6c. CLAUDE.md §3 ("AI/automation suggests, humans confirm")
+/// — we never silently overwrite a Contact field from a webhook; we record
+/// the proposal here and surface it in the staff review queue.
+///
+/// Idempotency: keyed on `(source, sourceEventId, field)` so a webhook
+/// replay does not duplicate. `superseded` is set when a newer suggestion
+/// for the same `(contactId, field)` arrives before the first is reviewed,
+/// so the queue never shows stale proposals.
+model ContactFieldSuggestion {
+  id            String                       @id
+  contactId     String
+  source        String
+  sourceEventId String
+  field         String
+  proposedValue String?
+  currentValue  String?
+  status        ContactFieldSuggestionStatus @default(pending)
+  reviewedAt    DateTime?
+  reviewedById  String?
+  rejectionReason String?
+  createdAt     DateTime                     @default(now())
+  updatedAt     DateTime                     @updatedAt
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([source, sourceEventId, field])
+  @@index([status, createdAt])
+  @@index([contactId, status])
+}
+
+enum ContactFieldSuggestionStatus {
+  pending
+  accepted
+  rejected
+  superseded
 }
 
 // -----------------------------------------------------------------------------

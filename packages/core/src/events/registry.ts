@@ -287,6 +287,18 @@ export const EVENT_NAMES = [
   'backfill.failed',
   'backfill.cancelled',
   'interaction.recording_streamed',
+  // ADR 0020 Phase 2c: one-shot Conversation-head backfill. Distinct from
+  // provider backfills (which fill Interaction) — this re-derives queryable
+  // state from rows we already have.
+  'migration.conversation_head_backfill_requested',
+  'migration.conversation_head_backfill_started',
+  'migration.conversation_head_backfill_completed',
+  // ADR 0020 Phase 6c — contact-field suggestions from upstream providers.
+  // We NEVER silent-merge (CLAUDE.md §3); these events track the human
+  // review of a Trengo `contact.updated` (or other source).
+  'contact.suggestion_created',
+  'contact.suggestion_accepted',
+  'contact.suggestion_rejected',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
@@ -334,6 +346,14 @@ export const INNGEST_EVENT_NAMES = [
   // async like every other provider), plus the nightly events-feed reconcile.
   'invoicing/event.received',
   'invoicing/reconcile.requested',
+  // ADR 0020 Phase 2c — one-shot conversation-head backfill. Self-recursive
+  // (the function reschedules with a cursor) so a single Inngest event name
+  // covers the initial trigger and every continuation.
+  'migration/backfill-conversation-heads.requested',
+  // ADR 0020 Phase 6d — fan out attachment downloads off the webhook.
+  // Concurrency capped on the worker (4) so a burst of attachments doesn't
+  // starve the rest of the queue.
+  'trengo/download-attachments.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]
