@@ -60,6 +60,11 @@ export function useConversationStream(): void {
               contactId: data.contactId,
             })
           }
+          // ADR 0020 Phase 5 + 3 tie-in: a conversation update almost always
+          // implies a new audit row aimed at the assignee (assignment, close,
+          // reopen, message). Nudge the bell so the unread badge stays
+          // current without waiting for the 30 s staleTime.
+          void utils.notifications.list.invalidate()
         } catch {
           // Malformed payload — ignore. The next event (or the periodic
           // refetch in TanStack) will recover.
