@@ -28,6 +28,10 @@ export const TRENGO_EVENT_NAMES = [
   'ticket.reopened',
   'label.added',
   'label.removed',
+  // ADR 0020 Phase 6c — counterparty edited their details in Trengo. We do
+  // NOT silently apply this (CLAUDE.md §3) — the job writes a
+  // ContactFieldSuggestion the staff review queue surfaces.
+  'contact.updated',
 ] as const
 
 export type TrengoEventName = (typeof TRENGO_EVENT_NAMES)[number]
@@ -44,6 +48,7 @@ const TRENGO_EVENT_ALIASES: Record<string, TrengoEventName> = {
   label_added: 'label.added',
   label_detached: 'label.removed',
   label_removed: 'label.removed',
+  contact_updated: 'contact.updated',
 }
 
 export function normaliseTrengoEvent(raw: string): TrengoEventName | null {
