@@ -37,9 +37,14 @@ export function TopBar({ user, logoVersion = null }: Props) {
         Skip to content
       </a>
 
+      {/* The logo Link is hard-pinned to the top-bar height so even a
+          rogue logo upload can never blow out the bar. The BrandLogo
+          itself is also pinned (CSS background, fixed size, contained),
+          but defence in depth costs nothing. */}
       <Link
         href="/"
-        className="flex items-center gap-2 tracking-tight"
+        className="flex shrink-0 items-center gap-2 overflow-hidden tracking-tight"
+        style={{ height: '40px', maxHeight: '40px' }}
         aria-label="StudyMind CRM home"
       >
         <BrandLogo size={26} markOnly customLogoVersion={logoVersion} />

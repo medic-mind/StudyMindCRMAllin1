@@ -27,38 +27,60 @@ export function BrandLogo({
   customLogoVersion = null,
 }: Props) {
   if (customLogoVersion != null) {
-    // The previous attempts used <img> inside a fixed-size wrapper and
-    // kept losing to flex stretch / preflight rules / parent overrides
-    // — the logo was still rendering 2-3x its budget in production.
+    // Permanent-fix attempt: render the uploaded logo as a CSS
+    // background-image on a strictly-sized block element AND wrap that
+    // in an outer span with the same constraints. Every previous attempt
+    // (object-fit / max-height / overflow-hidden / minHeight + maxHeight)
+    // lost to flex stretch or some Tailwind preflight rule somewhere.
     //
-    // This version paints the logo as a CSS background-image on a
-    // strictly-sized <span>. A background-image lives inside its
-    // element's box by definition and can never overflow, so the box
-    // dimensions ARE the final visual dimensions. `background-size:
-    // contain` preserves the logo's aspect ratio inside the box.
+    // Background images CAN NOT overflow their element — that's a CSS
+    // axiom, not a layout rule. So if the element is constrained, the
+    // visible image is constrained. We pin the element with:
+    //   - inline width / height / minWidth / minHeight / maxWidth /
+    //     maxHeight (six constraints, all the same)
+    //   - display: block (avoid any baseline-related inline quirks)
+    //   - contain: strict (browser-enforced layout / paint isolation)
+    //   - clipPath: inset(0) (last-resort hard clip, costs nothing
+    //     visually because the image already fits)
+    // and we ALSO wrap that span in a second span with the same fixed
+    // size so even a flex parent can't grab the inner one.
     //
-    // CLAUDE.md §4 (brand identity). Bulletproof clip, third time's the
-    // charm.
+    // CLAUDE.md §4 (brand identity). This is the fourth attempt — if
+    // anything still grows the logo, the fault is downstream caching,
+    // not this component.
     const boxHeight = `${size}px`
     const boxWidth = `${size * 6}px`
+    const fixedBox: React.CSSProperties = {
+      display: 'block',
+      width: boxWidth,
+      height: boxHeight,
+      minWidth: boxWidth,
+      minHeight: boxHeight,
+      maxWidth: boxWidth,
+      maxHeight: boxHeight,
+      boxSizing: 'border-box',
+      overflow: 'hidden',
+      flex: '0 0 auto',
+    }
     return (
       <span
-        role="img"
-        aria-label="StudyMind"
-        className={`inline-block shrink-0 align-middle ${className ?? ''}`}
-        style={{
-          height: boxHeight,
-          maxHeight: boxHeight,
-          minHeight: boxHeight,
-          width: boxWidth,
-          maxWidth: boxWidth,
-          minWidth: boxWidth,
-          backgroundImage: `url("/api/branding/logo?v=${customLogoVersion}")`,
-          backgroundRepeat: 'no-repeat',
-          backgroundSize: 'contain',
-          backgroundPosition: 'left center',
-        }}
-      />
+        className={`shrink-0 align-middle ${className ?? ''}`}
+        style={fixedBox}
+      >
+        <span
+          role="img"
+          aria-label="StudyMind"
+          style={{
+            ...fixedBox,
+            backgroundImage: `url("/api/branding/logo?v=${customLogoVersion}")`,
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: 'contain',
+            backgroundPosition: 'left center',
+            contain: 'strict',
+            clipPath: 'inset(0)',
+          }}
+        />
+      </span>
     )
   }
   return (
