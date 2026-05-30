@@ -62,10 +62,22 @@ async function applyEvent(raw: unknown): Promise<{ applied: boolean; reason: str
     case 'payment':
       await upsertPaymentFromRecord(db, record, source)
       return { applied: true, reason: 'payment' }
+    case 'task':
+    case 'student':
+      // Intentionally not mirrored in this slice. The CRM already models these
+      // first-class (Task, and BusinessAccountStudent), so we deliberately
+      // acknowledge-and-drop rather than leave them as "unhandled" in the
+      // platform's delivery log. The route still returns 200, so the platform
+      // will not retry.
+      // TODO(invoicing, follow-up): wire these two entities. For students the
+      // CRM is the source of truth, so the intended flow is CRM → invoicing
+      // (push), not invoicing → CRM. Tasks map to the CRM Task model.
+      return { applied: false, reason: `acknowledged_not_mirrored:${entityType}` }
     default:
-      // task / student / unknown — not mirrored in this slice. Acknowledged so
-      // the channel does not retry forever; surfaced via the return tag.
-      return { applied: false, reason: `entity_not_mirrored:${entityType}` }
+      // Genuinely unknown entity_type. Acknowledged (200 at the route) so the
+      // channel does not retry forever; surfaced via the return tag + log so a
+      // new platform entity shows up in our observability rather than silently.
+      return { applied: false, reason: `unknown_entity:${entityType}` }
   }
 }
 
