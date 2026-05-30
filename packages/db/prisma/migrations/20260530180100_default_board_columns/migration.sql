@@ -6,18 +6,28 @@
 -- (soft-flag) rather than deleted, so Family.stageId references stay
 -- valid and stages can be restored if needed.
 --
--- This migration is fully self-healing: it tolerates any prior state
+-- This migration is fully self-healing — it tolerates any prior state
 -- (including a previous half-applied attempt of itself) because:
+--
 --   1. It first parks ALL active stages on the default board at high
---      sentinel positions (current + 1000). That frees positions 1-8
---      regardless of what was there.
---   2. It then UPSERTs the target stage set with the correct positions.
---   3. It re-positions the keepers (call_completed, not_answered) at
---      the end.
+--      sentinel positions (current + 1000) by RANGE, not by id. That
+--      frees positions 1-8 regardless of what was there. The `< 1000`
+--      guard makes the step idempotent across re-runs.
+--   2. It then UPSERTs the complete target stage set — the six new
+--      columns AT 1-6, plus pstg_seed_not_answered AT 7 and
+--      pstg_seed_call_completed AT 8. Earlier deploys of the original
+--      board-seed migration used a conditional INSERT that only created
+--      the call-completed / not-answered rows when no stage of that
+--      name was already present; some environments therefore have
+--      neither id at all, so the BoardQuickAction FKs below need both
+--      ids to be guaranteed present. UPSERT (ON CONFLICT DO UPDATE)
+--      creates the rows when missing and re-points them otherwise.
+--   3. The quick-action seed then runs against guaranteed-present FKs.
+--
 -- Every step is idempotent against the partial unique index
 -- (boardId, position) WHERE archivedAt IS NULL.
 
--- 1. Rename the legacy "Not answered" stage to "Never answered" — matches
+-- 1. Rename any legacy "Not answered" stage to "Never answered" — matches
 -- the user's preferred wording. No-op if the row was already renamed
 -- (or if it never existed).
 UPDATE "PipelineStage"
@@ -26,8 +36,8 @@ UPDATE "PipelineStage"
    AND "name" = 'Not answered';
 
 -- 2. Archive the legacy lifecycle stages on the default board so the
--- kanban starts clean. Forward-only — `pipeline.stage.restore` brings them
--- back at any time. No-op for stages already archived.
+-- kanban starts clean. Forward-only — `pipeline.stage.restore` brings
+-- them back at any time. No-op for stages already archived.
 UPDATE "PipelineStage"
    SET "archivedAt" = CURRENT_TIMESTAMP, "updatedAt" = CURRENT_TIMESTAMP
  WHERE "boardId" = 'board_seed_default'
@@ -41,22 +51,25 @@ UPDATE "PipelineStage"
    AND "archivedAt" IS NULL;
 
 -- 3. Park every remaining ACTIVE stage on the default board at a high
--- sentinel position (current + 1000). This guarantees positions 1-8
--- are free no matter what's there — including any partial inserts left
--- over from a previous failed run of this migration. Adding the SAME
--- constant 1000 to every row preserves their relative order without
--- creating new collisions.
+-- sentinel position (current + 1000). Frees positions 1-8 no matter
+-- what is there — including rows from a previous failed attempt of
+-- this migration, OR a custom stage someone created at position 6, OR
+-- a "Call completed" row whose id is not pstg_seed_call_completed
+-- (the original board-seed migration only created the seeded id
+-- conditionally; some environments have a name-matched row instead).
+-- The `< 1000` guard makes this step idempotent across re-runs.
 UPDATE "PipelineStage"
    SET "position" = "position" + 1000, "updatedAt" = CURRENT_TIMESTAMP
  WHERE "boardId" = 'board_seed_default'
    AND "archivedAt" IS NULL
    AND "position" < 1000;
 
--- 4. UPSERT the user's preferred columns to their target positions.
--- Using ON CONFLICT (id) DO UPDATE so rows that already exist (from a
--- partial earlier attempt) get re-pointed at the correct position +
--- boardId + name. Rows that don't exist get inserted fresh. Either way
--- the final state is the same six-stage set.
+-- 4. UPSERT the complete target stage set. Six new columns at 1-6 +
+-- pstg_seed_not_answered at 7 + pstg_seed_call_completed at 8. We
+-- UPSERT all eight (not just the new six) so the BoardQuickAction
+-- inserts below have guaranteed FK targets — some environments
+-- lack the call_completed / not_answered seeded ids entirely
+-- (see commentary above).
 INSERT INTO "PipelineStage" ("id", "name", "position", "color", "isClosed", "boardId", "updatedAt")
 VALUES
   ('pstg_seed_new_leads',         'New leads',          1, 'blue-500',    false, 'board_seed_default', CURRENT_TIMESTAMP),
@@ -64,7 +77,9 @@ VALUES
   ('pstg_seed_scheduled_1_4',     'Scheduled 1pm-4pm',  3, 'fuchsia-500', false, 'board_seed_default', CURRENT_TIMESTAMP),
   ('pstg_seed_scheduled_4_8',     'Scheduled 4pm-8pm',  4, 'pink-500',    false, 'board_seed_default', CURRENT_TIMESTAMP),
   ('pstg_seed_called_once',       'Called once',        5, 'amber-500',   false, 'board_seed_default', CURRENT_TIMESTAMP),
-  ('pstg_seed_called_twice',      'Called twice',       6, 'orange-500',  false, 'board_seed_default', CURRENT_TIMESTAMP)
+  ('pstg_seed_called_twice',      'Called twice',       6, 'orange-500',  false, 'board_seed_default', CURRENT_TIMESTAMP),
+  ('pstg_seed_not_answered',      'Never answered',     7, 'rose-500',    false, 'board_seed_default', CURRENT_TIMESTAMP),
+  ('pstg_seed_call_completed',    'Call completed',     8, 'sky-500',     false, 'board_seed_default', CURRENT_TIMESTAMP)
 ON CONFLICT ("id") DO UPDATE
   SET "name"       = EXCLUDED."name",
       "position"   = EXCLUDED."position",
@@ -74,19 +89,11 @@ ON CONFLICT ("id") DO UPDATE
       "archivedAt" = NULL,
       "updatedAt"  = CURRENT_TIMESTAMP;
 
--- 5. Re-position the existing Never answered + Call completed at the
--- end of the board, after the new columns. They're currently parked at
--- 1006 + 1007 (from step 3). Move them back to 7 + 8.
-UPDATE "PipelineStage" SET "position" = 7, "boardId" = 'board_seed_default',
-       "updatedAt" = CURRENT_TIMESTAMP
- WHERE "id" = 'pstg_seed_not_answered';
-UPDATE "PipelineStage" SET "position" = 8, "boardId" = 'board_seed_default',
-       "updatedAt" = CURRENT_TIMESTAMP
- WHERE "id" = 'pstg_seed_call_completed';
-
--- 6. Seed the three quick-action buttons the user wanted. Each button
+-- 5. Seed the three quick-action buttons the user wanted. Each button
 -- adds a templated comment and moves the card to the named stage.
 -- Editable from board settings; archive any that are no longer useful.
+-- All three targetStageIds are now guaranteed present (step 4 just
+-- UPSERTed them).
 INSERT INTO "BoardQuickAction" ("id", "boardId", "label", "color",
     "targetStageId", "targetBoardId", "commentTemplate", "sortOrder",
     "updatedAt")
@@ -120,7 +127,7 @@ VALUES
    CURRENT_TIMESTAMP)
 ON CONFLICT ("id") DO NOTHING;
 
--- 7. Clear the legacy tick/X pointers on the default board — the
+-- 6. Clear the legacy tick/X pointers on the default board — the
 -- multi-row BoardQuickAction catalogue takes over rendering.
 UPDATE "Board"
    SET "tickActionStageId" = NULL,
