@@ -427,5 +427,13 @@ function buildSummary(name: TrengoEventName, channel: TrengoChannel | null): str
 
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as TRENGO_BACKFILL_FUNCTIONS } from './backfill'
+// ADR 0020 Phase 2c: one-shot Conversation-head backfill from existing
+// Interactions. Triggered via admin.backfill.conversationHeads.start; runs
+// once per environment.
+import { backfillConversationHeads } from './backfill-conversation-heads'
 
-export const FUNCTIONS = [trengoEventReceived, ...TRENGO_BACKFILL_FUNCTIONS] as const
+export const FUNCTIONS = [
+  trengoEventReceived,
+  backfillConversationHeads,
+  ...TRENGO_BACKFILL_FUNCTIONS,
+] as const
