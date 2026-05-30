@@ -85,6 +85,16 @@ export const EVENT_NAMES = [
   'team.member_removed',
   'task.team_changed',
 
+  // Internal team messaging (ADR 0022). Channel administration is audited;
+  // individual messages are high-volume staff↔staff chat and are deliberately
+  // NOT written to the compliance AuditLog or the customer timeline.
+  'chat.channel_created',
+  'chat.channel_updated',
+  'chat.channel_archived',
+  'chat.channel_restored',
+  'chat.member_added',
+  'chat.member_removed',
+
   // Forwarding (Settings → Forwarding): configurable "Forward to <team>"
   // quick actions on a contact. Rule CRUD is Manager+; sending is
   // Sales Executive+.

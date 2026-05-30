@@ -42,6 +42,7 @@ function buildNav(role: Role): NavItem[] {
   const items: NavItemDef[] = [
     { href: '/', label: 'Dashboard' },
     { href: '/inbox', label: 'Inbox' },
+    { href: '/messages', label: 'Messages' },
     { href: '/contacts', label: 'Contacts' },
     {
       href: '/accounts',

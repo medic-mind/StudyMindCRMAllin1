@@ -2323,3 +2323,153 @@ model InvoicingSetting {
   createdById String?
   updatedById String?
 }
+
+// -----------------------------------------------------------------------------
+// Internal team messaging (ADR 0022). A Slack-style workspace chat for staff:
+// public/private channels, direct messages, threaded replies, @mentions of
+// teammates, emoji reactions, and inline references to CRM entities (Contact,
+// Family, Card, Task). This is staff↔staff communication — message bodies are
+// deliberately kept OUT of the customer Interaction timeline and out of the
+// 7-year compliance AuditLog (high-volume, non-compliance). Channel
+// administration (create/archive/membership) IS audited at the tRPC layer.
+// CLAUDE.md §4 (modern UI), §20 (RBAC), §45 (events).
+// -----------------------------------------------------------------------------
+
+enum ChatChannelKind {
+  public
+  private
+  dm
+}
+
+model ChatChannel {
+  id          String          @id
+  /// Human name (also the slug) for public/private channels. Null for `dm`
+  /// channels — their title is derived from their members at render time.
+  name        String?
+  topic       String?
+  description String?
+  kind        ChatChannelKind @default(public)
+  /// The seeded company-wide channel everyone lands in. At most one row true.
+  isGeneral   Boolean         @default(false)
+  /// Stable dedupe key for direct messages: the sorted member user-ids joined
+  /// by ':'. Makes "open DM with X" idempotent. Null for named channels.
+  dmKey       String?         @unique
+
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  members  ChatChannelMember[]
+  messages ChatMessage[]
+
+  // Name uniqueness is enforced in the domain layer (createChannel checks for
+  // a non-archived clash), mirroring Board — a name can be reused once the old
+  // channel is archived, which a DB-level unique constraint would forbid.
+  @@index([name])
+  @@index([kind, archivedAt])
+}
+
+model ChatChannelMember {
+  id          String    @id
+  channelId   String
+  userId      String
+  /// Slack-style read state: everything created at/before this instant is read.
+  lastReadAt  DateTime?
+  /// Per-channel notification preference: all | mentions | none.
+  notifyLevel String    @default("all")
+  /// member | admin. Channel admins (and Manager+) can edit/archive a channel.
+  role        String    @default("member")
+  /// Set when the member mutes the channel (no unread badge contribution).
+  mutedAt     DateTime?
+
+  createdAt   DateTime  @default(now())
+
+  channel ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, userId])
+  @@index([userId])
+}
+
+model ChatMessage {
+  id        String  @id
+  channelId String
+  authorId  String
+  body      String
+  /// Thread model (two-level, like Slack): null = a top-level channel message;
+  /// set = a reply belonging to that root message's thread.
+  parentId  String?
+  /// Denormalised on the ROOT message for fast thread previews on the channel.
+  replyCount  Int       @default(0)
+  lastReplyAt DateTime?
+
+  editedAt  DateTime?
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  channel   ChatChannel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  parent    ChatMessage?     @relation("ChatThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   ChatMessage[]    @relation("ChatThread")
+  mentions  ChatMention[]
+  refs      ChatMessageRef[]
+  reactions ChatReaction[]
+
+  /// Channel timeline (top-level rows have parentId IS NULL) ordered by recency.
+  @@index([channelId, parentId, createdAt])
+  /// Thread replies ordered oldest-first.
+  @@index([parentId, createdAt])
+  @@index([channelId, createdAt])
+}
+
+model ChatMention {
+  id        String    @id
+  messageId String
+  /// The mentioned teammate. (@channel/@here may later use sentinel ids.)
+  userId    String
+  /// Denormalised so "my mentions across all channels" is one index hit.
+  channelId String
+  /// Mention-specific read state — drives the "Mentions" inbox + bell badge.
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId, readAt])
+}
+
+enum ChatRefType {
+  contact
+  family
+  card
+  task
+}
+
+model ChatMessageRef {
+  id        String      @id
+  messageId String
+  refType   ChatRefType
+  refId     String
+  createdAt DateTime    @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([refType, refId])
+  @@index([messageId])
+}
+
+model ChatReaction {
+  id        String   @id
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+}
