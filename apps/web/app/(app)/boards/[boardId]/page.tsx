@@ -73,6 +73,9 @@ export default async function BoardPage({ params }: PageProps) {
     stageId: c.stageId,
     contactId: c.contactId,
     contactName: c.contactName,
+    contactEmail: c.contactEmail,
+    contactPhone: c.contactPhone,
+    description: c.description,
     subject: c.subject,
     labels: c.labels,
     lastActivityAt: c.lastActivityAt,
@@ -97,10 +100,6 @@ export default async function BoardPage({ params }: PageProps) {
         breadcrumbs={[{ label: 'Boards', href: '/boards' }]}
         actions={
           <div className="flex items-center gap-2">
-            <BoardSwitcher
-              boards={boards.map((b) => ({ id: b.id, name: b.name }))}
-              currentId={board.id}
-            />
             {canManage ? (
               <a
                 href={`/boards/${board.id}/settings`}
@@ -119,6 +118,19 @@ export default async function BoardPage({ params }: PageProps) {
           </div>
         }
       />
+      {/* Board switcher sits on its own row so it stays anchored on the
+          LEFT even when the kanban scrolls horizontally — previously it
+          competed with the header actions and got pushed off to the
+          right with everything else. */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500">
+          Board
+        </span>
+        <BoardSwitcher
+          boards={boards.map((b) => ({ id: b.id, name: b.name }))}
+          currentId={board.id}
+        />
+      </div>
       <PageBody>
         {stages.length === 0 ? (
           <div className="rounded-lg border border-neutral-200 bg-white p-6 text-center text-sm text-neutral-600">

@@ -48,6 +48,9 @@ interface CardData {
   stageId: string
   contactId: string
   contactName: string
+  contactEmail?: string | null
+  contactPhone?: string | null
+  description?: string | null
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
@@ -87,6 +90,10 @@ interface Props {
   canWrite: boolean
   canComment: boolean
   currentUserName: string
+  /** Optimistic move so quick actions + dropdown shift the card
+   * instantly. Optional — when missing the card still moves via the
+   * server round-trip + router.refresh, just not instantly. */
+  onLocalMove?: (cardId: string, toStageId: string) => void
   // Supplied by SortableCard (ADR 0019); undefined when DnD is not in play.
   dragRef?: Ref<HTMLLIElement>
   dragStyle?: CSSProperties
@@ -103,6 +110,7 @@ export function BoardCard({
   canWrite,
   canComment,
   currentUserName,
+  onLocalMove,
   dragRef,
   dragStyle,
   dragHandleProps,
@@ -153,6 +161,25 @@ export function BoardCard({
             </span>
           ))}
         </div>
+        {/* Contact preview — phone + email so the agent can dial / mail
+            without opening the card. */}
+        {(card.contactEmail || card.contactPhone) && (
+          <div className="mt-1 flex flex-col gap-0.5 text-[11px] text-neutral-600">
+            {card.contactPhone && (
+              <span className="font-mono">{card.contactPhone}</span>
+            )}
+            {card.contactEmail && (
+              <span className="truncate">{card.contactEmail}</span>
+            )}
+          </div>
+        )}
+        {/* Note preview — first 2 lines of the card description so the
+            agent gets context at a glance. */}
+        {card.description && card.description.trim().length > 0 && (
+          <p className="mt-1 line-clamp-2 text-[11px] italic text-neutral-500">
+            {card.description.trim()}
+          </p>
+        )}
         <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-neutral-500">
           {card.assigneeId && (
             <span
@@ -199,6 +226,7 @@ export function BoardCard({
             cardId={card.id}
             currentStageId={stageId}
             actions={quickActions}
+            onLocalMove={onLocalMove}
           />
         ) : null}
         {canWrite ? (
@@ -208,6 +236,7 @@ export function BoardCard({
               currentStageId={stageId}
               stages={stages}
               crossBoardStages={crossBoardStages}
+              onLocalMove={onLocalMove}
             />
           </div>
         ) : null}
