@@ -72,6 +72,12 @@ export type CardMoveInput = z.infer<typeof CardMoveInput>
 export const CardUpdateInput = z.object({
   id: z.string(),
   subjectId: z.string().nullish(),
+  /** Assigned CRM user; pass null to clear. */
+  assigneeId: z.string().nullish(),
+  /** Due date; pass null to clear. */
+  dueAt: z.date().nullish(),
+  /** Priority 1 (highest) – 4. Pass null to clear. */
+  priority: z.number().int().min(1).max(4).nullish(),
 })
 export type CardUpdateInput = z.infer<typeof CardUpdateInput>
 

@@ -27,35 +27,34 @@ export function BrandLogo({
   customLogoVersion = null,
 }: Props) {
   if (customLogoVersion != null) {
-    // Hard-clip the uploaded logo to a fixed box so an oversized PNG can
-    // never blow out the top bar or the sign-in hero. The wrapper owns
-    // both width AND height (height === size, width === size * 6) plus a
-    // matching maxHeight so flex parents can't stretch it. The img fills
-    // the box with object-contain so the logo's natural aspect ratio is
-    // preserved without overflowing. CLAUDE.md §4.
+    // Hard-clip the uploaded logo to a fixed box. The wrapper has both
+    // width AND height set inline AND via Tailwind utility classes
+    // (block + h-X + w-X + overflow-hidden) so that even if a parent
+    // flex stretches us, the box can't grow. The img inside is forced
+    // to fully cover the box via `block max-h-full max-w-full h-full
+    // w-full object-contain object-left`, so wide / tall / square
+    // uploads all render inside the fixed box. The previous fix used
+    // inline style alone; on some browsers a flex parent + `align-items:
+    // stretch` was still letting the IMG grow vertically. CLAUDE.md §4.
     const boxHeight = `${size}px`
     const boxWidth = `${size * 6}px`
     return (
       <span
-        className={`inline-flex shrink-0 items-center justify-start overflow-hidden align-middle ${className ?? ''}`}
+        className={`relative block shrink-0 overflow-hidden align-middle ${className ?? ''}`}
         style={{
           height: boxHeight,
           maxHeight: boxHeight,
+          minHeight: boxHeight,
           width: boxWidth,
           maxWidth: boxWidth,
+          minWidth: boxWidth,
         }}
       >
         <img
           src={`/api/branding/logo?v=${customLogoVersion}`}
           alt="StudyMind"
-          width={size * 6}
-          height={size}
-          className="block"
+          className="absolute inset-0 block h-full w-full"
           style={{
-            height: boxHeight,
-            maxHeight: boxHeight,
-            width: '100%',
-            maxWidth: boxWidth,
             objectFit: 'contain',
             objectPosition: 'left center',
           }}
