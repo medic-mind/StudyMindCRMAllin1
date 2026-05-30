@@ -17,6 +17,7 @@ import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { LiveUpdates } from '../LiveUpdates'
+import { AssignControl } from './AssignControl'
 import { ConversationReply } from './ConversationReply'
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -214,13 +215,21 @@ export default async function ConversationDetailPage({
 
         <div className="mt-6">
           {head.contactId ? (
-            <ConversationReply
-              conversationId={head.id}
-              contactId={head.contactId}
-              ticketId={head.trengoTicketId}
-              status={head.status}
-              latestInteractionId={messages[messages.length - 1]?.id ?? null}
-            />
+            <>
+              <AssignControl
+                conversationId={head.id}
+                contactId={head.contactId}
+                ticketId={head.trengoTicketId}
+                assigneeUserId={head.assigneeUserId}
+              />
+              <ConversationReply
+                conversationId={head.id}
+                contactId={head.contactId}
+                ticketId={head.trengoTicketId}
+                status={head.status}
+                latestInteractionId={messages[messages.length - 1]?.id ?? null}
+              />
+            </>
           ) : (
             <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600">
               This conversation is not yet matched to a contact. Open it in
