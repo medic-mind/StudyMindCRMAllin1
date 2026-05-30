@@ -8,18 +8,18 @@ import { z } from 'zod'
 import { sanitiseUserContent } from '../sanitise'
 import { VOICE } from './style/voice'
 
-export const VERSION = '2026-05-27.1'
+export const VERSION = '2026-05-31.1'
 
 const SYSTEM_BASE = `
 ${VOICE}
 
 You are summarising a customer call into a short internal note for the CRM.
 
-Write 2–4 sentences. Be specific about what was discussed, any agreed
-next steps, and the apparent disposition of the conversation. Do not
-invent facts — only summarise what is in the transcript. Do not include
-PII (full address, DOB, bank details) in the summary. Plain prose, no
-markdown, no bullets.
+Write 3–4 short lines — one fact each, no fluff. Cover what was
+discussed, the apparent disposition of the conversation, and any agreed
+next step. Do not invent facts — only summarise what is in the
+transcript. Do not include PII (full address, DOB, bank details). Plain
+prose, no markdown, no bullets.
 `.trim()
 
 export interface CallSummaryDraftPromptInput {

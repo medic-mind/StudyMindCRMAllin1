@@ -59,6 +59,12 @@ import {
   updateCard,
   updateLabel,
 } from '@studymind/core/board'
+import {
+  buildCallSummaryDraftPrompt,
+  CALL_SUMMARY_DRAFT_PROMPT_VERSION,
+  CallSummaryDraftShape,
+  runDraft,
+} from '@studymind/ai'
 import { displayNameOf } from '@studymind/core/contact'
 import { BusinessError } from '@studymind/core/errors'
 
@@ -739,6 +745,198 @@ const cardRouter = router({
         mapBusinessError(err)
       }
     }),
+
+    /**
+     * AI-draft a 3–4 line call summary from the contact's most recent
+     * call transcript. Mirrors contact.callSummary.draftFromCall so the
+     * card modal can render the same "AI draft" button. Returns null-status
+     * variants when there's no call or no transcript yet.
+     */
+    draftFromCall: protectedProcedure
+      .input(z.object({ cardId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const card = await ctx.db.card.findFirst({
+          where: { id: input.cardId, archivedAt: null },
+          select: { contact: { select: { id: true, firstName: true, lastName: true, email: true } } },
+        })
+        if (!card) throw new TRPCError({ code: 'NOT_FOUND', message: 'Card not found' })
+        const contactId = card.contact.id
+        const call = await ctx.db.interaction.findFirst({
+          where: { contactId, type: 'call', deletedAt: null },
+          orderBy: { occurredAt: 'desc' },
+          select: { id: true, occurredAt: true, payload: true },
+        })
+        if (!call) return { status: 'no_call' as const }
+        const payload = (call.payload ?? {}) as {
+          transcriptText?: unknown
+          outcome?: unknown
+        }
+        const transcript =
+          typeof payload.transcriptText === 'string' ? payload.transcriptText.trim() : ''
+        if (!transcript) {
+          return {
+            status: 'no_transcript' as const,
+            callInteractionId: call.id,
+            callOccurredAt: call.occurredAt,
+          }
+        }
+        const contactName =
+          [card.contact.firstName, card.contact.lastName].filter(Boolean).join(' ').trim() ||
+          card.contact.email ||
+          'this contact'
+        const outcomeRaw = typeof payload.outcome === 'string' ? payload.outcome : undefined
+        const outcomeHint =
+          outcomeRaw === 'answered' || outcomeRaw === 'voicemail' || outcomeRaw === 'no_answer'
+            ? outcomeRaw
+            : undefined
+        const prompt = buildCallSummaryDraftPrompt({
+          transcript,
+          contactName,
+          outcomeHint,
+        })
+        try {
+          const result = await runDraft({
+            task: 'call_summary_draft',
+            promptVersion: CALL_SUMMARY_DRAFT_PROMPT_VERSION,
+            system: prompt.system,
+            user: prompt.user,
+            model: 'gpt-4o-mini',
+            temperature: 0.2,
+            contentShape: CallSummaryDraftShape,
+            contactId,
+            ctx: { source: 'card.callSummary.draftFromCall' },
+          })
+          return {
+            status: 'ok' as const,
+            text: result.text,
+            outcomeHint: outcomeHint ?? null,
+            callInteractionId: call.id,
+            callOccurredAt: call.occurredAt,
+          }
+        } catch (err) {
+          if (err instanceof BusinessError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          throw err
+        }
+      }),
+
+    /**
+     * Preview the call-summary fan-out before firing it. Returns the
+     * recipient + composed text per channel so the UI can render a
+     * "Send to X · Preview · Confirm" flow. Read-only — no Interactions
+     * or audits written.
+     */
+    preview: protectedProcedure
+      .input(
+        z.object({
+          cardId: z.string(),
+          body: z.string().min(1).max(8000),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        const card = await ctx.db.card.findFirst({
+          where: { id: input.cardId, archivedAt: null },
+          select: {
+            id: true,
+            contact: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneE164: true,
+              },
+            },
+          },
+        })
+        if (!card) throw new TRPCError({ code: 'NOT_FOUND', message: 'Card not found' })
+        const contact = card.contact
+        const contactName =
+          [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim() ||
+          contact.email ||
+          'this contact'
+        const appUrl = (
+          process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000'
+        ).replace(/\/$/, '')
+        const composed = `Call summary for ${contactName}\n\n${input.body}\n\n${appUrl}/contacts/${contact.id}`
+
+        const slackChannelId = process.env['SLACK_ALERTS_CHANNEL_ID'] ?? null
+
+        // Trengo target — same lookup buildCallSummarySenders does.
+        const recentMessage = contact.phoneE164
+          ? await ctx.db.interaction.findFirst({
+              where: { contactId: contact.id, type: 'message', deletedAt: null },
+              orderBy: { occurredAt: 'desc' },
+              select: { payload: true },
+            })
+          : null
+        const trengoPayload = (recentMessage?.payload ?? {}) as Record<string, unknown>
+        const trengoTicketId =
+          typeof trengoPayload['ticketId'] === 'number'
+            ? trengoPayload['ticketId']
+            : null
+        const trengoChannel =
+          typeof trengoPayload['channel'] === 'string'
+            ? (trengoPayload['channel'] as string)
+            : null
+
+        // Gmail target — most recent email thread + actor's mailbox.
+        const recentEmail = contact.email
+          ? await ctx.db.interaction.findFirst({
+              where: {
+                contactId: contact.id,
+                type: { in: ['email_received', 'email_sent'] },
+                deletedAt: null,
+              },
+              orderBy: { occurredAt: 'desc' },
+              select: { payload: true, summary: true },
+            })
+          : null
+        const emailPayload = (recentEmail?.payload ?? {}) as Record<string, unknown>
+        const emailThreadId =
+          typeof emailPayload['threadId'] === 'string'
+            ? (emailPayload['threadId'] as string)
+            : typeof emailPayload['gmailThreadId'] === 'string'
+              ? (emailPayload['gmailThreadId'] as string)
+              : null
+        const emailSubject =
+          typeof emailPayload['subject'] === 'string'
+            ? (emailPayload['subject'] as string)
+            : recentEmail?.summary ?? 'Call summary'
+        const mailbox = await ctx.db.gmailMailbox.findFirst({
+          where: { agentId: user.id, deletedAt: null },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+          select: { address: true },
+        })
+
+        return {
+          composedText: composed,
+          slack: slackChannelId
+            ? { channelId: slackChannelId, body: composed }
+            : null,
+          trengo:
+            contact.phoneE164 && trengoTicketId != null && trengoChannel
+              ? {
+                  phoneE164: contact.phoneE164,
+                  ticketId: trengoTicketId,
+                  channel: trengoChannel,
+                  body: input.body,
+                }
+              : null,
+          email:
+            contact.email && mailbox && emailThreadId
+              ? {
+                  fromAddress: mailbox.address,
+                  toAddress: contact.email,
+                  threadId: emailThreadId,
+                  subject: emailSubject,
+                  body: input.body,
+                }
+              : null,
+        }
+      }),
   }),
 
   setDescription: auditedProcedure
