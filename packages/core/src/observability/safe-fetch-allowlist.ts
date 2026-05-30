@@ -47,8 +47,6 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   // Sentry ingest
   '*.ingest.sentry.io',
   '*.sentry.io',
-  // Resend
-  'api.resend.com',
   // PagerDuty (Events API v2)
   'events.pagerduty.com',
 ]

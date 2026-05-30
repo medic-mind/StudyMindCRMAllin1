@@ -1,7 +1,7 @@
 // Branded transactional email templates for the user-management flows
 // (ADR 0021). Pure builders: input → { subject, html, text }. No I/O — the
-// admin router composes these with the credentials PDF and hands them to the
-// Resend client. Inline styles only (email clients ignore <style>/Tailwind).
+// admin router composes these with the credentials PDF and sends them via
+// Gmail (sendSystemEmail). Inline styles only (email clients ignore <style>/Tailwind).
 //
 // House style (CLAUDE.md §4): warm, professional, specific. No emoji.
 

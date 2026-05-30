@@ -1,6 +1,6 @@
 // @studymind/core/forwarding — configurable "Forward to <team>" quick action
 // on a contact. The rule catalogue lives in `ForwardingRule`; the orchestrator
-// in `forward.ts` sends via an injected sender (Resend in production) and
+// in `forward.ts` sends via an injected sender (Gmail OAuth in production) and
 // records an `email_forwarded` Interaction on the contact.
 
 export {

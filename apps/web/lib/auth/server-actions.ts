@@ -26,7 +26,7 @@ import {
 import { BusinessError } from '@studymind/core/errors'
 import { logger } from '@studymind/core/logger'
 import { db } from '@studymind/db'
-import { sendEmail } from '@studymind/integration-resend'
+import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 
 import { authRateLimit } from './rate-limit-handler'
 
@@ -153,16 +153,17 @@ export async function resendVerification(emailRaw: string): Promise<ActionResult
       },
     })
     const link = `${appUrl()}/verify?token=${encodeURIComponent(rawToken)}`
-    await sendEmail({
+    const sent = await sendSystemEmail({
       to: email,
       subject: 'Verify your StudyMind CRM account',
-      body:
+      text:
         `Hello,\n\n` +
         `Here is a fresh verification link, valid for 24 hours:\n\n${link}\n\n` +
         `— StudyMind CRM`,
-    }).catch((err) => {
-      logger.error({ err }, 'auth.resend.email_send_failed')
     })
+    if (sent.status === 'failed') {
+      logger.error({ detail: sent.detail }, 'auth.resend.email_send_failed')
+    }
     await writeAuditLogEntry(db, {
       actorId: user.id,
       action: 'auth.email_verification_resent',
@@ -205,16 +206,17 @@ export async function requestPasswordReset(emailRaw: string): Promise<ActionResu
       },
     })
     const link = `${appUrl()}/reset?token=${encodeURIComponent(rawToken)}`
-    await sendEmail({
+    const sent = await sendSystemEmail({
       to: email,
       subject: 'Reset your StudyMind CRM password',
-      body:
+      text:
         `Hello,\n\n` +
         `Use the link below to reset your StudyMind CRM password. It expires in 1 hour.\n\n${link}\n\n` +
         `If you did not request this, you can safely ignore this email.\n\n— StudyMind CRM`,
-    }).catch((err) => {
-      logger.error({ err }, 'auth.forgot.email_send_failed')
     })
+    if (sent.status === 'failed') {
+      logger.error({ detail: sent.detail }, 'auth.forgot.email_send_failed')
+    }
     await writeAuditLogEntry(db, {
       actorId: user.id,
       action: 'auth.password_reset_requested',

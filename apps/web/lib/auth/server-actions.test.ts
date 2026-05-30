@@ -1,6 +1,6 @@
 // Tests for unauthenticated auth server actions. ADR 0010.
-// Mocks Prisma + Resend + audit and walks the four key paths:
-//   - signUp creates User + token, sends email
+// Mocks Prisma + Gmail system-send + audit and walks the key paths:
+//   - signUp is disabled (ADR 0021)
 //   - requestPasswordReset is enumeration-safe
 //   - verifyEmail flips emailVerifiedAt + invalidates the token
 //   - resetPassword rotates the password and clears lockout
@@ -16,8 +16,8 @@ const mocks = vi.hoisted(() => ({
   writeAudit: vi.fn(async () => 'audit-id'),
 }))
 
-vi.mock('@studymind/integration-resend', () => ({
-  sendEmail: mocks.sendEmail,
+vi.mock('@studymind/integration-gmail/system-send', () => ({
+  sendSystemEmail: mocks.sendEmail,
 }))
 
 vi.mock('@studymind/audit', () => ({

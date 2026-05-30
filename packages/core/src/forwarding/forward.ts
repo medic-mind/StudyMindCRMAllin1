@@ -3,7 +3,7 @@
 // modal, and submits. We:
 //   1. Look the rule up (must be non-archived).
 //   2. Send the email via the injected `sendForwardingEmail` sender — this is
-//      Resend-backed in production (apps/web/lib/forwarding/senders.ts).
+//      Gmail-backed (Google OAuth) in production (apps/web/lib/forwarding/senders.ts).
 //      `packages/core` is pure domain and may not import integration clients
 //      (CLAUDE.md §5 module boundaries), hence the injection.
 //   3. Persist an `email_forwarded` Interaction on the contact carrying the

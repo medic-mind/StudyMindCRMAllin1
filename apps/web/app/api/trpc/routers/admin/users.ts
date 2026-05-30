@@ -51,7 +51,7 @@ import {
 } from '@studymind/core/email'
 import { BusinessError } from '@studymind/core/errors'
 import { logger } from '@studymind/core/logger'
-import { sendEmail } from '@studymind/integration-resend'
+import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 
 import {
   auditedProcedure,
@@ -209,21 +209,22 @@ async function issueTemporaryCredentials(
   const rendered = buildWelcomeEmail(creds)
   const pdf = buildWelcomePdf(creds)
 
-  await sendEmail({
+  const sendResult = await sendSystemEmail({
     to: args.email,
     subject: rendered.subject,
-    body: rendered.text,
+    text: rendered.text,
     html: rendered.html,
     attachments: [
       {
         filename: WELCOME_PDF_FILENAME,
-        content: pdf.toString('base64'),
+        content: pdf,
         contentType: 'application/pdf',
       },
     ],
-  }).catch((err) => {
-    logger.error({ err }, 'admin.users.welcome.email_send_failed')
   })
+  if (sendResult.status === 'failed') {
+    logger.error({ detail: sendResult.detail }, 'admin.users.welcome.email_send_failed')
+  }
 
   return temporaryPassword
 }
@@ -692,17 +693,18 @@ export const adminUsersRouter = router({
       })
 
       const link = `${appUrl()}/accept-invite?token=${encodeURIComponent(rawToken)}&email=${encodeURIComponent(email)}`
-      await sendEmail({
+      const inviteSend = await sendSystemEmail({
         to: email,
         subject: 'You have been invited to StudyMind CRM',
-        body:
+        text:
           `Hello${input.name ? ` ${input.name}` : ''},\n\n` +
           `${actor.email} has invited you to StudyMind CRM. ` +
           `Use the link below to set your password — it expires in 7 days.\n\n${link}\n\n` +
           `If you were not expecting this email, you can ignore it.\n\n— StudyMind CRM`,
-      }).catch((err) => {
-        logger.error({ err }, 'admin.users.invite.email_send_failed')
       })
+      if (inviteSend.status === 'failed') {
+        logger.error({ detail: inviteSend.detail }, 'admin.users.invite.email_send_failed')
+      }
 
       await ctx.audit({
         action: 'auth.user_invited',
@@ -739,15 +741,16 @@ export const adminUsersRouter = router({
         },
       })
       const link = `${appUrl()}/accept-invite?token=${encodeURIComponent(rawToken)}&email=${encodeURIComponent(user.email)}`
-      await sendEmail({
+      const resendSend = await sendSystemEmail({
         to: user.email,
         subject: 'Your StudyMind CRM invite',
-        body:
+        text:
           `Hello${user.name ? ` ${user.name}` : ''},\n\n` +
           `Here is a fresh invite link, valid for 7 days:\n\n${link}\n\n— StudyMind CRM`,
-      }).catch((err) => {
-        logger.error({ err }, 'admin.users.invite.email_send_failed')
       })
+      if (resendSend.status === 'failed') {
+        logger.error({ detail: resendSend.detail }, 'admin.users.invite.email_send_failed')
+      }
       await ctx.audit({
         action: 'auth.user_invite_resent',
         target: { type: 'User', id: user.id },

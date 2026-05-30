@@ -135,9 +135,6 @@ importers:
       '@studymind/integration-pagerduty':
         specifier: workspace:*
         version: link:../../packages/integrations/pagerduty
-      '@studymind/integration-resend':
-        specifier: workspace:*
-        version: link:../../packages/integrations/resend
       '@studymind/integration-slack':
         specifier: workspace:*
         version: link:../../packages/integrations/slack
@@ -526,16 +523,6 @@ importers:
         version: 5.9.3
 
   packages/integrations/pagerduty:
-    dependencies:
-      '@studymind/core':
-        specifier: workspace:*
-        version: link:../../core
-    devDependencies:
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-
-  packages/integrations/resend:
     dependencies:
       '@studymind/core':
         specifier: workspace:*

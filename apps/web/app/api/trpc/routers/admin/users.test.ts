@@ -8,8 +8,8 @@ import type { TrpcContext, SessionUser, AuditRecorder } from '@/lib/trpc/builder
 
 import { adminUsersRouter } from './users'
 
-vi.mock('@studymind/integration-resend', () => ({
-  sendEmail: vi.fn(async () => ({ status: 'sent' as const, id: 'm1' })),
+vi.mock('@studymind/integration-gmail/system-send', () => ({
+  sendSystemEmail: vi.fn(async () => ({ status: 'sent' as const, id: 'm1' })),
 }))
 
 interface FakeUser {

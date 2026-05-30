@@ -25,8 +25,9 @@ product owner:
 ADR 0010 already gives us NextAuth v5 + bcrypt passwords, server-side sessions,
 the `mustResetPassword` gate + `/account/change-password`, account lockout,
 single-use email/reset tokens, and an `admin.users.*` router (list / get /
-invite / role grant-revoke / deactivate). The Resend wrapper sent plaintext
-only; there was no PDF capability.
+invite / role grant-revoke / deactivate), and a per-agent Gmail OAuth
+integration (ADR 0012) for outbound mail. There was no system-email path for
+fresh (non-reply) messages with HTML + attachments.
 
 ## Decision
 
@@ -55,14 +56,20 @@ Manager) actor may never act on a CEO or Senior Manager account
 per call (fresh, no session/JWT changes) and exposes `admin.users.myAccess` so
 the UI can gate itself.
 
-**Email + PDF.** The Resend wrapper gains optional `html` and `attachments`
-(base64), default from `RESEND_FROM_ADDRESS` (→ `info@studymind.co.uk`).
-Templates and a **first-party, dependency-free PDF writer** live in
-`packages/core/src/email/` (pure builders). We hand-rolled the PDF (one page,
-built-in Helvetica, ASCII-safe) rather than add a library, matching this
-codebase's preference for small first-party wrappers (cf. the custom Resend
-client) and CLAUDE.md §35/§44.1 on dependency/supply-chain discipline. The only
-PDF we produce is a short text credentials sheet, so a library is not warranted.
+**Email + PDF — Gmail OAuth, never Resend.** Per the product owner, we do not
+use any third-party email API. `packages/integrations/gmail/src/system-send.ts`
+adds `sendSystemEmail` — a fresh (non-reply) RFC 5322 builder supporting HTML +
+attachments, sent through a connected Gmail mailbox resolved from
+`SYSTEM_GMAIL_EMAIL` (default `info@studymind.co.uk`), falling back to any
+connected default mailbox and skipping gracefully when none is connected (the
+admin still sees the temp password in the UI). All previous Resend call sites
+(welcome/reset, self-service forgot/verify, forwarding) now go through it, and
+the `@studymind/integration-resend` package is removed. Templates and a
+**first-party, dependency-free PDF writer** live in `packages/core/src/email/`
+(pure builders). We hand-rolled the PDF (one page, built-in Helvetica,
+ASCII-safe) rather than add a library, per CLAUDE.md §35/§44.1 on
+dependency/supply-chain discipline. The only PDF we produce is a short text
+credentials sheet, so a library is not warranted.
 
 **Self-service sign-up is disabled.** The `/sign-up` route is removed, the
 `signUp` server action is a hard-disabled stub (regression-tested), and the

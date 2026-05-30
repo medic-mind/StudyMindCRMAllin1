@@ -2,8 +2,8 @@
 //
 // Why hand-rolled rather than a library: the only PDF we generate is a one-page
 // "credentials sheet" of plain text, and this codebase prefers small
-// first-party wrappers over dependencies (see the custom Resend client, and
-// CLAUDE.md §35 / §44.1 on supply-chain surface). This produces a valid
+// first-party wrappers over dependencies (CLAUDE.md §35 / §44.1 on
+// supply-chain surface). This produces a valid
 // PDF-1.4 file using the two built-in Helvetica fonts (no font embedding,
 // no images), so it needs no third party and works offline.
 //
