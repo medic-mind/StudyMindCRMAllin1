@@ -206,6 +206,19 @@ export const backfillConversationHeads = inngest.createFunction(
       return { ok: true, processed: processedSoFar }
     }
 
+    // Resolve trengoUserId → CRM user once per batch and cache. Most batches
+    // touch a single conversation in a single ticket, so the cache is small.
+    const assigneeCache = new Map<number, string | null>()
+    const resolveAssignee = async (trengoUserId: number): Promise<string | null> => {
+      if (assigneeCache.has(trengoUserId)) return assigneeCache.get(trengoUserId) ?? null
+      const u = await db.user.findUnique({
+        where: { trengoUserId },
+        select: { id: true },
+      })
+      assigneeCache.set(trengoUserId, u?.id ?? null)
+      return u?.id ?? null
+    }
+
     let applied = 0
     let skipped = 0
     for (const row of rows) {
@@ -213,6 +226,13 @@ export const backfillConversationHeads = inngest.createFunction(
       if (!input) {
         skipped += 1
         continue
+      }
+      if (
+        input.eventName === 'ticket.assigned' &&
+        typeof input.trengoAssigneeId === 'number' &&
+        !input.assigneeUserId
+      ) {
+        input.assigneeUserId = await resolveAssignee(input.trengoAssigneeId)
       }
       await applyEventToConversation(db, input)
       applied += 1

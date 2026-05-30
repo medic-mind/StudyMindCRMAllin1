@@ -439,6 +439,7 @@ Every async unit of work is an Inngest function. Conventions:
 | `ai/regenerate-status-summaries` | every 30 min for changed contacts | Refresh the 2 sentence "Current Status" header |
 | `aircall/recover-disabled-webhook` | hourly | Re-enable Aircall webhook if it was disabled by failures |
 | `gocardless/reconcile-late-failures` | every 4 hours | Walk recent confirmations and surface any new late failures |
+| `trengo/retry-pending-send` | every 5 min | Re-send outbound Trengo Interactions stuck in `pending_send` (ADR 0020 Phase 7a). Bounded at 5 attempts per row; skips TOKEN_EXPIRED (the agent must reconnect). |
 
 **Event-triggered backfill workers (ADR 0017).** Not recurring — fired once on first-connect (Gmail/Trengo) or by an admin button (Aircall/Slack). `gmail/backfill.requested`, `aircall/backfill.requested`, `trengo/backfill.requested`, `slack/backfill.requested` each pull the last 90 days of history and write retroactive Interactions for matched Contacts. Idempotent on the provider's native id; concurrency-capped (Slack 3 as it is AI-heavy, others 2). One summary audit row per job — never per imported message.
 
@@ -1001,6 +1002,8 @@ When asked something that touches money, safeguarding, or external mutation:
 | Read the current state of a Trengo conversation | `Conversation` table (ADR 0020 Phase 2). Upserted by the webhook job and the CRM outbound (`packages/integrations/trengo/src/conversation-head.ts`). Indexed columns: status, lastMessageAt, assigneeUserId, channel, unreadCount, tags. Message bodies stay in `Interaction` — the head is a queryable state layer, not a copy. |
 | Backfill the Conversation head from historic Interactions | Admin trigger `admin.backfill.conversationHeads.start` (CEO + Senior Manager only) fires `migration/backfill-conversation-heads.requested`. Self-recursive Inngest function `packages/integrations/trengo/src/backfill-conversation-heads.ts` walks 1000 rows per invocation ordered by `(occurredAt, id)`, scheduling the next batch with a cursor. Idempotent — replays converge to the same state. Audit at start + completion only. |
 | Live conversation updates in the UI | SSE endpoint `apps/web/app/api/realtime/conversations/route.ts` (Node.js runtime, staff-gated). In-process event bus `packages/core/src/realtime/bus.ts` is published to by `applyEventToConversation` on every head change. Client hook `useConversationStream` (`apps/web/lib/hooks/use-conversation-stream.ts`) invalidates the comms-centre query and the per-contact channel query. Multi-instance Redis pub/sub fan-out is Phase 7. |
+| Map a CRM user to their Trengo identity | `User.trengoUserId` (Int, nullable, unique). Stamped at token-connect from `/me`; the webhook job resolves `assignee_id` → `User.id` via this column. Comms-centre badges render the resolved CRM name. |
+| Recover a stuck outbound message | Cron `trengo/retry-pending-send` (every 5 min). Walks Interactions still in `pending_send`, re-attempts via the audited outbound, caps at 5 attempts per row. TOKEN_EXPIRED rows are skipped (the rotation banner is the recovery surface). |
 | Start a backfill | `packages/core/src/backfill/index.ts` (workers in `packages/integrations/<svc>/backfill.ts`) |
 | Tweak an AI prompt | `packages/ai/prompts/<task>.ts` |
 | Add a new background job | `packages/jobs/` |

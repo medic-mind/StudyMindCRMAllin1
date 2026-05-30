@@ -246,6 +246,14 @@ model User {
   /// counted as unread. Null means "never opened" (everything unread).
   notificationsSeenAt  DateTime?
 
+  /// ADR 0020 Phase 6 — the user's numeric id on Trengo. Resolved from
+  /// `/me` at token-connect time and used to map the `assignee_id` on
+  /// `ticket.assigned` webhooks to the CRM `User`. Nullable: a user without
+  /// a connected token has no Trengo identity to map. The unique index is
+  /// partial (PG default for nullable `@unique`) so multiple users without
+  /// the mapping coexist.
+  trengoUserId         Int?      @unique
+
   // ADR 0012: per-agent Gmail OAuth. Status is free text (see migration).
   // gmailRefreshTokenCipherId references EncryptedField.id, not enforced as
   // a foreign key — lifecycle is lock-stepped in the OAuth route handlers.
