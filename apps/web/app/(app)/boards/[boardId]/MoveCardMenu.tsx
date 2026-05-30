@@ -1,6 +1,11 @@
-// Per-card "Move to…" dropdown. ADR 0018. No drag yet (slice 3). The parent
-// RSC only renders this for roles that can call card.move; the server gates
-// too (CLAUDE.md §20, §3).
+// Per-card "Move to…" dropdown. ADR 0018. Supports both same-board and
+// cross-board moves: when `crossBoardStages` is provided, those stages
+// appear in a second `<optgroup>` so the agent can jump a card off to
+// a different pipeline in one click. CLAUDE.md §20.
+//
+// Cache: we invalidate the card list + the card detail query directly on
+// success so the kanban updates live; the user reported the legacy
+// `router.refresh()` alone wasn't always refreshing the kanban view.
 
 'use client'
 
@@ -15,20 +20,47 @@ interface StageOption {
   name: string
 }
 
-interface Props {
-  cardId: string
-  currentStageId: string
+interface CrossBoardGroup {
+  boardId: string
+  boardName: string
   stages: ReadonlyArray<StageOption>
 }
 
-export function MoveCardMenu({ cardId, currentStageId, stages }: Props) {
+interface Props {
+  cardId: string
+  currentStageId: string
+  /** Same-board stages — primary options. */
+  stages: ReadonlyArray<StageOption>
+  /** Other boards' stages — rendered under a "Move to other board" optgroup. */
+  crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+}
+
+export function MoveCardMenu({
+  cardId,
+  currentStageId,
+  stages,
+  crossBoardStages = [],
+}: Props) {
   const router = useRouter()
+  const utils = trpc.useUtils()
   const [pending, setPending] = useState(false)
   const move = trpc.card.move.useMutation({
-    onSuccess: (_data, vars) => {
-      const dest = stages.find((s) => s.id === vars.toStageId)
+    onSuccess: async (_data, vars) => {
+      const dest =
+        stages.find((s) => s.id === vars.toStageId) ??
+        crossBoardStages
+          .flatMap((g) => g.stages)
+          .find((s) => s.id === vars.toStageId)
       toast.success(`Moved to ${dest?.name ?? 'new stage'}`)
       setPending(false)
+      // Invalidate everything the kanban shows — the user reported the
+      // dropdown sometimes only updated on full refresh. Invalidate the
+      // list for every board we may have touched (source + target).
+      await Promise.all([
+        utils.card.list.invalidate(),
+        utils.card.get.invalidate({ id: cardId }),
+        utils.card.quickActions.list.invalidate(),
+      ])
       router.refresh()
     },
     onError: (e) => {
@@ -37,8 +69,14 @@ export function MoveCardMenu({ cardId, currentStageId, stages }: Props) {
     },
   })
 
-  const targets = stages.filter((s) => s.id !== currentStageId)
-  if (targets.length === 0) return null
+  const sameBoardTargets = stages.filter((s) => s.id !== currentStageId)
+  const crossBoardTargets = crossBoardStages
+    .map((g) => ({
+      boardName: g.boardName,
+      stages: g.stages.filter((s) => s.id !== currentStageId),
+    }))
+    .filter((g) => g.stages.length > 0)
+  if (sameBoardTargets.length === 0 && crossBoardTargets.length === 0) return null
 
   return (
     <label className="block">
@@ -56,10 +94,23 @@ export function MoveCardMenu({ cardId, currentStageId, stages }: Props) {
         aria-label="Move card to another stage"
       >
         <option value="">{pending ? 'Moving…' : 'Move to…'}</option>
-        {targets.map((s) => (
-          <option key={s.id} value={s.id}>
-            → {s.name}
-          </option>
+        {sameBoardTargets.length > 0 && (
+          <optgroup label="This board">
+            {sameBoardTargets.map((s) => (
+              <option key={s.id} value={s.id}>
+                → {s.name}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {crossBoardTargets.map((g) => (
+          <optgroup key={g.boardName} label={`→ ${g.boardName}`}>
+            {g.stages.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </optgroup>
         ))}
       </select>
     </label>

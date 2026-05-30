@@ -1,8 +1,12 @@
-// Per-card quick actions. ADR 0018. A tick moves the card to the board's
-// configured "completed" stage (tickActionStageId); the cross moves it to
-// the "not answered" stage (xActionStageId). Both target stages are set per
-// board in board settings; if a board hasn't configured them the buttons
-// don't render. Uses the same audited card.move mutation as the dropdown.
+// Per-card quick actions, driven by the BoardQuickAction catalogue.
+// Each row in the catalogue renders as a chip on every card: clicking it
+// fires `card.applyQuickAction` which adds the row's comment template
+// to the card and moves it to the row's target stage (possibly on a
+// different board). Configurable from /boards/[boardId]/settings.
+//
+// Cache invalidation: same fix as MoveCardMenu — we explicitly invalidate
+// the card list + card detail so the kanban updates live (the user
+// reported moves not landing until manual refresh).
 
 'use client'
 
@@ -10,66 +14,74 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
-import { CheckCircleIcon, XCircleIcon } from '@/components/ui/icon'
+
+interface QuickAction {
+  id: string
+  label: string
+  color: string | null
+  targetStageId: string
+  targetStageName: string
+  targetBoardName: string | null
+}
 
 interface Props {
   cardId: string
   currentStageId: string
-  tickStageId: string | null
-  tickStageName: string | null
-  xStageId: string | null
-  xStageName: string | null
+  actions: ReadonlyArray<QuickAction>
 }
 
-export function QuickActionButtons({
-  cardId,
-  currentStageId,
-  tickStageId,
-  tickStageName,
-  xStageId,
-  xStageName,
-}: Props) {
+function chipStyle(color: string | null): React.CSSProperties {
+  if (!color) return {}
+  return {
+    backgroundColor: color,
+    color: '#ffffff',
+    borderColor: color,
+  }
+}
+
+export function QuickActionButtons({ cardId, currentStageId, actions }: Props) {
   const router = useRouter()
-  const move = trpc.card.move.useMutation({
-    onSuccess: (_d, vars) => {
-      toast.success(vars.toStageId === tickStageId ? 'Marked complete' : 'Marked not answered')
+  const utils = trpc.useUtils()
+  const apply = trpc.card.applyQuickAction.useMutation({
+    onSuccess: async (_data, vars) => {
+      const fired = actions.find((a) => a.id === vars.quickActionId)
+      toast.success(fired ? `${fired.label} → ${fired.targetStageName}` : 'Applied')
+      await Promise.all([
+        utils.card.list.invalidate(),
+        utils.card.get.invalidate({ id: cardId }),
+        utils.card.quickActions.list.invalidate(),
+      ])
       router.refresh()
     },
-    onError: (e) => toast.error(e.message ?? 'Could not move card'),
+    onError: (e) => toast.error(e.message ?? 'Could not apply quick action'),
   })
 
-  const showTick = tickStageId && tickStageId !== currentStageId
-  const showX = xStageId && xStageId !== currentStageId
-  if (!showTick && !showX) return null
+  const visible = actions.filter((a) => a.targetStageId !== currentStageId)
+  if (visible.length === 0) return null
 
   return (
-    <div className="mt-2 flex items-center gap-1.5">
-      {showTick ? (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {visible.map((action) => (
         <button
+          key={action.id}
           type="button"
-          disabled={move.isPending}
-          onClick={() => move.mutate({ cardId, toStageId: tickStageId })}
-          className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
-          aria-label={`Move to ${tickStageName ?? 'completed'}`}
-          title={`Move to ${tickStageName ?? 'completed'}`}
+          disabled={apply.isPending}
+          onClick={(e) => {
+            // Don't trigger the card-modal click on the parent.
+            e.stopPropagation()
+            apply.mutate({ cardId, quickActionId: action.id })
+          }}
+          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-[11px] font-medium text-neutral-800 hover:brightness-95 disabled:opacity-60"
+          style={chipStyle(action.color)}
+          title={
+            action.targetBoardName
+              ? `→ ${action.targetBoardName} · ${action.targetStageName}`
+              : `→ ${action.targetStageName}`
+          }
         >
-          <CheckCircleIcon size={13} />
-          {tickStageName ?? 'Complete'}
+          {action.label}
         </button>
-      ) : null}
-      {showX ? (
-        <button
-          type="button"
-          disabled={move.isPending}
-          onClick={() => move.mutate({ cardId, toStageId: xStageId })}
-          className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-60"
-          aria-label={`Move to ${xStageName ?? 'not answered'}`}
-          title={`Move to ${xStageName ?? 'not answered'}`}
-        >
-          <XCircleIcon size={13} />
-          {xStageName ?? 'Not answered'}
-        </button>
-      ) : null}
+      ))}
     </div>
   )
 }

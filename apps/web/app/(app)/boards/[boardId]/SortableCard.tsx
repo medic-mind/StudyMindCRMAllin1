@@ -16,6 +16,11 @@ interface StageOption {
   id: string
   name: string
 }
+interface CrossBoardGroup {
+  boardId: string
+  boardName: string
+  stages: ReadonlyArray<StageOption>
+}
 interface LabelChip {
   id: string
   name: string
@@ -30,15 +35,22 @@ interface CardData {
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
 }
+interface QuickAction {
+  id: string
+  label: string
+  color: string | null
+  targetStageId: string
+  targetStageName: string
+  targetBoardName: string | null
+}
 
 interface Props {
   card: CardData
   stageId: string
+  stageColor?: string
   stages: ReadonlyArray<StageOption>
-  tickStageId: string | null
-  tickStageName: string | null
-  xStageId: string | null
-  xStageName: string | null
+  crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+  quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
   currentUserName: string

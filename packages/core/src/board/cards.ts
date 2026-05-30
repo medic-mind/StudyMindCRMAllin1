@@ -65,6 +65,27 @@ async function resolveStage(
   return stage
 }
 
+/** Stage lookup with no board constraint — used for cross-board moves where
+ * the target may be on a different board. Returns the `boardId` so the
+ * caller can update `card.boardId` when the target is elsewhere. */
+async function resolveStageAnyBoard(
+  db: Db,
+  stageId: string,
+): Promise<{ id: string; name: string; boardId: string }> {
+  const stage = await db.pipelineStage.findFirst({
+    where: { id: stageId, archivedAt: null },
+    select: { id: true, name: true, boardId: true },
+  })
+  if (!stage || !stage.boardId) {
+    throw new BusinessError(
+      'PIPELINE_STAGE_NOT_FOUND',
+      'Stage not found (or archived)',
+      { stageId },
+    )
+  }
+  return { id: stage.id, name: stage.name, boardId: stage.boardId }
+}
+
 /**
  * Create a card on a board. If `contact` carries raw fields, a Contact is
  * created first via the shared validation path; otherwise an existing
@@ -212,22 +233,33 @@ export async function moveCard(
   })
   if (!card) throw new BusinessError('CARD_NOT_FOUND', 'Card not found')
 
-  const toStage = await resolveStage(db, card.boardId, input.toStageId)
+  // Cross-board moves are supported when the target stage belongs to a
+  // different board: we update card.boardId at the same time and place
+  // the card at the end of the target stage on the target board.
+  const toStageAny = await resolveStageAnyBoard(db, input.toStageId)
+  const toStage = { id: toStageAny.id, name: toStageAny.name }
+  const targetBoardId = toStageAny.boardId
+  const isCrossBoard = targetBoardId !== card.boardId
   const fromStageId = card.stageId
+  const fromBoardId = card.boardId
 
   // First place the card on the target stage (so it is part of the sibling
   // set), then resequence when an explicit position was requested.
   const landingPosition =
-    input.toPosition ?? (await nextCardPosition(db, card.boardId, input.toStageId))
+    input.toPosition ?? (await nextCardPosition(db, targetBoardId, input.toStageId))
   await db.card.update({
     where: { id: card.id },
-    data: { stageId: input.toStageId, position: landingPosition },
+    data: {
+      stageId: input.toStageId,
+      position: landingPosition,
+      ...(isCrossBoard ? { boardId: targetBoardId } : {}),
+    },
   })
 
   let position = landingPosition
   if (input.toPosition !== undefined) {
     const siblings = await db.card.findMany({
-      where: { boardId: card.boardId, stageId: input.toStageId, archivedAt: null },
+      where: { boardId: targetBoardId, stageId: input.toStageId, archivedAt: null },
       select: { id: true, position: true },
     })
     const writes = resequence(siblings, card.id, input.toPosition - 1)
@@ -253,9 +285,11 @@ export async function moveCard(
       payload: {
         event: 'card.moved',
         cardId: card.id,
-        boardId: card.boardId,
+        boardId: targetBoardId,
+        fromBoardId,
         fromStageId,
         toStageId: input.toStageId,
+        ...(isCrossBoard ? { crossBoard: true } : {}),
       },
       createdById: ctx.actorId,
       updatedById: ctx.actorId,
@@ -267,8 +301,8 @@ export async function moveCard(
     requestId: ctx.requestId,
     action: 'card.moved',
     target: { type: 'Card', id: card.id },
-    before: { stageId: fromStageId, position: card.position },
-    after: { stageId: input.toStageId, position },
+    before: { boardId: fromBoardId, stageId: fromStageId, position: card.position },
+    after: { boardId: targetBoardId, stageId: input.toStageId, position },
   })
   return updated
 }

@@ -41,6 +41,9 @@ export type BusinessErrorCode =
   // Forwarding ("Forward to <team>" quick action — packages/core/src/forwarding).
   | 'FORWARDING_RULE_NOT_FOUND'
   | 'FORWARDING_RULE_ARCHIVED'
+  // Board quick actions (per-board configurable buttons that move a card +
+  // add a comment in one click).
+  | 'QUICK_ACTION_NOT_FOUND'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

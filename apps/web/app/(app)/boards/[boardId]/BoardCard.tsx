@@ -1,10 +1,11 @@
-// Client wrapper for a single board card. Clicking the card body opens the
-// detail modal; the contact name remains a secondary link (cmd/ctrl-click or
-// the explicit link still navigates). ADR 0018, CLAUDE.md §26.
+// Client wrapper for a single board card. The whole card body (everything
+// except the per-card controls) is clickable and opens the detail modal;
+// quick-action buttons and the Move dropdown stay clickable on their own.
+// ADR 0018, CLAUDE.md §26.
 //
 // Drag-and-drop (ADR 0019) is layered on by the SortableCard wrapper, which
-// passes a `dragRef`, `dragStyle`, and `dragHandleProps`. When absent the card
-// renders exactly as before, so the component is usable without DnD.
+// passes a `dragRef`, `dragStyle`, and `dragHandleProps`. When absent the
+// card renders exactly as before, so the component is usable without DnD.
 
 'use client'
 
@@ -23,10 +24,23 @@ interface StageOption {
   id: string
   name: string
 }
+interface CrossBoardGroup {
+  boardId: string
+  boardName: string
+  stages: ReadonlyArray<StageOption>
+}
 interface LabelChip {
   id: string
   name: string
   color: string
+}
+interface QuickAction {
+  id: string
+  label: string
+  color: string | null
+  targetStageId: string
+  targetStageName: string
+  targetBoardName: string | null
 }
 
 interface CardData {
@@ -42,11 +56,13 @@ interface CardData {
 interface Props {
   card: CardData
   stageId: string
+  /** Column accent colour — used for the left-border so cards visually
+   * inherit the stage they're in (one of the user's pain points: cards
+   * look identical no matter which column they sit in). */
+  stageColor?: string
   stages: ReadonlyArray<StageOption>
-  tickStageId: string | null
-  tickStageName: string | null
-  xStageId: string | null
-  xStageName: string | null
+  crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+  quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
   currentUserName: string
@@ -59,11 +75,10 @@ interface Props {
 export function BoardCard({
   card,
   stageId,
+  stageColor,
   stages,
-  tickStageId,
-  tickStageName,
-  xStageId,
-  xStageName,
+  crossBoardStages = [],
+  quickActions,
   canWrite,
   canComment,
   currentUserName,
@@ -74,70 +89,81 @@ export function BoardCard({
   const [open, setOpen] = useState(false)
   const now = new Date()
 
+  const borderColor = stageColor ? resolveStageColor(stageColor) : 'transparent'
+
   return (
     <li
       ref={dragRef}
-      style={dragStyle}
+      style={{ ...dragStyle, borderLeftColor: borderColor }}
       {...dragHandleProps}
-      className={`bg-white p-3 text-sm ${dragHandleProps ? 'touch-none' : ''}`}
+      className={`group relative rounded-md border border-neutral-200 border-l-[3px] bg-white p-3 text-sm shadow-card transition-shadow hover:shadow-card-hover ${dragHandleProps ? 'touch-none' : ''}`}
     >
+      {/* Whole-card click target. Sits behind the per-card controls so
+       * those still receive their own clicks. */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="block w-full min-w-0 truncate text-left font-medium text-neutral-900 hover:text-primary-700 hover:underline"
-      >
-        {card.contactName}
-      </button>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        {card.subject ? <Badge tone="info">{card.subject.name}</Badge> : null}
-        {card.labels.map((l) => (
-          <span
-            key={l.id}
-            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
-            style={{ backgroundColor: resolveStageColor(l.color) }}
-          >
-            {l.name}
-          </span>
-        ))}
+        aria-label={`Open ${card.contactName}`}
+        className="absolute inset-0 z-0 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+      />
+      <div className="relative z-10 pointer-events-none">
+        <div className="min-w-0 truncate font-medium text-neutral-900 group-hover:text-primary-700">
+          {card.contactName}
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          {card.subject ? <Badge tone="info">{card.subject.name}</Badge> : null}
+          {card.labels.map((l) => (
+            <span
+              key={l.id}
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+              style={{ backgroundColor: resolveStageColor(l.color) }}
+            >
+              {l.name}
+            </span>
+          ))}
+        </div>
+        {card.lastActivityAt ? (
+          <p className="mt-1.5 font-mono text-[10px] tabular-nums text-neutral-500">
+            {formatRelativeTime(new Date(card.lastActivityAt), now)}
+          </p>
+        ) : null}
       </div>
-      {card.lastActivityAt ? (
-        <p className="mt-1.5 font-mono text-[10px] tabular-nums text-neutral-500">
-          {formatRelativeTime(new Date(card.lastActivityAt), now)}
-        </p>
-      ) : null}
-      <p className="mt-1">
+
+      {/* Per-card interactive controls — sit on top of the click target. */}
+      <div className="relative z-10 mt-2 space-y-2">
         <Link
           href={`/contacts/${card.contactId}`}
-          className="text-[10px] text-neutral-500 hover:text-primary-700 hover:underline"
+          className="inline-block text-[10px] text-neutral-500 hover:text-primary-700 hover:underline"
+          onClick={(e) => e.stopPropagation()}
         >
           Open contact →
         </Link>
-      </p>
-      {canWrite ? (
-        <>
+        {canWrite && quickActions.length > 0 ? (
           <QuickActionButtons
             cardId={card.id}
             currentStageId={stageId}
-            tickStageId={tickStageId}
-            tickStageName={tickStageName}
-            xStageId={xStageId}
-            xStageName={xStageName}
+            actions={quickActions}
           />
-          <div className="mt-2">
-            <MoveCardMenu cardId={card.id} currentStageId={stageId} stages={stages} />
+        ) : null}
+        {canWrite ? (
+          <div onClick={(e) => e.stopPropagation()}>
+            <MoveCardMenu
+              cardId={card.id}
+              currentStageId={stageId}
+              stages={stages}
+              crossBoardStages={crossBoardStages}
+            />
           </div>
-        </>
-      ) : null}
+        ) : null}
+      </div>
 
       <CardModal
         cardId={card.id}
         open={open}
         onClose={() => setOpen(false)}
         stages={stages}
-        tickStageId={tickStageId}
-        tickStageName={tickStageName}
-        xStageId={xStageId}
-        xStageName={xStageName}
+        crossBoardStages={crossBoardStages}
+        quickActions={quickActions}
         canWrite={canWrite}
         canComment={canComment}
         currentUserName={currentUserName}

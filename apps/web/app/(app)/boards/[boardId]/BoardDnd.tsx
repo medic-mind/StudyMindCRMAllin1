@@ -57,14 +57,26 @@ interface Stage {
   isClosed: boolean
 }
 
+interface CrossBoardGroup {
+  boardId: string
+  boardName: string
+  stages: ReadonlyArray<StageOption>
+}
+interface QuickAction {
+  id: string
+  label: string
+  color: string | null
+  targetStageId: string
+  targetStageName: string
+  targetBoardName: string | null
+}
+
 interface Props {
   stages: ReadonlyArray<Stage>
   cards: ReadonlyArray<CardData>
   stageOptions: ReadonlyArray<StageOption>
-  tickStageId: string | null
-  tickStageName: string | null
-  xStageId: string | null
-  xStageName: string | null
+  crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+  quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
   currentUserName: string
@@ -84,10 +96,8 @@ export function BoardDnd({
   stages,
   cards: initialCards,
   stageOptions,
-  tickStageId,
-  tickStageName,
-  xStageId,
-  xStageName,
+  crossBoardStages = [],
+  quickActions,
   canWrite,
   canComment,
   currentUserName,
@@ -105,14 +115,18 @@ export function BoardDnd({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
+  const utils = trpc.useUtils()
   const move = trpc.card.move.useMutation({
     onError: (e) => {
       if (preMoveSnapshot.current) setCards(preMoveSnapshot.current)
       preMoveSnapshot.current = null
       toast.error(e.message ?? 'Could not move card')
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       preMoveSnapshot.current = null
+      // Invalidate the card-list query so other surfaces (e.g. the modal
+      // open elsewhere) catch up. router.refresh re-renders this RSC.
+      await utils.card.list.invalidate()
       router.refresh()
     },
   })
@@ -182,21 +196,20 @@ export function BoardDnd({
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
+      <div className="flex gap-4 overflow-x-auto pb-2">
         {stages.map((stage) => (
-          <BoardColumn
-            key={stage.id}
-            stage={stage}
-            cards={byStage.get(stage.id) ?? []}
-            stages={stageOptions}
-            tickStageId={tickStageId}
-            tickStageName={tickStageName}
-            xStageId={xStageId}
-            xStageName={xStageName}
-            canWrite={canWrite}
-            canComment={canComment}
-            currentUserName={currentUserName}
-          />
+          <div key={stage.id} className="min-w-[300px] max-w-[320px] flex-1">
+            <BoardColumn
+              stage={stage}
+              cards={byStage.get(stage.id) ?? []}
+              stages={stageOptions}
+              crossBoardStages={crossBoardStages}
+              quickActions={quickActions}
+              canWrite={canWrite}
+              canComment={canComment}
+              currentUserName={currentUserName}
+            />
+          </div>
         ))}
       </div>
       <DragOverlay>

@@ -36,6 +36,14 @@ export const EVENT_NAMES = [
   'card.archived',
   'card.commented',
   'card.description_changed',
+  // Per-board configurable quick-action buttons (Called once, Called
+  // twice, Call completed, …). Manager+ manages the catalogue; anyone
+  // with card-write can fire one.
+  'board.quick_action_created',
+  'board.quick_action_updated',
+  'board.quick_action_archived',
+  'board.quick_action_restored',
+  'card.quick_action_applied',
   // Call summary on a card (slice B): an agent records the outcome of a call
   // and can fan it out to Slack / Trengo / email.
   'card.call_summary_added',
