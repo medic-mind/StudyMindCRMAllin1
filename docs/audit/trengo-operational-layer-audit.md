@@ -2,6 +2,34 @@
 
 > Status: living document. Authored 2026-05-30. Owner: see `OWNERS.md`.
 > Companion ADR: `docs/adr/0020-trengo-operational-layer.md`.
+>
+> **Implementation status (as of 2026-06-03)** — every phase below has a
+> verified `main` landing referenced in the table:
+>
+> | Phase | What it ships | PR | Main commit |
+> |---|---|---|---|
+> | 1 | `interaction.trengo.reply`; shared resolver; draft panel sends; full audit + ADR 0020 | #93 | `f86fe77` |
+> | 1+ | Close / reopen from CRM; webhook echo-skip via `linkCrmOutboundEcho`; per-card actions | #93 | `bd8198a` |
+> | 1++ | Inbox honors snooze + assign; Active / Mine / Unassigned / Snoozed chips | #93 | `2254e9c` |
+> | 2 | `Conversation` head model + migration; pure `applyEventToConversation` merger; webhook + outbound both write | #93 | `b6ddbfc` |
+> | 2b | Comms Centre seed `/inbox/conversations` reading the head | #93 | `acdce79` |
+> | 2c | One-shot Inngest backfill from existing Interactions; admin trigger | #94 | `8a2ff75` |
+> | 3 | SSE endpoint + in-process bus + client hook; live list updates | #94 | `5c2edec` |
+> | 4 | Comms Centre **thread view** at `/inbox/conversations/[id]` with inline reply / close / reopen | #96 | `3649822` |
+> | 5 | `User.notificationsSeenAt` + `notifications.markSeen`; bell fires on open | #96 | `4b9ed88` |
+> | 6a | `User.trengoUserId` mapping; assignee name surfaces in the list | #97 | `7173702` |
+> | 7a | Outbound retry queue (`trengo/retry-pending-send`, 5-min cron, capped attempts, TOKEN_EXPIRED skip) | #97 | `3bb028e` |
+>
+> **Open follow-ups**:
+> - **6b** — contact-level tag sync from Trengo labels. Per-conversation tags
+>   are already on the `Conversation` head; the design decision pending is
+>   whether to introduce a contact-level `Tag` model or keep tagging at the
+>   conversation level only.
+> - **6c** — contact-field suggestions on inbound `contact.updated` events
+>   (must never silent-merge per §3 — surface for human confirmation).
+> - **6d** — message attachments to S3, reusing the `packages/integrations/gmail/src/s3.ts` pattern.
+> - **7b** — Redis pub/sub for multi-instance SSE fan-out (single-instance
+>   Railway today; the in-process bus suffices until horizontal scale).
 
 This is a full audit of the StudyMind CRM as it relates to Trengo, plus the
 architecture and phased plan to make the CRM a complete operational layer on
