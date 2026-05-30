@@ -17,6 +17,7 @@ import { FUNCTIONS as ASANA_FUNCTIONS } from '@studymind/integration-asana/jobs'
 import { FUNCTIONS as BOOKING_FUNCTIONS } from '@studymind/integration-booking/jobs'
 import { FUNCTIONS as GMAIL_FUNCTIONS } from '@studymind/integration-gmail/jobs'
 import { FUNCTIONS as GOCARDLESS_FUNCTIONS } from '@studymind/integration-gocardless/jobs'
+import { FUNCTIONS as INVOICING_FUNCTIONS } from '@studymind/integration-invoicing/jobs'
 import { FUNCTIONS as SLACK_FUNCTIONS } from '@studymind/integration-slack/jobs'
 import { FUNCTIONS as STRIPE_FUNCTIONS } from '@studymind/integration-stripe/jobs'
 import { FUNCTIONS as TRENGO_FUNCTIONS } from '@studymind/integration-trengo/jobs'
@@ -53,6 +54,7 @@ const handlers = serve({
     ...SLACK_FUNCTIONS,
     ...ASANA_FUNCTIONS,
     ...GMAIL_FUNCTIONS,
+    ...INVOICING_FUNCTIONS,
   ],
   signingKey: process.env['INNGEST_SIGNING_KEY'],
 })

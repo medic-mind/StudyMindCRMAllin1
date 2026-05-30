@@ -17,6 +17,9 @@ importers:
       '@studymind/core':
         specifier: workspace:*
         version: link:packages/core
+      '@studymind/integration-invoicing':
+        specifier: workspace:*
+        version: link:packages/integrations/invoicing
       '@studymind/jobs':
         specifier: workspace:*
         version: link:packages/jobs
@@ -126,6 +129,9 @@ importers:
       '@studymind/integration-gocardless':
         specifier: workspace:*
         version: link:../../packages/integrations/gocardless
+      '@studymind/integration-invoicing':
+        specifier: workspace:*
+        version: link:../../packages/integrations/invoicing
       '@studymind/integration-pagerduty':
         specifier: workspace:*
         version: link:../../packages/integrations/pagerduty
@@ -464,6 +470,34 @@ importers:
         version: 5.9.3
 
   packages/integrations/gocardless:
+    dependencies:
+      '@paralleldrive/cuid2':
+        specifier: ^3.3.0
+        version: 3.3.0
+      '@prisma/client':
+        specifier: ^5.22.0
+        version: 5.22.0(prisma@5.22.0)
+      '@studymind/audit':
+        specifier: workspace:*
+        version: link:../../audit
+      '@studymind/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@studymind/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@studymind/jobs':
+        specifier: workspace:*
+        version: link:../../jobs
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/integrations/invoicing:
     dependencies:
       '@paralleldrive/cuid2':
         specifier: ^3.3.0

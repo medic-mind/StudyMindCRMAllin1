@@ -125,6 +125,19 @@ export const EVENT_NAMES = [
   'uploaded_invoice.restored',
   'uploaded_invoice.deleted',
 
+  // B2B Invoices Platform sync (b2b.studymind.co.uk). Outbound writes, inbound
+  // mirror upserts, and config/connection management. CLAUDE.md §2, §6, §21.
+  'invoicing.config_updated',
+  'invoicing.connection_tested',
+  'invoicing.customer_pushed',
+  'invoicing.customer_synced',
+  'invoicing.invoice_raised',
+  'invoicing.invoice_sent',
+  'invoicing.invoice_synced',
+  'invoicing.payment_recorded',
+  'invoicing.payment_synced',
+  'invoicing.invoice_marked_paid',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',
@@ -298,6 +311,10 @@ export const INNGEST_EVENT_NAMES = [
   'backfill/aircall.requested',
   'backfill/trengo.requested',
   'backfill/slack.requested',
+  // B2B Invoices Platform sync. One bus event per inbound webhook (processed
+  // async like every other provider), plus the nightly events-feed reconcile.
+  'invoicing/event.received',
+  'invoicing/reconcile.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]

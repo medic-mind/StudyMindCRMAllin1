@@ -464,6 +464,9 @@ model Contact {
   /// Manually uploaded invoice files attached to this contact (different
   /// from the finance-mirrored Invoice rows, which live under Family).
   uploadedInvoices  UploadedInvoice[]
+  /// Mirror of customers on the B2B Invoices Platform (b2b.studymind.co.uk)
+  /// that correlate to this contact (B2C individuals). See InvoicingCustomer.
+  invoicingCustomers InvoicingCustomer[]
 
   @@index([email])
   @@index([phoneE164])
@@ -1515,6 +1518,9 @@ model BusinessAccount {
   students         BusinessAccountStudent[]
   uploadedInvoices UploadedInvoice[]
   companies        BusinessAccountCompany[]
+  /// Mirror of customers on the B2B Invoices Platform (b2b.studymind.co.uk)
+  /// that correlate to this account (schools, partnerships, AP/council).
+  invoicingCustomers InvoicingCustomer[]
 
   @@unique([kind, slug])
   @@index([kind])
@@ -2010,4 +2016,239 @@ model GmailToken {
   createdById String?
   updatedById String?
   deletedAt   DateTime?
+}
+
+// -----------------------------------------------------------------------------
+// B2B Invoices Platform sync (b2b.studymind.co.uk). Live two-way mirror.
+//
+// We push writes via REST and receive changes via webhooks + SSE + a nightly
+// events-feed reconcile. Every mirror row dedupes on the invoicing-side id
+// (`invoicingId`) so all three inbound channels converge idempotently
+// (CLAUDE.md §2 idempotency, §6 correlation, §19 money in minor units).
+// -----------------------------------------------------------------------------
+
+/// Customer categories on the invoicing platform ("partners" table). CRM
+/// schools/partnerships map to `b2b`, individuals to `b2c`, AP/council to
+/// `alt_provision`. Unknown values fail closed to `unknown` (CLAUDE.md §8).
+enum InvoicingCustomerCategory {
+  b2b
+  b2c
+  alt_provision
+  unknown
+}
+
+enum InvoicingCustomerStatus {
+  active
+  on_hold
+  archived
+  unknown
+}
+
+enum InvoicingInvoiceStatus {
+  draft
+  issued
+  partially_paid
+  paid
+  overdue
+  cancelled
+  unknown
+}
+
+enum InvoicingClientType {
+  uk_b2b
+  school
+  summer_school
+  international
+  unknown
+}
+
+/// Mirror of a customer on the invoicing platform. `invoicingId` is the dedup
+/// key for every inbound channel. CRM correlation is via an optional
+/// BusinessAccount (schools/partnerships/AP) or Contact (B2C individuals).
+model InvoicingCustomer {
+  id          String @id
+  invoicingId String @unique
+
+  category       InvoicingCustomerCategory @default(unknown)
+  status         InvoicingCustomerStatus   @default(unknown)
+  companyName    String
+  contactName    String?
+  contactEmail   String?
+  contactEmailCc String?
+  phone          String?
+  address        String?
+  country        String?
+  vatNumber      String?
+  service        String?
+  tags           String[] @default([])
+  notes          String?
+
+  /// CRM correlation — at most one is set. Set on lookup-or-create so the two
+  /// sides stay linked (CLAUDE.md task: persist the invoicing id on the row).
+  businessAccountId String?
+  contactId         String?
+
+  /// Observability: when we last applied an event and what caused it
+  /// (api | app | system). Helps debug echo-loop suppression.
+  lastSyncedAt    DateTime?
+  lastEventSource String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  businessAccount BusinessAccount?   @relation(fields: [businessAccountId], references: [id], onDelete: SetNull)
+  contact         Contact?           @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  invoices        InvoicingInvoice[]
+
+  @@index([businessAccountId])
+  @@index([contactId])
+  @@index([category])
+  @@index([status])
+}
+
+/// Mirror of an invoice on the invoicing platform. Money is integer minor
+/// units (pence) — the API's decimal strings/numbers are converted on the way
+/// in and back out (CLAUDE.md §19, never floats for money).
+model InvoicingInvoice {
+  id            String  @id
+  invoicingId   String  @unique
+  /// Server-generated human number ("INV-1000"); persisted for correlation.
+  invoiceNumber String?
+
+  /// FK to our mirror customer plus the raw partner id, so an invoice that
+  /// arrives before its customer still resolves once the customer syncs.
+  customerId         String?
+  invoicingPartnerId String?
+
+  status     InvoicingInvoiceStatus @default(unknown)
+  clientType InvoicingClientType    @default(unknown)
+  currency   String                 @default("GBP")
+
+  // Server-computed totals, mirrored in minor units.
+  subtotalMinor   Int @default(0)
+  vatTotalMinor   Int @default(0)
+  grandTotalMinor Int @default(0)
+  /// Sum of recorded payments in minor units (derived from payments[]).
+  paidMinor       Int @default(0)
+
+  pricesIncludeVat Boolean?
+  issueDate        DateTime?
+  dueDate          DateTime?
+  paymentTerms     String?
+  poNumber         String?
+  paymentReference String?
+  billToName       String?
+  fromEmail        String?
+  notes            String?
+  internalNotes    String?
+  lastEmailedAt    DateTime?
+
+  lastSyncedAt    DateTime?
+  lastEventSource String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  customer  InvoicingCustomer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  lineItems InvoicingLineItem[]
+  payments  InvoicingPayment[]
+
+  @@index([customerId])
+  @@index([invoicingPartnerId])
+  @@index([status])
+  @@index([invoiceNumber])
+}
+
+/// Mirror of an invoice line item. `quantity` is kept as the raw decimal
+/// string (hours can be fractional) to avoid float drift; `unitPriceMinor`
+/// is money in pence.
+model InvoicingLineItem {
+  id          String @id
+  /// Invoicing-side line id when present; else a deterministic
+  /// `<invoiceInvoicingId>:<position>` composite so re-sync is idempotent.
+  invoicingId String @unique
+  invoiceId   String
+
+  description    String
+  quantity       String
+  unitPriceMinor Int
+  /// VAT rate as a percentage integer (e.g. 20). Null when not provided.
+  vatRate        Int?
+  position       Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoice InvoicingInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+/// Mirror of a payment recorded against an invoice. Dedupes on the
+/// invoicing-side payment id so a webhook + our own POST never double-count
+/// (CLAUDE.md acceptance: no double-payment).
+model InvoicingPayment {
+  id          String @id
+  invoicingId String @unique
+  invoiceId   String
+
+  amountMinor Int
+  currency    String  @default("GBP")
+  method      String?
+  reference   String?
+  paidAt      DateTime?
+
+  lastEventSource String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  invoice InvoicingInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+/// Singleton config for the invoicing integration. API key + webhook secret
+/// are envelope-encrypted at rest (CLAUDE.md §21). Cursors let the SSE stream
+/// and the nightly events-feed reconcile resume without gaps.
+model InvoicingSetting {
+  /// Always the literal "default" — single-tenant singleton.
+  id String @id @default("default")
+
+  /// Base URL of the invoicing API. Override only for staging.
+  baseUrl String @default("https://b2b.studymind.co.uk")
+
+  // Envelope-encrypted API key (sk_live_…). Null until configured.
+  apiKeyCiphertext    Bytes?
+  apiKeyIv            Bytes?
+  apiKeyDekCiphertext Bytes?
+  apiKeyAad           Bytes?
+  apiKeyKeyVersion    Int?
+  /// Last 4 chars of the key for the UI ("…a1b2"). Never the whole key.
+  apiKeyLast4         String?
+
+  // Envelope-encrypted webhook secret (whsec_…).
+  webhookSecretCiphertext    Bytes?
+  webhookSecretIv            Bytes?
+  webhookSecretDekCiphertext Bytes?
+  webhookSecretAad           Bytes?
+  webhookSecretKeyVersion    Int?
+
+  /// Events-feed cursor (GET /api/v1/events?since=). Persisted as we process.
+  eventsCursor String?
+  /// Highest SSE event id processed (GET /api/v1/stream?since=).
+  streamCursor String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
 }

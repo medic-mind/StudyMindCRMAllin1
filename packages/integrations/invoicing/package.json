@@ -1,0 +1,36 @@
+{
+  "name": "@studymind/integration-invoicing",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./webhook": "./src/webhook.ts",
+    "./jobs": "./src/jobs.ts",
+    "./outbound": "./src/outbound.ts",
+    "./config": "./src/config.ts",
+    "./adapter": "./src/adapter.ts",
+    "./sync": "./src/sync.ts",
+    "./types": "./src/types.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet'"
+  },
+  "dependencies": {
+    "@paralleldrive/cuid2": "^3.3.0",
+    "@prisma/client": "^5.22.0",
+    "@studymind/audit": "workspace:*",
+    "@studymind/core": "workspace:*",
+    "@studymind/db": "workspace:*",
+    "@studymind/jobs": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
