@@ -36,11 +36,30 @@ export function NotificationsBell() {
   const panelRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
 
+  const utils = trpc.useUtils()
   const query = trpc.notifications.list.useQuery(
     { limit: 10 },
     { staleTime: 30_000, refetchOnWindowFocus: true },
   )
   const unread = query.data?.unreadCount ?? 0
+
+  // ADR 0020 Phase 5 — persist the seen marker the first time the panel is
+  // opened while there are unread rows. Idempotent on the server side; we
+  // also refetch the list so the badge clears immediately.
+  const markSeen = trpc.notifications.markSeen.useMutation({
+    onSuccess: () => {
+      void utils.notifications.list.invalidate()
+    },
+  })
+  useEffect(() => {
+    if (!open) return
+    if (unread === 0) return
+    if (markSeen.isPending) return
+    markSeen.mutate({})
+    // The mutation closure is stable for the lifetime of this effect; we
+    // only want to fire on `open` going true while there is something to
+    // clear, so listing markSeen in deps is intentional.
+  }, [open, unread, markSeen])
 
   // Click outside / Esc closes the panel.
   useEffect(() => {
