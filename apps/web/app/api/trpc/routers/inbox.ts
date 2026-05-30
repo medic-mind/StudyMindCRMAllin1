@@ -235,4 +235,119 @@ export const inboxRouter = router({
       })
       return { id: row.id, snoozedUntil: until.toISOString() }
     }),
+
+  // ADR 0020 Phase 2b — Communication Centre seed. Reads the Conversation
+  // head (not the polymorphic Interaction list) so the UI gets the
+  // conversation's *current* status / assignee / channel / unread in a
+  // single indexed query. The filter set mirrors inbox.list so the user's
+  // mental model stays consistent across the two views.
+  conversations: router({
+    list: protectedProcedure
+      .input(
+        z.object({
+          filter: z
+            .enum(['active', 'mine', 'unassigned', 'closed', 'snoozed'])
+            .default('active'),
+          channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
+          cursor: z
+            .object({ id: z.string(), lastMessageAt: z.date() })
+            .nullish(),
+          limit: z.number().int().min(1).max(100).default(25),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Inbox is staff-only.',
+          })
+        }
+
+        const where: Record<string, unknown> = {}
+        switch (input.filter) {
+          case 'mine':
+            where['assigneeUserId'] = user.id
+            where['status'] = { in: ['open', 'snoozed'] }
+            break
+          case 'unassigned':
+            where['assigneeUserId'] = null
+            where['status'] = 'open'
+            break
+          case 'closed':
+            where['status'] = 'closed'
+            break
+          case 'snoozed':
+            where['status'] = 'snoozed'
+            break
+          case 'active':
+          default:
+            where['status'] = 'open'
+            break
+        }
+        if (input.channel) where['channel'] = input.channel
+        if (input.cursor) {
+          where['OR'] = [
+            { lastMessageAt: { lt: input.cursor.lastMessageAt } },
+            {
+              AND: [
+                { lastMessageAt: input.cursor.lastMessageAt },
+                { id: { lt: input.cursor.id } },
+              ],
+            },
+          ]
+        }
+
+        const rows = await ctx.db.conversation.findMany({
+          where,
+          orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+          take: input.limit + 1,
+          select: {
+            id: true,
+            trengoTicketId: true,
+            contactId: true,
+            familyId: true,
+            channel: true,
+            status: true,
+            assigneeUserId: true,
+            lastMessageAt: true,
+            unreadCount: true,
+            subject: true,
+            tags: true,
+            replyDeadlineAt: true,
+            contact: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        })
+
+        const hasMore = rows.length > input.limit
+        const sliced = hasMore ? rows.slice(0, input.limit) : rows
+        const items = sliced.map((r) => ({
+          id: r.id,
+          trengoTicketId: r.trengoTicketId,
+          contactId: r.contactId,
+          familyId: r.familyId,
+          channel: r.channel,
+          status: r.status,
+          assigneeUserId: r.assigneeUserId,
+          lastMessageAt: r.lastMessageAt,
+          unreadCount: r.unreadCount,
+          subject: r.subject,
+          tags: r.tags,
+          replyDeadlineAt: r.replyDeadlineAt,
+          contactName: r.contact
+            ? [r.contact.firstName, r.contact.lastName]
+                .filter((x): x is string => !!x)
+                .join(' ') || r.contact.email || null
+            : null,
+        }))
+        const last = sliced[sliced.length - 1]
+        const nextCursor =
+          hasMore && last
+            ? { id: last.id, lastMessageAt: last.lastMessageAt }
+            : null
+        return { items, nextCursor }
+      }),
+  }),
 })

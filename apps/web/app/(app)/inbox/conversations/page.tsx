@@ -1,9 +1,12 @@
-// Inbox. CLAUDE.md §11 (inbound messages), §20 (role-gated), §26 (RSC by
-// default, dense lists, plain-English empty states).
+// Communication Centre seed (ADR 0020 Phase 2b). CLAUDE.md §11, §20, §26.
 //
-// Lists recent inbound message Interactions across all conversations. Each
-// row links to the related Contact detail. Pagination is cursor-based; this
-// page renders only the first slice — paging comes with the client list.
+// Lists Trengo conversations from the first-class `Conversation` head, not
+// the polymorphic Interaction grouping. The status / assignee / unread are
+// real columns so the inbox can answer "all unassigned open WhatsApp" with
+// one indexed query. Forward-only: rows only exist for conversations that
+// have received an event since the Phase 2 migration. Historic Trengo
+// threads remain visible per-contact on the Contact page until the backfill
+// (Phase 2c) lands.
 
 import Link from 'next/link'
 import { TRPCError } from '@trpc/server'
@@ -19,8 +22,6 @@ import {
 } from '@/components/ui/icon'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
-
-import { InboxRowActions } from './InboxRowActions'
 
 const CHANNEL_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
@@ -44,21 +45,22 @@ function ChannelIcon({ channel }: { channel: string | null | undefined }) {
   }
 }
 
-type FilterValue = 'all' | 'mine' | 'unassigned' | 'snoozed'
+type FilterValue = 'active' | 'mine' | 'unassigned' | 'closed' | 'snoozed'
 
 const FILTERS: ReadonlyArray<{ value: FilterValue; label: string }> = [
-  { value: 'all', label: 'Active' },
+  { value: 'active', label: 'Active' },
   { value: 'mine', label: 'Mine' },
   { value: 'unassigned', label: 'Unassigned' },
   { value: 'snoozed', label: 'Snoozed' },
+  { value: 'closed', label: 'Closed' },
 ]
 
 function parseFilter(raw: string | string[] | undefined): FilterValue {
   const v = Array.isArray(raw) ? raw[0] : raw
-  return FILTERS.some((f) => f.value === v) ? (v as FilterValue) : 'all'
+  return FILTERS.some((f) => f.value === v) ? (v as FilterValue) : 'active'
 }
 
-export default async function InboxPage({
+export default async function ConversationsPage({
   searchParams,
 }: {
   searchParams: Promise<{ filter?: string | string[] }>
@@ -66,10 +68,11 @@ export default async function InboxPage({
   const params = await searchParams
   const filter = parseFilter(params.filter)
   const caller = await createServerCaller()
-  let items: Awaited<ReturnType<typeof caller.inbox.list>>['items'] = []
+  type Item = Awaited<ReturnType<typeof caller.inbox.conversations.list>>['items'][number]
+  let items: Item[] = []
   let forbidden = false
   try {
-    const res = await caller.inbox.list({ limit: 50, filter })
+    const res = await caller.inbox.conversations.list({ filter, limit: 50 })
     items = res.items
   } catch (err) {
     if (err instanceof TRPCError && err.code === 'FORBIDDEN') {
@@ -82,10 +85,10 @@ export default async function InboxPage({
   if (forbidden) {
     return (
       <>
-        <PageHeader title="Inbox" subtitle="Unassigned conversations" />
+        <PageHeader title="Conversations" subtitle="Communication Centre" />
         <PageBody>
           <p className="text-sm text-neutral-600">
-            You need an agent, ops, DSL, or admin role to view the inbox.
+            You need a staff role to view conversations.
           </p>
         </PageBody>
       </>
@@ -97,37 +100,40 @@ export default async function InboxPage({
   return (
     <>
       <PageHeader
-        title="Inbox"
-        subtitle="Recent inbound messages across all channels. Click a row to open the related Contact and reply."
+        title="Conversations"
+        subtitle="Every Trengo conversation, with its current status, assignee, and unread count — kept in sync as messages land."
       />
       <PageBody>
-        {/* View nav between this Messages list and the new Conversations
-            head list (ADR 0020 Phase 2b). Keeps the legacy Messages view as
-            the default so the existing flow is unchanged. */}
+        {/* Sub-nav between Messages list and Conversations head list. Keeps
+            the existing /inbox stable and makes the new head discoverable. */}
         <nav
           aria-label="Inbox view"
           className="mb-3 flex flex-wrap items-center gap-1"
         >
           <Link
             href="/inbox"
-            aria-current="page"
-            className="rounded-md bg-primary-600 px-2.5 py-1 text-xs font-medium text-white"
+            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
           >
             Messages
           </Link>
           <Link
             href="/inbox/conversations"
-            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
+            aria-current="page"
+            className="rounded-md bg-primary-600 px-2.5 py-1 text-xs font-medium text-white"
           >
             Conversations
           </Link>
         </nav>
+
         <nav
-          aria-label="Inbox filters"
+          aria-label="Conversation filters"
           className="mb-3 flex flex-wrap items-center gap-1"
         >
           {FILTERS.map((f) => {
-            const href = f.value === 'all' ? '/inbox' : `/inbox?filter=${f.value}`
+            const href =
+              f.value === 'active'
+                ? '/inbox/conversations'
+                : `/inbox/conversations?filter=${f.value}`
             const isActive = filter === f.value
             return (
               <Link
@@ -136,7 +142,7 @@ export default async function InboxPage({
                 aria-current={isActive ? 'page' : undefined}
                 className={
                   isActive
-                    ? 'rounded-md bg-primary-600 px-2.5 py-1 text-xs font-medium text-white'
+                    ? 'rounded-md bg-neutral-900 px-2.5 py-1 text-xs font-medium text-white'
                     : 'rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50'
                 }
               >
@@ -145,76 +151,93 @@ export default async function InboxPage({
             )
           })}
         </nav>
+
         {items.length === 0 ? (
           <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-sm">
             <p className="text-sm font-medium text-neutral-700">
               {filter === 'mine'
-                ? 'Nothing assigned to you right now.'
+                ? 'No conversations assigned to you.'
                 : filter === 'unassigned'
                   ? 'Nothing waiting to be picked up.'
-                  : filter === 'snoozed'
-                    ? 'Nothing snoozed for later.'
-                    : 'No inbound messages yet.'}
+                  : filter === 'closed'
+                    ? 'No closed conversations yet.'
+                    : filter === 'snoozed'
+                      ? 'No conversations snoozed for later.'
+                      : 'No active conversations.'}
             </p>
             <p className="mt-1 text-sm text-neutral-500">
-              New WhatsApp, SMS, email, and web-chat messages will appear here
-              as they land.
+              Each Trengo event — message, assignment, close, label — updates
+              this list automatically. New conversations will appear as soon
+              as the next event lands.
             </p>
           </div>
         ) : (
           <ul className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white shadow-sm">
-            {items.map((item) => {
-              const href = item.contactId ? `/contacts/${item.contactId}` : '/inbox'
+            {items.map((c) => {
               const channelLabel =
-                item.channel && CHANNEL_LABEL[item.channel]
-                  ? CHANNEL_LABEL[item.channel]
-                  : (item.channel ?? 'Message')
-              const snoozedNow =
-                item.inboxSnoozedUntil &&
-                item.inboxSnoozedUntil.getTime() > now.getTime()
+                c.channel && CHANNEL_LABEL[c.channel]
+                  ? CHANNEL_LABEL[c.channel]
+                  : (c.channel ?? 'Conversation')
+              const href = c.contactId ? `/contacts/${c.contactId}` : '/inbox/conversations'
+              const replyWindowOpen =
+                c.replyDeadlineAt &&
+                new Date(c.replyDeadlineAt).getTime() > now.getTime()
               return (
-                <li key={item.id} className="p-3 transition hover:bg-neutral-50">
+                <li
+                  key={c.id}
+                  className="p-3 transition hover:bg-neutral-50"
+                >
                   <div className="flex items-start justify-between gap-4">
                     <Link href={href} className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
                         <span
                           className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100"
                           aria-hidden
                         >
-                          <ChannelIcon channel={item.channel} />
+                          <ChannelIcon channel={c.channel} />
                         </span>
                         <Badge tone="neutral">{channelLabel}</Badge>
                         <span className="truncate font-medium text-neutral-900">
-                          {item.summary ?? 'Inbound message'}
+                          {c.contactName ?? (c.contactId ? 'Contact' : 'Unmatched')}
                         </span>
-                        {!item.contactId ? (
-                          <Badge tone="warn">Unassigned</Badge>
+                        {c.unreadCount > 0 ? (
+                          <Badge tone="warn">{c.unreadCount} unread</Badge>
                         ) : null}
-                        {item.inboxAssigneeId ? (
-                          <Badge tone="neutral">Assigned</Badge>
+                        {c.status === 'closed' ? (
+                          <Badge tone="neutral">Closed</Badge>
                         ) : null}
-                        {snoozedNow ? (
+                        {c.status === 'snoozed' ? (
                           <Badge tone="neutral">Snoozed</Badge>
                         ) : null}
+                        {c.channel === 'whatsapp' && c.replyDeadlineAt ? (
+                          <span
+                            className={`rounded px-1.5 text-[10px] ${
+                              replyWindowOpen
+                                ? 'bg-green-50 text-green-800'
+                                : 'bg-red-50 text-red-800'
+                            }`}
+                          >
+                            {replyWindowOpen ? '24h window open' : '24h window closed'}
+                          </span>
+                        ) : null}
+                        {c.tags.slice(0, 3).map((t) => (
+                          <Badge key={t} tone="neutral">
+                            {t}
+                          </Badge>
+                        ))}
                       </div>
-                      {item.preview ? (
+                      {c.subject ? (
                         <p className="mt-1 truncate pl-8 text-sm text-neutral-700">
-                          {item.preview}
+                          {c.subject}
                         </p>
                       ) : null}
                     </Link>
                     <time
                       className="shrink-0 font-mono text-xs tabular-nums text-neutral-500"
-                      dateTime={item.occurredAt.toISOString()}
+                      dateTime={c.lastMessageAt.toISOString()}
                     >
-                      {formatRelativeTime(item.occurredAt, now)}
+                      {formatRelativeTime(c.lastMessageAt, now)}
                     </time>
-                  </div>
-                  <div className="mt-2 pl-8">
-                    <InboxRowActions
-                      interactionId={item.id}
-                      contactId={item.contactId}
-                    />
                   </div>
                 </li>
               )
