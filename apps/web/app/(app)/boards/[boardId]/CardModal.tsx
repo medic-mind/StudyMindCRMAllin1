@@ -25,6 +25,7 @@ import { resolveStageColor } from '../../pipeline/stage-color'
 import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 import { CallSummarySection } from './CallSummarySection'
 import { CardSidebar } from './CardSidebar'
+import { CardSubtasks } from './CardSubtasks'
 import { MoveCardMenu } from './MoveCardMenu'
 import { QuickActionButtons } from './QuickActionButtons'
 
@@ -252,6 +253,8 @@ export function CardModal({
                 <p className="text-sm text-neutral-500">No description yet.</p>
               )}
             </section>
+
+            <CardSubtasks cardId={card.id} canWrite={canWrite} />
 
             <CallSummarySection cardId={card.id} canWrite={canWrite} />
 

@@ -784,11 +784,36 @@ model Card {
   subject  Subject?      @relation(fields: [subjectId], references: [id])
   assignee User?         @relation("CardAssignee", fields: [assigneeId], references: [id])
   labels   CardLabel[]
+  subtasks CardSubtask[]
 
   @@index([boardId, stageId, position])
   @@index([contactId])
   @@index([assigneeId])
   @@index([dueAt])
+}
+
+/// A checklist item ON a card (Todoist-style sub-tasks). Distinct from the
+/// CRM Task table and from contact-synced Asana tasks — these are
+/// lightweight, card-local checkboxes the agent ticks off as they work the
+/// card. No assignee / due date by design; if it needs those it should be a
+/// real Task. Sales Executive+ manages them; the toggle is cheap and not
+/// individually audited (the card itself carries the audit trail).
+model CardSubtask {
+  id          String   @id
+  cardId      String
+  title       String
+  completed   Boolean  @default(false)
+  /// 1-based order within the card's checklist.
+  position    Int
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, position])
 }
 
 /// Coloured label that can be attached to cards (ADR 0018). Three defaults
