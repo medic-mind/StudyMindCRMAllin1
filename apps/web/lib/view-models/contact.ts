@@ -90,6 +90,7 @@ interface ContactSummaryRow extends ContactRow {
   familyMembers: Array<{ family: { id: string; name: string | null } | null }>
   interactions: Array<{ occurredAt: Date }>
   companies: ContactCompanyJoin[]
+  createdAt: Date
 }
 
 export function toContactSummary(row: ContactSummaryRow): ContactSummary {
@@ -104,6 +105,7 @@ export function toContactSummary(row: ContactSummaryRow): ContactSummary {
     familyId: family?.id ?? null,
     familyName: family?.name ?? null,
     lastInteractionAt: last,
+    createdAt: row.createdAt,
     companies: row.companies.map((cc) => cc.company),
   }
 }

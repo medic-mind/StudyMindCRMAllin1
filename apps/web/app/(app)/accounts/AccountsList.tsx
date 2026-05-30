@@ -31,6 +31,12 @@ interface AccountRow {
   city: string | null
   country: string | null
   contactCount: number
+  companies: ReadonlyArray<{
+    id: string
+    name: string
+    slug: string
+    color: string | null
+  }>
   archived: boolean
   createdAt: Date | string
 }
@@ -145,6 +151,15 @@ export function AccountsList({
                     >
                       {a.status}
                     </span>
+                    {a.companies.slice(0, 4).map((c) => (
+                      <span
+                        key={c.id}
+                        className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+                        style={{ backgroundColor: c.color ?? '#475569' }}
+                      >
+                        {c.name}
+                      </span>
+                    ))}
                   </div>
                   {a.description && (
                     <p className="mt-0.5 text-xs text-neutral-600">{a.description}</p>

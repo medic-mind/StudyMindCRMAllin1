@@ -32,6 +32,12 @@ interface Account {
   country: string | null
   notes: string | null
   archived: boolean
+  companies: ReadonlyArray<{
+    id: string
+    name: string
+    slug: string
+    color: string | null
+  }>
 }
 
 export function AccountEditor({ account }: { account: Account }) {
@@ -48,9 +54,14 @@ export function AccountEditor({ account }: { account: Account }) {
   const [postcode, setPostcode] = useState(account.postcode ?? '')
   const [country, setCountry] = useState(account.country ?? '')
   const [notes, setNotes] = useState(account.notes ?? '')
+  const [companyIds, setCompanyIds] = useState<string[]>(
+    account.companies.map((c) => c.id),
+  )
   const [busy, setBusy] = useState(false)
 
+  const companiesList = trpc.company.pickList.useQuery()
   const update = trpc.businessAccount.update.useMutation()
+  const setCompanies = trpc.businessAccount.companies.set.useMutation()
   const archive = trpc.businessAccount.archive.useMutation()
   const restore = trpc.businessAccount.restore.useMutation()
 
@@ -71,6 +82,10 @@ export function AccountEditor({ account }: { account: Account }) {
         postcode: postcode.trim() || null,
         country: country.trim() || null,
         notes: notes.trim() || null,
+      })
+      await setCompanies.mutateAsync({
+        accountId: account.id,
+        companyIds,
       })
       toast.success('Saved')
       router.refresh()
@@ -141,6 +156,43 @@ export function AccountEditor({ account }: { account: Account }) {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
+      </Field>
+
+      <Field label="Companies (sister-brand tags)">
+        <div className="flex flex-wrap gap-1.5">
+          {(companiesList.data ?? []).map((c) => {
+            const picked = companyIds.includes(c.id)
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() =>
+                  setCompanyIds((prev) =>
+                    picked ? prev.filter((id) => id !== c.id) : [...prev, c.id],
+                  )
+                }
+                className={
+                  picked
+                    ? 'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-white'
+                    : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50'
+                }
+                style={picked ? { backgroundColor: c.color ?? '#475569' } : undefined}
+              >
+                <span
+                  aria-hidden
+                  className="h-2 w-2 rounded-full"
+                  style={{ backgroundColor: c.color ?? '#94a3b8' }}
+                />
+                {c.name}
+              </button>
+            )
+          })}
+          {(companiesList.data ?? []).length === 0 && (
+            <span className="text-xs text-neutral-500">
+              No companies yet — add them in Settings → Companies.
+            </span>
+          )}
+        </div>
       </Field>
 
       <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">

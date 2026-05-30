@@ -61,6 +61,7 @@ export const ContactSummary = z.object({
   familyId: z.string().nullable(),
   familyName: z.string().nullable(),
   lastInteractionAt: z.date().nullable(),
+  createdAt: z.date(),
   /** Up to three for the list dot strip; first one is the primary. */
   companies: CompanyRef.array(),
 })

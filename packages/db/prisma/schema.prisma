@@ -552,8 +552,9 @@ model Company {
   createdById String?
   updatedById String?
 
-  contacts ContactCompany[]
-  families Family[]
+  contacts         ContactCompany[]
+  families         Family[]
+  businessAccounts BusinessAccountCompany[]
 
   @@index([archivedAt])
 }
@@ -1475,11 +1476,29 @@ model BusinessAccount {
   contacts         BusinessAccountContact[]
   students         BusinessAccountStudent[]
   uploadedInvoices UploadedInvoice[]
+  companies        BusinessAccountCompany[]
 
   @@unique([kind, slug])
   @@index([kind])
   @@index([status])
   @@index([archivedAt])
+}
+
+/// Many-to-many: BusinessAccount ↔ Company (sister-brand tag). Mirrors
+/// the ContactCompany shape so a school / partnership can be tagged with
+/// every brand it works under (Medic Mind + Oxbridge Mind, etc).
+model BusinessAccountCompany {
+  accountId String
+  companyId String
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  account BusinessAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  company Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, companyId])
+  @@index([companyId])
 }
 
 /// Many-to-many join: BusinessAccount ↔ Contact. The optional `role` text is
