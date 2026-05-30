@@ -51,6 +51,24 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
 
   const [testResult, setTestResult] = useState<string | null>(null)
 
+  // The webhook receiver URL is this CRM's own origin + the route path. We read
+  // it from the browser so it is always correct for whatever domain the app is
+  // served on (prod, staging, preview) without hard-coding it.
+  const receiverUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/api/webhooks/invoicing`
+      : '/api/webhooks/invoicing'
+  const [copied, setCopied] = useState(false)
+  async function copyReceiverUrl() {
+    try {
+      await navigator.clipboard.writeText(receiverUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard API can be blocked; the URL is visible to select manually.
+    }
+  }
+
   async function handleSave() {
     try {
       await save.mutateAsync({
@@ -221,15 +239,23 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
           Webhook receiver
         </h3>
         <p className="mt-2 text-sm text-neutral-600">
-          In the invoicing platform → Settings → API &amp; Integrations → Add webhook, point at:
+          In the invoicing platform → Settings → API &amp; Integrations → Add webhook, set the
+          URL to this CRM&rsquo;s receiver and subscribe to <span className="font-mono">*</span>{' '}
+          (all topics):
         </p>
-        <code className="mt-2 block rounded bg-white px-3 py-2 font-mono text-xs text-neutral-800 ring-1 ring-neutral-200">
-          {data.baseUrl ? '' : ''}
-          {`<this CRM origin>/api/webhooks/invoicing`}
-        </code>
-        <p className="mt-2 text-xs text-neutral-500">
-          Subscribe to <span className="font-mono">*</span> (all topics). They return a{' '}
-          <span className="font-mono">whsec_…</span> secret — paste it above.
+        <div className="mt-2 flex items-center gap-2">
+          <code className="block flex-1 rounded bg-white px-3 py-2 font-mono text-xs text-neutral-800 ring-1 ring-neutral-200">
+            {receiverUrl}
+          </code>
+          <Button type="button" size="sm" variant="ghost" onClick={copyReceiverUrl}>
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
+        </div>
+        <p className="mt-3 text-xs text-neutral-500">
+          When you save that webhook, the platform generates a signing secret
+          (<span className="font-mono">whsec_…</span>) and shows it to you once. Copy it and
+          paste it into the <strong>Webhook secret</strong> field above, then Save. You
+          don&rsquo;t create the secret yourself — it comes from them.
         </p>
       </div>
     </div>
