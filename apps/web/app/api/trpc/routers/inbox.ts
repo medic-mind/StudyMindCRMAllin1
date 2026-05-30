@@ -32,6 +32,11 @@ const InboxListInput = z.object({
     })
     .nullish(),
   limit: z.number().min(1).max(100).default(25),
+  /** Triage filter. `all` (default) surfaces everything not currently snoozed
+   *  past `now`. `mine` returns rows where `inboxAssigneeId` equals the caller
+   *  (i.e. messages the agent picked up). `unassigned` returns rows with no
+   *  assignee. `snoozed` returns rows whose snooze is still in the future. */
+  filter: z.enum(['all', 'mine', 'unassigned', 'snoozed']).default('all'),
 })
 
 export interface InboxListItem {
@@ -43,6 +48,10 @@ export interface InboxListItem {
   preview: string | null
   contactId: string | null
   familyId: string | null
+  /** Who picked up the row, if anyone. Drives the "assigned to me" badge. */
+  inboxAssigneeId: string | null
+  /** When the row comes back into the active inbox. Null when not snoozed. */
+  inboxSnoozedUntil: Date | null
 }
 
 export const inboxRouter = router({
@@ -54,7 +63,13 @@ export const inboxRouter = router({
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
       }
 
-      const rows = await ctx.db.interaction.findMany({
+      // Triage filters are applied post-fetch in JS. Prisma JSON predicates
+      // cannot cleanly express "key missing", and the inbox is paginated
+      // small enough (≤100/page) that filtering in-process is cheaper than
+      // working around the predicate gap. We over-fetch by 4× to keep the
+      // page full when the filter drops rows.
+      const sweep = Math.min(input.limit * 4 + 1, 400)
+      const rawRows = await ctx.db.interaction.findMany({
         where: {
           deletedAt: null,
           // The Prisma enum reuses `message` for both inbound and outbound;
@@ -80,7 +95,7 @@ export const inboxRouter = router({
             : {}),
         },
         orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
+        take: sweep,
         select: {
           id: true,
           type: true,
@@ -92,12 +107,49 @@ export const inboxRouter = router({
         },
       })
 
-      const hasMore = rows.length > input.limit
-      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      const now = Date.now()
+      const isSnoozedFuture = (raw: string | null): boolean =>
+        raw !== null && new Date(raw).getTime() > now
+      const filtered = rawRows.filter((r) => {
+        const payload = (r.payload as Record<string, unknown> | null) ?? {}
+        const assignee =
+          typeof payload['inboxAssigneeId'] === 'string'
+            ? (payload['inboxAssigneeId'] as string)
+            : null
+        const snoozedRaw =
+          typeof payload['inboxSnoozedUntil'] === 'string'
+            ? (payload['inboxSnoozedUntil'] as string)
+            : null
+        const snoozedNow = isSnoozedFuture(snoozedRaw)
+
+        switch (input.filter) {
+          case 'mine':
+            return assignee === user.id && !snoozedNow
+          case 'unassigned':
+            return assignee === null && !snoozedNow
+          case 'snoozed':
+            return snoozedNow
+          case 'all':
+          default:
+            return !snoozedNow
+        }
+      })
+
+      const hasMore = filtered.length > input.limit
+      const sliced = hasMore ? filtered.slice(0, input.limit) : filtered
       const items: InboxListItem[] = sliced.map((r) => {
         const payload = (r.payload as Record<string, unknown> | null) ?? {}
         const channel = typeof payload['channel'] === 'string' ? (payload['channel'] as string) : null
         const body = typeof payload['body'] === 'string' ? (payload['body'] as string) : null
+        const inboxAssigneeId =
+          typeof payload['inboxAssigneeId'] === 'string'
+            ? (payload['inboxAssigneeId'] as string)
+            : null
+        const snoozedRaw =
+          typeof payload['inboxSnoozedUntil'] === 'string'
+            ? (payload['inboxSnoozedUntil'] as string)
+            : null
+        const inboxSnoozedUntil = snoozedRaw ? new Date(snoozedRaw) : null
         return {
           id: r.id,
           type: r.type,
@@ -107,6 +159,8 @@ export const inboxRouter = router({
           preview: body ? body.slice(0, 160) : null,
           contactId: r.contactId,
           familyId: r.familyId,
+          inboxAssigneeId,
+          inboxSnoozedUntil,
         }
       })
 
