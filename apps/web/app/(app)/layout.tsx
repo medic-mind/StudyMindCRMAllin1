@@ -92,6 +92,7 @@ function buildNav(role: Role): NavItem[] {
         { href: '/settings/companies', label: 'Companies' },
         { href: '/settings/branding', label: 'Branding' },
         { href: '/settings/integrations', label: 'Integrations' },
+        { href: '/settings/invoicing', label: 'Invoicing' },
         { href: '/settings/flags', label: 'Feature flags' },
       ],
     },
