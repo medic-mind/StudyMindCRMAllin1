@@ -23,7 +23,11 @@ import {
   InvoicingUnauthorizedError,
   createClient,
 } from '@studymind/integration-invoicing/client'
-import { loadInvoicingConfig, saveInvoicingConfig } from '@studymind/integration-invoicing/config'
+import {
+  loadInvoicingConfig,
+  loadInvoicingConfigStatus,
+  saveInvoicingConfig,
+} from '@studymind/integration-invoicing/config'
 import {
   ensureCustomerForBusinessAccount,
   ensureCustomerForContact,
@@ -121,7 +125,9 @@ const configRouter = router({
   status: protectedProcedure.query(async ({ ctx }) => {
     const user = requireUser(ctx)
     assertRead(user.role)
-    const cfg = await loadInvoicingConfig()
+    // Metadata only — never decrypt the stored secrets to render a status
+    // badge. A KMS/local-key failure must not 500 the Settings page.
+    const cfg = await loadInvoicingConfigStatus()
     const [customerCount, invoiceCount, lastEvent] = await Promise.all([
       ctx.db.invoicingCustomer.count(),
       ctx.db.invoicingInvoice.count(),
@@ -133,8 +139,8 @@ const configRouter = router({
     ])
     return {
       baseUrl: cfg.baseUrl,
-      configured: Boolean(cfg.apiKey),
-      webhookSecretConfigured: Boolean(cfg.webhookSecret),
+      configured: cfg.configured,
+      webhookSecretConfigured: cfg.webhookSecretConfigured,
       apiKeyLast4: cfg.apiKeyLast4,
       eventsCursor: cfg.eventsCursor,
       streamCursor: cfg.streamCursor,

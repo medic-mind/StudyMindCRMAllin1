@@ -136,6 +136,39 @@ export async function loadInvoicingConfig(): Promise<InvoicingConfig> {
   }
 }
 
+/**
+ * Metadata-only view of the config for the Settings status badge. Critically,
+ * this does NOT decrypt anything — it reads presence (ciphertext set?) and the
+ * plaintext `apiKeyLast4` column. Rendering a status badge must never depend on
+ * a successful KMS/local decrypt (CLAUDE.md §21: decryption needs an audited
+ * purpose, and a decrypt failure must not take down a settings page).
+ */
+export interface InvoicingConfigStatus {
+  baseUrl: string
+  configured: boolean
+  webhookSecretConfigured: boolean
+  apiKeyLast4: string | null
+  eventsCursor: string | null
+  streamCursor: string | null
+}
+
+export async function loadInvoicingConfigStatus(): Promise<InvoicingConfigStatus> {
+  const row = await db.invoicingSetting.findUnique({ where: { id: SETTING_ID } })
+
+  const envApiKey = process.env['INVOICING_API_KEY']?.trim() || null
+  const envSecret = process.env['INVOICING_WEBHOOK_SECRET']?.trim() || null
+  const envBaseUrl = process.env['INVOICING_API_BASE_URL']?.trim() || null
+
+  return {
+    baseUrl: row?.baseUrl || envBaseUrl || DEFAULT_BASE_URL,
+    configured: Boolean(row?.apiKeyCiphertext) || Boolean(envApiKey),
+    webhookSecretConfigured: Boolean(row?.webhookSecretCiphertext) || Boolean(envSecret),
+    apiKeyLast4: row?.apiKeyLast4 ?? (envApiKey ? envApiKey.slice(-4) : null),
+    eventsCursor: row?.eventsCursor ?? null,
+    streamCursor: row?.streamCursor ?? null,
+  }
+}
+
 export interface SaveConfigInput {
   baseUrl?: string
   apiKey?: string | null
