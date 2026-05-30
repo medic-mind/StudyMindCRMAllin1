@@ -31,6 +31,9 @@ interface CardData {
   stageId: string
   contactId: string
   contactName: string
+  contactEmail?: string | null
+  contactPhone?: string | null
+  description?: string | null
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
@@ -59,6 +62,7 @@ interface Props {
   canWrite: boolean
   canComment: boolean
   currentUserName: string
+  onLocalMove?: (cardId: string, toStageId: string) => void
 }
 
 export function SortableCard(props: Props) {
@@ -84,3 +88,4 @@ export function SortableCard(props: Props) {
     />
   )
 }
+

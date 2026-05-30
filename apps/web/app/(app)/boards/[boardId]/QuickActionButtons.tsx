@@ -28,6 +28,9 @@ interface Props {
   cardId: string
   currentStageId: string
   actions: ReadonlyArray<QuickAction>
+  /** Optimistic local-state shift so the card jumps the instant the user
+   * clicks — no waiting for the round-trip + router refresh. */
+  onLocalMove?: (cardId: string, toStageId: string) => void
 }
 
 function chipStyle(color: string | null): React.CSSProperties {
@@ -39,7 +42,12 @@ function chipStyle(color: string | null): React.CSSProperties {
   }
 }
 
-export function QuickActionButtons({ cardId, currentStageId, actions }: Props) {
+export function QuickActionButtons({
+  cardId,
+  currentStageId,
+  actions,
+  onLocalMove,
+}: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
   const apply = trpc.card.applyQuickAction.useMutation({
@@ -69,6 +77,12 @@ export function QuickActionButtons({ cardId, currentStageId, actions }: Props) {
           onClick={(e) => {
             // Don't trigger the card-modal click on the parent.
             e.stopPropagation()
+            // Optimistic shift first so the card jumps instantly. The
+            // server mutation follows; if it errors, the next router
+            // refresh / invalidation will snap it back.
+            if (onLocalMove && action.targetStageId !== currentStageId) {
+              onLocalMove(cardId, action.targetStageId)
+            }
             apply.mutate({ cardId, quickActionId: action.id })
           }}
           className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-[11px] font-medium text-neutral-800 hover:brightness-95 disabled:opacity-60"

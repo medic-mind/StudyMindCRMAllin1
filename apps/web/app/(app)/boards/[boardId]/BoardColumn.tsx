@@ -31,6 +31,9 @@ interface CardData {
   stageId: string
   contactId: string
   contactName: string
+  contactEmail?: string | null
+  contactPhone?: string | null
+  description?: string | null
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
@@ -58,6 +61,9 @@ interface Props {
   canWrite: boolean
   canComment: boolean
   currentUserName: string
+  /** Optimistic local-state update so quick actions + move dropdown
+   * shift the card immediately, before the server mutation lands. */
+  onLocalMove?: (cardId: string, toStageId: string) => void
 }
 
 export function BoardColumn({
@@ -69,6 +75,7 @@ export function BoardColumn({
   canWrite,
   canComment,
   currentUserName,
+  onLocalMove,
 }: Props) {
   const colour = resolveStageColor(stage.color)
   const { setNodeRef, isOver } = useDroppable({ id: `stage:${stage.id}` })
@@ -116,6 +123,7 @@ export function BoardColumn({
                 canWrite={canWrite}
                 canComment={canComment}
                 currentUserName={currentUserName}
+                onLocalMove={onLocalMove}
               />
             ))}
           </ul>

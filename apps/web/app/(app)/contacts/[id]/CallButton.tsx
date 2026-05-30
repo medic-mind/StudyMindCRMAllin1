@@ -114,7 +114,10 @@ export function CallButton({ contactId, phoneE164, displayName }: Props) {
           ref={panelRef}
           role="menu"
           aria-label="Call options"
-          className="absolute right-0 z-30 mt-2 w-64 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
+          /* z-50 so the menu sits over the sticky top bar (z-30) — the
+             previous z-30 tied with the bar and got hidden behind it
+             when the contact page was scrolled. */
+          className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
         >
           <p className="border-b border-neutral-100 px-4 py-2 font-mono text-xs text-neutral-500">
             {phoneE164 ?? 'No number'}

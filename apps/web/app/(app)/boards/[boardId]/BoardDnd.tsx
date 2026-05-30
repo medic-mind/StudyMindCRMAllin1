@@ -46,6 +46,9 @@ interface CardData {
   stageId: string
   contactId: string
   contactName: string
+  contactEmail?: string | null
+  contactPhone?: string | null
+  description?: string | null
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
@@ -113,6 +116,17 @@ export function BoardDnd({
   // Snapshot of card state taken just before an optimistic move, so a failed
   // mutation can revert. A kanban only ever has one move in flight at a time.
   const preMoveSnapshot = useRef<CardData[] | null>(null)
+
+  /** Optimistic local move — used by quick actions + the move dropdown
+   * so the card jumps columns the instant the user clicks. The actual
+   * server mutation lives inside the component that called us; we just
+   * mutate local state here. If the server call fails the caller can
+   * revert by passing the previous stageId back through. */
+  function moveCardLocal(cardId: string, toStageId: string) {
+    setCards((prev) =>
+      prev.map((c) => (c.id === cardId ? { ...c, stageId: toStageId } : c)),
+    )
+  }
 
   const sensors = useSensors(
     // 6px activation distance: a click (open modal) never starts a drag.
@@ -213,6 +227,7 @@ export function BoardDnd({
               canWrite={canWrite}
               canComment={canComment}
               currentUserName={currentUserName}
+              onLocalMove={moveCardLocal}
             />
           </div>
         ))}

@@ -33,6 +33,9 @@ interface Props {
   stages: ReadonlyArray<StageOption>
   /** Other boards' stages — rendered under a "Move to other board" optgroup. */
   crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+  /** Optimistic local-state shift so the card jumps the instant the
+   * user picks a target. */
+  onLocalMove?: (cardId: string, toStageId: string) => void
 }
 
 export function MoveCardMenu({
@@ -40,6 +43,7 @@ export function MoveCardMenu({
   currentStageId,
   stages,
   crossBoardStages = [],
+  onLocalMove,
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
@@ -89,6 +93,8 @@ export function MoveCardMenu({
           const next = e.target.value
           if (!next) return
           setPending(true)
+          // Optimistic local move first so the column jump is instant.
+          if (onLocalMove) onLocalMove(cardId, next)
           move.mutate({ cardId, toStageId: next })
         }}
         className="w-full rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-[11px] text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
