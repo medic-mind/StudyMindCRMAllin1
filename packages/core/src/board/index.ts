@@ -10,3 +10,9 @@ export * from './call-summary'
 export * from './comments'
 export * from './labels'
 export * from './subjects'
+export {
+  applyQuickAction,
+  getQuickAction,
+  listQuickActions,
+  type QuickActionSummary,
+} from './quick-actions'

@@ -16,6 +16,11 @@ interface StageOption {
   id: string
   name: string
 }
+interface CrossBoardGroup {
+  boardId: string
+  boardName: string
+  stages: ReadonlyArray<StageOption>
+}
 interface LabelChip {
   id: string
   name: string
@@ -30,15 +35,21 @@ interface CardData {
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
 }
+interface QuickAction {
+  id: string
+  label: string
+  color: string | null
+  targetStageId: string
+  targetStageName: string
+  targetBoardName: string | null
+}
 
 interface Props {
   stage: { id: string; name: string; color: string; isClosed: boolean }
   cards: ReadonlyArray<CardData>
   stages: ReadonlyArray<StageOption>
-  tickStageId: string | null
-  tickStageName: string | null
-  xStageId: string | null
-  xStageName: string | null
+  crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+  quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
   currentUserName: string
@@ -48,10 +59,8 @@ export function BoardColumn({
   stage,
   cards,
   stages,
-  tickStageId,
-  tickStageName,
-  xStageId,
-  xStageName,
+  crossBoardStages = [],
+  quickActions,
   canWrite,
   canComment,
   currentUserName,
@@ -89,17 +98,16 @@ export function BoardColumn({
             No cards in {stage.name}.
           </div>
         ) : (
-          <ul className="divide-y divide-neutral-100">
+          <ul className="space-y-2 p-2">
             {cards.map((c) => (
               <SortableCard
                 key={c.id}
                 card={c}
                 stageId={stage.id}
+                stageColor={stage.color}
                 stages={stages}
-                tickStageId={tickStageId}
-                tickStageName={tickStageName}
-                xStageId={xStageId}
-                xStageName={xStageName}
+                crossBoardStages={crossBoardStages}
+                quickActions={quickActions}
                 canWrite={canWrite}
                 canComment={canComment}
                 currentUserName={currentUserName}

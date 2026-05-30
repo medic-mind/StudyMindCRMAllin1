@@ -44,18 +44,29 @@ export default async function BoardPage({ params }: PageProps) {
     notFound()
   }
 
-  const [boards, stages, cards, labels] = await Promise.all([
+  const [boards, stages, cards, labels, quickActions] = await Promise.all([
     caller.board.list(),
     caller.board.stages.list({ boardId }),
     caller.card.list({ boardId }),
     caller.label.list(),
+    caller.card.quickActions.list({ boardId, includeArchived: false }),
   ])
 
+  // For cross-board move support: load the stages for every other board so
+  // MoveCardMenu can offer "Move to other board → stage" in a nested optgroup.
+  const otherBoards = boards.filter((b) => b.id !== boardId)
+  const otherBoardStages = await Promise.all(
+    otherBoards.map(async (b) => ({
+      boardId: b.id,
+      boardName: b.name,
+      stages: (await caller.board.stages.list({ boardId: b.id })).map((s) => ({
+        id: s.id,
+        name: s.name,
+      })),
+    })),
+  )
+
   const stageOptions = stages.map((s) => ({ id: s.id, name: s.name }))
-  const tickStageId = board.tickActionStageId ?? null
-  const xStageId = board.xActionStageId ?? null
-  const tickStageName = stages.find((s) => s.id === tickStageId)?.name ?? null
-  const xStageName = stages.find((s) => s.id === xStageId)?.name ?? null
 
   const dndCards = cards.map((c) => ({
     id: c.id,
@@ -120,10 +131,8 @@ export default async function BoardPage({ params }: PageProps) {
             stages={dndStages}
             cards={dndCards}
             stageOptions={stageOptions}
-            tickStageId={tickStageId}
-            tickStageName={tickStageName}
-            xStageId={xStageId}
-            xStageName={xStageName}
+            crossBoardStages={otherBoardStages}
+            quickActions={quickActions}
             canWrite={canWrite}
             canComment={canComment}
             currentUserName={currentUserName}

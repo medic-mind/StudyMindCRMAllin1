@@ -30,16 +30,27 @@ interface StageOption {
   id: string
   name: string
 }
+interface CrossBoardGroup {
+  boardId: string
+  boardName: string
+  stages: ReadonlyArray<StageOption>
+}
+interface QuickAction {
+  id: string
+  label: string
+  color: string | null
+  targetStageId: string
+  targetStageName: string
+  targetBoardName: string | null
+}
 
 interface Props {
   cardId: string
   open: boolean
   onClose: () => void
   stages: ReadonlyArray<StageOption>
-  tickStageId: string | null
-  tickStageName: string | null
-  xStageId: string | null
-  xStageName: string | null
+  crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+  quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
   currentUserName: string
@@ -50,10 +61,8 @@ export function CardModal({
   open,
   onClose,
   stages,
-  tickStageId,
-  tickStageName,
-  xStageId,
-  xStageName,
+  crossBoardStages = [],
+  quickActions,
   canWrite,
   canComment,
   currentUserName,
@@ -162,16 +171,20 @@ export function CardModal({
                   Move
                 </h3>
                 <div className="flex flex-col gap-2">
-                  <QuickActionButtons
-                    cardId={card.id}
-                    currentStageId={card.stageId}
-                    tickStageId={tickStageId}
-                    tickStageName={tickStageName}
-                    xStageId={xStageId}
-                    xStageName={xStageName}
-                  />
+                  {quickActions.length > 0 ? (
+                    <QuickActionButtons
+                      cardId={card.id}
+                      currentStageId={card.stageId}
+                      actions={quickActions}
+                    />
+                  ) : null}
                   <div className="max-w-xs">
-                    <MoveCardMenu cardId={card.id} currentStageId={card.stageId} stages={stages} />
+                    <MoveCardMenu
+                      cardId={card.id}
+                      currentStageId={card.stageId}
+                      stages={stages}
+                      crossBoardStages={crossBoardStages}
+                    />
                   </div>
                 </div>
               </section>

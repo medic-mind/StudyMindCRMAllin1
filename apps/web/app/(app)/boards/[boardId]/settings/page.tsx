@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/shell/page-header'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { BoardQuickActionsAdmin } from './BoardQuickActionsAdmin'
 import { BoardSettings } from './BoardSettings'
 
 export const dynamic = 'force-dynamic'
@@ -32,10 +33,29 @@ export default async function BoardSettingsPage({ params }: PageProps) {
   } catch {
     notFound()
   }
-  const [stages, labels] = await Promise.all([
+  const [stages, labels, boards] = await Promise.all([
     caller.board.stages.list({ boardId }),
     caller.label.list(),
+    caller.board.list(),
   ])
+  // All stages across every active board so quick actions can route off
+  // to another pipeline. One extra round-trip per other board; fine for
+  // an admin page.
+  const allStages = (
+    await Promise.all(
+      boards.map(async (b) => ({
+        board: b,
+        stages: await caller.board.stages.list({ boardId: b.id }),
+      })),
+    )
+  ).flatMap((g) =>
+    g.stages.map((s) => ({
+      id: s.id,
+      name: s.name,
+      boardId: g.board.id,
+      boardName: g.board.name,
+    })),
+  )
 
   return (
     <>
@@ -48,17 +68,20 @@ export default async function BoardSettingsPage({ params }: PageProps) {
         ]}
       />
       <PageBody>
-        <BoardSettings
-          board={{
-            id: board.id,
-            name: board.name,
-            description: board.description,
-            tickActionStageId: board.tickActionStageId,
-            xActionStageId: board.xActionStageId,
-          }}
-          stages={stages}
-          labels={labels}
-        />
+        <div className="space-y-6">
+          <BoardSettings
+            board={{
+              id: board.id,
+              name: board.name,
+              description: board.description,
+              tickActionStageId: board.tickActionStageId,
+              xActionStageId: board.xActionStageId,
+            }}
+            stages={stages}
+            labels={labels}
+          />
+          <BoardQuickActionsAdmin boardId={boardId} allStages={allStages} />
+        </div>
       </PageBody>
     </>
   )

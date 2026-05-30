@@ -19,6 +19,7 @@ import { z } from 'zod'
 import {
   addCallSummary,
   addCardComment,
+  applyQuickAction,
   archiveBoard,
   archiveCard,
   BoardCreateInput,
@@ -41,6 +42,7 @@ import {
   findOrCreateSubject,
   LabelCreateInput,
   listCardComments,
+  listQuickActions,
   setCardDescription,
   LabelUpdateInput,
   listLabels,
@@ -120,6 +122,7 @@ function mapBusinessError(err: unknown): never {
       case 'SUBJECT_NOT_FOUND':
       case 'CONTACT_NOT_FOUND':
       case 'PIPELINE_STAGE_NOT_FOUND':
+      case 'QUICK_ACTION_NOT_FOUND':
         throw new TRPCError({ code: 'NOT_FOUND', message: err.message })
       default:
         throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
@@ -838,6 +841,55 @@ const cardRouter = router({
       mapBusinessError(err)
     }
   }),
+
+  // Configurable per-board quick actions (replaces the legacy tick/X
+  // single-action pair). Listing is open; firing requires card-write;
+  // CRUD on the catalogue is Manager+ via the boardQuickAction router.
+  quickActions: router({
+    list: protectedProcedure
+      .input(z.object({ boardId: z.string(), includeArchived: z.boolean().default(false) }))
+      .query(async ({ ctx, input }) =>
+        listQuickActions(ctx.db, input.boardId, { includeArchived: input.includeArchived }),
+      ),
+  }),
+
+  /**
+   * Fire a configurable quick action against a card. Adds the action's
+   * comment template to the card (if set) and moves the card to the
+   * action's target stage (possibly on a different board). Both writes
+   * are audited via the domain functions; the procedure marks the
+   * middleware happy.
+   */
+  applyQuickAction: auditedProcedure
+    .input(z.object({ cardId: z.string(), quickActionId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCardWrite(user.role)
+      try {
+        const result = await applyQuickAction(
+          ctx.db,
+          {
+            cardId: input.cardId,
+            quickActionId: input.quickActionId,
+            actorUserId: user.id,
+          },
+          { actorId: user.id, requestId: ctx.requestId },
+        )
+        await ctx.audit({
+          action: 'card.quick_action_applied',
+          target: { type: 'Card', id: input.cardId },
+          after: {
+            quickActionId: input.quickActionId,
+            targetStageId: result.targetStageId,
+            targetBoardId: result.targetBoardId,
+            commentId: result.commentId,
+          },
+        })
+        return result
+      } catch (err) {
+        mapBusinessError(err)
+      }
+    }),
 })
 
 // --- Label sub-router ------------------------------------------------------
@@ -918,4 +970,193 @@ const subjectRouter = router({
   }),
 })
 
-export { boardRouter, cardRouter, labelRouter, subjectRouter }
+// --- Board quick-action admin router --------------------------------------
+// CRUD for the BoardQuickAction catalogue. Manager+ can manage; surfaced
+// on /boards/[boardId]/settings.
+
+const QuickActionCreateInput = z.object({
+  boardId: z.string(),
+  label: z.string().trim().min(1).max(60),
+  color: z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-fA-F]{6}$/u, 'Use #RRGGBB')
+    .optional(),
+  targetStageId: z.string(),
+  commentTemplate: z.string().trim().max(2000).optional(),
+  sortOrder: z.number().int().min(0).max(10_000).optional(),
+})
+
+const QuickActionUpdateInput = z.object({
+  id: z.string(),
+  label: z.string().trim().min(1).max(60).optional(),
+  color: z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-fA-F]{6}$/u, 'Use #RRGGBB')
+    .nullish(),
+  targetStageId: z.string().optional(),
+  commentTemplate: z.string().trim().max(2000).nullish(),
+  sortOrder: z.number().int().min(0).max(10_000).optional(),
+})
+
+const QUICK_ACTION_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  'ceo',
+  'senior_manager',
+  'manager',
+])
+
+function assertCanManageQuickActions(role: UserRole): void {
+  if (!QUICK_ACTION_MANAGE_ROLES.has(role)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Only Manager or above can manage quick-action buttons',
+    })
+  }
+}
+
+const boardQuickActionRouter = router({
+  list: protectedProcedure
+    .input(z.object({ boardId: z.string(), includeArchived: z.boolean().default(false) }))
+    .query(async ({ ctx, input }) =>
+      listQuickActions(ctx.db, input.boardId, { includeArchived: input.includeArchived }),
+    ),
+
+  create: auditedProcedure
+    .input(QuickActionCreateInput)
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManageQuickActions(user.role)
+      const board = await ctx.db.board.findUnique({
+        where: { id: input.boardId },
+        select: { id: true, archivedAt: true },
+      })
+      if (!board) throw new TRPCError({ code: 'NOT_FOUND', message: 'Board not found' })
+      const stage = await ctx.db.pipelineStage.findFirst({
+        where: { id: input.targetStageId, archivedAt: null },
+        select: { id: true, boardId: true },
+      })
+      if (!stage || !stage.boardId) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' })
+      }
+      const id = createId()
+      const row = await ctx.db.boardQuickAction.create({
+        data: {
+          id,
+          boardId: input.boardId,
+          label: input.label,
+          color: input.color ?? null,
+          targetStageId: input.targetStageId,
+          targetBoardId: stage.boardId === input.boardId ? null : stage.boardId,
+          commentTemplate: input.commentTemplate ?? null,
+          sortOrder: input.sortOrder ?? 100,
+          createdById: user.id,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'board.quick_action_created',
+        target: { type: 'Board', id: input.boardId },
+        after: { quickActionId: row.id, label: row.label },
+      })
+      return { id: row.id }
+    }),
+
+  update: auditedProcedure
+    .input(QuickActionUpdateInput)
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManageQuickActions(user.role)
+      const before = await ctx.db.boardQuickAction.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          boardId: true,
+          label: true,
+          color: true,
+          targetStageId: true,
+          targetBoardId: true,
+          commentTemplate: true,
+          sortOrder: true,
+        },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      let targetBoardId = before.targetBoardId
+      if (input.targetStageId !== undefined) {
+        const stage = await ctx.db.pipelineStage.findFirst({
+          where: { id: input.targetStageId, archivedAt: null },
+          select: { id: true, boardId: true },
+        })
+        if (!stage || !stage.boardId) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' })
+        }
+        targetBoardId = stage.boardId === before.boardId ? null : stage.boardId
+      }
+      const after = await ctx.db.boardQuickAction.update({
+        where: { id: input.id },
+        data: {
+          ...(input.label !== undefined ? { label: input.label } : {}),
+          color: input.color,
+          ...(input.targetStageId !== undefined
+            ? { targetStageId: input.targetStageId, targetBoardId }
+            : {}),
+          commentTemplate: input.commentTemplate,
+          ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'board.quick_action_updated',
+        target: { type: 'Board', id: after.boardId },
+        before,
+        after,
+      })
+      return { id: after.id }
+    }),
+
+  archive: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManageQuickActions(user.role)
+      const before = await ctx.db.boardQuickAction.findUnique({
+        where: { id: input.id },
+        select: { id: true, boardId: true, label: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.boardQuickAction.update({
+        where: { id: input.id },
+        data: { archivedAt: new Date(), updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'board.quick_action_archived',
+        target: { type: 'Board', id: before.boardId },
+        before,
+      })
+      return { id: input.id }
+    }),
+
+  restore: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManageQuickActions(user.role)
+      const before = await ctx.db.boardQuickAction.findUnique({
+        where: { id: input.id },
+        select: { id: true, boardId: true, label: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.boardQuickAction.update({
+        where: { id: input.id },
+        data: { archivedAt: null, updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'board.quick_action_restored',
+        target: { type: 'Board', id: before.boardId },
+        after: before,
+      })
+      return { id: input.id }
+    }),
+})
+
+export { boardRouter, boardQuickActionRouter, cardRouter, labelRouter, subjectRouter }

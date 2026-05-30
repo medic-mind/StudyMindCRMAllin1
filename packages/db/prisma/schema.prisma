@@ -670,6 +670,7 @@ model PipelineStage {
   board    Board?   @relation(fields: [boardId], references: [id], onDelete: Cascade)
   families Family[]
   cards    Card[]
+  quickActions BoardQuickAction[] @relation("QuickActionTargetStage")
 
   @@index([archivedAt])
   @@index([boardId])
@@ -688,21 +689,63 @@ model Board {
   /// Exactly one board may be the default. Enforced in app logic
   /// (ensureSingleDefault), not by a DB constraint, so swaps are atomic.
   isDefault   Boolean @default(false)
-  /// Target stage for the per-board "tick" quick action (e.g. mark answered →
-  /// move to Active). Configured per board in settings.
+  /// DEPRECATED — superseded by the BoardQuickAction multi-row catalogue.
+  /// Retained per CLAUDE.md §19 forward-only; the old single-tick / single-X
+  /// fallback is no longer rendered when the board has any BoardQuickAction
+  /// rows.
   tickActionStageId String?
-  /// Target stage for the per-board "x" quick action (e.g. no answer →
-  /// move to Not answered).
   xActionStageId    String?
   archivedAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   createdById String?
 
-  stages PipelineStage[]
-  cards  Card[]
+  stages       PipelineStage[]
+  cards        Card[]
+  quickActions BoardQuickAction[]
 
   @@index([archivedAt])
+}
+
+/// Configurable per-board quick-action buttons. Replaces the legacy
+/// `tickActionStageId` / `xActionStageId` pair: each row is one button
+/// rendered on every card on the board, with its own label, colour, and
+/// target stage. When `targetBoardId` is set the move is cross-board
+/// (sends the card off to a stage on another pipeline). Optional
+/// `commentTemplate` is appended as a card comment alongside the move so
+/// the contact's timeline carries a record of "called once at 10:42".
+///
+/// Manager+ manages the catalogue; everyone with card-write permission
+/// can trigger an action.
+model BoardQuickAction {
+  id              String  @id
+  boardId         String
+  label           String
+  /// #RRGGBB. Drives the chip background; falls back to the target stage
+  /// colour when null.
+  color           String?
+  targetStageId   String
+  /// When set, the target stage is on a different board — moves the card
+  /// cross-pipeline. When null, target is on the same board as the
+  /// action.
+  targetBoardId   String?
+  /// Optional comment template added to the card (and recorded on the
+  /// backing contact's timeline) when the action fires.
+  commentTemplate String?
+  sortOrder       Int     @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  board       Board         @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  targetStage PipelineStage @relation("QuickActionTargetStage", fields: [targetStageId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+  @@index([archivedAt])
+  @@index([sortOrder])
 }
 
 /// A card on a board (ADR 0018). Backed by a Contact (lighter than a Family,
