@@ -48,6 +48,9 @@ export type BusinessErrorCode =
   | 'SUBTASK_EMPTY'
   | 'SUBTASK_TOO_LONG'
   | 'SUBTASK_NOT_FOUND'
+  // ADR 0020 Phase 6e: assigning a Trengo conversation to a CRM user.
+  | 'UNKNOWN_USER'
+  | 'NO_TRENGO_IDENTITY'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

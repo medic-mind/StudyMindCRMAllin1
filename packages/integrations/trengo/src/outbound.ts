@@ -301,6 +301,168 @@ async function changeTicketState(
   }
 }
 
+// -----------------------------------------------------------------------------
+// Assignment — ADR 0020 Phase 6e.
+//
+// Resolves the target CRM User to their Trengo numeric id (User.trengoUserId
+// — stamped at token-connect in Phase 6a), persists a CRM-sourced
+// `ticket_assigned` Interaction with `source: 'crm_outbound'`, calls Trengo's
+// PATCH /tickets/:id/assign, and mirrors onto the Conversation head. The
+// inbound `ticket.assigned` echo is folded back onto our row by
+// `linkCrmOutboundEcho` in jobs.ts.
+//
+// Refuses (BAD_INPUT) when the target user has no Trengo identity — Trengo
+// would reject the PATCH and we'd waste a request.
+// -----------------------------------------------------------------------------
+
+export interface AssignConversationInput {
+  contactId: string
+  /** The CRM agent performing the action — used for token + attribution. */
+  agentId: string
+  ticketId: number
+  /** Target CRM User.id whose Trengo identity we'll resolve. */
+  assigneeUserId: string
+  requestId: string
+}
+
+export interface AssignConversationResult {
+  interactionId: string
+  ticketId: number
+  assigneeUserId: string
+  trengoAssigneeId: number
+}
+
+export async function assignConversation(
+  input: AssignConversationInput,
+): Promise<AssignConversationResult> {
+  // 1. Resolve the target user's Trengo identity. No Trengo id → no point
+  //    issuing the PATCH (Trengo would reject).
+  const target = await db.user.findUnique({
+    where: { id: input.assigneeUserId },
+    select: { id: true, trengoUserId: true },
+  })
+  if (!target) {
+    throw new BusinessError('UNKNOWN_USER', 'Assignee user not found', {
+      assigneeUserId: input.assigneeUserId,
+    })
+  }
+  if (target.trengoUserId === null) {
+    throw new BusinessError(
+      'NO_TRENGO_IDENTITY',
+      'Target user has no Trengo identity — they need to connect their Trengo token.',
+      { assigneeUserId: input.assigneeUserId },
+    )
+  }
+  const trengoAssigneeId = target.trengoUserId
+
+  // 2. Persist the CRM-sourced Interaction first. Idempotent on requestId.
+  const existing = await db.interaction.findFirst({
+    where: {
+      type: 'ticket_assigned',
+      contactId: input.contactId,
+      payload: { path: ['outboundRequestId'], equals: input.requestId },
+    },
+    select: { id: true },
+  })
+
+  let interactionId: string
+  if (existing) {
+    interactionId = existing.id
+  } else {
+    const created = await db.interaction.create({
+      data: {
+        id: createId(),
+        type: 'ticket_assigned',
+        contactId: input.contactId,
+        occurredAt: new Date(),
+        summary: 'Conversation assigned',
+        createdById: input.agentId,
+        updatedById: input.agentId,
+        payload: {
+          interactionType: 'ticket.assigned',
+          source: 'crm_outbound',
+          status: 'pending_send',
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          assigneeUserId: input.assigneeUserId,
+          trengoAssigneeId,
+          outboundRequestId: input.requestId,
+        },
+      },
+      select: { id: true },
+    })
+    interactionId = created.id
+  }
+
+  // 3. Per-agent client. Fail-closed on TOKEN_EXPIRED.
+  let client
+  try {
+    client = await createClientForAgent({
+      agentId: input.agentId,
+      requestId: input.requestId,
+      purpose: 'trengo.assign',
+    })
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+
+  // 4. Issue the assignment. On failure, leave the Interaction in
+  //    pending_send so the cron retry queue (Phase 7a) picks it up.
+  try {
+    const ticket = await client.assignTicket(input.ticketId, trengoAssigneeId)
+
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: {
+        payload: {
+          interactionType: 'ticket.assigned',
+          source: 'crm_outbound',
+          status: 'sent',
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          assigneeUserId: input.assigneeUserId,
+          trengoAssigneeId,
+          outboundRequestId: input.requestId,
+          trengoTicketStatus: ticket.status,
+        },
+      },
+    })
+
+    await writeAuditLogEntry(db, {
+      actorId: input.agentId,
+      action: 'trengo.ticket_assign_requested',
+      target: { type: 'Contact', id: input.contactId },
+      requestId: input.requestId,
+      after: {
+        interactionId,
+        ticketId: input.ticketId,
+        assigneeUserId: input.assigneeUserId,
+        trengoAssigneeId,
+      },
+    })
+
+    await applyEventToConversation(db, {
+      ticketId: input.ticketId,
+      eventName: 'ticket.assigned',
+      occurredAt: new Date(),
+      contactId: input.contactId,
+      assigneeUserId: input.assigneeUserId,
+      trengoAssigneeId,
+    })
+
+    return {
+      interactionId,
+      ticketId: input.ticketId,
+      assigneeUserId: input.assigneeUserId,
+      trengoAssigneeId,
+    }
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+}
+
 async function markFailed(interactionId: string, err: unknown): Promise<void> {
   const reason =
     err instanceof BusinessError
