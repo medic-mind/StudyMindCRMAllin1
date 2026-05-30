@@ -105,6 +105,47 @@ function assertCardWrite(role: UserRole): void {
   }
 }
 
+/**
+ * Resolve the three flavours of attachment ref to {filename, contentType,
+ * data} tuples. Returns at most one row per ref; skips refs whose
+ * underlying row no longer exists rather than failing the whole send.
+ */
+async function resolveCallSummaryAttachments(
+  db: import('@prisma/client').PrismaClient,
+  refs: ReadonlyArray<{ kind: string; id: string }>,
+): Promise<ReadonlyArray<{ filename: string; contentType: string; data: Buffer }>> {
+  if (refs.length === 0) return []
+  const out: Array<{ filename: string; contentType: string; data: Buffer }> = []
+  for (const ref of refs) {
+    if (ref.kind === 'contactDocument') {
+      const row = await db.contactDocument.findUnique({
+        where: { id: ref.id },
+        select: { fileName: true, contentType: true, data: true },
+      })
+      if (row) out.push({ filename: row.fileName, contentType: row.contentType, data: row.data })
+    } else if (ref.kind === 'uploadedInvoice') {
+      const row = await db.uploadedInvoice.findUnique({
+        where: { id: ref.id },
+        select: { fileName: true, contentType: true, data: true },
+      })
+      if (row) out.push({ filename: row.fileName, contentType: row.contentType, data: row.data })
+    } else if (ref.kind === 'callSummaryTemplatePdf') {
+      const row = await db.callSummaryTemplate.findUnique({
+        where: { id: ref.id },
+        select: { pdfFileName: true, pdfContentType: true, pdfData: true },
+      })
+      if (row && row.pdfData && row.pdfContentType && row.pdfFileName) {
+        out.push({
+          filename: row.pdfFileName,
+          contentType: row.pdfContentType,
+          data: row.pdfData,
+        })
+      }
+    }
+  }
+  return out
+}
+
 function mapBusinessError(err: unknown): never {
   if (err instanceof BusinessError) {
     switch (err.code) {
@@ -744,6 +785,12 @@ const cardRouter = router({
         agentId: user.id,
         requestId: ctx.requestId,
       })
+      // Resolve email attachments to bytes when the agent has picked any.
+      // Each ref kind comes from its own table; bytes are inlined in
+      // Postgres for all three (ContactDocument / UploadedInvoice /
+      // CallSummaryTemplate). Cap on the input keeps the payload sane.
+      const refs = input.channels.email ? (input.emailAttachments ?? []) : []
+      const emailAttachments = await resolveCallSummaryAttachments(ctx.db, refs)
       try {
         const results = await sendCallSummary(
           ctx.db,
@@ -751,6 +798,7 @@ const cardRouter = router({
             summaryInteractionId: input.summaryInteractionId,
             channels: input.channels,
             slackChannelId: input.slackChannelId,
+            emailAttachments,
             senders,
           },
           { actorId: user.id, requestId: ctx.requestId },

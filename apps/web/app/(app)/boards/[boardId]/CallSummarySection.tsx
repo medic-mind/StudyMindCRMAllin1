@@ -27,6 +27,14 @@ const OUTCOME_LABELS: Record<Outcome, string> = {
   no_answer: 'No answer',
 }
 
+type AttachmentKind = 'contactDocument' | 'uploadedInvoice' | 'callSummaryTemplatePdf'
+interface AttachmentChoice {
+  kind: AttachmentKind
+  id: string
+  label: string
+  hint?: string
+}
+
 export function CallSummarySection({ cardId, canWrite }: Props) {
   const [body, setBody] = useState('')
   const [outcome, setOutcome] = useState<Outcome>('answered')
@@ -39,11 +47,72 @@ export function CallSummarySection({ cardId, canWrite }: Props) {
   })
   const [slackChannelId, setSlackChannelId] = useState('')
   const [drafting, setDrafting] = useState(false)
+  const [pickedAttachments, setPickedAttachments] = useState<
+    Array<{ kind: AttachmentKind; id: string }>
+  >([])
+
+  const cardQuery = trpc.card.get.useQuery({ id: cardId }, { enabled: canWrite })
+  const contactId = cardQuery.data?.contactId ?? ''
 
   const availability = trpc.card.callSummary.availability.useQuery(
     { cardId },
     { enabled: canWrite },
   )
+
+  // Attachment choices — only relevant when email is enabled in the popover.
+  // Three sources: the contact's own documents, uploaded invoices on the
+  // contact, and the global call-summary template PDF catalogue. Each is
+  // capped at a sensible size by its own router; we just render the chips.
+  const documentsQuery = trpc.contact.documents.list.useQuery(
+    { contactId },
+    { enabled: canWrite && showSend && channels.email && Boolean(contactId) },
+  )
+  const invoicesQuery = trpc.uploadedInvoice.list.useQuery(
+    { contactId, includeArchived: false },
+    { enabled: canWrite && showSend && channels.email && Boolean(contactId) },
+  )
+  const templatesQuery = trpc.callSummaryTemplate.list.useQuery(
+    { includeArchived: false },
+    { enabled: canWrite && showSend && channels.email },
+  )
+
+  const attachmentChoices: AttachmentChoice[] = [
+    ...((documentsQuery.data ?? []).map((d) => ({
+      kind: 'contactDocument' as const,
+      id: d.id,
+      label: d.fileName,
+      hint: 'Contact document',
+    }))),
+    ...((invoicesQuery.data ?? []).map((i) => ({
+      kind: 'uploadedInvoice' as const,
+      id: i.id,
+      label: i.fileName,
+      hint: i.invoiceNumber ? `Invoice #${i.invoiceNumber}` : 'Uploaded invoice',
+    }))),
+    ...((templatesQuery.data ?? [])
+      .filter((t) => t.hasPdf)
+      .map((t) => ({
+        kind: 'callSummaryTemplatePdf' as const,
+        id: t.id,
+        label: t.pdfFileName ?? t.name,
+        hint: `Template · ${t.name}`,
+      }))),
+  ]
+
+  function toggleAttachment(choice: AttachmentChoice, next: boolean) {
+    setPickedAttachments((prev) => {
+      const without = prev.filter(
+        (p) => !(p.kind === choice.kind && p.id === choice.id),
+      )
+      return next ? [...without, { kind: choice.kind, id: choice.id }] : without
+    })
+  }
+
+  function isPicked(choice: AttachmentChoice): boolean {
+    return pickedAttachments.some(
+      (p) => p.kind === choice.kind && p.id === choice.id,
+    )
+  }
   const utils = trpc.useUtils()
 
   // Per-channel preview — resolves what address / thread / channel each
@@ -253,6 +322,35 @@ export function CallSummarySection({ cardId, canWrite }: Props) {
                       />
                     </label>
                   ) : null}
+                  {!emailReason && channels.email && attachmentChoices.length > 0 ? (
+                    <div className="mt-3 border-t border-neutral-100 pt-2">
+                      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+                        Attach to email ({pickedAttachments.length})
+                      </p>
+                      <ul className="max-h-32 space-y-1 overflow-y-auto pr-1">
+                        {attachmentChoices.map((c) => (
+                          <li key={`${c.kind}:${c.id}`}>
+                            <label className="flex items-start gap-2 text-xs text-neutral-700">
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                                checked={isPicked(c)}
+                                onChange={(e) => toggleAttachment(c, e.target.checked)}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium">{c.label}</span>
+                                {c.hint && (
+                                  <span className="block text-[10px] text-neutral-500">
+                                    {c.hint}
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   <div className="mt-3 flex justify-end gap-2">
                     <Button
                       type="button"
@@ -277,6 +375,10 @@ export function CallSummarySection({ cardId, canWrite }: Props) {
                           slackChannelId:
                             !slackReason && channels.slack && slackChannelId.trim().length > 0
                               ? slackChannelId.trim()
+                              : undefined,
+                          emailAttachments:
+                            !emailReason && channels.email && pickedAttachments.length > 0
+                              ? pickedAttachments
                               : undefined,
                         })
                       }
