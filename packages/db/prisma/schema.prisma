@@ -1498,6 +1498,9 @@ model Team {
 
   members TeamMember[]
   tasks   Task[]
+  /// ADR 0021: a shared team inbox can be tied to an ops Team (Admissions,
+  /// Sales, …). Optional — a shared inbox may exist without a Team.
+  mailAccounts MailAccount[]
 
   @@index([archivedAt])
 }
@@ -1988,6 +1991,11 @@ model GmailMailbox {
   updatedById String?
   deletedAt   DateTime?
 
+  /// ADR 0021 Communications Hub bridge. When this Gmail mailbox is surfaced
+  /// as a provider-agnostic MailAccount, that row points back here (1:1) so the
+  /// hub reuses the live Gmail sync without a destructive migration (§19.1).
+  mailAccount MailAccount?
+
   @@index([agentId])
   @@index([watchExpiresAt])
 }
@@ -2142,6 +2150,104 @@ model GmailToken {
   createdById String?
   updatedById String?
   deletedAt   DateTime?
+}
+
+// -----------------------------------------------------------------------------
+// Communications Hub — multi-account email operating system (ADR 0021).
+//
+// `MailAccount` is the provider-agnostic unit of "a connected inbox",
+// generalising the Gmail-only `GmailMailbox`. One row per connected email
+// address — personal (one agent) or shared (a team inbox like info@ /
+// admissions@) — across Gmail/Workspace/Outlook/Exchange/IMAP. Secrets (OAuth
+// refresh tokens, IMAP passwords) are NEVER stored here; they live in
+// `EncryptedField` (§21). For provider=gmail a row bridges to the legacy
+// `GmailMailbox` via `gmailMailboxId`, so the hub reuses the live Gmail sync
+// with no destructive migration (forward-only, §19.1).
+// -----------------------------------------------------------------------------
+
+enum MailProvider {
+  gmail
+  google_workspace
+  outlook
+  exchange
+  imap
+}
+
+enum MailAccountOwnerKind {
+  /// Belongs to one agent — their own mailbox.
+  personal
+  /// A team inbox (info@, admissions@, …) accessed by many agents via
+  /// MailAccountMember rows.
+  shared
+}
+
+enum MailAccountStatus {
+  connected
+  needs_reconnect
+  disconnected
+  error
+}
+
+model MailAccount {
+  id          String               @id
+  provider    MailProvider
+  address     String               @unique
+  displayName String?
+  ownerKind   MailAccountOwnerKind @default(personal)
+  /// Connecting/owning agent (User.id). For shared inboxes this is the user
+  /// who connected it; access is governed by MailAccountMember. Plain column,
+  /// matching the GmailMailbox.agentId / Conversation.assigneeUserId
+  /// convention (not every userId is a FK in this schema).
+  ownerUserId String?
+  /// Optional owning ops Team for a shared inbox (Admissions, Sales, …).
+  teamId      String?
+  status      MailAccountStatus    @default(connected)
+  /// Default send-from mailbox for the owning agent. App-level invariant: at
+  /// most one personal account per ownerUserId is the default.
+  isDefault   Boolean              @default(false)
+  /// Generic provider sync cursor. Opaque string each provider interprets in
+  /// its own terms (Gmail historyId, Graph deltaToken, IMAP UID).
+  syncCursor  String?
+  /// Push-subscription expiry (Gmail watch / Graph subscription). Null for
+  /// poll-only providers (IMAP).
+  watchExpiresAt DateTime?
+  lastSyncedAt   DateTime?
+  /// Bridge to the legacy per-agent Gmail row (provider=gmail only). 1:1.
+  gmailMailboxId String? @unique
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  team         Team?         @relation(fields: [teamId], references: [id])
+  gmailMailbox GmailMailbox? @relation(fields: [gmailMailboxId], references: [id])
+  members      MailAccountMember[]
+
+  @@index([ownerUserId, deletedAt])
+  @@index([ownerKind, status])
+  @@index([teamId])
+  @@index([provider])
+}
+
+/// Access grant to a shared mail account (team inbox). Mirrors TeamMember.
+/// Personal accounts need no rows here — the owner is implicit.
+model MailAccountMember {
+  id            String @id
+  mailAccountId String
+  /// User.id (plain column, matching TeamMember.userId).
+  userId        String
+  /// agent (read + send) | viewer (read-only). App-enforced.
+  access        String @default("agent")
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  mailAccount MailAccount @relation(fields: [mailAccountId], references: [id])
+
+  @@unique([mailAccountId, userId])
+  @@index([userId])
 }
 
 // -----------------------------------------------------------------------------
