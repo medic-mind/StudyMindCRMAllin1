@@ -42,6 +42,8 @@ import {
   isMinorByDob,
 } from '@studymind/core/contact'
 
+import { loadContactCommsCounts } from '@studymind/core/stats'
+
 import { mergeContacts } from '@/lib/services/contact-merge'
 import { findMergeCandidates } from '@/lib/services/merge-suggestions'
 import { toContactDetail, toContactSummary } from '@/lib/view-models/contact'
@@ -69,6 +71,10 @@ const ListInput = z.object({
   subjectId: z.string().nullish(),
   /** Filter by contact kind (parent / student / tutor / other). */
   kind: z.enum(['parent', 'student', 'tutor', 'other']).optional(),
+  /** Filter by booking lifecycle (CLAUDE.md §15). */
+  bookingStatus: z
+    .enum(['lead', 'registered_no_hours', 'registered_with_hours'])
+    .optional(),
   /** Only contacts that belong to a Family (or only those who don't). */
   hasFamily: z.boolean().optional(),
   /** Sort field. `createdAt` (default) and `name` are supported today. */
@@ -97,6 +103,7 @@ export const contactRouter = router({
         where: {
           deletedAt: null,
           ...(input.kind ? { kind: input.kind } : {}),
+          ...(input.bookingStatus ? { bookingStatus: input.bookingStatus } : {}),
           ...(input.hasFamily !== undefined
             ? input.hasFamily
               ? { familyMembers: { some: {} } }
@@ -167,7 +174,14 @@ export const contactRouter = router({
 
       const hasMore = rows.length > input.limit
       const sliced = hasMore ? rows.slice(0, input.limit) : rows
-      const items: ContactSummary[] = sliced.map(toContactSummary)
+      // One batched groupBy for the whole page's call/text/email counts.
+      const counts = await loadContactCommsCounts(
+        ctx.db,
+        sliced.map((r) => r.id),
+      )
+      const items: ContactSummary[] = sliced.map((r) =>
+        toContactSummary(r, counts.get(r.id)),
+      )
       const last = sliced[sliced.length - 1]
       const nextCursor =
         hasMore && last ? { id: last.id, createdAt: last.createdAt } : null

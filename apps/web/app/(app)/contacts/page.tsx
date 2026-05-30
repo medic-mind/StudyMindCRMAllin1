@@ -23,10 +23,18 @@ interface PageSearchParams {
   cursorAt?: string
   company?: string
   kind?: string
-  hasFamily?: string
+  bookingStatus?: string
   sortBy?: string
   sortDir?: string
 }
+
+type BookingStatus = 'lead' | 'registered_no_hours' | 'registered_with_hours'
+
+const BOOKING_FILTERS: ReadonlyArray<{ value: BookingStatus; label: string }> = [
+  { value: 'lead', label: 'Leads' },
+  { value: 'registered_no_hours', label: 'Registered' },
+  { value: 'registered_with_hours', label: 'Booked hours' },
+]
 
 /** A row from `trpc.company.pickList`. */
 interface CompanyOption {
@@ -60,8 +68,12 @@ export default async function ContactsPage({
     sp.kind === 'other'
       ? sp.kind
       : undefined
-  const hasFamily =
-    sp.hasFamily === '1' ? true : sp.hasFamily === '0' ? false : undefined
+  const bookingStatus: BookingStatus | undefined =
+    sp.bookingStatus === 'lead' ||
+    sp.bookingStatus === 'registered_no_hours' ||
+    sp.bookingStatus === 'registered_with_hours'
+      ? sp.bookingStatus
+      : undefined
   const sortBy: 'name' | 'createdAt' = sp.sortBy === 'name' ? 'name' : 'createdAt'
   const sortDir: 'asc' | 'desc' = sp.sortDir === 'asc' ? 'asc' : 'desc'
   const data = await caller.contact.list({
@@ -70,7 +82,7 @@ export default async function ContactsPage({
     q: sp.q && sp.q.trim() ? sp.q.trim() : undefined,
     companyId: activeCompany?.id,
     kind,
-    hasFamily,
+    bookingStatus,
     sortBy,
     sortDir,
   })
@@ -155,14 +167,15 @@ export default async function ContactsPage({
           })}
         </div>
 
-        {/* Kind + has-family filters */}
+        {/* Kind filter — contacts are students or parents/guardians (no
+            Family grouping in this surface). */}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {(['parent', 'student', 'tutor', 'other'] as const).map((k) => {
             const active = kind === k
             const params = new URLSearchParams()
             if (sp.q) params.set('q', sp.q)
             if (activeCompany) params.set('company', activeCompany.slug)
-            if (sp.hasFamily) params.set('hasFamily', sp.hasFamily)
+            if (sp.bookingStatus) params.set('bookingStatus', sp.bookingStatus)
             if (sp.sortBy) params.set('sortBy', sp.sortBy)
             if (sp.sortDir) params.set('sortDir', sp.sortDir)
             if (!active) params.set('kind', k)
@@ -180,32 +193,37 @@ export default async function ContactsPage({
               </Link>
             )
           })}
-          {(() => {
+        </div>
+
+        {/* Booking status filter (CLAUDE.md §15) — the primary lens for the
+            sales team: fresh leads vs registered vs booked-hours. */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+            Status
+          </span>
+          {BOOKING_FILTERS.map((f) => {
+            const active = bookingStatus === f.value
             const params = new URLSearchParams()
             if (sp.q) params.set('q', sp.q)
             if (activeCompany) params.set('company', activeCompany.slug)
             if (sp.kind) params.set('kind', sp.kind)
             if (sp.sortBy) params.set('sortBy', sp.sortBy)
             if (sp.sortDir) params.set('sortDir', sp.sortDir)
-            const next = hasFamily === true ? '0' : hasFamily === false ? '' : '1'
-            if (next) params.set('hasFamily', next)
+            if (!active) params.set('bookingStatus', f.value)
             return (
               <Link
+                key={f.value}
                 href={`/contacts?${params.toString()}`}
                 className={
-                  hasFamily !== undefined
-                    ? 'inline-flex items-center rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
-                    : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50'
+                  active
+                    ? 'inline-flex items-center rounded-full bg-primary-600 px-3 py-1 text-xs font-medium text-white'
+                    : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
                 }
               >
-                {hasFamily === true
-                  ? 'In a family'
-                  : hasFamily === false
-                    ? 'No family'
-                    : 'Any family'}
+                {f.label}
               </Link>
             )
-          })()}
+          })}
         </div>
 
         <ContactsTable
@@ -215,9 +233,14 @@ export default async function ContactsPage({
             email: c.email,
             phoneE164: c.phoneE164,
             kind: c.kind,
-            familyId: c.familyId,
-            familyName: c.familyName,
             companies: c.companies,
+            bookingStatus: c.bookingStatus,
+            hoursBooked: c.hoursBooked,
+            lastLessonAt: c.lastLessonAt,
+            amountSpentMinor: c.amountSpentMinor,
+            callCount: c.callCount,
+            emailCount: c.emailCount,
+            textCount: c.textCount,
             lastInteractionAt: c.lastInteractionAt,
             createdAt: c.createdAt,
           }))}
@@ -233,7 +256,7 @@ export default async function ContactsPage({
             ...(sp.q ? { q: sp.q } : {}),
             ...(activeCompany ? { company: activeCompany.slug } : {}),
             ...(sp.kind ? { kind: sp.kind } : {}),
-            ...(sp.hasFamily ? { hasFamily: sp.hasFamily } : {}),
+            ...(sp.bookingStatus ? { bookingStatus: sp.bookingStatus } : {}),
             ...(sp.sortBy ? { sortBy: sp.sortBy } : {}),
             ...(sp.sortDir ? { sortDir: sp.sortDir } : {}),
           }}

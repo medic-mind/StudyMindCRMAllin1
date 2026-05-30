@@ -1,8 +1,12 @@
-// Rich client-side contacts table — sortable columns, kind filter, has-family
-// filter, multi-select with a bulk-actions bar (Mailchimp push, soft delete).
-// Owns the table view so checkbox selection survives the React tree without
-// shuttling state through the server. Search + company chips stay in the
-// parent RSC page so URLs are shareable.
+// Rich client-side contacts table. Dense by design (CLAUDE.md §4): one row
+// surfaces the contact, clickable email + phone, booking status, the
+// call/text/email counts from their timeline, booking-derived hours / last
+// lesson / spend, and last-contacted. Multi-select drives the bulk-actions
+// bar (merge, soft delete, Mailchimp push).
+//
+// Family is intentionally not a column or filter here — contacts are students
+// or parents/guardians, linked via contact relations, not grouped into a
+// Family in this surface (product direction, May 2026).
 //
 // CLAUDE.md §27 — bulk procedures gate on role server-side; the bar just
 // reflects what the user is allowed to do.
@@ -17,12 +21,21 @@ import { toast } from 'sonner'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ChevronRightIcon, UsersIcon } from '@/components/ui/icon'
+import {
+  ChevronRightIcon,
+  MailIcon,
+  MessageSquareIcon,
+  PhoneIcon,
+} from '@/components/ui/icon'
+import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
+import { formatMoneyMinor } from '@/lib/format/money'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
 
 type SortBy = 'createdAt' | 'name'
 type SortDir = 'asc' | 'desc'
+
+type BookingStatus = 'lead' | 'registered_no_hours' | 'registered_with_hours'
 
 interface ContactRow {
   id: string
@@ -30,9 +43,14 @@ interface ContactRow {
   email: string | null
   phoneE164: string | null
   kind: string
-  familyId: string | null
-  familyName: string | null
   companies: ReadonlyArray<{ id: string; name: string; color: string | null }>
+  bookingStatus: BookingStatus
+  hoursBooked: number | null
+  lastLessonAt: Date | string | null
+  amountSpentMinor: number | null
+  callCount: number
+  emailCount: number
+  textCount: number
   lastInteractionAt: Date | string | null
   createdAt: Date | string
 }
@@ -58,6 +76,27 @@ const KIND_RING: Record<string, string> = {
   student: 'ring-violet-100',
   tutor: 'ring-emerald-100',
   other: 'ring-neutral-100',
+}
+
+const BOOKING_STATUS: Record<
+  BookingStatus,
+  { label: string; tone: BadgeTone; title: string }
+> = {
+  lead: {
+    label: 'Lead',
+    tone: 'neutral',
+    title: 'Not registered on the booking site yet',
+  },
+  registered_no_hours: {
+    label: 'Registered',
+    tone: 'info',
+    title: 'Registered on the booking site but has not booked hours',
+  },
+  registered_with_hours: {
+    label: 'Booked hours',
+    tone: 'success',
+    title: 'Registered on the booking site and has booked hours',
+  },
 }
 
 function formatKind(kind: string): string {
@@ -270,7 +309,7 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-card">
         {rows.length === 0 ? (
           <div className="p-10 text-center">
             <p className="text-sm font-medium text-neutral-700">
@@ -278,7 +317,7 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
             </p>
           </div>
         ) : (
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full min-w-[1100px] border-collapse text-sm">
             <thead className="bg-neutral-50 text-left">
               <tr>
                 <th className="w-10 px-3 py-2">
@@ -295,16 +334,28 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                     Contact{sortGlyph('name')}
                   </Link>
                 </th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Type</th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Family</th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Companies</th>
+                <th className="px-3 py-2 font-medium text-neutral-600">Email</th>
+                <th className="px-3 py-2 font-medium text-neutral-600">Phone</th>
+                <th className="px-3 py-2 font-medium text-neutral-600">Status</th>
+                <th className="px-3 py-2 text-center font-medium text-neutral-600">
+                  Activity
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Hours
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Last lesson
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Spent
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Last contact
+                </th>
                 <th className="px-3 py-2 text-right font-medium text-neutral-600">
                   <Link href={sortHref('createdAt')} className="hover:text-neutral-900">
                     Added{sortGlyph('createdAt')}
                   </Link>
-                </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
-                  Last activity
                 </th>
                 <th className="w-8" />
               </tr>
@@ -314,12 +365,13 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                 const tone = KIND_TONE[c.kind] ?? 'neutral'
                 const ring = KIND_RING[c.kind] ?? 'ring-neutral-100'
                 const isSelected = selected.has(c.id)
+                const status = BOOKING_STATUS[c.bookingStatus]
                 return (
                   <tr
                     key={c.id}
                     className={`group ${isSelected ? 'bg-primary-50/40' : ''}`}
                   >
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <input
                         type="checkbox"
                         aria-label={`Select ${c.displayName}`}
@@ -328,7 +380,7 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                         onChange={(e) => toggleOne(c.id, e.target.checked)}
                       />
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <Link
                         href={`/contacts/${c.id}`}
                         className="flex min-w-0 items-center gap-2.5"
@@ -342,58 +394,79 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                           <span className="block truncate font-medium text-neutral-900 group-hover:text-primary-700">
                             {c.displayName}
                           </span>
-                          <span className="block truncate text-xs text-neutral-500">
-                            {c.email ?? (
-                              <span className="text-neutral-400">no email</span>
-                            )}
-                            {c.phoneE164 ? (
-                              <>
-                                {' · '}
-                                <span className="font-mono">{c.phoneE164}</span>
-                              </>
-                            ) : null}
+                          <span className="mt-0.5 flex items-center gap-1.5">
+                            <Badge tone={tone}>{formatKind(c.kind)}</Badge>
+                            {c.companies.slice(0, 3).map((cc) => (
+                              <span
+                                key={cc.id}
+                                aria-hidden
+                                title={cc.name}
+                                className="h-2 w-2 rounded-full"
+                                style={{ backgroundColor: cc.color ?? '#94a3b8' }}
+                              />
+                            ))}
                           </span>
                         </span>
                       </Link>
                     </td>
-                    <td className="px-3 py-2">
-                      <Badge tone={tone}>{formatKind(c.kind)}</Badge>
+                    <td className="px-3 py-2 align-top text-xs">
+                      <EmailLink email={c.email} />
                     </td>
-                    <td className="px-3 py-2 text-xs">
-                      {c.familyId ? (
-                        <Link
-                          href={`/contacts/families/${c.familyId}`}
-                          className="inline-flex items-center gap-1.5 text-neutral-700 hover:text-primary-700 hover:underline"
+                    <td className="px-3 py-2 align-top text-xs">
+                      <PhoneLink phone={c.phoneE164} />
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <Badge tone={status.tone} >
+                        <span title={status.title}>{status.label}</span>
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <div className="flex items-center justify-center gap-2 text-xs tabular-nums text-neutral-600">
+                        <span
+                          className="inline-flex items-center gap-0.5"
+                          title={`${c.callCount} calls`}
                         >
-                          <UsersIcon size={13} className="text-neutral-400" />
-                          <span className="truncate">{c.familyName ?? 'Family'}</span>
-                        </Link>
-                      ) : (
-                        <span className="text-neutral-400">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1">
-                        {c.companies.slice(0, 3).map((cc) => (
-                          <span
-                            key={cc.id}
-                            className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white"
-                            style={{ backgroundColor: cc.color ?? '#475569' }}
-                          >
-                            {cc.name}
-                          </span>
-                        ))}
+                          <PhoneIcon size={12} className="text-neutral-400" />
+                          {c.callCount}
+                        </span>
+                        <span
+                          className="inline-flex items-center gap-0.5"
+                          title={`${c.textCount} messages`}
+                        >
+                          <MessageSquareIcon size={12} className="text-neutral-400" />
+                          {c.textCount}
+                        </span>
+                        <span
+                          className="inline-flex items-center gap-0.5"
+                          title={`${c.emailCount} emails`}
+                        >
+                          <MailIcon size={12} className="text-neutral-400" />
+                          {c.emailCount}
+                        </span>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right font-mono text-xs tabular-nums text-neutral-500">
-                      {formatRelativeTime(new Date(c.createdAt), now)}
+                    <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-600">
+                      {c.hoursBooked != null ? `${c.hoursBooked}h` : '—'}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono text-xs tabular-nums text-neutral-500">
+                    <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
+                      {c.lastLessonAt
+                        ? formatRelativeTime(new Date(c.lastLessonAt), now)
+                        : '—'}
+                    </td>
+                    <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-700">
+                      {c.amountSpentMinor != null
+                        ? formatMoneyMinor(c.amountSpentMinor)
+                        : '—'}
+                    </td>
+                    <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
                       {c.lastInteractionAt
                         ? formatRelativeTime(new Date(c.lastInteractionAt), now)
                         : '—'}
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
+                      {formatRelativeTime(new Date(c.createdAt), now)}
+                    </td>
+                    <td className="px-3 py-2 align-top text-right">
                       <Link
                         href={`/contacts/${c.id}`}
                         aria-label={`Open ${c.displayName}`}

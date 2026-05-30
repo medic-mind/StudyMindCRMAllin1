@@ -13,6 +13,11 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
+import {
+  formatLondon,
+  londonWallToUtc,
+  utcToLondonWall,
+} from '@/lib/format/london-time'
 import { trpc } from '@/lib/trpc/client'
 
 interface Card {
@@ -27,6 +32,7 @@ interface Card {
   assigneeName: string | null
   assigneeEmail: string | null
   dueAt: Date | string | null
+  scheduledCallAt: Date | string | null
   priority: number | null
   labels: ReadonlyArray<{ id: string; name: string; color: string }>
 }
@@ -135,6 +141,40 @@ export function CardSidebar({ card, canWrite }: Props) {
           </p>
         ) : (
           <p className="text-sm text-neutral-400">No due date</p>
+        )}
+      </Section>
+
+      <Section label="Call time">
+        {canWrite ? (
+          <div className="space-y-1">
+            <input
+              type="datetime-local"
+              value={utcToLondonWall(card.scheduledCallAt)}
+              onChange={(e) =>
+                update.mutate({
+                  id: card.id,
+                  // The picker value is read as Europe/London wall-clock and
+                  // stored UTC (CLAUDE.md §29).
+                  scheduledCallAt: e.target.value
+                    ? londonWallToUtc(e.target.value)
+                    : null,
+                })
+              }
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+            />
+            <p className="text-[10px] text-neutral-400">
+              {card.scheduledCallAt
+                ? `${formatLondon(card.scheduledCallAt)} · UK time`
+                : 'UK time (Europe/London)'}
+            </p>
+          </div>
+        ) : card.scheduledCallAt ? (
+          <p className="text-sm text-neutral-800">
+            {formatLondon(card.scheduledCallAt)}
+            <span className="ml-1 text-xs text-neutral-400">UK</span>
+          </p>
+        ) : (
+          <p className="text-sm text-neutral-400">No call scheduled</p>
         )}
       </Section>
 
