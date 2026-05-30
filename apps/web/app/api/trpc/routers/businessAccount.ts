@@ -20,6 +20,8 @@ import {
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { loadAccountStats } from '@studymind/core/stats'
+
 import {
   auditedProcedure,
   protectedProcedure,
@@ -509,29 +511,47 @@ export const businessAccountRouter = router({
           },
         },
       })
-      return rows.map((a) => ({
-        id: a.id,
-        kind: a.kind,
-        name: a.name,
-        slug: a.slug,
-        color: a.color,
-        description: a.description,
-        status: a.status,
-        contactEmail: a.contactEmail,
-        contactPhone: a.contactPhone,
-        website: a.website,
-        city: a.city,
-        country: a.country,
-        contactCount: a._count.contacts,
-        companies: a.companies.map((link) => ({
-          id: link.company.id,
-          name: link.company.name,
-          slug: link.company.slug,
-          color: link.company.color,
-        })),
-        archived: a.archivedAt != null,
-        createdAt: a.createdAt,
-      }))
+      // Engagement aggregates (students, hours, spend, comms, last contacted)
+      // for the whole page in a fixed handful of batched queries.
+      const stats = await loadAccountStats(
+        ctx.db,
+        rows.map((a) => a.id),
+      )
+      return rows.map((a) => {
+        const s = stats.get(a.id)
+        return {
+          id: a.id,
+          kind: a.kind,
+          name: a.name,
+          slug: a.slug,
+          color: a.color,
+          description: a.description,
+          status: a.status,
+          contactEmail: a.contactEmail,
+          contactPhone: a.contactPhone,
+          website: a.website,
+          city: a.city,
+          country: a.country,
+          contactCount: a._count.contacts,
+          companies: a.companies.map((link) => ({
+            id: link.company.id,
+            name: link.company.name,
+            slug: link.company.slug,
+            color: link.company.color,
+          })),
+          // Engagement (CLAUDE.md §27).
+          studentCount: s?.studentCount ?? 0,
+          hoursContracted: s?.hoursContracted ?? 0,
+          hoursDelivered: s?.hoursDelivered ?? 0,
+          amountPaidMinor: s?.amountPaidMinor ?? 0,
+          callCount: s?.callCount ?? 0,
+          textCount: s?.textCount ?? 0,
+          emailCount: s?.emailCount ?? 0,
+          lastContactedAt: s?.lastContactedAt ?? null,
+          archived: a.archivedAt != null,
+          createdAt: a.createdAt,
+        }
+      })
     }),
 
   /** Lightweight selector — sorted, active only, optionally kind-scoped. */
