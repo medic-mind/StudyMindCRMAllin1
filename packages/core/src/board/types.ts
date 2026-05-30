@@ -105,6 +105,14 @@ export const CallSummaryAddInput = z.object({
 })
 export type CallSummaryAddInput = z.infer<typeof CallSummaryAddInput>
 
+/** Tagged ids the email channel can attach. Resolved server-side to bytes. */
+export const CallSummaryAttachmentRef = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('contactDocument'), id: z.string() }),
+  z.object({ kind: z.literal('uploadedInvoice'), id: z.string() }),
+  z.object({ kind: z.literal('callSummaryTemplatePdf'), id: z.string() }),
+])
+export type CallSummaryAttachmentRef = z.infer<typeof CallSummaryAttachmentRef>
+
 export const CallSummarySendInput = z.object({
   summaryInteractionId: z.string(),
   channels: z.object({
@@ -113,6 +121,9 @@ export const CallSummarySendInput = z.object({
     email: z.boolean().optional(),
   }),
   slackChannelId: z.string().trim().min(1).max(64).optional(),
+  /** Up to 10 attachments for the email channel. Ignored when email
+   * isn't enabled. */
+  emailAttachments: z.array(CallSummaryAttachmentRef).max(10).optional(),
 })
 export type CallSummarySendInput = z.infer<typeof CallSummarySendInput>
 

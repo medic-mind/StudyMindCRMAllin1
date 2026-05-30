@@ -39,7 +39,15 @@ export interface CallSummarySenders {
     slackChannelId?: string
   }) => Promise<ChannelResult>
   trengo?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
-  email?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
+  email?: (args: {
+    body: string
+    contactId: string
+    attachments?: ReadonlyArray<{
+      filename: string
+      contentType: string
+      data: Buffer
+    }>
+  }) => Promise<ChannelResult>
 }
 
 export interface CallSummaryInteraction {
@@ -150,6 +158,12 @@ export async function sendContactCallSummary(
     summaryInteractionId: string
     channels: { slack?: boolean; trengo?: boolean; email?: boolean }
     slackChannelId?: string
+    /** Optional pre-resolved attachments for the email channel. */
+    emailAttachments?: ReadonlyArray<{
+      filename: string
+      contentType: string
+      data: Buffer
+    }>
     senders: CallSummarySenders
   },
   ctx: ActorCtx,
@@ -194,7 +208,14 @@ export async function sendContactCallSummary(
   }
   if (input.channels.email) {
     results.email = await runChannel(
-      input.senders.email ? () => input.senders.email!({ body, contactId }) : undefined,
+      input.senders.email
+        ? () =>
+            input.senders.email!({
+              body,
+              contactId,
+              attachments: input.emailAttachments,
+            })
+        : undefined,
     )
   }
 

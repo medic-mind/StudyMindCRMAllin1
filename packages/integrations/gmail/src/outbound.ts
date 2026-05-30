@@ -18,6 +18,13 @@ import { db } from '@studymind/db'
 
 import { createClientForAgent } from './client'
 
+export interface OutboundAttachment {
+  filename: string
+  contentType: string
+  /** Raw bytes — base64 encoding happens inside buildRawReply. */
+  data: Buffer
+}
+
 export interface SendReplyInput {
   agentId: string
   threadId: string
@@ -30,6 +37,9 @@ export interface SendReplyInput {
   requestId: string
   /** Original Message-ID header from the inbound thread, e.g. <abc@mail.gmail.com>. */
   originalMessageId?: string | undefined
+  /** Optional file attachments — PDF, image, Excel, etc. Encoded as
+   * base64 inside a multipart/mixed body when present. */
+  attachments?: ReadonlyArray<OutboundAttachment>
   /** Override gmail SDK construction (tests). */
   factory?: () => Parameters<typeof createClientForAgent>[0]['factory'] extends infer F
     ? F
@@ -54,6 +64,26 @@ const CRLF = '\r\n'
  *
  * Exported for unit testing.
  */
+function quotedFilename(name: string): string {
+  // Strip CR/LF + quote so a malicious filename can't inject headers.
+  return name.replace(/[\r\n"]/g, '_')
+}
+
+function base76(data: Buffer): string {
+  // Gmail accepts base64 (RFC 2045) with 76-char line wraps. Build the
+  // wrapped form ourselves so we don't rely on Node version specifics.
+  const b = data.toString('base64')
+  const lines: string[] = []
+  for (let i = 0; i < b.length; i += 76) lines.push(b.slice(i, i + 76))
+  return lines.join(CRLF)
+}
+
+function multipartBoundary(seed: string): string {
+  // Random-ish but deterministic per call so tests can pass `seed` for
+  // golden output. Production uses createId().
+  return `==SMCRM_${seed.replace(/[^a-z0-9]/gi, '').slice(0, 24)}==`
+}
+
 export function buildRawReply(input: {
   fromAddress?: string | undefined
   subject: string
@@ -62,12 +92,15 @@ export function buildRawReply(input: {
   bcc?: string[] | undefined
   body: string
   originalMessageId?: string | undefined
+  attachments?: ReadonlyArray<OutboundAttachment>
+  /** Deterministic boundary seed (tests). Defaults to a fresh id. */
+  boundarySeed?: string
 }): { raw: string; subject: string; headers: Record<string, string> } {
   const subj = normaliseReplySubject(input.subject)
+  const hasAttachments = (input.attachments?.length ?? 0) > 0
+
   const headers: Record<string, string> = {
     'MIME-Version': '1.0',
-    'Content-Type': 'text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding': '8bit',
     To: input.toAddresses.join(', '),
     Subject: subj,
   }
@@ -79,11 +112,42 @@ export function buildRawReply(input: {
     headers['References'] = input.originalMessageId
   }
 
+  let body: string
+  if (hasAttachments) {
+    const boundary = multipartBoundary(input.boundarySeed ?? createId())
+    headers['Content-Type'] = `multipart/mixed; boundary="${boundary}"`
+    const parts: string[] = []
+    // Text part.
+    parts.push(
+      `--${boundary}${CRLF}` +
+        `Content-Type: text/plain; charset=UTF-8${CRLF}` +
+        `Content-Transfer-Encoding: 8bit${CRLF}${CRLF}` +
+        `${input.body}${CRLF}`,
+    )
+    // Attachment parts.
+    for (const att of input.attachments!) {
+      const name = quotedFilename(att.filename)
+      parts.push(
+        `--${boundary}${CRLF}` +
+          `Content-Type: ${att.contentType}; name="${name}"${CRLF}` +
+          `Content-Disposition: attachment; filename="${name}"${CRLF}` +
+          `Content-Transfer-Encoding: base64${CRLF}${CRLF}` +
+          `${base76(att.data)}${CRLF}`,
+      )
+    }
+    parts.push(`--${boundary}--${CRLF}`)
+    body = parts.join('')
+  } else {
+    headers['Content-Type'] = 'text/plain; charset=UTF-8'
+    headers['Content-Transfer-Encoding'] = '8bit'
+    body = input.body
+  }
+
   const headerLines = Object.entries(headers)
     .map(([name, value]) => `${name}: ${value}`)
     .join(CRLF)
 
-  const message = headerLines + CRLF + CRLF + input.body
+  const message = headerLines + CRLF + CRLF + body
   const raw = Buffer.from(message, 'utf8').toString('base64url')
   return { raw, subject: subj, headers }
 }
@@ -140,7 +204,8 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
     })
   }
 
-  // 3. Build the RFC 5322 raw message.
+  // 3. Build the RFC 5322 raw message. Attachments (if any) become
+  // multipart/mixed parts inside buildRawReply.
   const { raw } = buildRawReply({
     subject: input.subject,
     toAddresses: input.toAddresses,
@@ -148,6 +213,7 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
     bcc: input.bcc,
     body: input.body,
     originalMessageId: input.originalMessageId,
+    attachments: input.attachments,
   })
 
   // 4. Send.

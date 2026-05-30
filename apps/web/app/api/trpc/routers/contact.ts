@@ -702,6 +702,16 @@ export const contactRouter = router({
             email: z.boolean().optional(),
           }),
           slackChannelId: z.string().optional(),
+          emailAttachments: z
+            .array(
+              z.discriminatedUnion('kind', [
+                z.object({ kind: z.literal('contactDocument'), id: z.string() }),
+                z.object({ kind: z.literal('uploadedInvoice'), id: z.string() }),
+                z.object({ kind: z.literal('callSummaryTemplatePdf'), id: z.string() }),
+              ]),
+            )
+            .max(10)
+            .optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -710,6 +720,47 @@ export const contactRouter = router({
           agentId: user.id,
           requestId: ctx.requestId,
         })
+        const refs = input.channels.email ? (input.emailAttachments ?? []) : []
+        const emailAttachments: Array<{
+          filename: string
+          contentType: string
+          data: Buffer
+        }> = []
+        for (const ref of refs) {
+          if (ref.kind === 'contactDocument') {
+            const row = await ctx.db.contactDocument.findUnique({
+              where: { id: ref.id },
+              select: { fileName: true, contentType: true, data: true },
+            })
+            if (row) emailAttachments.push({
+              filename: row.fileName,
+              contentType: row.contentType,
+              data: row.data,
+            })
+          } else if (ref.kind === 'uploadedInvoice') {
+            const row = await ctx.db.uploadedInvoice.findUnique({
+              where: { id: ref.id },
+              select: { fileName: true, contentType: true, data: true },
+            })
+            if (row) emailAttachments.push({
+              filename: row.fileName,
+              contentType: row.contentType,
+              data: row.data,
+            })
+          } else if (ref.kind === 'callSummaryTemplatePdf') {
+            const row = await ctx.db.callSummaryTemplate.findUnique({
+              where: { id: ref.id },
+              select: { pdfFileName: true, pdfContentType: true, pdfData: true },
+            })
+            if (row && row.pdfData && row.pdfContentType && row.pdfFileName) {
+              emailAttachments.push({
+                filename: row.pdfFileName,
+                contentType: row.pdfContentType,
+                data: row.pdfData,
+              })
+            }
+          }
+        }
         try {
           const results = await sendContactCallSummary(
             ctx.db,
@@ -717,6 +768,7 @@ export const contactRouter = router({
               summaryInteractionId: input.summaryInteractionId,
               channels: input.channels,
               slackChannelId: input.slackChannelId,
+              emailAttachments,
               senders,
             },
             { actorId: user.id, requestId: ctx.requestId },

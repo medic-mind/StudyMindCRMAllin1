@@ -27,20 +27,25 @@ export function BrandLogo({
   customLogoVersion = null,
 }: Props) {
   if (customLogoVersion != null) {
-    // Hard-clip the uploaded logo to a fixed box. The wrapper has both
-    // width AND height set inline AND via Tailwind utility classes
-    // (block + h-X + w-X + overflow-hidden) so that even if a parent
-    // flex stretches us, the box can't grow. The img inside is forced
-    // to fully cover the box via `block max-h-full max-w-full h-full
-    // w-full object-contain object-left`, so wide / tall / square
-    // uploads all render inside the fixed box. The previous fix used
-    // inline style alone; on some browsers a flex parent + `align-items:
-    // stretch` was still letting the IMG grow vertically. CLAUDE.md §4.
+    // The previous attempts used <img> inside a fixed-size wrapper and
+    // kept losing to flex stretch / preflight rules / parent overrides
+    // — the logo was still rendering 2-3x its budget in production.
+    //
+    // This version paints the logo as a CSS background-image on a
+    // strictly-sized <span>. A background-image lives inside its
+    // element's box by definition and can never overflow, so the box
+    // dimensions ARE the final visual dimensions. `background-size:
+    // contain` preserves the logo's aspect ratio inside the box.
+    //
+    // CLAUDE.md §4 (brand identity). Bulletproof clip, third time's the
+    // charm.
     const boxHeight = `${size}px`
     const boxWidth = `${size * 6}px`
     return (
       <span
-        className={`relative block shrink-0 overflow-hidden align-middle ${className ?? ''}`}
+        role="img"
+        aria-label="StudyMind"
+        className={`inline-block shrink-0 align-middle ${className ?? ''}`}
         style={{
           height: boxHeight,
           maxHeight: boxHeight,
@@ -48,18 +53,12 @@ export function BrandLogo({
           width: boxWidth,
           maxWidth: boxWidth,
           minWidth: boxWidth,
+          backgroundImage: `url("/api/branding/logo?v=${customLogoVersion}")`,
+          backgroundRepeat: 'no-repeat',
+          backgroundSize: 'contain',
+          backgroundPosition: 'left center',
         }}
-      >
-        <img
-          src={`/api/branding/logo?v=${customLogoVersion}`}
-          alt="StudyMind"
-          className="absolute inset-0 block h-full w-full"
-          style={{
-            objectFit: 'contain',
-            objectPosition: 'left center',
-          }}
-        />
-      </span>
+      />
     )
   }
   return (

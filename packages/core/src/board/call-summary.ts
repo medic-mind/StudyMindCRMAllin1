@@ -51,6 +51,14 @@ export type SendResults = Partial<Record<ChannelKey, ChannelResult>>
  * still guards every call with try/catch so an unexpected throw degrades to a
  * `failed` result rather than aborting the whole fan-out.
  */
+/** Resolved attachment bytes ready to hand to the integration sender.
+ * The tRPC layer turns attachment ids into these. */
+export interface ResolvedAttachment {
+  filename: string
+  contentType: string
+  data: Buffer
+}
+
 export interface CallSummarySenders {
   slack?: (args: {
     body: string
@@ -65,6 +73,7 @@ export interface CallSummarySenders {
   email?: (args: {
     body: string
     contactId: string
+    attachments?: ReadonlyArray<ResolvedAttachment>
   }) => Promise<ChannelResult>
 }
 
@@ -157,6 +166,8 @@ export async function sendCallSummary(
     summaryInteractionId: string
     channels: { slack?: boolean; trengo?: boolean; email?: boolean }
     slackChannelId?: string
+    /** Optional pre-resolved attachments for the email channel. */
+    emailAttachments?: ReadonlyArray<ResolvedAttachment>
     senders: CallSummarySenders
   },
   ctx: ActorCtx,
@@ -201,7 +212,14 @@ export async function sendCallSummary(
   }
   if (input.channels.email) {
     results.email = await runChannel(
-      input.senders.email ? () => input.senders.email!({ body, contactId }) : undefined,
+      input.senders.email
+        ? () =>
+            input.senders.email!({
+              body,
+              contactId,
+              attachments: input.emailAttachments,
+            })
+        : undefined,
     )
   }
 

@@ -98,7 +98,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       }
     },
 
-    async email({ body, contactId }): Promise<ChannelResult> {
+    async email({ body, contactId, attachments }): Promise<ChannelResult> {
       const contact = await db.contact.findFirst({
         where: { id: contactId, deletedAt: null },
         select: { email: true },
@@ -152,6 +152,14 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           toAddresses: [contact.email],
           requestId,
           originalMessageId,
+          attachments:
+            attachments && attachments.length > 0
+              ? attachments.map((a) => ({
+                  filename: a.filename,
+                  contentType: a.contentType,
+                  data: a.data,
+                }))
+              : undefined,
         })
         return { status: 'sent', ref: result.gmailMessageId }
       } catch (err) {

@@ -140,6 +140,56 @@ describe('buildRawReply', () => {
     })
     expect(subject).toBe('Re: Original')
   })
+
+  it('emits a multipart/mixed body with base64 attachments when given some', () => {
+    const pdfBytes = Buffer.from('%PDF-1.4 minimal pdf bytes for the test')
+    const { raw, headers } = buildRawReply({
+      subject: 'Call summary',
+      toAddresses: ['parent@example.com'],
+      body: 'See attached call summary script.',
+      attachments: [
+        {
+          filename: 'ucat-script.pdf',
+          contentType: 'application/pdf',
+          data: pdfBytes,
+        },
+      ],
+      boundarySeed: 'deterministicseed',
+    })
+    expect(headers['Content-Type']).toMatch(/^multipart\/mixed; boundary="/)
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8')
+    // Boundary line, text part, attachment part with base64 body, closing boundary.
+    expect(decoded).toMatch(/\r\n--==SMCRM_deterministicseed==\r\n/)
+    expect(decoded).toMatch(/Content-Type: text\/plain; charset=UTF-8\r\n/)
+    expect(decoded).toMatch(/See attached call summary script\./)
+    expect(decoded).toMatch(/Content-Type: application\/pdf; name="ucat-script\.pdf"/)
+    expect(decoded).toMatch(
+      /Content-Disposition: attachment; filename="ucat-script\.pdf"/,
+    )
+    expect(decoded).toMatch(/Content-Transfer-Encoding: base64\r\n/)
+    expect(decoded).toMatch(/\r\n--==SMCRM_deterministicseed==--\r\n$/)
+    // Encoded bytes round-trip.
+    const b64 = pdfBytes.toString('base64')
+    expect(decoded).toContain(b64)
+  })
+
+  it('escapes CR/LF/quote in attachment filenames so headers cannot be injected', () => {
+    const { raw } = buildRawReply({
+      subject: 'x',
+      toAddresses: ['a@b.com'],
+      body: 'x',
+      attachments: [
+        {
+          filename: 'bad"\r\nname.pdf',
+          contentType: 'application/pdf',
+          data: Buffer.from('x'),
+        },
+      ],
+      boundarySeed: 'b',
+    })
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8')
+    expect(decoded).toMatch(/filename="bad___name\.pdf"/)
+  })
 })
 
 describe('sendReply', () => {
