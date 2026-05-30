@@ -23,7 +23,7 @@ conflate the two.
 Add a first-class messaging domain (`packages/core/src/chat/`) with its own
 tables and a `chat.*` tRPC namespace, surfaced at `/messages`.
 
-### Data model (`20260603120000_add_team_chat`)
+### Data model (`20260603180000_add_team_chat`)
 
 - `ChatChannel` — `public | private | dm`. One seeded `#general` (singleton id
   `seed-chat-general`). DMs dedupe on a sorted-member `dmKey`.
