@@ -1,6 +1,6 @@
 # ADR 0021 — Communications Hub (multi-account email operating system)
 
-- Status: Proposed (Phase 1, multi-account foundation: Accepted & implemented)
+- Status: Proposed (Phases 1–2 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam)
 - Date: 2026-05-30
 - Supersedes: none
 - Related: ADR 0012 (Gmail OAuth), ADR 0017 (comprehensive customer view + backfill), ADR 0020 (CRM as the operational layer on top of Trengo), CLAUDE.md §14
@@ -93,12 +93,17 @@ inbox", generalising the Gmail-only `GmailMailbox`:
 
 This phase ships no irreversible action and changes no existing Gmail code path.
 
-### Phase 2 — Provider sync interface + Gmail behind it
+### Phase 2 — Provider sync interface + Gmail behind it (implemented)
 
-Define a `MailSyncProvider` interface in `packages/integrations/mail` (read
-window, fetch message, send, mutate flags/labels, watch/poll). Refactor the
-existing Gmail client to **implement** it; point `gmail/history.changed` at the
-`MailAccount` row (via the bridge). No behaviour change — pure seam.
+`MailSyncProvider` interface lives in `packages/core/src/mail/sync-provider.ts`
+(type-only seam, no I/O — fits §5: `core` cannot import `integrations`). Gmail
+implements it in `packages/integrations/gmail/src/mail-provider.ts` as a thin
+pass-through to the existing `GmailClient` — no behaviour change. The runtime
+dispatcher `apps/web/lib/mail/get-sync-provider.ts` resolves a `MailAccount.id`
+to its provider and fails closed (`MailProviderUnavailableError`) for
+non-connectable providers and disconnected accounts. Pointing the live
+`gmail/history.changed` job at `MailAccount` is deferred to Phase 3 (when the
+bridge is materialised by `syncFromGmail`).
 
 ### Phase 3 — Unified inbox (email into the Conversation head)
 
