@@ -21,7 +21,12 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { closeConversation, reopenConversation, sendMessage } from './outbound'
+import {
+  assignConversation,
+  closeConversation,
+  reopenConversation,
+  sendMessage,
+} from './outbound'
 
 const MAX_ATTEMPTS = 5
 /** Skip rows whose last failure is too recent — give Trengo time to recover
@@ -39,6 +44,7 @@ interface RetryablePayload {
   ticketId?: number
   channel?: string
   body?: string
+  assigneeUserId?: string
   attempts?: number
   lastError?: { code?: string; message?: string }
 }
@@ -58,7 +64,9 @@ export const trengoRetryPendingSend = inngest.createFunction(
       db.interaction.findMany({
         where: {
           deletedAt: null,
-          type: { in: ['message', 'ticket_closed', 'ticket_reopened'] },
+          type: {
+            in: ['message', 'ticket_closed', 'ticket_reopened', 'ticket_assigned'],
+          },
           updatedAt: { lt: cutoff },
           payload: { path: ['status'], equals: 'pending_send' },
         },
@@ -130,6 +138,19 @@ export const trengoRetryPendingSend = inngest.createFunction(
             contactId: row.contactId,
             agentId: payload.agentId,
             ticketId: payload.ticketId,
+            requestId: payload.outboundRequestId,
+          })
+          recovered += 1
+        } else if (row.type === 'ticket_assigned') {
+          if (typeof payload.assigneeUserId !== 'string') {
+            skipped += 1
+            continue
+          }
+          await assignConversation({
+            contactId: row.contactId,
+            agentId: payload.agentId,
+            ticketId: payload.ticketId,
+            assigneeUserId: payload.assigneeUserId,
             requestId: payload.outboundRequestId,
           })
           recovered += 1

@@ -91,14 +91,23 @@ export const trengoEventReceived = inngest.createFunction(
     // onto it rather than creating a duplicate. The window is bounded by
     // CRM_OUTBOUND_ECHO_WINDOW_MS so a future organic close on the same
     // ticket is not silently dropped.
-    if (eventName === 'ticket.closed' || eventName === 'ticket.reopened') {
+    if (
+      eventName === 'ticket.closed' ||
+      eventName === 'ticket.reopened' ||
+      eventName === 'ticket.assigned'
+    ) {
       const ticketId = envelope.data.ticket_id
       if (typeof ticketId === 'number') {
+        const echoType =
+          eventName === 'ticket.closed'
+            ? 'ticket_closed'
+            : eventName === 'ticket.reopened'
+              ? 'ticket_reopened'
+              : 'ticket_assigned'
         const linked = await step.run('echo-skip-state', async () =>
           linkCrmOutboundEcho({
             ticketId,
-            interactionType:
-              eventName === 'ticket.closed' ? 'ticket_closed' : 'ticket_reopened',
+            interactionType: echoType,
             trengoEventId: eventId,
           }),
         )
@@ -298,7 +307,7 @@ export const CRM_OUTBOUND_ECHO_WINDOW_MS = 5 * 60 * 1000
 
 interface LinkEchoInput {
   ticketId: number
-  interactionType: 'ticket_closed' | 'ticket_reopened'
+  interactionType: 'ticket_closed' | 'ticket_reopened' | 'ticket_assigned'
   trengoEventId: string
 }
 

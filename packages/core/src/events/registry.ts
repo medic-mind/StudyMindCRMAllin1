@@ -274,6 +274,8 @@ export const EVENT_NAMES = [
   // Interaction (jobs.ts linkCrmOutboundEcho) rather than duplicated.
   'trengo.ticket_close_requested',
   'trengo.ticket_reopen_requested',
+  // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
+  'trengo.ticket_assign_requested',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',

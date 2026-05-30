@@ -58,6 +58,9 @@ export type BusinessErrorCode =
   | 'MESSAGE_EMPTY'
   | 'CHAT_FORBIDDEN'
   | 'DM_NEEDS_MEMBER'
+  // ADR 0020 Phase 6e: assigning a Trengo conversation to a CRM user.
+  | 'UNKNOWN_USER'
+  | 'NO_TRENGO_IDENTITY'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

@@ -623,6 +623,90 @@ export const interactionRouter = router({
             }),
         })
       }),
+
+    // ADR 0020 Phase 6e — assign a conversation to a CRM teammate from the
+    // Comms Centre. Routes through Trengo (assignTicket) using the target's
+    // User.trengoUserId (Phase 6a). Manager+ only — reassigning ownership is
+    // a supervisory action.
+    assign: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          ticketId: z.number().int().positive(),
+          assigneeUserId: z.string().min(1),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (
+          !['ceo', 'senior_manager', 'manager'].includes(user.role)
+        ) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Only Manager and above can reassign conversations.',
+          })
+        }
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-assign')
+        const { assignConversation } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        try {
+          const result = await assignConversation({
+            contactId: input.contactId,
+            agentId: user.id,
+            ticketId: input.ticketId,
+            assigneeUserId: input.assigneeUserId,
+            requestId: ctx.requestId,
+          })
+          await ctx.audit({
+            action: 'trengo.ticket_assign_requested',
+            target: { type: 'Contact', id: input.contactId },
+            after: {
+              interactionId: result.interactionId,
+              ticketId: input.ticketId,
+              assigneeUserId: input.assigneeUserId,
+            },
+          })
+          return result
+        } catch (err) {
+          if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message:
+                'Your Trengo token has expired — reconnect it in Account → Trengo to assign.',
+            })
+          }
+          if (
+            err instanceof BusinessError &&
+            (err.code === 'NO_TRENGO_IDENTITY' || err.code === 'UNKNOWN_USER')
+          ) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          const name = err instanceof Error ? err.name : ''
+          if (err instanceof BusinessError || name === 'TrengoApiError') {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Trengo could not accept the assignment right now. Try again shortly.',
+            })
+          }
+          throw err
+        }
+      }),
+
+    /** Users who can be assigned a Trengo conversation — i.e. those with a
+     *  Trengo identity (User.trengoUserId). Drives the assignee picker. */
+    assignableUsers: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      const rows = await ctx.db.user.findMany({
+        where: { trengoUserId: { not: null }, isActive: true, deletedAt: null },
+        orderBy: [{ name: 'asc' }, { email: 'asc' }],
+        select: { id: true, name: true, email: true },
+      })
+      return rows.map((r) => ({ id: r.id, name: r.name ?? r.email }))
+    }),
   }),
 })
 
