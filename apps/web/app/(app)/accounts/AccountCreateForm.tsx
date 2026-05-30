@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { CountrySelect } from '@/components/ui/country-select'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -123,7 +124,7 @@ export function AccountCreateForm({ kind, onClose, onCreated }: Props) {
           <Input value={city} onChange={(e) => setCity(e.target.value)} />
         </Field>
         <Field label="Country">
-          <Input value={country} onChange={(e) => setCountry(e.target.value)} />
+          <CountrySelect value={country} onChange={setCountry} />
         </Field>
       </div>
 

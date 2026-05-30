@@ -19,9 +19,11 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import type { CsvColumn } from '@/lib/csv'
 import { trpc } from '@/lib/trpc/client'
 
 type Status = 'draft' | 'sent' | 'paid' | 'overdue' | 'void'
@@ -52,6 +54,37 @@ const STATUS_TONE: Record<Status, string> = {
   overdue: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
   void: 'bg-red-50 text-red-700 ring-1 ring-red-200',
 }
+
+const INVOICE_COLUMNS: CsvColumn<{
+  id: string
+  invoiceNumber: string | null
+  amountMinor: number | null
+  currency: string
+  status: string
+  issuedAt: Date | string | null
+  dueAt: Date | string | null
+  fileName: string
+  byteSize: number
+  notes: string | null
+  createdAt: Date | string
+}>[] = [
+  { header: 'Invoice number', value: (r) => r.invoiceNumber ?? '' },
+  {
+    header: 'Amount',
+    value: (r) => (r.amountMinor != null ? r.amountMinor / 100 : ''),
+  },
+  { header: 'Currency', value: (r) => r.currency },
+  { header: 'Status', value: (r) => r.status },
+  { header: 'Issued at', value: (r) => (r.issuedAt ? new Date(r.issuedAt) : '') },
+  { header: 'Due at', value: (r) => (r.dueAt ? new Date(r.dueAt) : '') },
+  { header: 'File name', value: (r) => r.fileName },
+  { header: 'File size (bytes)', value: (r) => r.byteSize },
+  { header: 'Notes', value: (r) => r.notes ?? '' },
+  {
+    header: 'Uploaded at',
+    value: (r) => (r.createdAt ? new Date(r.createdAt) : ''),
+  },
+]
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -142,11 +175,20 @@ export function InvoicesPanel({ target }: { target: InvoiceTarget }) {
             </span>
           )}
         </div>
-        {!creating && (
-          <Button type="button" size="sm" onClick={() => setCreating(true)}>
-            Upload invoice
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {rows.length > 0 && (
+            <CsvExportButton
+              getRows={() => rows}
+              columns={INVOICE_COLUMNS}
+              fileNameBase="invoices"
+            />
+          )}
+          {!creating && (
+            <Button type="button" size="sm" onClick={() => setCreating(true)}>
+              Upload invoice
+            </Button>
+          )}
+        </div>
       </div>
 
       {creating && (

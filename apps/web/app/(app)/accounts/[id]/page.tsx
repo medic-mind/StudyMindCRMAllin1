@@ -10,6 +10,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { AccountEditor } from './AccountEditor'
 import { AccountContacts } from './AccountContacts'
+import { AccountStudents } from './AccountStudents'
 
 export const dynamic = 'force-dynamic'
 
@@ -80,6 +81,8 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
           <AccountEditor account={account} />
           <AccountContacts account={account} />
         </div>
+
+        <AccountStudents accountId={account.id} />
 
         <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
           <div className="mb-3 flex items-center justify-between">

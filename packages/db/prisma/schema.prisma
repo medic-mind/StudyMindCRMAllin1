@@ -1430,6 +1430,7 @@ model BusinessAccount {
   archivedAt  DateTime?
 
   contacts         BusinessAccountContact[]
+  students         BusinessAccountStudent[]
   uploadedInvoices UploadedInvoice[]
 
   @@unique([kind, slug])
@@ -1454,6 +1455,64 @@ model BusinessAccountContact {
 
   @@id([accountId, contactId])
   @@index([contactId])
+}
+
+/// Students enrolled at a BusinessAccount (school / partnership) — what
+/// they're getting from us. Each row is one (account, student-name) pair,
+/// not a CRM Contact, so accounts can track cohorts without dragging every
+/// pupil into the contact database. Hours are split into `contracted` and
+/// `delivered`; the delivered figure is the column the booking site sync
+/// will write into when wired (see `bookingStudentId` / `bookingLastSyncAt`).
+model BusinessAccountStudent {
+  id        String @id
+  accountId String
+
+  firstName  String
+  lastName   String?
+  yearGroup  String?
+  dateOfBirth DateTime?
+
+  /// What the student is getting — free-form text (e.g. "UCAT prep — 10
+  /// sessions", "Medical interview package", "Maths weekly tutoring").
+  program            String?
+  /// Hours contracted under the current programme.
+  hoursContracted    Int?
+  /// Hours delivered — synced from booking.studymind.co.uk when the
+  /// integration is live. Manually editable until then.
+  hoursDelivered     Int?
+  startDate          DateTime?
+  endDate            DateTime?
+  status             BusinessAccountStudentStatus @default(active)
+
+  /// Free-form text. Subjects + notes for at-a-glance triage.
+  subjects String?
+  notes    String?
+
+  /// Booking site cross-reference. Populated once we hook up the
+  /// booking.studymind.co.uk pull (CLAUDE.md §15). Sync writes
+  /// `hoursDelivered` + `bookingLastSyncAt`; manual edits remain possible.
+  bookingStudentId   String?
+  bookingLastSyncAt  DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  account BusinessAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([status])
+  @@index([archivedAt])
+  @@index([bookingStudentId])
+}
+
+enum BusinessAccountStudentStatus {
+  active
+  paused
+  completed
+  withdrawn
 }
 
 // -----------------------------------------------------------------------------

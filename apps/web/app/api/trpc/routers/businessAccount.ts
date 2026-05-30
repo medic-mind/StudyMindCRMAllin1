@@ -12,7 +12,11 @@
 // CLAUDE.md §20.1 — Manager+ for writes; all authenticated roles read.
 
 import { createId } from '@paralleldrive/cuid2'
-import { BusinessAccountKind, BusinessAccountStatus } from '@prisma/client'
+import {
+  BusinessAccountKind,
+  BusinessAccountStatus,
+  BusinessAccountStudentStatus,
+} from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -170,6 +174,239 @@ const contactsRouter = router({
         before: { accountId: input.accountId, contactId: input.contactId, role: existing.role },
       })
       return { ok: true as const }
+    }),
+})
+
+// ---------------------------------------------------------------------------
+// Students (BusinessAccountStudent). Tracks cohorts the account is sending
+// us — what they're getting and hours contracted vs delivered. Hours
+// delivered will be filled by the booking.studymind.co.uk sync once it
+// lands; until then editable by hand. CLAUDE.md §15.
+// ---------------------------------------------------------------------------
+
+const StudentStatusEnum = z.nativeEnum(BusinessAccountStudentStatus)
+
+const StudentCreateInput = z.object({
+  accountId: z.string(),
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().max(80).optional(),
+  yearGroup: z.string().trim().max(40).optional(),
+  dateOfBirth: z.date().optional(),
+  program: z.string().trim().max(280).optional(),
+  hoursContracted: z.number().int().min(0).max(100_000).optional(),
+  hoursDelivered: z.number().int().min(0).max(100_000).optional(),
+  startDate: z.date().optional(),
+  endDate: z.date().optional(),
+  status: StudentStatusEnum.optional(),
+  subjects: z.string().trim().max(280).optional(),
+  notes: z.string().trim().max(4000).optional(),
+  bookingStudentId: z.string().trim().max(120).optional(),
+})
+
+const StudentUpdateInput = z.object({
+  id: z.string(),
+  firstName: z.string().trim().min(1).max(80).optional(),
+  lastName: z.string().trim().max(80).nullish(),
+  yearGroup: z.string().trim().max(40).nullish(),
+  dateOfBirth: z.date().nullish(),
+  program: z.string().trim().max(280).nullish(),
+  hoursContracted: z.number().int().min(0).max(100_000).nullish(),
+  hoursDelivered: z.number().int().min(0).max(100_000).nullish(),
+  startDate: z.date().nullish(),
+  endDate: z.date().nullish(),
+  status: StudentStatusEnum.optional(),
+  subjects: z.string().trim().max(280).nullish(),
+  notes: z.string().trim().max(4000).nullish(),
+  bookingStudentId: z.string().trim().max(120).nullish(),
+})
+
+const studentsRouter = router({
+  list: protectedProcedure
+    .input(
+      z.object({
+        accountId: z.string(),
+        includeArchived: z.boolean().default(false),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.businessAccountStudent.findMany({
+        where: {
+          accountId: input.accountId,
+          ...(input.includeArchived ? {} : { archivedAt: null }),
+        },
+        orderBy: [{ archivedAt: 'asc' }, { lastName: 'asc' }, { firstName: 'asc' }],
+      })
+      return rows.map((r) => ({
+        id: r.id,
+        accountId: r.accountId,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        yearGroup: r.yearGroup,
+        dateOfBirth: r.dateOfBirth,
+        program: r.program,
+        hoursContracted: r.hoursContracted,
+        hoursDelivered: r.hoursDelivered,
+        startDate: r.startDate,
+        endDate: r.endDate,
+        status: r.status,
+        subjects: r.subjects,
+        notes: r.notes,
+        bookingStudentId: r.bookingStudentId,
+        bookingLastSyncAt: r.bookingLastSyncAt,
+        archived: r.archivedAt != null,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }))
+    }),
+
+  create: auditedProcedure
+    .input(StudentCreateInput)
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const account = await ctx.db.businessAccount.findUnique({
+        where: { id: input.accountId },
+        select: { id: true },
+      })
+      if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
+      const id = createId()
+      const row = await ctx.db.businessAccountStudent.create({
+        data: {
+          id,
+          accountId: input.accountId,
+          firstName: input.firstName,
+          lastName: input.lastName ?? null,
+          yearGroup: input.yearGroup ?? null,
+          dateOfBirth: input.dateOfBirth ?? null,
+          program: input.program ?? null,
+          hoursContracted: input.hoursContracted ?? null,
+          hoursDelivered: input.hoursDelivered ?? null,
+          startDate: input.startDate ?? null,
+          endDate: input.endDate ?? null,
+          status: input.status ?? 'active',
+          subjects: input.subjects ?? null,
+          notes: input.notes ?? null,
+          bookingStudentId: input.bookingStudentId ?? null,
+          createdById: user.id,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'business_account.student_added',
+        target: { type: 'BusinessAccount', id: input.accountId },
+        after: {
+          studentId: row.id,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          program: row.program,
+        },
+      })
+      return { id: row.id }
+    }),
+
+  update: auditedProcedure
+    .input(StudentUpdateInput)
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const before = await ctx.db.businessAccountStudent.findUnique({
+        where: { id: input.id },
+        select: {
+          id: true,
+          accountId: true,
+          firstName: true,
+          lastName: true,
+          status: true,
+          hoursContracted: true,
+          hoursDelivered: true,
+        },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      const after = await ctx.db.businessAccountStudent.update({
+        where: { id: input.id },
+        data: {
+          ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
+          lastName: input.lastName,
+          yearGroup: input.yearGroup,
+          dateOfBirth: input.dateOfBirth,
+          program: input.program,
+          hoursContracted: input.hoursContracted,
+          hoursDelivered: input.hoursDelivered,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          subjects: input.subjects,
+          notes: input.notes,
+          bookingStudentId: input.bookingStudentId,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'business_account.student_updated',
+        target: { type: 'BusinessAccount', id: before.accountId },
+        before,
+        after: {
+          studentId: after.id,
+          firstName: after.firstName,
+          lastName: after.lastName,
+          status: after.status,
+          hoursContracted: after.hoursContracted,
+          hoursDelivered: after.hoursDelivered,
+        },
+      })
+      return { id: after.id }
+    }),
+
+  archive: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const before = await ctx.db.businessAccountStudent.findUnique({
+        where: { id: input.id },
+        select: { id: true, accountId: true, firstName: true, lastName: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.businessAccountStudent.update({
+        where: { id: input.id },
+        data: { archivedAt: new Date(), updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'business_account.student_archived',
+        target: { type: 'BusinessAccount', id: before.accountId },
+        before,
+      })
+      return { id: input.id }
+    }),
+
+  /**
+   * Stub for the booking.studymind.co.uk sync — wired in a follow-up PR.
+   * Returns `{ status: 'not_implemented' }` so the UI can show a friendly
+   * banner today and the call site is ready to swap in the real pull
+   * once the booking integration exposes a per-student endpoint
+   * (CLAUDE.md §15).
+   */
+  syncFromBooking: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const row = await ctx.db.businessAccountStudent.findUnique({
+        where: { id: input.id },
+        select: { id: true, accountId: true, bookingStudentId: true },
+      })
+      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+      ctx.audit.called = true
+      await ctx.db.businessAccountStudent.update({
+        where: { id: input.id },
+        data: { bookingLastSyncAt: new Date(), updatedById: user.id },
+      })
+      return {
+        status: 'not_implemented' as const,
+        message:
+          'Booking site sync not yet wired up — last-sync timestamp updated as a placeholder.',
+        bookingStudentId: row.bookingStudentId,
+      }
     }),
 })
 
@@ -425,4 +662,5 @@ export const businessAccountRouter = router({
     }),
 
   contacts: contactsRouter,
+  students: studentsRouter,
 })

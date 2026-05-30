@@ -15,6 +15,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { NewTaskDialog } from './NewTaskDialog'
 import { TaskCheckbox } from './TaskCheckbox'
+import { TasksExportButton } from './TasksExportButton'
 
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
@@ -107,7 +108,17 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
       <PageHeader
         title="Tasks"
         subtitle={`${data.items.length} task${data.items.length === 1 ? '' : 's'} in this view`}
-        actions={<NewTaskDialog />}
+        actions={
+          <div className="flex items-center gap-2">
+            <TasksExportButton
+              scope={scope === 'mine' ? 'me' : scope === 'team' ? 'team' : 'all'}
+              teamId={teamId}
+              status={status}
+              overdue={overdue || undefined}
+            />
+            <NewTaskDialog />
+          </div>
+        }
       />
       <PageBody>
         {/* Scope segmented control */}
