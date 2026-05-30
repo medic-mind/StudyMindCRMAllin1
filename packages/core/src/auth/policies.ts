@@ -55,8 +55,11 @@ export const ACTIONS = [
   'audit.read',
   'settings.write',
   // User management. Slice 14 (ADR 0009) introduced these; ADR 0014 renames
-  // the grant/revoke verbs to the new role names.
+  // the grant/revoke verbs to the new role names; ADR 0021 adds account
+  // editing (`user.manage`) and the right to delegate it (`user.grant_manage`).
   'user.invite',
+  'user.manage',
+  'user.grant_manage',
   'user.deactivate',
   'user.role.grant_senior_manager',
   'user.role.grant_ceo',
@@ -83,6 +86,8 @@ export const ATTRIBUTE_GATED_ACTIONS: Readonly<Record<Action, boolean>> = {
   'audit.read': false,
   'settings.write': false,
   'user.invite': false,
+  'user.manage': false,
+  'user.grant_manage': false,
   'user.deactivate': false,
   'user.role.grant_senior_manager': false,
   'user.role.grant_ceo': false,
@@ -105,6 +110,8 @@ export const AUDIT_REQUIRED_ACTIONS: Readonly<Record<Action, boolean>> = {
   'audit.read': false,
   'settings.write': true,
   'user.invite': true,
+  'user.manage': true,
+  'user.grant_manage': true,
   'user.deactivate': true,
   'user.role.grant_senior_manager': true,
   'user.role.grant_ceo': true,
@@ -129,14 +136,17 @@ const SENIOR_MANAGER_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'audit.read',
   'settings.write',
   'user.invite',
+  'user.manage',
+  'user.grant_manage',
   'user.deactivate',
   'user.role.revoke_senior_manager',
 ])
 
 // Manager: sales + finance ops. Can refund, create payment links, manage
-// allocations. Invites Sales Executives and Virtual Assistants (the grant
-// matrix in canGrantRole gates which roles they may mint). Cannot deactivate
-// peers and cannot write tenant-wide settings.
+// allocations. Can edit user details + reset passwords (`user.manage`) and
+// delegate that right to an individual (`user.grant_manage`) — but CANNOT
+// create accounts (ADR 0021: creation is CEO + Senior Manager only),
+// deactivate peers, or write tenant-wide settings.
 const MANAGER_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'contact.read',
   'contact.read_minor',
@@ -147,7 +157,8 @@ const MANAGER_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'charge.refund',
   'subscription.cancel',
   'audit.read',
-  'user.invite',
+  'user.manage',
+  'user.grant_manage',
 ])
 
 // Sales Executive: full CRUD on Contacts/Families/Tasks/Interactions; sends
@@ -212,6 +223,65 @@ export function canGrantRole(actorRole: Role, targetRole: Role): boolean {
  */
 export function canRevokeRole(actorRole: Role, targetRole: Role): boolean {
   return canGrantRole(actorRole, targetRole)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Grantable per-user permissions (ADR 0021)                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Actions a privileged user can hand to an individual via a `UserPermission`
+ * row, layered on top of the role matrix. Today the only grantable action is
+ * `user.manage` (edit details / change email / reset another user's password).
+ * Account creation, role grants and deactivation are deliberately NOT
+ * grantable — they stay role-gated.
+ */
+export const GRANTABLE_ACTIONS = ['user.manage'] as const
+export type GrantableAction = (typeof GRANTABLE_ACTIONS)[number]
+
+export function isGrantableAction(value: string): value is GrantableAction {
+  return (GRANTABLE_ACTIONS as readonly string[]).includes(value)
+}
+
+/**
+ * Effective permission check. An actor may perform `action` if their role
+ * grants it OR they hold a matching grantable permission. `granted` is the
+ * list of `UserPermission.permission` strings for the actor.
+ */
+export function hasAction(
+  role: Role,
+  granted: readonly string[],
+  action: Action,
+): boolean {
+  if (roleCan(role, action)) return true
+  return isGrantableAction(action) && granted.includes(action)
+}
+
+/**
+ * Who can CREATE accounts (temp-password create + link invite): CEO and
+ * Senior Manager only. Not grantable to individuals. ADR 0021.
+ */
+export function canCreateUsers(role: Role): boolean {
+  return roleCan(role, 'user.invite')
+}
+
+/**
+ * Who can edit details / change email / reset another user's password:
+ * any role that grants `user.manage` (CEO, Senior Manager, Manager) OR an
+ * individual who has been granted the `user.manage` permission. ADR 0021.
+ */
+export function canManageUsers(role: Role, granted: readonly string[]): boolean {
+  return hasAction(role, granted, 'user.manage')
+}
+
+/** Who can grant/revoke the `user.manage` permission: CEO, Senior Manager, Manager. */
+export function canGrantUserManage(role: Role): boolean {
+  return roleCan(role, 'user.grant_manage')
+}
+
+/** Who can deactivate / reactivate users: CEO + Senior Manager. */
+export function canDeactivateUsers(role: Role): boolean {
+  return roleCan(role, 'user.deactivate')
 }
 
 /**

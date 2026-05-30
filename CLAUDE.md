@@ -66,7 +66,7 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 | Auth | Auth.js v5 (next-auth) — self-hosted, Postgres-backed | Email + bcrypt password, optional TOTP MFA, sessions in our DB; no third-party processor for staff identity (ADR 0010) |
 | File and audio storage | AWS S3 (eu-west-2) | Call recordings, email attachments, DSAR exports |
 | Encryption (field level) | AWS KMS envelope encryption | Safeguarding notes, EHCP extracts |
-| Email transactional | Resend | Outbound system email, not Gmail sync |
+| Email transactional | Gmail API (Google OAuth) | Outbound system email (account welcome, password reset, forwarding) sent from the configured system mailbox via `packages/integrations/gmail/src/system-send.ts`. **No third-party email API — never use Resend.** |
 | Observability | Sentry (errors), Axiom (logs), OpenTelemetry traces | Required from day one |
 | AI | OpenAI gpt-4o, gpt-4o-mini, Whisper | Mini for cheap classification, 4o for drafting |
 | Hosting | Railway (services: web, worker, postgres; Redis via Railway plugin) | Single platform for the whole stack |
@@ -611,7 +611,9 @@ Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `
 | `dsar.export` | ✓ | ✓ | — | — | — |
 | `audit.read` | ✓ | ✓ | ✓ | — | — |
 | `settings.write` | ✓ | ✓ | — | — | — |
-| `user.invite` | ✓ | ✓ | ✓ | — | — |
+| `user.invite` | ✓ | ✓ | — | — | — |
+| `user.manage` | ✓ | ✓ | ✓ | — | — |
+| `user.grant_manage` | ✓ | ✓ | ✓ | — | — |
 | `user.deactivate` | ✓ | ✓ | — | — | — |
 | `user.role.grant_senior_manager` | ✓ | — | — | — | — |
 | `user.role.grant_ceo` | ✓ | — | — | — | — |
@@ -620,6 +622,8 @@ Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `
 | `tenant.config.write` | ✓ | — | — | — | — |
 
 The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch (`pnpm policy:check`).
+
+**User management (ADR 0021).** Account **creation** is CEO + Senior Manager only (`user.invite`; public self-service sign-up is disabled). **Editing** details, changing email, and **resetting passwords** require `user.manage` — held by role by CEO/Senior Manager/Manager, and additionally **grantable to any individual** via a `UserPermission` row (the only member of `GRANTABLE_ACTIONS`). `user.grant_manage` (CEO/Senior Manager/Manager) governs who may delegate that permission. Deactivation and role changes stay CEO + Senior Manager. A non-(CEO/Senior Manager) actor may never act on a CEO or Senior Manager account. New accounts and admin resets issue a **temporary password** (forced reset on first login via `mustResetPassword`) delivered in a branded welcome email plus a credentials PDF (templates + PDF in `packages/core/src/email/`, sent via Gmail (Google OAuth) through `sendSystemEmail` — never Resend).
 
 ---
 
@@ -1066,6 +1070,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a new background job | `packages/jobs/` |
 | Change reconciliation logic | `packages/core/finance/reconcile.ts` |
 | Update RBAC rules | `packages/core/auth/policies.ts` |
+| Manage staff users (create / edit / reset password / delegate `user.manage`) | Settings → Users (`/settings/users`). tRPC `admin.users.*` (`apps/web/app/api/trpc/routers/admin/users.ts`); welcome email + credentials PDF in `packages/core/src/email/`; ADR 0021. Account creation is CEO + Senior Manager only; self-service sign-up is disabled. |
 | Add a runbook | `docs/runbooks/` |
 | Record an architecture decision | `docs/adr/` |
 | Adjust a brand token | `packages/ui/tokens/` |
@@ -1084,7 +1089,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Card sub-tasks (Todoist-style checklist on a card) | Schema `CardSubtask` (`cardId`, `title`, `completed`, `position`). Domain `packages/core/src/board/subtasks.ts`; tRPC `card.subtasks.*` (list / add / update / delete, Sales Executive+). UI `apps/web/app/(app)/boards/[boardId]/CardSubtasks.tsx` in the card modal. Distinct from CRM `Task` + contact-synced tasks. |
 | Manage a board's quick-action buttons | `/settings/board-quick-actions` (Manager+) lists boards → links to `/boards/[boardId]/settings` where the `BoardQuickAction` catalogue is edited. Firing is `card.applyQuickAction` (Sales Executive+). |
 | Bulk-merge duplicate contacts | `/contacts` table → select 2+ → Merge (Manager+). tRPC `contact.bulkMerge` ({survivorId, loserIds}); first selected row is the survivor, the rest merge in via `mergeContacts` (`apps/web/lib/services/contact-merge.ts`) one at a time. |
-| Manage "Forward to <team>" quick actions | `/settings/forwarding` (Manager+). Domain `packages/core/src/forwarding/`, tRPC `forwarding.*`, sender `apps/web/lib/forwarding/senders.ts` (Resend). UI lives on the contact page (`ForwardingSection`). Records `email_forwarded` Interactions; defaults seeded by migration `20260529120000_add_forwarding_rules`. |
+| Manage "Forward to <team>" quick actions | `/settings/forwarding` (Manager+). Domain `packages/core/src/forwarding/`, tRPC `forwarding.*`, sender `apps/web/lib/forwarding/senders.ts` (Gmail OAuth via `sendSystemEmail`). UI lives on the contact page (`ForwardingSection`). Records `email_forwarded` Interactions; defaults seeded by migration `20260529120000_add_forwarding_rules`. |
 | Group ops staff into teams (one user → many teams) | Settings → Teams (`/settings/teams`, CEO + Senior Manager). Domain `packages/core/src/team/`, tRPC `team.*`, schema `Team` + `TeamMember` (M:N junction). |
 | Track B2B partnerships and schools | `/accounts` (kind tabs). tRPC `businessAccount.*` (`apps/web/app/api/trpc/routers/businessAccount.ts`); schema `BusinessAccount` (kind: `school | partnership`, status lifecycle, address, notes) + `BusinessAccountContact` (M:N to Contact, optional `role`). Manager+ for writes; all roles read. |
 | Manage call summary templates (UCAT, Medical Interview, Dental Interview, …) | `/settings/call-summary-templates` (Manager+). Schema `CallSummaryTemplate` carries the prefill body + optional inline PDF; tRPC `callSummaryTemplate.*` (list / pickList / get / create / update / archive / restore / attachPdf / removePdf). PDFs served at `/api/call-summary-templates/[id]/pdf` (authenticated, inline). Contact-page `CallSummarySection` reads the live catalogue via `pickList` and surfaces "Open PDF" on the chosen template. |

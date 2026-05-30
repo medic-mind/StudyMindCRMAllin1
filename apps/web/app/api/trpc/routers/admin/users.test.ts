@@ -8,8 +8,8 @@ import type { TrpcContext, SessionUser, AuditRecorder } from '@/lib/trpc/builder
 
 import { adminUsersRouter } from './users'
 
-vi.mock('@studymind/integration-resend', () => ({
-  sendEmail: vi.fn(async () => ({ status: 'sent' as const, id: 'm1' })),
+vi.mock('@studymind/integration-gmail/system-send', () => ({
+  sendSystemEmail: vi.fn(async () => ({ status: 'sent' as const, id: 'm1' })),
 }))
 
 interface FakeUser {
@@ -109,9 +109,13 @@ function makeCtx(role: SessionUser['role'], userId = 'actor_1') {
   const ras: { id: string; userId: string; role: string }[] = users
     .flatMap((u) => u.roleAssignments.map((ra) => ({ ...ra, userId: u.id })))
   const tokens: { id: string; userId: string; tokenHash: string; expiresAt: Date; usedAt: Date | null }[] = []
+  const resetTokens: { id: string; userId: string; usedAt: Date | null }[] = []
   const sessions: { id: string; userId: string }[] = users.flatMap((u) =>
     u.sessions.map((s) => ({ id: s.id, userId: u.id })),
   )
+  const userPermissions: { id: string; userId: string; permission: string }[] = []
+  const permsFor = (id: string) =>
+    userPermissions.filter((p) => p.userId === id).map((p) => ({ permission: p.permission }))
 
   const auditCalls: { action: string; target: { type: string; id: string } }[] = []
   const audit = (async (input: { action: string; target: { type: string; id: string } }) => {
@@ -124,7 +128,9 @@ function makeCtx(role: SessionUser['role'], userId = 'actor_1') {
   const db = {
     user: {
       findMany: () => {
-        const rows = users.filter((u) => u.deletedAt === null)
+        const rows = users
+          .filter((u) => u.deletedAt === null)
+          .map((u) => ({ ...u, permissions: permsFor(u.id) }))
         return Promise.resolve(rows)
       },
       findFirst: ({ where }: { where: { id: string; deletedAt: null; deactivatedAt?: null; roleAssignments?: { some: { role: string } } } }) => {
@@ -134,7 +140,7 @@ function makeCtx(role: SessionUser['role'], userId = 'actor_1') {
         if (where.roleAssignments?.some?.role && !row.roleAssignments.some((ra) => ra.role === where.roleAssignments?.some?.role)) {
           return Promise.resolve(null)
         }
-        return Promise.resolve(row)
+        return Promise.resolve({ ...row, permissions: permsFor(row.id) })
       },
       findUnique: ({ where }: { where: { email?: string; id?: string } }) => {
         if (where.email) return Promise.resolve(users.find((u) => u.email === where.email) ?? null)
@@ -244,6 +250,35 @@ function makeCtx(role: SessionUser['role'], userId = 'actor_1') {
         return Promise.resolve({ count: 0 })
       },
     },
+    passwordResetToken: {
+      updateMany: ({ where, data }: { where: { userId: string; usedAt: null }; data: { usedAt: Date } }) => {
+        for (const t of resetTokens) {
+          if (t.userId === where.userId && t.usedAt === null) t.usedAt = data.usedAt
+        }
+        return Promise.resolve({ count: 0 })
+      },
+    },
+    userPermission: {
+      findMany: ({ where }: { where: { userId: string } }) =>
+        Promise.resolve(userPermissions.filter((p) => p.userId === where.userId)),
+      findUnique: ({ where }: { where: { userId_permission: { userId: string; permission: string } } }) =>
+        Promise.resolve(
+          userPermissions.find(
+            (p) =>
+              p.userId === where.userId_permission.userId &&
+              p.permission === where.userId_permission.permission,
+          ) ?? null,
+        ),
+      create: ({ data }: { data: { id: string; userId: string; permission: string } }) => {
+        userPermissions.push({ id: data.id, userId: data.userId, permission: data.permission })
+        return Promise.resolve({ id: data.id })
+      },
+      delete: ({ where }: { where: { id: string } }) => {
+        const idx = userPermissions.findIndex((p) => p.id === where.id)
+        if (idx >= 0) userPermissions.splice(idx, 1)
+        return Promise.resolve({ id: where.id })
+      },
+    },
   }
 
   const ctx: TrpcContext = {
@@ -253,7 +288,7 @@ function makeCtx(role: SessionUser['role'], userId = 'actor_1') {
     audit,
     headers: { origin: null, host: null },
   }
-  return { ctx, audit, auditCalls, ras, users, tokens, sessions }
+  return { ctx, audit, auditCalls, ras, users, tokens, sessions, userPermissions, resetTokens }
 }
 
 describe('admin.users router', () => {
@@ -359,5 +394,105 @@ describe('admin.users router', () => {
     await expect(
       caller.deactivate({ userId: 'ceo_1', reason: 'no' }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  /* ----------------------------------------------------------------- */
+  /* ADR 0021 — create / update / resetPassword / permissions          */
+  /* ----------------------------------------------------------------- */
+
+  it('list is allowed for a manager and for a granted lower role', async () => {
+    const mgr = makeCtx('manager')
+    await expect(adminUsersRouter.createCaller(mgr.ctx).list({ limit: 50 })).resolves.toBeDefined()
+
+    const va = makeCtx('virtual_assistant')
+    va.userPermissions.push({ id: 'p_grant', userId: 'actor_1', permission: 'user.manage' })
+    await expect(adminUsersRouter.createCaller(va.ctx).list({ limit: 50 })).resolves.toBeDefined()
+  })
+
+  it('create issues a temp password, forces reset, and audits', async () => {
+    const { ctx, auditCalls, users } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const r = await caller.create({ email: 'fresh@example.com', name: 'Fresh', roles: ['sales_executive'] })
+    expect(r.temporaryPassword).toHaveLength(16)
+    const created = users.find((u) => u.email === 'fresh@example.com')
+    expect(created?.passwordHash).toBeTruthy()
+    expect(created?.mustResetPassword).toBe(true)
+    expect(auditCalls.some((a) => a.action === 'auth.user_created')).toBe(true)
+  })
+
+  it('create is refused for manager and sales_executive (creation is CEO/SM only)', async () => {
+    for (const role of ['manager', 'sales_executive'] as const) {
+      const { ctx } = makeCtx(role)
+      const caller = adminUsersRouter.createCaller(ctx)
+      await expect(
+        caller.create({ email: 'x@example.com', roles: ['virtual_assistant'] }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    }
+  })
+
+  it('update changes name and rejects a clashing email', async () => {
+    const { ctx, users } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const r = await caller.update({ userId: 'u_2', name: 'Renamed' })
+    expect(r.changed).toBe(true)
+    expect(users.find((u) => u.id === 'u_2')?.name).toBe('Renamed')
+    await expect(
+      caller.update({ userId: 'u_2', email: 'ceo@example.com' }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+
+  it('a manager cannot edit or reset a CEO/Senior Manager', async () => {
+    const { ctx } = makeCtx('manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    await expect(
+      caller.update({ userId: 'ceo_1', name: 'nope' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await expect(
+      caller.resetPassword({ userId: 'ceo_1' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('resetPassword issues a temp password, forces reset, and clears sessions', async () => {
+    const { ctx, users, sessions, auditCalls } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const r = await caller.resetPassword({ userId: 'u_2' })
+    expect(r.temporaryPassword).toHaveLength(16)
+    expect(users.find((u) => u.id === 'u_2')?.mustResetPassword).toBe(true)
+    expect(sessions.find((s) => s.userId === 'u_2')).toBeUndefined()
+    expect(auditCalls.some((a) => a.action === 'auth.password_reset_by_admin')).toBe(true)
+  })
+
+  it('grant/revoke user.manage works for a manager and is audited', async () => {
+    const { ctx, userPermissions, auditCalls } = makeCtx('manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const g = await caller.grantPermission({ userId: 'u_2', permission: 'user.manage' })
+    expect(g.alreadyPresent).toBe(false)
+    expect(userPermissions.some((p) => p.userId === 'u_2' && p.permission === 'user.manage')).toBe(true)
+    expect(auditCalls.some((a) => a.action === 'auth.permission_granted')).toBe(true)
+
+    const r = await caller.revokePermission({ userId: 'u_2', permission: 'user.manage' })
+    expect(r.alreadyAbsent).toBe(false)
+    expect(userPermissions.some((p) => p.userId === 'u_2')).toBe(false)
+  })
+
+  it('a sales_executive cannot delegate the manage permission', async () => {
+    const { ctx } = makeCtx('sales_executive')
+    const caller = adminUsersRouter.createCaller(ctx)
+    await expect(
+      caller.grantPermission({ userId: 'u_2', permission: 'user.manage' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('myAccess reports a manager can manage + delegate but not create or deactivate', async () => {
+    const { ctx } = makeCtx('manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const a = await caller.myAccess()
+    expect(a).toMatchObject({
+      canCreate: false,
+      canManage: true,
+      canGrantManage: true,
+      canDeactivate: false,
+      canManageRoles: false,
+    })
   })
 })

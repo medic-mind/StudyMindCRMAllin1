@@ -29,6 +29,7 @@
     "./auth/guards": "./src/auth/guards.ts",
     "./auth/rate-limits": "./src/auth/rate-limits.ts",
     "./compliance/dsar": "./src/compliance/dsar.ts",
+    "./email": "./src/email/index.ts",
     "./events/registry": "./src/events/registry.ts",
     "./errors": "./src/errors.ts",
     "./flags": "./src/flags/index.ts",

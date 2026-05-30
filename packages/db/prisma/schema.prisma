@@ -272,9 +272,31 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   oauthStates             OAuthState[]
   totpRecoveryCodes       TotpRecoveryCode[]
+  permissions             UserPermission[]
   assignedCards           Card[]                   @relation("CardAssignee")
 
   @@index([email])
+}
+
+// Grantable per-user capabilities that sit ON TOP of the role matrix
+// (CLAUDE.md §20, ADR 0021). Today the only value is `user.manage` — the
+// right to edit details / change email / reset another user's password —
+// which CEO, Senior Manager and Manager can hand to any individual so a
+// trusted Sales Executive can help run the team without a role change.
+// Account CREATION, role grants and deactivation stay role-gated.
+model UserPermission {
+  id          String   @id
+  userId      String
+  // One of GRANTABLE_ACTIONS in packages/core/src/auth/policies.ts. Stored as
+  // text (forward-only, §19) and validated by Zod at the procedure boundary.
+  permission  String
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permission])
+  @@index([userId])
 }
 
 // Audit-A2: TOTP recovery codes. 10 codes generated at MFA enrolment time;

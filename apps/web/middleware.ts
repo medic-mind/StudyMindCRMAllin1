@@ -21,7 +21,8 @@ const { auth: authMiddleware } = NextAuth(authEdgeConfig)
 
 const PUBLIC_PATH_PREFIXES = [
   '/sign-in',
-  '/sign-up',
+  // '/sign-up' intentionally omitted — public self-service sign-up is disabled
+  // (ADR 0021). Accounts are created only by a CEO or Senior Manager.
   '/verify',
   '/verify-email-sent',
   '/forgot',

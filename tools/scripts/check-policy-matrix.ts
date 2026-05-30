@@ -56,6 +56,8 @@ const DOC_LABEL_TO_ACTION: Record<string, Action | { action: Action; suffix?: st
   'audit.read': 'audit.read',
   'settings.write': 'settings.write',
   'user.invite': 'user.invite',
+  'user.manage': 'user.manage',
+  'user.grant_manage': 'user.grant_manage',
   'user.deactivate': 'user.deactivate',
   'user.role.grant_senior_manager': 'user.role.grant_senior_manager',
   'user.role.grant_ceo': 'user.role.grant_ceo',
