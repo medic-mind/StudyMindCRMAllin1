@@ -4,7 +4,9 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { AccountInvoicingPanel } from '@/components/invoicing/AccountInvoicingPanel'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
+import { getCurrentUser } from '@/lib/auth/server'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -25,9 +27,13 @@ const STATUS_TONE: Record<string, string> = {
   churned: 'bg-red-50 text-red-700 ring-1 ring-red-200',
 }
 
+const INVOICING_WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+const INVOICING_MARK_PAID_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+
 export default async function BusinessAccountDetailPage({ params }: Props) {
   const { id } = await params
   const caller = await createServerCaller()
+  const me = await getCurrentUser()
   let account
   try {
     account = await caller.businessAccount.get({ id })
@@ -35,6 +41,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
     notFound()
   }
   if (!account) notFound()
+
+  const canInvoiceWrite = Boolean(me && INVOICING_WRITE_ROLES.has(me.role))
+  const canInvoiceMarkPaid = Boolean(me && INVOICING_MARK_PAID_ROLES.has(me.role))
 
   return (
     <>
@@ -57,9 +66,7 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
           >
             {account.status}
           </span>
-          <span className="text-xs uppercase tracking-wide text-neutral-500">
-            {account.kind}
-          </span>
+          <span className="text-xs uppercase tracking-wide text-neutral-500">{account.kind}</span>
           {account.archived && (
             <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-600">
               Archived
@@ -86,14 +93,26 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
 
         <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-neutral-900">Invoices</h2>
+            <h2 className="text-sm font-semibold text-neutral-900">Invoicing</h2>
+            <span className="text-[11px] uppercase tracking-wide text-neutral-500">
+              B2B Invoices Platform
+            </span>
+          </div>
+          <AccountInvoicingPanel
+            target={{ kind: 'businessAccount', businessAccountId: account.id }}
+            canWrite={canInvoiceWrite}
+            canMarkPaid={canInvoiceMarkPaid}
+          />
+        </section>
+
+        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-neutral-900">Invoice files</h2>
             <span className="text-[11px] uppercase tracking-wide text-neutral-500">
               Uploaded paperwork
             </span>
           </div>
-          <InvoicesPanel
-            target={{ kind: 'businessAccount', businessAccountId: account.id }}
-          />
+          <InvoicesPanel target={{ kind: 'businessAccount', businessAccountId: account.id }} />
         </section>
       </div>
     </>

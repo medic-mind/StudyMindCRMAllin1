@@ -44,6 +44,7 @@ import { financeRouter } from './routers/finance'
 import { forwardingRouter } from './routers/forwarding'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
+import { invoicingRouter } from './routers/invoicing'
 import { notificationsRouter } from './routers/notifications'
 import { oauthRouter } from './routers/oauth'
 import { pipelineRouter } from './routers/pipeline'
@@ -73,6 +74,7 @@ export const appRouter = router({
   forwarding: forwardingRouter,
   inbox: inboxRouter,
   interaction: interactionRouter,
+  invoicing: invoicingRouter,
   notifications: notificationsRouter,
   oauth: oauthRouter,
   pipeline: pipelineRouter,
