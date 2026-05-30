@@ -554,8 +554,123 @@ export const interactionRouter = router({
           throw err
         }
       }),
+
+    // CLAUDE.md §11 — close / reopen a Trengo conversation from the CRM.
+    // Reuses the new audited `closeConversation` / `reopenConversation`
+    // outbound, which writes a CRM-sourced Interaction the inbound webhook
+    // echo then links to (no duplicate Interactions). Virtual Assistants
+    // cannot trigger state changes.
+    close: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          ticketId: z.number().int().positive(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        gateTrengoStateChange(user.role)
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-close')
+        const { closeConversation } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        return runTrengoStateChange({
+          action: 'close',
+          run: () =>
+            closeConversation({
+              contactId: input.contactId,
+              agentId: user.id,
+              ticketId: input.ticketId,
+              requestId: ctx.requestId,
+            }),
+          audit: (interactionId) =>
+            ctx.audit({
+              action: 'trengo.ticket_close_requested',
+              target: { type: 'Contact', id: input.contactId },
+              after: { interactionId, ticketId: input.ticketId },
+            }),
+        })
+      }),
+
+    reopen: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          ticketId: z.number().int().positive(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        gateTrengoStateChange(user.role)
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-reopen')
+        const { reopenConversation } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        return runTrengoStateChange({
+          action: 'reopen',
+          run: () =>
+            reopenConversation({
+              contactId: input.contactId,
+              agentId: user.id,
+              ticketId: input.ticketId,
+              requestId: ctx.requestId,
+            }),
+          audit: (interactionId) =>
+            ctx.audit({
+              action: 'trengo.ticket_reopen_requested',
+              target: { type: 'Contact', id: input.contactId },
+              after: { interactionId, ticketId: input.ticketId },
+            }),
+        })
+      }),
   }),
 })
+
+function gateTrengoStateChange(role: string): void {
+  if (
+    !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(role)
+  ) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'role cannot change conversation state',
+    })
+  }
+}
+
+interface RunTrengoStateChangeInput<R extends { interactionId: string }> {
+  action: 'close' | 'reopen'
+  run: () => Promise<R>
+  audit: (interactionId: string) => Promise<string>
+}
+
+async function runTrengoStateChange<R extends { interactionId: string }>(
+  input: RunTrengoStateChangeInput<R>,
+): Promise<R> {
+  try {
+    const result = await input.run()
+    await input.audit(result.interactionId)
+    return result
+  } catch (err) {
+    if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message:
+          'Your Trengo token has expired — reconnect it in Account → Trengo to act on conversations.',
+      })
+    }
+    const name = err instanceof Error ? err.name : ''
+    if (err instanceof BusinessError || name === 'TrengoApiError') {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          input.action === 'close'
+            ? 'Trengo could not close the conversation right now. Try again shortly.'
+            : 'Trengo could not reopen the conversation right now. Try again shortly.',
+      })
+    }
+    throw err
+  }
+}
 
 /**
  * For a family-scoped list, return the contact ids whose timeline rows must

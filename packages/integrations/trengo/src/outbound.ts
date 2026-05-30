@@ -136,6 +136,148 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
   }
 }
 
+// -----------------------------------------------------------------------------
+// Ticket state changes — close / reopen.
+//
+// Trengo's PATCH /tickets/:id/{close,reopen} endpoints do not accept
+// custom_fields, so we cannot use the same "interactionId echo-skip" path that
+// sendMessage uses for messages. Instead we write a `ticket_closed` /
+// `ticket_reopened` Interaction with `payload.source = 'crm_outbound'` and the
+// originating requestId; the webhook job (jobs.ts) recognises that marker and
+// links the inbound webhook event to the existing row rather than creating a
+// duplicate. CLAUDE.md §11.
+// -----------------------------------------------------------------------------
+
+export type TicketStateAction = 'close' | 'reopen'
+
+export interface ChangeTicketStateInput {
+  /** The CRM Contact whose conversation we are acting on. */
+  contactId: string
+  agentId: string
+  ticketId: number
+  action: TicketStateAction
+  requestId: string
+}
+
+export interface ChangeTicketStateResult {
+  interactionId: string
+  ticketId: number
+  action: TicketStateAction
+}
+
+export async function closeConversation(
+  input: Omit<ChangeTicketStateInput, 'action'>,
+): Promise<ChangeTicketStateResult> {
+  return changeTicketState({ ...input, action: 'close' })
+}
+
+export async function reopenConversation(
+  input: Omit<ChangeTicketStateInput, 'action'>,
+): Promise<ChangeTicketStateResult> {
+  return changeTicketState({ ...input, action: 'reopen' })
+}
+
+async function changeTicketState(
+  input: ChangeTicketStateInput,
+): Promise<ChangeTicketStateResult> {
+  const interactionType =
+    input.action === 'close' ? 'ticket_closed' : 'ticket_reopened'
+  const eventName = input.action === 'close' ? 'ticket.closed' : 'ticket.reopened'
+  const summary =
+    input.action === 'close' ? 'Conversation closed' : 'Conversation reopened'
+
+  // 1. Idempotency: same (contactId, ticketId, requestId, action) tuple yields
+  //    the same Interaction id. Retries do not double-write.
+  const existing = await db.interaction.findFirst({
+    where: {
+      type: interactionType,
+      contactId: input.contactId,
+      payload: { path: ['outboundRequestId'], equals: input.requestId },
+    },
+    select: { id: true },
+  })
+
+  let interactionId: string
+  if (existing) {
+    interactionId = existing.id
+  } else {
+    const created = await db.interaction.create({
+      data: {
+        id: createId(),
+        type: interactionType,
+        contactId: input.contactId,
+        occurredAt: new Date(),
+        summary,
+        createdById: input.agentId,
+        updatedById: input.agentId,
+        payload: {
+          interactionType: eventName,
+          source: 'crm_outbound',
+          status: 'pending_send',
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          outboundRequestId: input.requestId,
+        },
+      },
+      select: { id: true },
+    })
+    interactionId = created.id
+  }
+
+  // 2. Per-agent client. Fail-closed on TOKEN_EXPIRED (CLAUDE.md §11).
+  let client
+  try {
+    client = await createClientForAgent({
+      agentId: input.agentId,
+      requestId: input.requestId,
+      purpose: `trengo.${input.action}`,
+    })
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+
+  // 3. Issue the state change. On failure, leave the Interaction in
+  //    pending_send so an agent can retry from the inline error banner.
+  try {
+    const ticket =
+      input.action === 'close'
+        ? await client.closeTicket(input.ticketId)
+        : await client.reopenTicket(input.ticketId)
+
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: {
+        payload: {
+          interactionType: eventName,
+          source: 'crm_outbound',
+          status: 'sent',
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          outboundRequestId: input.requestId,
+          trengoTicketStatus: ticket.status,
+        },
+      },
+    })
+
+    await writeAuditLogEntry(db, {
+      actorId: input.agentId,
+      action:
+        input.action === 'close'
+          ? 'trengo.ticket_close_requested'
+          : 'trengo.ticket_reopen_requested',
+      target: { type: 'Contact', id: input.contactId },
+      requestId: input.requestId,
+      after: { interactionId, ticketId: input.ticketId, trengoStatus: ticket.status },
+    })
+
+    return { interactionId, ticketId: input.ticketId, action: input.action }
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+}
+
 async function markFailed(interactionId: string, err: unknown): Promise<void> {
   const reason =
     err instanceof BusinessError

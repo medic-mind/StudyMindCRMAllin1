@@ -246,6 +246,11 @@ export const EVENT_NAMES = [
   // additionally writes `trengo.message_sent` on success). Mirrors the Gmail
   // `*.reply_requested` shape.
   'trengo.reply_requested',
+  // CRM → Trengo ticket state changes. Audited at the integration layer once
+  // the PATCH succeeds; the webhook echo is then linked onto the same
+  // Interaction (jobs.ts linkCrmOutboundEcho) rather than duplicated.
+  'trengo.ticket_close_requested',
+  'trengo.ticket_reopen_requested',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',

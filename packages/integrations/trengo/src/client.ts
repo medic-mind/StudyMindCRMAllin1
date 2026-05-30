@@ -40,6 +40,7 @@ export interface TrengoClient {
   sendMessage(input: TrengoSendMessageInput): Promise<TrengoMessageResource>
   assignTicket(ticketId: number, assigneeUserId: number): Promise<TrengoTicketResource>
   closeTicket(ticketId: number): Promise<TrengoTicketResource>
+  reopenTicket(ticketId: number): Promise<TrengoTicketResource>
   request<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
@@ -167,6 +168,13 @@ export async function createClientForAgent(
       const res = await request<{ ticket: TrengoTicketResource }>(
         'PATCH',
         `/tickets/${ticketId}/close`,
+      )
+      return res.ticket
+    },
+    async reopenTicket(ticketId) {
+      const res = await request<{ ticket: TrengoTicketResource }>(
+        'PATCH',
+        `/tickets/${ticketId}/reopen`,
       )
       return res.ticket
     },

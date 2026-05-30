@@ -80,6 +80,35 @@ export const trengoEventReceived = inngest.createFunction(
       return { skipped: true, reason: 'self_sent_mirror' }
     }
 
+    // State changes (close / reopen) that the CRM initiated. Trengo's PATCH
+    // endpoints do not accept custom_fields, so we look for a recent
+    // CRM-sourced Interaction on the same ticket and link the trengoEventId
+    // onto it rather than creating a duplicate. The window is bounded by
+    // CRM_OUTBOUND_ECHO_WINDOW_MS so a future organic close on the same
+    // ticket is not silently dropped.
+    if (eventName === 'ticket.closed' || eventName === 'ticket.reopened') {
+      const ticketId = envelope.data.ticket_id
+      if (typeof ticketId === 'number') {
+        const linked = await step.run('echo-skip-state', async () =>
+          linkCrmOutboundEcho({
+            ticketId,
+            interactionType:
+              eventName === 'ticket.closed' ? 'ticket_closed' : 'ticket_reopened',
+            trengoEventId: eventId,
+          }),
+        )
+        if (linked) {
+          await step.run('mark-processed', async () => {
+            await db.providerEvent.update({
+              where: { id: providerEventRowId },
+              data: { processedAt: new Date() },
+            })
+          })
+          return { skipped: true, reason: 'crm_outbound_echo', linkedTo: linked }
+        }
+      }
+    }
+
     // Persist Interaction (idempotent on the Trengo eventId).
     const interaction = await step.run('upsert-interaction', async () => {
       return upsertTrengoInteraction({
@@ -136,6 +165,52 @@ export const trengoEventReceived = inngest.createFunction(
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+
+/**
+ * How long after a CRM-initiated state change we treat the matching Trengo
+ * webhook as an echo of our own action. 5 minutes is generous for normal
+ * latency while small enough that an organic close 10 minutes later is not
+ * mistakenly suppressed.
+ */
+export const CRM_OUTBOUND_ECHO_WINDOW_MS = 5 * 60 * 1000
+
+interface LinkEchoInput {
+  ticketId: number
+  interactionType: 'ticket_closed' | 'ticket_reopened'
+  trengoEventId: string
+}
+
+/**
+ * Look for a CRM-sourced Interaction (source = 'crm_outbound') on the same
+ * ticket within the echo window. If found, stamp the trengoEventId onto its
+ * payload and return its id so the caller can short-circuit. Returns null when
+ * the event is organic (Trengo user closed/reopened in Trengo itself) and the
+ * normal upsert path should run.
+ */
+async function linkCrmOutboundEcho(input: LinkEchoInput): Promise<string | null> {
+  const since = new Date(Date.now() - CRM_OUTBOUND_ECHO_WINDOW_MS)
+  const candidate = await db.interaction.findFirst({
+    where: {
+      type: input.interactionType,
+      occurredAt: { gte: since },
+      AND: [
+        { payload: { path: ['ticketId'], equals: input.ticketId } },
+        { payload: { path: ['source'], equals: 'crm_outbound' } },
+      ],
+    },
+    orderBy: { occurredAt: 'desc' },
+    select: { id: true, payload: true },
+  })
+  if (!candidate) return null
+  const payload = (candidate.payload ?? {}) as Record<string, unknown>
+  // Already linked to a Trengo event id — keep it stable.
+  if (typeof payload['trengoEventId'] === 'string') return candidate.id
+  await db.interaction.update({
+    where: { id: candidate.id },
+    data: { payload: { ...payload, trengoEventId: input.trengoEventId } },
+  })
+  return candidate.id
+}
 
 interface TrengoMatch {
   contactId: string | null
