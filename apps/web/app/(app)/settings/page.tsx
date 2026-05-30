@@ -105,6 +105,14 @@ const GROUPS: Group[] = [
     description: 'Operational state of the system itself.',
     tiles: [
       {
+        href: '/settings/email-accounts',
+        title: 'Email accounts',
+        description:
+          'Connect personal mailboxes and shared team inboxes (info@, admissions@…). The Communications Hub foundation (ADR 0021).',
+        roles: 'all · Manager+ for shared',
+        icon: <MailIcon size={16} />,
+      },
+      {
         href: '/settings/integrations',
         title: 'Integrations status',
         description: 'Webhook recency, Gmail watch expiry, Asana webhook health.',

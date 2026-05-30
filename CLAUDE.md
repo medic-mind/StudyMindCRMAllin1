@@ -19,6 +19,25 @@
 
 Parents, students, tutors do **not** log in. They use the booking site, Trengo, email, phone.
 
+> **TOP PRIORITY INITIATIVE — Communications Hub (Gmail replacement).** Much of
+> the CRM already exists; the highest-value work now is the **Email &
+> Communications Operating System**, not more CRM surface. The goal in one line:
+> **build a Gmail replacement that stays fully synchronised with Gmail** — staff
+> can spend the whole day in the CRM and never open Gmail, and if they do open
+> Gmail everything stays in step. The CRM and the mailbox become two interfaces
+> onto the same data. This means: **multi-account, multi-provider** (Gmail,
+> Workspace, Outlook 365, Exchange, IMAP — no practical limit on connected
+> inboxes), **true two-way sync** (mail, sent, drafts, read/unread, labels,
+> folders, stars, archive, delete, threading — both directions, near-real-time),
+> a **full email client** (Gmail/Superhuman class), **shared team inboxes** with
+> assign/claim/transfer/notes/@mentions, **auto-linking** every message to the
+> existing Lead/Contact/Family (no duplicate records), and a path to fold
+> WhatsApp/Trengo/SMS/social into one unified conversation list. **Reuse what
+> exists — do not rebuild it.** Architecture and the phased plan: **ADR 0021**;
+> the email playbook is §14. Phase 1 (the provider-agnostic multi-account
+> foundation: `MailAccount`/`MailAccountMember`, Settings → Email accounts) is
+> implemented.
+
 ---
 
 ## 2. Golden rules (read every time)
@@ -375,17 +394,48 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 ---
 
-## 14. Gmail playbook
+## 14. Email & Communications Hub playbook (Gmail today)
+
+This section is the email engine of the **Communications Hub** top-priority
+initiative (see §1 callout and **ADR 0021**). The target is a Gmail-class client
+inside the CRM that stays fully two-way-synchronised with the real mailbox,
+across many accounts and many providers. Gmail is the only live provider today;
+the design is provider-agnostic so Outlook/Exchange/IMAP slot in without
+touching the domain.
+
+**The connected-inbox unit is `MailAccount` (ADR 0021), not `GmailMailbox`.**
+`MailAccount` is provider-agnostic (`provider ∈ gmail|google_workspace|outlook|exchange|imap`),
+is either `personal` (one agent) or `shared` (a team inbox: info@, admissions@,
+…), and carries generic sync state (`syncCursor`, `watchExpiresAt`,
+`lastSyncedAt`). Shared-inbox access is granted via `MailAccountMember` (mirrors
+`TeamMember`); an optional `teamId` ties it to an ops `Team`. For `provider=gmail`
+a row **bridges** to the legacy `GmailMailbox` via `gmailMailboxId`, so the live
+Gmail sync below is reused with no destructive migration (§19.1). **Secrets
+(OAuth refresh tokens, IMAP passwords) never live on `MailAccount` — they stay in
+`EncryptedField` (§21).** Domain: `packages/core/src/mail`; tRPC: `mailAccount.*`;
+UI: Settings → Email accounts (`/settings/email-accounts`). The provider
+capability registry (`MAIL_PROVIDERS`) is the single source of which providers
+are connectable today — we **fail closed** (§8): only `gmail` is connectable; the
+rest advertise the roadmap and reject connection attempts.
+
+**Phased plan (ADR 0021):** (1) multi-account foundation — *implemented*;
+(2) `MailSyncProvider` seam + Gmail behind it; (3) email into the `Conversation`
+head + Communication Centre (unified inbox); (4) full `/mail` client; (5) two-way
+action sync (read/archive/label/delete/drafts both directions); (6) shared-inbox
+operations; (7) Outlook/Exchange/IMAP providers (own ADR for new deps); (8)
+templates, automations, analytics, calendar, unified channels.
+
+### Gmail provider specifics (live today)
 
 **Auth.** OAuth 2.0 per agent. Refresh tokens encrypted with KMS, never logged. Granular scopes only — `gmail.readonly`, `gmail.send`, `gmail.modify` (no full account access).
 
 **Real-time push.** Google Cloud Pub/Sub `watch` for real-time delivery. Watch expires after 7 days, so we renew every 6 days via the `gmail/refresh-watch` job.
 
-**Phase 1 scope.** Read sync, reply from CRM, sent items reflect in Gmail. **Not in phase 1:** labels, drafts, snooze, undo send, scheduled send. Phase 2.
+**Sync surface today.** Read sync, reply from CRM, sent items reflect in Gmail, attachments, 90-day backfill. Labels/drafts/snooze/archive/delete two-way mirroring is ADR 0021 Phase 5 — not yet live.
 
 **Threading.** Use Gmail's `thread_id` directly. Do not invent our own threading.
 
-**Contact matching.** Match by `from`, `to`, `cc`, `bcc` addresses. Many to many — one email touches several Contacts. Persist all links so each Contact's timeline shows the full thread regardless of which address was matched.
+**Contact matching.** Match by `from`, `to`, `cc`, `bcc` addresses. Many to many — one email touches several Contacts. Persist all links so each Contact's timeline shows the full thread regardless of which address was matched. Unmatched mail must **never** auto-create a Contact (§11 rule, applied to email — create a `Lead` instead).
 
 **Attachments.** Stream to S3 on first sync; do not store payloads in Postgres. Reference by S3 key in `Interaction.payload`.
 
@@ -517,7 +567,7 @@ OpenAI for everything AI today. Models per task:
 
 ### 19.2 Schema reference (top tables)
 
-`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018), `BrandingSetting` (custom logo, §4), `ChatChannel`, `ChatChannelMember`, `ChatMessage`, `ChatMention`, `ChatMessageRef`, `ChatReaction` (internal team messaging, ADR 0022). Definitive shape: `prisma/schema.prisma`.
+`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018), `BrandingSetting` (custom logo, §4), `MailAccount` + `MailAccountMember` (Communications Hub multi-account foundation, ADR 0021), `ChatChannel`, `ChatChannelMember`, `ChatMessage`, `ChatMention`, `ChatMessageRef`, `ChatReaction` (internal team messaging, ADR 0022). Definitive shape: `prisma/schema.prisma`.
 
 ---
 
@@ -997,6 +1047,8 @@ When asked something that touches money, safeguarding, or external mutation:
 | Change the timeline display | `apps/web/components/timeline/` |
 | Change a per-channel customer view | `apps/web/lib/view-models/contact-channels.ts` (ADR 0017) |
 | Reply to a Trengo conversation from the CRM | tRPC `interaction.trengo.reply`; resolver `resolveActiveTrengoConversation` in `packages/integrations/trengo/src/conversations.ts`; reuses `outbound.ts` `sendMessage`. Send button on `components/contact/draft-reply-panel.tsx`. Roadmap: ADR 0020. |
+| Connect or manage email accounts (personal + shared team inboxes) | Settings → Email accounts (`/settings/email-accounts`). Domain `packages/core/src/mail`; tRPC `mailAccount.*` (list / get / providers / createShared / update / setDefault / disconnect / members.\* / syncFromGmail); schema `MailAccount` + `MailAccountMember` (ADR 0021). `syncFromGmail` imports the agent's existing `GmailMailbox` rows via the bridge — reuse, not rebuild. Architecture + phased plan: ADR 0021. The legacy per-agent Gmail connect stays at `/settings/mailbox`. |
+| Add a new email provider (Outlook / Exchange / IMAP) | ADR 0021 Phase 7 + a new ADR for the dependency. Add the entry to the `MAIL_PROVIDERS` capability registry (`packages/core/src/mail`, flip `connectable`) and implement the `MailSyncProvider` seam (ADR 0021 Phase 2) under `packages/integrations/`. |
 | Close / reopen a Trengo conversation from the CRM | tRPC `interaction.trengo.{close,reopen}`; outbound `closeConversation` / `reopenConversation` write a `ticket_closed` / `ticket_reopened` Interaction with `payload.source = 'crm_outbound'`; the webhook job's `linkCrmOutboundEcho` (`packages/integrations/trengo/src/jobs.ts`) stamps the trengoEventId onto that row so the echo never duplicates. Per-card buttons live in `apps/web/app/(app)/contacts/[id]/sections/TrengoConversationActions.tsx`. |
 | Assign a Trengo conversation to a teammate from the CRM | tRPC `interaction.trengo.assign` (Manager+); outbound `assignConversation` resolves the target's `User.trengoUserId`, calls Trengo `assignTicket`, writes a `ticket_assigned` Interaction (`source: 'crm_outbound'`) + mirrors the head. Echo folded back by `linkCrmOutboundEcho`. Assignee picker `AssignControl.tsx` on the comms-centre thread; assignable users come from `interaction.trengo.assignableUsers` (only users with a Trengo identity). Stuck assignments recovered by the `trengo/retry-pending-send` cron. |
 | Triage the inbox | tRPC `inbox.list` takes `filter: all \| mine \| unassigned \| snoozed` and respects `inboxAssigneeId` / `inboxSnoozedUntil` on the Interaction payload. UI chips at `/inbox` (`apps/web/app/(app)/inbox/page.tsx`). |

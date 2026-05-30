@@ -20,6 +20,7 @@
     "./chat/parse": "./src/chat/parse.ts",
     "./finance": "./src/finance/index.ts",
     "./interaction": "./src/interaction/index.ts",
+    "./mail": "./src/mail/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
     "./backfill": "./src/backfill/index.ts",
     "./auth/policies": "./src/auth/policies.ts",

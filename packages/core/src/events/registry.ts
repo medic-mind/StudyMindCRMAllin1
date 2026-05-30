@@ -255,6 +255,18 @@ export const EVENT_NAMES = [
   'gmail.oauth_invalid_state',
   'gmail.oauth_needs_reconnect',
 
+  // Communications Hub — multi-account mail (ADR 0021). MailAccount lifecycle
+  // (personal + shared team inboxes) and shared-inbox membership. Reuses the
+  // existing Gmail sync via the GmailMailbox bridge; secrets stay in
+  // EncryptedField (§21).
+  'mail_account.created',
+  'mail_account.imported',
+  'mail_account.updated',
+  'mail_account.disconnected',
+  'mail_account.default_changed',
+  'mail_account.member_added',
+  'mail_account.member_removed',
+
   // Audit-B2: payment links, allocations, gmail outbound, trengo connect
   'charge.payment_link_created',
   'charge.payment_link_requested',
