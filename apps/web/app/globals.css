@@ -91,3 +91,35 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/*
+ * Brand-logo size lock — defence-in-depth final safety net.
+ *
+ * The BrandLogo component already pins itself with inline width / height /
+ * min-* / max-* AND wraps the visual in a CSS background-image (which can
+ * not overflow its element). But a regression keeps appearing in
+ * production where the uploaded logo renders larger than the top bar.
+ *
+ * We add a high-specificity selector with !important on every box-sizing
+ * dimension so nothing — not flex stretch, not third-party CSS reset, not
+ * a stale CDN payload — can grow the logo beyond its budget. The selector
+ * targets every [role="img"][aria-label="StudyMind"] descendant of the
+ * header banner and any anchor in the auth shell that wraps a BrandLogo.
+ */
+[role="banner"] [role="img"][aria-label="StudyMind"],
+[role="banner"] [role="img"][aria-label="StudyMind"] * {
+  max-height: 28px !important;
+  max-width: 168px !important;
+  height: 28px !important;
+  width: 168px !important;
+  box-sizing: border-box !important;
+  display: block !important;
+  overflow: hidden !important;
+  flex: 0 0 auto !important;
+}
+
+[role="banner"] a[aria-label="StudyMind CRM home"] {
+  max-height: 40px !important;
+  height: 40px !important;
+  overflow: hidden !important;
+}
