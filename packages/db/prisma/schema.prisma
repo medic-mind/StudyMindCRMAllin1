@@ -241,6 +241,11 @@ model User {
   failedSignInAttempts Int       @default(0)
   lockedUntil          DateTime?
 
+  /// ADR 0020 Phase 5 — when the user last opened the notifications bell.
+  /// Rows in AuditLogEntry newer than this with this user as the target are
+  /// counted as unread. Null means "never opened" (everything unread).
+  notificationsSeenAt  DateTime?
+
   // ADR 0012: per-agent Gmail OAuth. Status is free text (see migration).
   // gmailRefreshTokenCipherId references EncryptedField.id, not enforced as
   // a foreign key — lifecycle is lock-stepped in the OAuth route handlers.

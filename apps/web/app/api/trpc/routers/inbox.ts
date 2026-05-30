@@ -242,6 +242,101 @@ export const inboxRouter = router({
   // single indexed query. The filter set mirrors inbox.list so the user's
   // mental model stays consistent across the two views.
   conversations: router({
+    // ADR 0020 Phase 4 — single-conversation thread view for the Comms
+    // Centre. Reads the head and the latest ~50 messages from Interaction
+    // (the head references, never copies — CLAUDE.md §35).
+    get: protectedProcedure
+      .input(z.object({ conversationId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        const head = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: {
+            id: true,
+            trengoTicketId: true,
+            contactId: true,
+            familyId: true,
+            channel: true,
+            status: true,
+            assigneeUserId: true,
+            lastMessageAt: true,
+            unreadCount: true,
+            subject: true,
+            tags: true,
+            replyDeadlineAt: true,
+            contact: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        })
+        if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
+
+        const messageRows = await ctx.db.interaction.findMany({
+          where: {
+            deletedAt: null,
+            type: 'message',
+            payload: { path: ['ticketId'], equals: head.trengoTicketId },
+          },
+          orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+          take: 100,
+          select: {
+            id: true,
+            occurredAt: true,
+            summary: true,
+            payload: true,
+            createdById: true,
+          },
+        })
+
+        const messages = messageRows.map((r) => {
+          const payload = (r.payload as Record<string, unknown> | null) ?? {}
+          const interactionType =
+            typeof payload['interactionType'] === 'string'
+              ? (payload['interactionType'] as string)
+              : null
+          const direction: 'inbound' | 'outbound' | 'unknown' =
+            interactionType === 'message.outbound'
+              ? 'outbound'
+              : interactionType === 'message.inbound'
+                ? 'inbound'
+                : 'unknown'
+          const body =
+            typeof payload['body'] === 'string' ? (payload['body'] as string) : null
+          return {
+            id: r.id,
+            occurredAt: r.occurredAt,
+            direction,
+            body: body ?? r.summary,
+            authorId: r.createdById,
+          }
+        })
+
+        return {
+          head: {
+            id: head.id,
+            trengoTicketId: head.trengoTicketId,
+            contactId: head.contactId,
+            familyId: head.familyId,
+            channel: head.channel,
+            status: head.status,
+            assigneeUserId: head.assigneeUserId,
+            lastMessageAt: head.lastMessageAt,
+            unreadCount: head.unreadCount,
+            subject: head.subject,
+            tags: head.tags,
+            replyDeadlineAt: head.replyDeadlineAt,
+            contactName: head.contact
+              ? [head.contact.firstName, head.contact.lastName]
+                  .filter((x): x is string => !!x)
+                  .join(' ') || head.contact.email || null
+              : null,
+          },
+          messages,
+        }
+      }),
     list: protectedProcedure
       .input(
         z.object({

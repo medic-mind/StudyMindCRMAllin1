@@ -184,7 +184,9 @@ export default async function ConversationsPage({
                 c.channel && CHANNEL_LABEL[c.channel]
                   ? CHANNEL_LABEL[c.channel]
                   : (c.channel ?? 'Conversation')
-              const href = c.contactId ? `/contacts/${c.contactId}` : '/inbox/conversations'
+              // ADR 0020 Phase 4 — rows now open the in-CRM thread view.
+              // The contact page is reachable from there via "Open contact".
+              const href = `/inbox/conversations/${c.id}`
               const replyWindowOpen =
                 c.replyDeadlineAt &&
                 new Date(c.replyDeadlineAt).getTime() > now.getTime()
