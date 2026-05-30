@@ -446,9 +446,14 @@ import { BACKFILL_FUNCTIONS as TRENGO_BACKFILL_FUNCTIONS } from './backfill'
 // Interactions. Triggered via admin.backfill.conversationHeads.start; runs
 // once per environment.
 import { backfillConversationHeads } from './backfill-conversation-heads'
+// ADR 0020 Phase 7a: outbound retry queue. 5-minute cron sweeps any
+// Interaction still in `pending_send` and re-attempts via the same audited
+// outbound. TOKEN_EXPIRED rows are not retried — the agent must reconnect.
+import { trengoRetryPendingSend } from './retry-pending'
 
 export const FUNCTIONS = [
   trengoEventReceived,
   backfillConversationHeads,
+  trengoRetryPendingSend,
   ...TRENGO_BACKFILL_FUNCTIONS,
 ] as const
