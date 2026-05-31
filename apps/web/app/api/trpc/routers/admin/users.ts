@@ -377,12 +377,18 @@ export const adminUsersRouter = router({
   /* ------------------------------------------------------------------ */
   /* create — temp password + welcome PDF (ADR 0021, primary path)       */
   /* ------------------------------------------------------------------ */
+  // Like resetPassword: omit `password` to generate a strong temporary one
+  // (emailed + PDF), or pass `password` to set a specific one yourself (e.g.
+  // when the new user can't receive email). `requireChange` (default true)
+  // forces a change on first sign-in.
   create: auditedProcedure
     .input(
       z.object({
         email: z.string().email(),
         roles: z.array(RoleEnum).min(1),
         name: z.string().trim().min(1).max(200).optional(),
+        password: z.string().optional(),
+        requireChange: z.boolean().default(true),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -393,6 +399,18 @@ export const adminUsersRouter = router({
       for (const role of input.roles) {
         if (!canGrantRole(actor.role, role)) {
           throw new TRPCError({ code: 'FORBIDDEN', message: `cannot grant role: ${role}` })
+        }
+      }
+
+      // Validate an admin-chosen password against the same strength policy.
+      if (input.password !== undefined) {
+        try {
+          assertStrongPassword(input.password)
+        } catch (e) {
+          if (e instanceof BusinessError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: e.message })
+          }
+          throw e
         }
       }
 
@@ -444,6 +462,8 @@ export const adminUsersRouter = router({
           actorName: actor.email,
           isReset: false,
           invalidateSessions: false,
+          password: input.password,
+          requireChange: input.requireChange,
         },
       )
 

@@ -421,6 +421,29 @@ describe('admin.users router', () => {
     expect(auditCalls.some((a) => a.action === 'auth.user_created')).toBe(true)
   })
 
+  it('create can set an admin-chosen password and skip the forced change', async () => {
+    const { ctx, users } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const r = await caller.create({
+      email: 'manual@example.com',
+      roles: ['virtual_assistant'],
+      password: 'Admin-Set-Pass-1',
+      requireChange: false,
+    })
+    expect(r.temporaryPassword).toBe('Admin-Set-Pass-1')
+    const created = users.find((u) => u.email === 'manual@example.com')
+    expect(created?.passwordHash).toBeTruthy()
+    expect(created?.mustResetPassword).toBe(false)
+  })
+
+  it('create rejects a weak admin-chosen password', async () => {
+    const { ctx } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    await expect(
+      caller.create({ email: 'weak@example.com', roles: ['virtual_assistant'], password: 'weak' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
   it('create is refused for manager and sales_executive (creation is CEO/SM only)', async () => {
     for (const role of ['manager', 'sales_executive'] as const) {
       const { ctx } = makeCtx(role)
