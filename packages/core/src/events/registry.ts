@@ -105,6 +105,13 @@ export const EVENT_NAMES = [
   'forwarding.rule_restored',
   'forwarding.email_sent',
 
+  // Quick replies / canned responses (ADR 0020 Phase 6h). Saved message
+  // snippets agents insert into a conversation reply. Manager+ manages.
+  'quick_reply.created',
+  'quick_reply.updated',
+  'quick_reply.archived',
+  'quick_reply.restored',
+
   // B2B accounts (Schools + Partnerships) — tracked organisations we work
   // with. CRUD is Manager+; viewing is all roles.
   'business_account.created',

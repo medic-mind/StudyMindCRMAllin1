@@ -1797,6 +1797,31 @@ model TeamMember {
 // CLAUDE.md §20.1.
 // -----------------------------------------------------------------------------
 
+/// Canned reply / quick-reply template (ADR 0020 Phase 6h). A saved message
+/// snippet an agent inserts into a conversation reply. Shared (team-wide)
+/// when `ownerUserId` is null; the column is retained for a future personal
+/// scope. `{{first_name}}` / `{{name}}` placeholders are substituted at
+/// insert time with the contact's details.
+model QuickReply {
+  id          String  @id
+  title       String
+  body        String
+  /// Optional channel filter — null = available on every channel.
+  channel     String?
+  /// null = shared (team-wide). Retained for future personal quick replies.
+  ownerUserId String?
+  sortOrder   Int     @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  @@index([archivedAt, sortOrder])
+  @@index([ownerUserId])
+}
+
 model ForwardingRule {
   id              String   @id
   // Stable identifier surfaced to code paths that need to refer to a rule by
