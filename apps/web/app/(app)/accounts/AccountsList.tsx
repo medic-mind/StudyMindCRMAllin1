@@ -12,7 +12,13 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
-import { ChevronRightIcon, MailIcon, MessageSquareIcon, PhoneIcon } from '@/components/ui/icon'
+import {
+  BuildingIcon,
+  ChevronRightIcon,
+  MailIcon,
+  MessageSquareIcon,
+  PhoneIcon,
+} from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
@@ -131,32 +137,59 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
       )}
 
       {accounts.length === 0 ? (
-        <p className="text-sm text-neutral-600">
-          No {kind === 'school' ? 'schools' : 'B2B partners'} yet — start by clicking{' '}
-          <em>New {kind === 'school' ? 'school' : 'B2B partner'}</em>, or pull existing customers
-          from the invoicing platform in <em>Settings → Invoicing</em>.
-        </p>
+        <div className="rounded-xl border border-dashed border-neutral-200 bg-white px-10 py-14 text-center shadow-card">
+          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-neutral-100">
+            <BuildingIcon size={18} className="text-neutral-400" />
+          </div>
+          <p className="text-sm font-medium text-neutral-800">
+            No {kind === 'school' ? 'schools' : 'B2B partners'} yet.
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-neutral-500">
+            Click <em>New {kind === 'school' ? 'school' : 'B2B partner'}</em> to
+            add one, or pull existing customers from the invoicing platform in{' '}
+            <em>Settings → Invoicing</em>.
+          </p>
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-card">
           <table className="w-full min-w-[1080px] border-collapse text-sm">
-            <thead className="bg-neutral-50 text-left">
-              <tr>
-                <th className="px-3 py-2 font-medium text-neutral-600">
+            {/* Sticky thead — same treatment as the Contacts table so column
+                headings stay visible while the agent scrolls a long list. */}
+            <thead className="sticky top-0 z-10 bg-neutral-50/95 text-left backdrop-blur supports-[backdrop-filter]:bg-neutral-50/80">
+              <tr className="border-b border-neutral-200">
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   {kind === 'school' ? 'School' : 'B2B Partner'}
                 </th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Email</th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Phone</th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">Students</th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">Hours</th>
-                <th className="px-3 py-2 text-center font-medium text-neutral-600">Activity</th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">Paid</th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">Last contact</th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Email
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Phone
+                </th>
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Students
+                </th>
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Hours
+                </th>
+                <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Activity
+                </th>
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Paid
+                </th>
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Last contact
+                </th>
                 <th className="w-8" />
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {accounts.map((a) => (
-                <tr key={a.id} className="group">
+                <tr
+                  key={a.id}
+                  className="group transition-colors hover:bg-neutral-50/80"
+                >
                   <td className="px-3 py-2 align-top">
                     <Link href={`/accounts/${a.id}`} className="block min-w-0">
                       <span className="flex items-center gap-1.5">

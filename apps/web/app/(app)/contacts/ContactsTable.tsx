@@ -26,6 +26,7 @@ import {
   MailIcon,
   MessageSquareIcon,
   PhoneIcon,
+  UsersIcon,
 } from '@/components/ui/icon'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { formatMoneyMinor } from '@/lib/format/money'
@@ -245,10 +246,27 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
 
   function sortGlyph(field: SortBy) {
     if (sortBy !== field) return null
+    // Proper chevron SVG — the previous Unicode arrows rendered at a
+    // different baseline on every OS and clashed with the column text.
     return (
-      <span className="ml-1 text-neutral-400" aria-hidden>
-        {sortDir === 'desc' ? '↓' : '↑'}
-      </span>
+      <svg
+        className="ml-1 inline-block text-primary-500"
+        width="10"
+        height="10"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        {sortDir === 'desc' ? (
+          <polyline points="6 9 12 15 18 9" />
+        ) : (
+          <polyline points="6 15 12 9 18 15" />
+        )}
+      </svg>
     )
   }
 
@@ -311,16 +329,25 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
 
       <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-card">
         {rows.length === 0 ? (
-          <div className="p-10 text-center">
-            <p className="text-sm font-medium text-neutral-700">
+          <div className="px-10 py-14 text-center">
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-neutral-100">
+              <UsersIcon size={18} className="text-neutral-400" />
+            </div>
+            <p className="text-sm font-medium text-neutral-800">
               No contacts match these filters.
+            </p>
+            <p className="mt-1 text-xs text-neutral-500">
+              Adjust the filters above, or add a new contact to get started.
             </p>
           </div>
         ) : (
           <table className="w-full min-w-[1100px] border-collapse text-sm">
-            <thead className="bg-neutral-50 text-left">
-              <tr>
-                <th className="w-10 px-3 py-2">
+            {/* Sticky thead — column headings remain visible while the agent
+                scrolls a long list. Uses an inset border + background to read
+                as a "table chrome" layer over the rows below. */}
+            <thead className="sticky top-0 z-10 bg-neutral-50/95 text-left backdrop-blur supports-[backdrop-filter]:bg-neutral-50/80">
+              <tr className="border-b border-neutral-200">
+                <th className="w-10 px-3 py-2.5">
                   <input
                     type="checkbox"
                     aria-label="Select all on this page"
@@ -329,31 +356,43 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                     onChange={(e) => toggleAll(e.target.checked)}
                   />
                 </th>
-                <th className="px-3 py-2 font-medium text-neutral-600">
-                  <Link href={sortHref('name')} className="hover:text-neutral-900">
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  <Link
+                    href={sortHref('name')}
+                    className="inline-flex items-center hover:text-neutral-900"
+                  >
                     Contact{sortGlyph('name')}
                   </Link>
                 </th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Email</th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Phone</th>
-                <th className="px-3 py-2 font-medium text-neutral-600">Status</th>
-                <th className="px-3 py-2 text-center font-medium text-neutral-600">
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Email
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Phone
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Status
+                </th>
+                <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Activity
                 </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Hours
                 </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Last lesson
                 </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Spent
                 </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Last contact
                 </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
-                  <Link href={sortHref('createdAt')} className="hover:text-neutral-900">
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  <Link
+                    href={sortHref('createdAt')}
+                    className="inline-flex items-center hover:text-neutral-900"
+                  >
                     Added{sortGlyph('createdAt')}
                   </Link>
                 </th>
@@ -369,7 +408,15 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                 return (
                   <tr
                     key={c.id}
-                    className={`group ${isSelected ? 'bg-primary-50/40' : ''}`}
+                    // Selected rows: tinted bg + a 2px primary left accent so
+                    // the agent can scan a multi-select without losing the
+                    // grid. Hover state is a flat neutral wash — no animation
+                    // on a dense table.
+                    className={
+                      isSelected
+                        ? 'group relative bg-primary-50/40 ring-inset hover:bg-primary-50/60'
+                        : 'group transition-colors hover:bg-neutral-50/80'
+                    }
                   >
                     <td className="px-3 py-2 align-top">
                       <input

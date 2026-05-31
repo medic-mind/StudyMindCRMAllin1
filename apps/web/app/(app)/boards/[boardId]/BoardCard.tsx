@@ -9,7 +9,6 @@
 
 'use client'
 
-import Link from 'next/link'
 import { useState, type CSSProperties, type HTMLAttributes, type Ref } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -182,7 +181,32 @@ export function BoardCard({
             {card.description.trim()}
           </p>
         )}
-        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-neutral-500">
+        {/* Scheduled call is the headline metadata on these boards — give it
+            its own row at a readable size (was lost in the meta strip
+            previously). Past times go red; future times stay primary. */}
+        {card.scheduledCallAt ? (
+          <div className="mt-2">
+            <span
+              className={
+                new Date(card.scheduledCallAt).getTime() < now.getTime()
+                  ? 'inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-inset ring-red-100'
+                  : 'inline-flex items-center gap-1.5 rounded-md bg-primary-50 px-2 py-0.5 text-[11px] font-semibold text-primary-700 ring-1 ring-inset ring-primary-100'
+              }
+              title="Scheduled call (UK time)"
+            >
+              <PhoneIcon size={11} />
+              {formatLondon(card.scheduledCallAt, {
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+          </div>
+        ) : null}
+        {/* Tertiary meta — assignee + due + last activity. Small, even
+            spacing, no emoji so the row is uniform. */}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-neutral-500">
           {card.assigneeId && (
             <span
               className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary-100 text-[9px] font-semibold text-primary-800"
@@ -191,34 +215,29 @@ export function BoardCard({
               {initialsOf(card.assigneeName, card.assigneeEmail)}
             </span>
           )}
-          {card.scheduledCallAt && (
-            <span
-              className={
-                new Date(card.scheduledCallAt).getTime() < now.getTime()
-                  ? 'inline-flex items-center gap-0.5 rounded bg-red-50 px-1 font-semibold text-red-700'
-                  : 'inline-flex items-center gap-0.5 rounded bg-primary-50 px-1 font-medium text-primary-700'
-              }
-              title="Scheduled call (UK time)"
-            >
-              <PhoneIcon size={10} />
-              {formatLondon(card.scheduledCallAt, {
-                day: '2-digit',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </span>
-          )}
           {card.dueAt && (
             <span
               className={
                 new Date(card.dueAt).getTime() < now.getTime()
-                  ? 'font-semibold text-red-700'
-                  : 'text-neutral-600'
+                  ? 'inline-flex items-center gap-1 font-semibold text-red-700'
+                  : 'inline-flex items-center gap-1 text-neutral-600'
               }
               title="Due date"
             >
-              ⏱{' '}
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <circle cx="12" cy="12" r="9" />
+                <polyline points="12 7 12 12 15 14" />
+              </svg>
               {new Intl.DateTimeFormat('en-GB', { dateStyle: 'short' }).format(
                 new Date(card.dueAt),
               )}
@@ -232,15 +251,13 @@ export function BoardCard({
         </div>
       </div>
 
-      {/* Per-card interactive controls — sit on top of the click target. */}
-      <div className="relative z-10 mt-2 space-y-2">
-        <Link
-          href={`/contacts/${card.contactId}`}
-          className="inline-block text-[10px] text-neutral-500 hover:text-primary-700 hover:underline"
-          onClick={(e) => e.stopPropagation()}
-        >
-          Open contact →
-        </Link>
+      {/* Per-card interactive controls — sit on top of the click target.
+          Dropped the "Open contact →" link; the contact name (which is the
+          card's headline) already routes via the card modal and competes
+          less for attention. The Quick actions + Move-to are the only
+          per-card affordances left, separated from the card body by a
+          hairline so they read as "controls" rather than "more info". */}
+      <div className="relative z-10 mt-2.5 space-y-1.5 border-t border-neutral-100 pt-2">
         {canWrite && quickActions.length > 0 ? (
           <QuickActionButtons
             cardId={card.id}
