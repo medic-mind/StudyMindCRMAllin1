@@ -10,7 +10,8 @@
 
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { ChevronDownIcon, MailIcon, PhoneIcon } from '@/components/ui/icon'
 
@@ -50,6 +51,30 @@ export function PhoneLink({ phone }: { phone: string | null | undefined }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
+  // Portal coords — needed so the menu escapes per-card stacking contexts
+  // (CSS transforms on board card <li>s create one each, hiding any
+  // `absolute` popover behind the next sibling).
+  const [mounted, setMounted] = useState(false)
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return
+    function place() {
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setCoords({ top: rect.bottom + 4, left: rect.left })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -89,39 +114,44 @@ export function PhoneLink({ phone }: { phone: string | null | undefined }) {
         <span>{phone}</span>
         <ChevronDownIcon size={10} className="text-neutral-400" />
       </button>
-      {open ? (
-        <div
-          ref={panelRef}
-          role="menu"
-          aria-label="Call options"
-          className="absolute left-0 z-50 mt-1 w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white text-left shadow-lg"
-        >
-          <a
-            role="menuitem"
-            href={`tel:${phone}`}
-            onClick={() => setOpen(false)}
-            className="block px-3 py-2 text-xs transition-colors hover:bg-neutral-50"
-          >
-            <span className="font-medium text-neutral-900">Aircall</span>
-            <span className="ml-1 text-neutral-500">
-              {looksUK(phone) ? '· recommended for UK' : '· tel:'}
-            </span>
-          </a>
-          <a
-            role="menuitem"
-            href={googleVoiceUrl(phone)}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-            className="block border-t border-neutral-100 px-3 py-2 text-xs transition-colors hover:bg-neutral-50"
-          >
-            <span className="font-medium text-neutral-900">Google Voice</span>
-            <span className="ml-1 text-neutral-500">
-              {!looksUK(phone) ? '· recommended' : '· new tab'}
-            </span>
-          </a>
-        </div>
-      ) : null}
+      {open && mounted && coords
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="menu"
+              aria-label="Call options"
+              onClick={(e) => e.stopPropagation()}
+              style={{ position: 'fixed', top: coords.top, left: coords.left }}
+              className="z-[100] w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white text-left shadow-lg"
+            >
+              <a
+                role="menuitem"
+                href={`tel:${phone}`}
+                onClick={() => setOpen(false)}
+                className="block px-3 py-2 text-xs transition-colors hover:bg-neutral-50"
+              >
+                <span className="font-medium text-neutral-900">Aircall</span>
+                <span className="ml-1 text-neutral-500">
+                  {looksUK(phone) ? '· recommended for UK' : '· tel:'}
+                </span>
+              </a>
+              <a
+                role="menuitem"
+                href={googleVoiceUrl(phone)}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+                className="block border-t border-neutral-100 px-3 py-2 text-xs transition-colors hover:bg-neutral-50"
+              >
+                <span className="font-medium text-neutral-900">Google Voice</span>
+                <span className="ml-1 text-neutral-500">
+                  {!looksUK(phone) ? '· recommended' : '· new tab'}
+                </span>
+              </a>
+            </div>,
+            document.body,
+          )
+        : null}
     </span>
   )
 }
