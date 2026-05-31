@@ -299,6 +299,9 @@ export const EVENT_NAMES = [
   'mail.thread_starred',
   'mail.thread_trashed',
   'mail.thread_labeled',
+  // ADR 0021 Phase 4 — reply to an email thread from the CRM (reuses the Gmail
+  // sendReply outbound, which additionally writes gmail.email_sent).
+  'mail.thread_replied',
 
   // Audit-B2: payment links, allocations, gmail outbound, trengo connect
   'charge.payment_link_created',
