@@ -343,6 +343,10 @@ export const EVENT_NAMES = [
   'trengo.label_add_requested',
   'trengo.label_remove_requested',
   'trengo.conversation_read',
+  // ADR 0020 Phase 6g — snooze / unsnooze a conversation (CRM-side head
+  // state; the unsnooze-due cron resurfaces them, a new inbound too).
+  'trengo.conversation_snoozed',
+  'trengo.conversation_unsnoozed',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',

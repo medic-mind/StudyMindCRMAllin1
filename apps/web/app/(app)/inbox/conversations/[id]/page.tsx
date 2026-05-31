@@ -161,6 +161,7 @@ export default async function ConversationDetailPage({
             ticketId={head.trengoTicketId}
             tags={head.tags}
             unread={head.unreadCount > 0}
+            status={head.status}
           />
         )}
 

@@ -495,6 +495,7 @@ Every async unit of work is an Inngest function. Conventions:
 | `aircall/recover-disabled-webhook` | hourly | Re-enable Aircall webhook if it was disabled by failures |
 | `gocardless/reconcile-late-failures` | every 4 hours | Walk recent confirmations and surface any new late failures |
 | `trengo/retry-pending-send` | every 5 min | Re-send outbound Trengo Interactions stuck in `pending_send` (ADR 0020 Phase 7a). Bounded at 5 attempts per row; skips TOKEN_EXPIRED (the agent must reconnect). |
+| `trengo/unsnooze-due` | every 5 min | Resurface snoozed conversations whose `snoozedUntil` has passed (ADR 0020 Phase 6g). Flips `Conversation.status` snoozed→open + SSE-nudges open inboxes. A new inbound also resurfaces immediately (webhook job). |
 
 **Event-triggered backfill workers (ADR 0017).** Not recurring — fired once on first-connect (Gmail/Trengo) or by an admin button (Aircall/Slack). `gmail/backfill.requested`, `aircall/backfill.requested`, `trengo/backfill.requested`, `slack/backfill.requested` each pull the last 90 days of history and write retroactive Interactions for matched Contacts. Idempotent on the provider's native id; concurrency-capped (Slack 3 as it is AI-heavy, others 2). One summary audit row per job — never per imported message.
 
