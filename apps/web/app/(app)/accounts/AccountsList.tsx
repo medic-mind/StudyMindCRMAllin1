@@ -12,6 +12,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import {
   BuildingIcon,
   ChevronRightIcon,
@@ -151,7 +152,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-card">
+        <Card className="overflow-x-auto">
           <table className="w-full min-w-[1080px] border-collapse text-sm">
             {/* Sticky thead — same treatment as the Contacts table so column
                 headings stay visible while the agent scrolls a long list. */}
@@ -282,7 +283,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
               ))}
             </tbody>
           </table>
-        </div>
+        </Card>
       )}
     </div>
   )
