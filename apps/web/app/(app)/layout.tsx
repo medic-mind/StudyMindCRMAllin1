@@ -41,9 +41,15 @@ function buildNav(role: Role): NavItem[] {
   // sidebar stays focused on actual work surfaces.
   const items: NavItemDef[] = [
     { href: '/', label: 'Dashboard' },
+    // Communications — customer channels. Inbox is the unified cross-channel
+    // customer view (WhatsApp / SMS / web-chat / email); Mail is the focused
+    // email client. Both are customer-facing.
     { href: '/inbox', label: 'Inbox' },
     { href: '/mail', label: 'Mail' },
-    { href: '/messages', label: 'Messages' },
+    // Internal — staff↔staff chat. Renamed from the colliding "Messages"
+    // (the sidebar said "Messages" for staff chat while the inbox said
+    // "Messages" for customer messages).
+    { href: '/messages', label: 'Team chat' },
     { href: '/leads', label: 'Leads' },
     { href: '/contacts', label: 'Contacts' },
     {

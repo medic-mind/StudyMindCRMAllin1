@@ -244,8 +244,8 @@ export default async function ConversationDetailPage({
             </>
           ) : (
             <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600">
-              This conversation is not yet matched to a contact. Open it in
-              Trengo to match a contact before replying from the CRM.
+              This conversation is not yet matched to a contact. Match it to a
+              contact before replying from the CRM.
             </div>
           )}
         </div>

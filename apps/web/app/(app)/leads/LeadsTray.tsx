@@ -19,13 +19,15 @@ type StatusKey =
   | 'reenquiry'
   | 'dismissed'
 
+// Triage first — that is the only set a human must act on. The rest are an
+// audit view over what auto-onboarded, with "All" last.
 const STATUS_TABS: { key: StatusKey; label: string }[] = [
-  { key: 'all', label: 'All' },
   { key: 'needs_triage', label: 'Needs triage' },
-  { key: 'onboarded', label: 'Onboarded' },
+  { key: 'onboarded', label: 'Auto-saved' },
   { key: 'reenquiry', label: 'Re-enquiry' },
   { key: 'received', label: 'New' },
   { key: 'dismissed', label: 'Dismissed' },
+  { key: 'all', label: 'All' },
 ]
 
 interface Props {
@@ -80,7 +82,7 @@ function BrandChip({ brand }: { brand: { name: string; color: string | null } | 
 }
 
 export function LeadsTray({ initialStats, canWrite }: Props) {
-  const [status, setStatus] = useState<StatusKey>('all')
+  const [status, setStatus] = useState<StatusKey>('needs_triage')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -117,8 +119,31 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
     ai?: { summary?: string; intent?: string; urgency?: string } | null
   } | null
 
+  const triageCount = stats.data?.byStatus['needs_triage'] ?? 0
+  const onboardedCount = stats.data?.byStatus['onboarded'] ?? 0
+
   return (
     <div className="space-y-4">
+      {/* How leads flow — kills the "why is there a separate leads area?"
+          confusion. Most enquiries never stop here. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+        <span>
+          New enquiries are saved as{' '}
+          <Link href="/contacts" className="font-medium text-primary-700 hover:underline">
+            Contacts
+          </Link>{' '}
+          and dropped onto{' '}
+          <Link href="/pipeline" className="font-medium text-primary-700 hover:underline">
+            New leads
+          </Link>{' '}
+          automatically. Duplicates within 24h are merged onto one contact; a
+          later re-enquiry adds a fresh card (no duplicate contact).
+        </span>
+        <span className="ml-auto whitespace-nowrap font-medium text-neutral-700">
+          {triageCount} to triage · {onboardedCount} auto-saved
+        </span>
+      </div>
+
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1">
@@ -160,7 +185,11 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
             <p className="p-6 text-sm text-neutral-600">
               {list.isLoading
                 ? 'Loading leads…'
-                : 'No leads here yet. Paste your /api/leads webhook URL into Contact Form 7 (Settings → Integrations → Lead webhook) and submit a test enquiry — it will appear here, classified and routed to the pipeline.'}
+                : status === 'needs_triage'
+                  ? 'Nothing to triage. Every recent enquiry was matched and saved as a contact on the New leads pipeline — there is nothing here that needs a human.'
+                  : status === 'all'
+                    ? 'No leads yet. Paste your /api/leads webhook URL into Contact Form 7 (Settings → Integrations → Lead webhook) and submit a test enquiry.'
+                    : 'Nothing with this status right now.'}
             </p>
           ) : (
             <Table>
