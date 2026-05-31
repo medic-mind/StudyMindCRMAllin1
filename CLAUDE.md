@@ -514,18 +514,26 @@ A failed step retries with exponential backoff up to 6 attempts. After exhaustio
 
 ## 18. AI workflows
 
-OpenAI for everything AI today. Models per task:
+**Provider: Google Gemini by default, OpenAI as switchable fallback (ADR 0028).**
+All AI runs through `packages/ai` behind `runStructured` / `runDraft` /
+`transcribeAudio`; the provider + concrete model are resolved centrally in
+`packages/ai/src/clients/models.ts`. Call sites still pass the legacy model
+literals below — they are now **tier hints**: `gpt-4o-mini` → the `mini` tier,
+`gpt-4o` → the `standard` tier. Both tiers default to **Gemini 2.5 Flash**
+("flash for most"); promote the standard tier to `gemini-2.5-pro` for drafts via
+`GEMINI_MODEL_STANDARD` with no code change. Flip provider with `AI_PROVIDER`
+(or just set `GEMINI_API_KEY`). The "Model" column is the tier hint per task:
 
-| Task | Model | Why |
+| Task | Tier hint | Why |
 |---|---|---|
-| Call outcome classification (voicemail vs human) | gpt-4o-mini | Cheap, binary plus a label |
-| Slack summary parser | gpt-4o-mini | Structured extraction, low stakes |
-| Contact merge suggestion | gpt-4o-mini | Fast, surfaces candidates only — humans decide |
-| Status summary (2 sentence header) | gpt-4o-mini | High volume, low complexity |
-| Reply draft (email and Trengo) | gpt-4o | Quality matters, agent reads and edits |
-| Intent classifier (inbound message) | gpt-4o-mini | Routes to right team |
-| Churn score | gpt-4o-mini | Aggregates signals into a score |
-| Audio transcription (Aircall fallback) | Whisper | Only used when AI Assist not available |
+| Call outcome classification (voicemail vs human) | gpt-4o-mini (mini) | Cheap, binary plus a label |
+| Slack summary parser | gpt-4o-mini (mini) | Structured extraction, low stakes |
+| Contact merge suggestion | gpt-4o-mini (mini) | Fast, surfaces candidates only — humans decide |
+| Status summary (2 sentence header) | gpt-4o-mini (mini) | High volume, low complexity |
+| Reply draft (email and Trengo) | gpt-4o (standard) | Quality matters, agent reads and edits |
+| Intent classifier (inbound message) | gpt-4o-mini (mini) | Routes to right team |
+| Churn score | gpt-4o-mini (mini) | Aggregates signals into a score |
+| Audio transcription (Aircall fallback) | Gemini multimodal / Whisper | Provider-routed; only when AI Assist not available |
 
 ### 18.1 Prompt rules
 

@@ -1,5 +1,7 @@
-// Drafting OpenAI client wrapper. Free-text output, validated post-hoc.
-// See CLAUDE.md Sections 18.1 and 18.2.
+// Drafting client wrapper. Free-text output, validated post-hoc.
+// See CLAUDE.md Sections 18.1 and 18.2, ADR 0028. The network call is delegated
+// to the provider seam (Gemini or OpenAI); this wrapper owns budget, content-
+// shape validation, logging, and drift sampling.
 //
 // Drafting tasks (e.g. reply drafts) cannot use structured outputs because
 // the content is prose. We instead validate with a small Zod schema
@@ -13,9 +15,12 @@ import { z } from 'zod'
 import { type AiTaskCategory, checkBudget, recordUsage } from '../budget'
 import { sampleForDrift } from '../drift'
 import { assertContactNotRestricted } from './restricted-guard'
-import { getOpenAI } from './openai'
+import { generate } from './provider'
+import { tierOf } from './models'
 import { estimateCostUsd } from './pricing'
 
+// Legacy alias retained so call sites compile unchanged; treated as a tier hint
+// (gpt-4o → standard, else mini). Concrete model resolved in models.ts (ADR 0028).
 export type DraftModel = 'gpt-4o' | 'gpt-4o-mini'
 
 /**
@@ -64,44 +69,45 @@ export async function runDraft(input: RunDraftInput): Promise<RunDraftResult> {
 
   const budget = checkBudget(task)
   if (!budget.allowed) {
-    throw new BusinessError(
-      'AI_BUDGET_EXCEEDED',
-      `Daily AI budget exhausted for task ${task}.`,
-      { task, mode: budget.mode },
-    )
+    throw new BusinessError('AI_BUDGET_EXCEEDED', `Daily AI budget exhausted for task ${task}.`, {
+      task,
+      mode: budget.mode,
+    })
   }
   if (budget.mode === 'page') {
-    logger.warn(
-      { task, remainingUsd: budget.remainingUsd, ...ctx },
-      'ai.budget.threshold_breached',
-    )
+    logger.warn({ task, remainingUsd: budget.remainingUsd, ...ctx }, 'ai.budget.threshold_breached')
   }
 
-  const client = getOpenAI()
   const startedAt = Date.now()
 
-  const completion = await client.chat.completions.create({
-    model,
+  // Provider + concrete model resolved from the tier hint (ADR 0028). Prose
+  // output — no JSON mode. All validation/logging/drift stays here.
+  const completion = await generate({
+    tier: tierOf(model),
+    system,
+    user,
     temperature,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
   })
 
   const latencyMs = Date.now() - startedAt
-  const inputTokens = completion.usage?.prompt_tokens ?? 0
-  const outputTokens = completion.usage?.completion_tokens ?? 0
-  const costUsd = estimateCostUsd(model, inputTokens, outputTokens)
+  const { inputTokens, outputTokens } = completion
+  const costUsd = estimateCostUsd(completion.model, inputTokens, outputTokens)
 
   recordUsage({ task, costUsd })
 
-  const text = completion.choices[0]?.message?.content?.trim() ?? ''
+  const text = completion.text.trim()
 
   const result = contentShape.safeParse(text)
   if (!result.success) {
     logger.error(
-      { task, promptVersion, model, issues: result.error.issues, ...ctx },
+      {
+        task,
+        promptVersion,
+        model: completion.model,
+        provider: completion.provider,
+        issues: result.error.issues,
+        ...ctx,
+      },
       'ai.draft.shape_violation',
     )
     throw new BusinessError('AI_OUTPUT_INVALID', 'Draft failed content-shape validation.', {
@@ -114,7 +120,8 @@ export async function runDraft(input: RunDraftInput): Promise<RunDraftResult> {
     {
       task,
       promptVersion,
-      model,
+      model: completion.model,
+      provider: completion.provider,
       inputTokens,
       outputTokens,
       latencyMs,
@@ -128,7 +135,7 @@ export async function runDraft(input: RunDraftInput): Promise<RunDraftResult> {
   // user-side prompt content already sanitised by the prompt builder.
   await sampleForDrift({
     task,
-    model,
+    model: completion.model,
     promptVersion,
     input: { user, ctx },
     output: { text: result.data },

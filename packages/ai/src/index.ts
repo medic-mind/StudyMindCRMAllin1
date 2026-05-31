@@ -10,10 +10,7 @@ export { redactPII, sanitiseUserContent, type RedactPIIOptions } from './sanitis
 
 // Restricted-contact guard. The web app injects a db client at boot so
 // AI clients can refuse prompts that reference a restricted_access contact.
-export {
-  setRestrictedGuardDb,
-  type RestrictedGuardDb,
-} from './clients/restricted-guard'
+export { setRestrictedGuardDb, type RestrictedGuardDb } from './clients/restricted-guard'
 
 // Drift sampling — 1% of production AI calls land in DriftSample for
 // weekly reviewer triage. Web app injects the db at boot.
@@ -35,12 +32,18 @@ export {
   type BudgetMode,
 } from './budget'
 
-// Clients — the only sanctioned way to call OpenAI.
+// Provider resolution (ADR 0028). The site runs on Gemini by default and can
+// fall back to OpenAI; these expose the active provider for display/diagnostics.
 export {
-  runStructured,
-  type RunStructuredInput,
-  type StructuredModel,
-} from './clients/structured'
+  resolveProvider,
+  resolveModel,
+  resolveTranscriptionModel,
+  type AiProvider,
+  type ModelTier,
+} from './clients/models'
+
+// Clients — the only sanctioned way to call the AI provider (Gemini / OpenAI).
+export { runStructured, type RunStructuredInput, type StructuredModel } from './clients/structured'
 export {
   defaultDraftShape,
   runDraft,

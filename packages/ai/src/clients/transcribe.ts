@@ -1,21 +1,28 @@
-// Whisper transcription client. CLAUDE.md §10, §18.
+// Audio transcription client. CLAUDE.md §10, §18; provider seam ADR 0028.
 //
 // The Aircall fallback flow uses this when AI Assist is not on the line:
-// download the recording, hand the bytes to Whisper, then run a structured
-// outcome classifier on the resulting transcript.
+// download the recording, hand the bytes to the active provider, then run a
+// structured outcome classifier on the resulting transcript.
+//
+// Provider routing (ADR 0028):
+//   - gemini  → Gemini multimodal: inline the audio bytes + a transcribe prompt.
+//   - openai  → Whisper (audio.transcriptions).
+// The public shape is identical regardless of provider.
 
 import { BusinessError, logger } from '@studymind/core'
 
 import { checkBudget, recordUsage } from '../budget'
+import { getGemini } from './gemini'
+import { resolveTranscriptionModel } from './models'
 import { getOpenAI } from './openai'
 
 export interface TranscribeAudioInput {
   /**
-   * Audio bytes. We accept a Buffer (Node) or a Uint8Array; the OpenAI SDK
-   * will convert under the hood. Caller is responsible for download.
+   * Audio bytes. We accept a Buffer (Node) or a Uint8Array; the provider SDK
+   * converts under the hood. Caller is responsible for download.
    */
   audio: Buffer | Uint8Array
-  /** Filename hint so OpenAI infers the format (e.g. `recording.mp3`). */
+  /** Filename hint so the provider infers the format (e.g. `recording.mp3`). */
   filename: string
   /** Optional ISO-639-1 hint. */
   language?: string
@@ -28,8 +35,6 @@ export interface TranscribeAudioResult {
   language?: string
   durationSec?: number
 }
-
-const MODEL = 'whisper-1'
 
 export async function transcribeAudio(input: TranscribeAudioInput): Promise<TranscribeAudioResult> {
   const budget = checkBudget('transcription')
@@ -47,54 +52,96 @@ export async function transcribeAudio(input: TranscribeAudioInput): Promise<Tran
     )
   }
 
+  const { provider, model } = resolveTranscriptionModel()
   const startedAt = Date.now()
-  const client = getOpenAI()
 
-  // The OpenAI SDK expects a File-like object. Node 20 has File globally.
-  const blob: File = new File([input.audio as BlobPart], input.filename, {
-    type: filenameToMime(input.filename),
-  })
-
-  const result = await client.audio.transcriptions.create({
-    model: MODEL,
-    file: blob,
-    ...(input.language ? { language: input.language } : {}),
-    response_format: 'verbose_json',
-  })
+  const result =
+    provider === 'gemini'
+      ? await transcribeGemini(model, input)
+      : await transcribeOpenAI(model, input)
 
   const latencyMs = Date.now() - startedAt
-  // Whisper is priced per minute; the token table treats it as zero-cost. We
-  // still record usage so the dashboard sees the call.
+  // Transcription is priced per audio minute on both providers; the token table
+  // treats it as zero token-side. We still record usage so the dashboard sees it.
   recordUsage({ task: 'transcription', costUsd: 0 })
 
-  const text = (result as unknown as { text?: string }).text ?? ''
-  if (!text) {
-    throw new BusinessError(
-      'AI_OUTPUT_INVALID',
-      'Whisper returned no transcript text.',
-      { filename: input.filename },
-    )
+  if (!result.text) {
+    throw new BusinessError('AI_OUTPUT_INVALID', 'Transcription returned no text.', {
+      filename: input.filename,
+      provider,
+    })
   }
-
-  const language = (result as unknown as { language?: string }).language
-  const durationSec = (result as unknown as { duration?: number }).duration
 
   logger.info(
     {
       task: 'transcription',
-      model: MODEL,
+      provider,
+      model,
       latencyMs,
       bytes: input.audio.byteLength,
-      durationSec,
+      durationSec: result.durationSec,
       ...input.ctx,
     },
     'ai.transcribe.completed',
   )
 
+  return result
+}
+
+async function transcribeOpenAI(
+  model: string,
+  input: TranscribeAudioInput,
+): Promise<TranscribeAudioResult> {
+  const client = getOpenAI()
+  // The OpenAI SDK expects a File-like object. Node 20 has File globally.
+  const blob: File = new File([input.audio as BlobPart], input.filename, {
+    type: filenameToMime(input.filename),
+  })
+  const result = await client.audio.transcriptions.create({
+    model,
+    file: blob,
+    ...(input.language ? { language: input.language } : {}),
+    response_format: 'verbose_json',
+  })
+  const r = result as unknown as { text?: string; language?: string; duration?: number }
   return {
-    text,
-    ...(language ? { language } : {}),
-    ...(typeof durationSec === 'number' ? { durationSec } : {}),
+    text: r.text ?? '',
+    ...(r.language ? { language: r.language } : {}),
+    ...(typeof r.duration === 'number' ? { durationSec: r.duration } : {}),
+  }
+}
+
+async function transcribeGemini(
+  model: string,
+  input: TranscribeAudioInput,
+): Promise<TranscribeAudioResult> {
+  const client = getGemini()
+  const base64 = Buffer.from(input.audio).toString('base64')
+  const langHint = input.language ? ` The audio language is ${input.language}.` : ''
+  const response = await client.models.generateContent({
+    model,
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text:
+              'Transcribe this audio recording verbatim. Return only the spoken ' +
+              `text with no commentary, labels, or timestamps.${langHint}`,
+          },
+          {
+            inlineData: {
+              mimeType: filenameToMime(input.filename),
+              data: base64,
+            },
+          },
+        ],
+      },
+    ],
+  })
+  return {
+    text: (response.text ?? '').trim(),
+    ...(input.language ? { language: input.language } : {}),
   }
 }
 
@@ -105,5 +152,7 @@ function filenameToMime(filename: string): string {
   if (lower.endsWith('.m4a')) return 'audio/mp4'
   if (lower.endsWith('.ogg')) return 'audio/ogg'
   if (lower.endsWith('.webm')) return 'audio/webm'
+  if (lower.endsWith('.flac')) return 'audio/flac'
+  if (lower.endsWith('.aac')) return 'audio/aac'
   return 'application/octet-stream'
 }

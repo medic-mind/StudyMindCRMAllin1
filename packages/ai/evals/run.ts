@@ -23,18 +23,13 @@ export interface FixturePair<I, O> {
 export function loadFixtures<I, O>(dir: string): FixturePair<I, O>[] {
   const fixturesDir = join(dir, 'fixtures')
   const files = readdirSync(fixturesDir).filter((f) => f.endsWith('.input.json'))
-  return files
-    .sort()
-    .map((file) => {
-      const name = file.replace('.input.json', '')
-      const input = JSON.parse(readFileSync(join(fixturesDir, file), 'utf8')) as I
-      const expectedRaw = readFileSync(
-        join(fixturesDir, `${name}.expected.json`),
-        'utf8',
-      )
-      const expected = JSON.parse(expectedRaw) as O
-      return { name, input, expected }
-    })
+  return files.sort().map((file) => {
+    const name = file.replace('.input.json', '')
+    const input = JSON.parse(readFileSync(join(fixturesDir, file), 'utf8')) as I
+    const expectedRaw = readFileSync(join(fixturesDir, `${name}.expected.json`), 'utf8')
+    const expected = JSON.parse(expectedRaw) as O
+    return { name, input, expected }
+  })
 }
 
 /** True when the live eval should run (nightly CI). */
