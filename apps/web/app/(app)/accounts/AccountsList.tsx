@@ -12,12 +12,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
-import {
-  ChevronRightIcon,
-  MailIcon,
-  MessageSquareIcon,
-  PhoneIcon,
-} from '@/components/ui/icon'
+import { ChevronRightIcon, MailIcon, MessageSquareIcon, PhoneIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
@@ -147,25 +142,15 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
             <thead className="bg-neutral-50 text-left">
               <tr>
                 <th className="px-3 py-2 font-medium text-neutral-600">
-                  {kind === 'school' ? 'School' : 'Partnership'}
+                  {kind === 'school' ? 'School' : 'B2B Partner'}
                 </th>
                 <th className="px-3 py-2 font-medium text-neutral-600">Email</th>
                 <th className="px-3 py-2 font-medium text-neutral-600">Phone</th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
-                  Students
-                </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
-                  Hours
-                </th>
-                <th className="px-3 py-2 text-center font-medium text-neutral-600">
-                  Activity
-                </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
-                  Paid
-                </th>
-                <th className="px-3 py-2 text-right font-medium text-neutral-600">
-                  Last contact
-                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">Students</th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">Hours</th>
+                <th className="px-3 py-2 text-center font-medium text-neutral-600">Activity</th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">Paid</th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">Last contact</th>
                 <th className="w-8" />
               </tr>
             </thead>
@@ -192,9 +177,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                         </span>
                       </span>
                       <span className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-neutral-500">
-                        {a.city && (
-                          <span>{[a.city, a.country].filter(Boolean).join(', ')}</span>
-                        )}
+                        {a.city && <span>{[a.city, a.country].filter(Boolean).join(', ')}</span>}
                         {a.companies.slice(0, 3).map((c) => (
                           <span
                             key={c.id}
@@ -251,9 +234,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                     {a.amountPaidMinor > 0 ? formatMoneyMinor(a.amountPaidMinor) : '—'}
                   </td>
                   <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
-                    {a.lastContactedAt
-                      ? formatRelativeTime(new Date(a.lastContactedAt), now)
-                      : '—'}
+                    {a.lastContactedAt ? formatRelativeTime(new Date(a.lastContactedAt), now) : '—'}
                   </td>
                   <td className="px-3 py-2 align-top text-right">
                     <Link

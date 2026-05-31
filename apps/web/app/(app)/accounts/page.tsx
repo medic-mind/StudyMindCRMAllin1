@@ -46,9 +46,9 @@ export default async function AccountsPage({ searchParams }: Props) {
   return (
     <>
       <PageHeader
-        title="Accounts"
+        title="B2B / Schools"
         subtitle="Schools and B2B partners we work with"
-        breadcrumbs={[{ label: 'Accounts', href: '/accounts' }]}
+        breadcrumbs={[{ label: 'B2B / Schools', href: '/accounts' }]}
         actions={
           <AccountsExportButton
             kind={kind}
