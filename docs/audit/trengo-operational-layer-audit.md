@@ -26,7 +26,9 @@
 > - **6b** — contact-level tag aggregation derived from the Conversation head; chip row on the contact detail page.
 > - **6c** — contact-field suggestions from inbound `contact.updated`; `ContactFieldSuggestion` table; review queue at `/inbox/suggestions` (Manager+ accepts/rejects, never silent-merge per §3).
 > - **6d** — Trengo message attachments persisted to S3 (SSE:KMS), surfaced as inline chips with download links in the comms-centre thread view.
+> - **6e** — assign a conversation to a teammate from the CRM (drives Trengo `assignTicket` via `User.trengoUserId`; echo-skipped + retry-covered).
 > - **7b** — Redis pub/sub fan-out for multi-instance SSE (lazy-init, falls back to in-process when `REDIS_URL` is unset).
+> - **Browser notifications** (original brief Phase 6) — opt-in desktop notifications via the Web Notifications API; client-only (`apps/web/lib/hooks/use-browser-notifications.ts`), high-water dedupe, fires only on server-flagged unread rows. Toggle in the bell dropdown.
 
 This is a full audit of the StudyMind CRM as it relates to Trengo, plus the
 architecture and phased plan to make the CRM a complete operational layer on

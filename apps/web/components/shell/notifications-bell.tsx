@@ -5,9 +5,13 @@
 
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { trpc } from '@/lib/trpc/client'
+import {
+  useBrowserNotifications,
+  type NotifiableItem,
+} from '@/lib/hooks/use-browser-notifications'
 
 import { BellIcon } from '@/components/ui/icon'
 
@@ -42,6 +46,22 @@ export function NotificationsBell() {
     { staleTime: 30_000, refetchOnWindowFocus: true },
   )
   const unread = query.data?.unreadCount ?? 0
+
+  // ADR 0020 Phase 5 / brief Phase 6 — desktop notifications. Map the bell's
+  // items to the notifiable shape; the hook diffs against its high-water
+  // mark and pings the OS for genuinely new unread rows.
+  const notifiable = useMemo<NotifiableItem[]>(
+    () =>
+      (query.data?.items ?? []).map((n) => ({
+        id: n.id,
+        title: ACTION_LABEL[n.action] ?? n.action,
+        body: `${n.targetType}`,
+        occurredAt: n.occurredAt,
+        unread: n.unread,
+      })),
+    [query.data],
+  )
+  const desktop = useBrowserNotifications(notifiable)
 
   // ADR 0020 Phase 5 — persist the seen marker the first time the panel is
   // opened while there are unread rows. Idempotent on the server side; we
@@ -155,6 +175,32 @@ export function NotificationsBell() {
               ))
             )}
           </ul>
+          {desktop.supported ? (
+            <div className="flex items-center justify-between border-t border-neutral-200 px-3 py-2 text-xs">
+              <span className="text-neutral-500">Desktop alerts</span>
+              {desktop.permission === 'denied' ? (
+                <span className="text-neutral-400" title="Blocked in browser settings">
+                  Blocked
+                </span>
+              ) : desktop.enabled ? (
+                <button
+                  type="button"
+                  onClick={desktop.disable}
+                  className="font-medium text-primary-700 hover:underline"
+                >
+                  On · turn off
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void desktop.enable()}
+                  className="font-medium text-primary-700 hover:underline"
+                >
+                  Enable
+                </button>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
