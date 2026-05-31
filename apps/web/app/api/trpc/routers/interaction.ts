@@ -832,8 +832,94 @@ export const interactionRouter = router({
         })
         return { ok: true as const }
       }),
+
+    // ADR 0020 Phase 6g — snooze a conversation: hide it from the active
+    // inbox until `minutes` from now. The `trengo/unsnooze-due` cron (and a
+    // new inbound) resurface it. CRM-side head state — any staff may triage.
+    snooze: auditedProcedure
+      .input(
+        z.object({
+          conversationId: z.string().min(1),
+          minutes: z.number().int().min(5).max(60 * 24 * 30),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!INBOX_STAFF_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const conv = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: { id: true, contactId: true },
+        })
+        if (!conv) throw new TRPCError({ code: 'NOT_FOUND' })
+        const until = new Date(Date.now() + input.minutes * 60_000)
+        await ctx.db.conversation.update({
+          where: { id: conv.id },
+          data: { status: 'snoozed', snoozedUntil: until },
+        })
+        const { publishConversationUpdate } = await import('@studymind/core/realtime')
+        publishConversationUpdate({
+          id: conv.id,
+          trengoTicketId: null,
+          lastMessageAt: null,
+          contactId: conv.contactId,
+        })
+        await ctx.audit({
+          action: 'trengo.conversation_snoozed',
+          target: conv.contactId
+            ? { type: 'Contact', id: conv.contactId }
+            : { type: 'Conversation', id: conv.id },
+          after: { conversationId: conv.id, snoozedUntil: until.toISOString() },
+        })
+        return { ok: true as const, snoozedUntil: until.toISOString() }
+      }),
+
+    /** Bring a snoozed conversation back to the active inbox now. */
+    unsnooze: auditedProcedure
+      .input(z.object({ conversationId: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!INBOX_STAFF_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const conv = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: { id: true, contactId: true, status: true },
+        })
+        if (!conv) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (conv.status === 'snoozed') {
+          await ctx.db.conversation.update({
+            where: { id: conv.id },
+            data: { status: 'open', snoozedUntil: null },
+          })
+        }
+        const { publishConversationUpdate } = await import('@studymind/core/realtime')
+        publishConversationUpdate({
+          id: conv.id,
+          trengoTicketId: null,
+          lastMessageAt: null,
+          contactId: conv.contactId,
+        })
+        await ctx.audit({
+          action: 'trengo.conversation_unsnoozed',
+          target: conv.contactId
+            ? { type: 'Contact', id: conv.contactId }
+            : { type: 'Conversation', id: conv.id },
+          after: { conversationId: conv.id },
+        })
+        return { ok: true as const }
+      }),
   }),
 })
+
+const INBOX_STAFF_ROLES: ReadonlySet<string> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 interface RunTrengoLabelInput<R extends { interactionId: string }> {
   run: () => Promise<R>

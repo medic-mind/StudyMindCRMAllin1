@@ -53,6 +53,7 @@ import { mailAccountRouter } from './routers/mailAccount'
 import { notificationsRouter } from './routers/notifications'
 import { oauthRouter } from './routers/oauth'
 import { pipelineRouter } from './routers/pipeline'
+import { quickReplyRouter } from './routers/quickReply'
 import { reportsRouter } from './routers/reports'
 import { searchRouter } from './routers/search'
 import { taskRouter } from './routers/task'
@@ -88,6 +89,7 @@ export const appRouter = router({
   notifications: notificationsRouter,
   oauth: oauthRouter,
   pipeline: pipelineRouter,
+  quickReply: quickReplyRouter,
   reports: reportsRouter,
   search: searchRouter,
   task: taskRouter,
