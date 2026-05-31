@@ -8,6 +8,7 @@
 import { z } from 'zod'
 
 export * from './sync-provider'
+export * from './conversation-head'
 
 // -----------------------------------------------------------------------------
 // Enumerations — mirror the Prisma enums one-for-one.
