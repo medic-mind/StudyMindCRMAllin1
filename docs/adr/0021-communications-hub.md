@@ -158,11 +158,15 @@ Gmail (our sync only ingests new messages today; mirroring provider-side flag
 changes back needs Gmail history `labelAdded/Removed` ingestion with the same
 echo-guard the Trengo layer uses).
 
-### Phase 6 — Shared-inbox operations
+### Phase 6 — Shared-inbox operations (partly implemented)
 
-Assign / claim / transfer a conversation within a shared inbox; internal notes
-and @mentions (never sent outbound); one-click task creation. Reuses the ADR
-0020 assignee/notification plumbing.
+Assign / claim / transfer already exist (`AssignControl`, ADR 0020). **Internal
+notes + @mentions (implemented):** `inbox.conversations.notes.{list,add}` store
+a staff-only `note` Interaction scoped by `payload.conversationId` (never sent
+outbound); a mention writes an audit row targeting the colleague so it surfaces
+in their notifications (the audit-log-backed feed). All staff may add notes
+(§20 — VA "writes notes"). UI: `ConversationNotes` on the conversation thread
+view. **Still to come:** one-click task creation from a conversation.
 
 ### Phase 7 — Outlook / Exchange / IMAP
 

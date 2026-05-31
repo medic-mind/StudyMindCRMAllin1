@@ -421,10 +421,11 @@ rest advertise the roadmap and reject connection attempts.
 **Phased plan (ADR 0021):** (1) multi-account foundation — *implemented*;
 (2) `MailSyncProvider` seam + Gmail behind it — *implemented*; (3) email into the
 `Conversation` head + Communication Centre (unified inbox) — *implemented*;
-(4) full `/mail` client — *v1 implemented* (account-aware reading workspace;
-compose / bulk / search still to come); (5) two-way action sync
+(4) `/mail` client — *v1 + compose/reply implemented* (bulk / search / preview
+still to come); (5) two-way action sync
 (read/archive/star/label/delete) — *implemented* (outbound CRM→Gmail; inbound
-flag-mirroring + drafts still to come); (6) shared-inbox operations;
+flag-mirroring + drafts still to come); (6) shared-inbox operations — *notes +
+@mentions implemented* (assign already existed; task-from-conversation to come);
 (7) Outlook/Exchange/IMAP providers — design in **ADR 0024** (deps not added
 until approved); (8) templates, automations, analytics, calendar, unified
 channels.
@@ -1062,6 +1063,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Close / reopen a Trengo conversation from the CRM | tRPC `interaction.trengo.{close,reopen}`; outbound `closeConversation` / `reopenConversation` write a `ticket_closed` / `ticket_reopened` Interaction with `payload.source = 'crm_outbound'`; the webhook job's `linkCrmOutboundEcho` (`packages/integrations/trengo/src/jobs.ts`) stamps the trengoEventId onto that row so the echo never duplicates. Per-card buttons live in `apps/web/app/(app)/contacts/[id]/sections/TrengoConversationActions.tsx`. |
 | Assign a Trengo conversation to a teammate from the CRM | tRPC `interaction.trengo.assign` (Manager+); outbound `assignConversation` resolves the target's `User.trengoUserId`, calls Trengo `assignTicket`, writes a `ticket_assigned` Interaction (`source: 'crm_outbound'`) + mirrors the head. Echo folded back by `linkCrmOutboundEcho`. Assignee picker `AssignControl.tsx` on the comms-centre thread; assignable users come from `interaction.trengo.assignableUsers` (only users with a Trengo identity). Stuck assignments recovered by the `trengo/retry-pending-send` cron. |
 | Triage the inbox | tRPC `inbox.list` takes `filter: all \| mine \| unassigned \| snoozed` and respects `inboxAssigneeId` / `inboxSnoozedUntil` on the Interaction payload. UI chips at `/inbox` (`apps/web/app/(app)/inbox/page.tsx`). |
+| Add an internal note / @mention on a conversation | tRPC `inbox.conversations.notes.{list,add}` (ADR 0021 Phase 6, all staff incl. VA — §20). Stores a staff-only `note` Interaction scoped by `payload.conversationId` (never sent outbound); each `mentionUserIds` entry writes a `conversation.note_mentioned` audit row targeting that user so it lands in their notifications. UI: `ConversationNotes` (amber "Only your team sees this" panel) on the conversation thread view. |
 | Read the current state of a Trengo conversation | `Conversation` table (ADR 0020 Phase 2). Upserted by the webhook job and the CRM outbound (`packages/integrations/trengo/src/conversation-head.ts`). Indexed columns: status, lastMessageAt, assigneeUserId, channel, unreadCount, tags. Message bodies stay in `Interaction` — the head is a queryable state layer, not a copy. |
 | Surface an email thread in the unified inbox | `Conversation` head with `provider='email'`, keyed on `(provider, externalThreadId=gmailThreadId)`, optional `mailAccountId` (ADR 0021 Phase 3). Upserter `applyMailToConversation` (`packages/core/src/mail/conversation-head.ts`, pure + db-port, reusable by Outlook/IMAP) is called by the Gmail sync `processMessage` after writing the `email_received`/`email_sent` Interaction. Email heads list in the Comms Centre automatically; `inbox.conversations.get` joins email messages on `payload.gmailThreadId`. |
 | Open the dedicated email workspace | `/mail` (ADR 0021 Phase 4 v1, `apps/web/app/(app)/mail/page.tsx`). Account-aware reading client over the email Conversation heads: folder rail (All / Unread) + account switcher + thread list. tRPC `mail.accounts` + `mail.threads.list` (`apps/web/app/api/trpc/routers/mail.ts`, staff-gated). Rows open the unified conversation thread view. Compose / bulk / search land with later phases. |

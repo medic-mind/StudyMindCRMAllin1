@@ -18,6 +18,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { LiveUpdates } from '../LiveUpdates'
 import { AssignControl } from './AssignControl'
+import { ConversationNotes } from './ConversationNotes'
 import { ConversationReply } from './ConversationReply'
 import { EmailReply } from './EmailReply'
 import { MailThreadActions } from './MailThreadActions'
@@ -249,6 +250,8 @@ export default async function ConversationDetailPage({
             </div>
           )}
         </div>
+
+        <ConversationNotes conversationId={head.id} />
       </PageBody>
     </>
   )
