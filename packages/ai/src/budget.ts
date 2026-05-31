@@ -1,9 +1,9 @@
 // AI cost guardrails. See CLAUDE.md Sections 18.3 and 32.
 //
 // At 80% of the daily cap we page finance + tech lead. At 100% we degrade:
-// the structured/draft clients refuse to call OpenAI and throw
-// BusinessError('AI_BUDGET_EXCEEDED'). Caller decides how to fall back
-// (skip, queue, downgrade to mini).
+// the structured/draft clients refuse to call the AI provider (Gemini or
+// OpenAI — ADR 0028) and throw BusinessError('AI_BUDGET_EXCEEDED'). Caller
+// decides how to fall back (skip, queue, downgrade to mini).
 //
 // This module currently uses an in-memory rolling counter. In production
 // the counter must be backed by Redis (TODO: wire to Redis on Railway —

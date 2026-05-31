@@ -13,6 +13,7 @@ import {
   HashIcon,
   LockIcon,
   PlusIcon,
+  SearchIcon,
 } from '@/components/ui/icon'
 import { Avatar } from '@/components/ui/avatar'
 
@@ -36,6 +37,7 @@ interface Props {
   notifications: NotificationControls
   onSelect: (id: string) => void
   onSelectMentions: () => void
+  onOpenSearch: () => void
   mentionsActive: boolean
 }
 
@@ -94,6 +96,7 @@ export function ChannelList({
   notifications,
   onSelect,
   onSelectMentions,
+  onOpenSearch,
   mentionsActive,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false)
@@ -110,6 +113,19 @@ export function ChannelList({
       className="flex h-full w-60 shrink-0 flex-col gap-3 overflow-y-auto border-r border-neutral-200 bg-neutral-50/70 px-2 py-3"
       aria-label="Channels"
     >
+      {/* Search (Cmd-K) */}
+      <button
+        type="button"
+        onClick={onOpenSearch}
+        className="flex w-full items-center gap-2 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-left text-sm text-neutral-500 hover:border-neutral-300 hover:text-neutral-700"
+      >
+        <SearchIcon size={14} className="shrink-0 text-neutral-400" />
+        <span className="flex-1">Search messages</span>
+        <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 text-[10px] font-medium text-neutral-400">
+          ⌘K
+        </kbd>
+      </button>
+
       {/* Mentions inbox entry */}
       <button
         type="button"

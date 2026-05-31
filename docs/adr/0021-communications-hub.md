@@ -142,8 +142,26 @@ the latest inbound message; the sent reply lands in Gmail too. **Compose
 Contacts, and creates the email Conversation head so it shows immediately.
 **Search (implemented):** `mail.threads.list` takes a `q` that matches
 subject / sender / account (composed as an AND clause so it coexists with the
-keyset cursor); a search box on `/mail` drives it via the URL. **Still to come:**
-multi-select + bulk actions, side-by-side preview pane, keyboard shortcuts.
+keyset cursor).
+
+**Polished client (implemented).** `/mail` is now a Superhuman-class **three-pane
+workspace** (`MailWorkspace`): account/folder rail with a **compose modal** ·
+thread list with debounced **search**, **multi-select + bulk actions** (archive
+/ mark-read / trash) and an unread accent treatment · a **reading pane** that
+renders the thread inline with per-thread actions (mark unread, star, archive,
+trash-with-confirm), **mark-read-on-open** (like Gmail), and an inline **reply**
+box. Every action runs the audited tRPC mutation against the live mailbox and
+invalidates the TanStack queries; the pane subscribes to the SSE stream
+(`useConversationStream` now also invalidates `mail.threads.list`) so it stays
+live. **Keyboard shortcuts (implemented):** `j`/`k` navigate, `e` archive, `s`
+star, `u` mark-unread, `#` trash, `r` reply, `/` search, `c` compose, `Esc`
+close, `?` toggles a shortcuts overlay — inert while typing in a field.
+**Attachments (implemented):** email attachments (streamed to S3 on sync)
+render as download chips in the reading pane, served by an authenticated
+streaming route (`/api/internal/mail-attachments/[interactionId]/[index]`,
+same access gate as the Trengo attachment route — `contact.get` enforces
+restricted-access; VA refused on unmatched mail). **Still to come:** in-pane
+label editing, inbound flag-mirroring (Gmail→CRM).
 
 ### Phase 5 — Two-way action sync (implemented)
 

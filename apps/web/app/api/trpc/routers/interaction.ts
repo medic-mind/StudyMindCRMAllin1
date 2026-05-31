@@ -707,8 +707,255 @@ export const interactionRouter = router({
       })
       return rows.map((r) => ({ id: r.id, name: r.name ?? r.email }))
     }),
+
+    // ADR 0020 Phase 6f — label (tag) add / remove on a conversation, synced
+    // to Trengo. Completes the brief's bi-directional tag management. Sales
+    // Executive+.
+    addLabel: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          ticketId: z.number().int().positive(),
+          label: z.string().trim().min(1).max(80),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        gateTrengoStateChange(user.role)
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-label')
+        const { addConversationLabel } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        return runTrengoLabel({
+          run: () =>
+            addConversationLabel({
+              contactId: input.contactId,
+              agentId: user.id,
+              ticketId: input.ticketId,
+              label: input.label,
+              requestId: ctx.requestId,
+            }),
+          audit: (interactionId) =>
+            ctx.audit({
+              action: 'trengo.label_add_requested',
+              target: { type: 'Contact', id: input.contactId },
+              after: { interactionId, ticketId: input.ticketId, label: input.label },
+            }),
+        })
+      }),
+
+    removeLabel: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          ticketId: z.number().int().positive(),
+          label: z.string().trim().min(1).max(80),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        gateTrengoStateChange(user.role)
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-label')
+        const { removeConversationLabel } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        return runTrengoLabel({
+          run: () =>
+            removeConversationLabel({
+              contactId: input.contactId,
+              agentId: user.id,
+              ticketId: input.ticketId,
+              label: input.label,
+              requestId: ctx.requestId,
+            }),
+          audit: (interactionId) =>
+            ctx.audit({
+              action: 'trengo.label_remove_requested',
+              target: { type: 'Contact', id: input.contactId },
+              after: { interactionId, ticketId: input.ticketId, label: input.label },
+            }),
+        })
+      }),
+
+    /** The agent's Trengo label catalogue — drives the label picker. */
+    availableLabels: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (
+        !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+      ) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      const { listTrengoLabels } = await import(
+        '@studymind/integration-trengo/outbound'
+      )
+      try {
+        return await listTrengoLabels(user.id, ctx.requestId)
+      } catch {
+        // No token / Trengo down — return empty so the picker degrades to a
+        // free-text entry rather than erroring the whole thread.
+        return []
+      }
+    }),
+
+    // ADR 0020 Phase 6f — clear a conversation's unread count (CRM-side head
+    // state; Trengo's own read state is not exposed for write). Internal
+    // notes go through the unified `inbox.conversations.notes.add` (which adds
+    // @mentions and pushes to Trengo for Trengo tickets).
+    markRead: auditedProcedure
+      .input(z.object({ conversationId: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(
+            user.role,
+          )
+        ) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const conv = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: { id: true, contactId: true, unreadCount: true },
+        })
+        if (!conv) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (conv.unreadCount > 0) {
+          await ctx.db.conversation.update({
+            where: { id: conv.id },
+            data: { unreadCount: 0 },
+          })
+        }
+        await ctx.audit({
+          action: 'trengo.conversation_read',
+          target: conv.contactId
+            ? { type: 'Contact', id: conv.contactId }
+            : { type: 'Conversation', id: conv.id },
+          after: { conversationId: conv.id },
+        })
+        return { ok: true as const }
+      }),
+
+    // ADR 0020 Phase 6g — snooze a conversation: hide it from the active
+    // inbox until `minutes` from now. The `trengo/unsnooze-due` cron (and a
+    // new inbound) resurface it. CRM-side head state — any staff may triage.
+    snooze: auditedProcedure
+      .input(
+        z.object({
+          conversationId: z.string().min(1),
+          minutes: z.number().int().min(5).max(60 * 24 * 30),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!INBOX_STAFF_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const conv = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: { id: true, contactId: true },
+        })
+        if (!conv) throw new TRPCError({ code: 'NOT_FOUND' })
+        const until = new Date(Date.now() + input.minutes * 60_000)
+        await ctx.db.conversation.update({
+          where: { id: conv.id },
+          data: { status: 'snoozed', snoozedUntil: until },
+        })
+        const { publishConversationUpdate } = await import('@studymind/core/realtime')
+        publishConversationUpdate({
+          id: conv.id,
+          trengoTicketId: null,
+          lastMessageAt: null,
+          contactId: conv.contactId,
+        })
+        await ctx.audit({
+          action: 'trengo.conversation_snoozed',
+          target: conv.contactId
+            ? { type: 'Contact', id: conv.contactId }
+            : { type: 'Conversation', id: conv.id },
+          after: { conversationId: conv.id, snoozedUntil: until.toISOString() },
+        })
+        return { ok: true as const, snoozedUntil: until.toISOString() }
+      }),
+
+    /** Bring a snoozed conversation back to the active inbox now. */
+    unsnooze: auditedProcedure
+      .input(z.object({ conversationId: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!INBOX_STAFF_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const conv = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: { id: true, contactId: true, status: true },
+        })
+        if (!conv) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (conv.status === 'snoozed') {
+          await ctx.db.conversation.update({
+            where: { id: conv.id },
+            data: { status: 'open', snoozedUntil: null },
+          })
+        }
+        const { publishConversationUpdate } = await import('@studymind/core/realtime')
+        publishConversationUpdate({
+          id: conv.id,
+          trengoTicketId: null,
+          lastMessageAt: null,
+          contactId: conv.contactId,
+        })
+        await ctx.audit({
+          action: 'trengo.conversation_unsnoozed',
+          target: conv.contactId
+            ? { type: 'Contact', id: conv.contactId }
+            : { type: 'Conversation', id: conv.id },
+          after: { conversationId: conv.id },
+        })
+        return { ok: true as const }
+      }),
   }),
 })
+
+const INBOX_STAFF_ROLES: ReadonlySet<string> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
+
+interface RunTrengoLabelInput<R extends { interactionId: string }> {
+  run: () => Promise<R>
+  audit: (interactionId: string) => Promise<string>
+}
+
+async function runTrengoLabel<R extends { interactionId: string }>(
+  input: RunTrengoLabelInput<R>,
+): Promise<R> {
+  try {
+    const result = await input.run()
+    await input.audit(result.interactionId)
+    return result
+  } catch (err) {
+    throw mapTrengoOutboundError(err)
+  }
+}
+
+/** Map a Trengo outbound BusinessError / API error to a clean tRPC error. */
+function mapTrengoOutboundError(err: unknown): TRPCError {
+  if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+    return new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Your Trengo token has expired — reconnect it in Account → Trengo.',
+    })
+  }
+  const name = err instanceof Error ? err.name : ''
+  if (err instanceof BusinessError || name === 'TrengoApiError') {
+    return new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Trengo could not complete that action right now. Try again shortly.',
+    })
+  }
+  if (err instanceof TRPCError) return err
+  return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Unexpected error' })
+}
 
 function gateTrengoStateChange(role: string): void {
   if (

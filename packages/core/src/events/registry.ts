@@ -105,6 +105,13 @@ export const EVENT_NAMES = [
   'forwarding.rule_restored',
   'forwarding.email_sent',
 
+  // Quick replies / canned responses (ADR 0020 Phase 6h). Saved message
+  // snippets agents insert into a conversation reply. Manager+ manages.
+  'quick_reply.created',
+  'quick_reply.updated',
+  'quick_reply.archived',
+  'quick_reply.restored',
+
   // B2B accounts (Schools + Partnerships) — tracked organisations we work
   // with. CRUD is Manager+; viewing is all roles.
   'business_account.created',
@@ -337,6 +344,16 @@ export const EVENT_NAMES = [
   'trengo.ticket_reopen_requested',
   // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
   'trengo.ticket_assign_requested',
+  // ADR 0020 Phase 6f — label (tag) add/remove from the CRM (drives the
+  // Trengo /labels endpoints) and mark-read (CRM-side head state). Internal
+  // notes flow through `conversation.note_added` (the unified notes path).
+  'trengo.label_add_requested',
+  'trengo.label_remove_requested',
+  'trengo.conversation_read',
+  // ADR 0020 Phase 6g — snooze / unsnooze a conversation (CRM-side head
+  // state; the unsnooze-due cron resurfaces them, a new inbound too).
+  'trengo.conversation_snoozed',
+  'trengo.conversation_unsnoozed',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',

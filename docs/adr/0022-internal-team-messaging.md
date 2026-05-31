@@ -113,6 +113,45 @@ incoming mentions (opt-in, from the channel rail).
   whole subtree) one tier above archive — CEO + Senior Manager only, audited,
   `#general` protected. Archive (reversible) remains for Manager+.
 
+### Attachments, search, Cmd-K (Phase 3 — shipped)
+
+- **File & image attachments** (`ChatAttachment` + `packages/core/src/chat/s3.ts`).
+  Bytes live in S3 with SSE:KMS (CLAUDE.md §21.1), never in Postgres — same
+  pattern as the Gmail/Trengo attachment modules. Two-phase upload: the composer
+  POSTs bytes to `/api/internal/chat-attachments/upload` (validated: 20 MB
+  ceiling, blocked executable types), which stages to S3 under a minted
+  attachmentId and returns metadata; `chat.send` binds those rows to the new
+  message, re-deriving the S3 key from the id so a client can never bind to an
+  arbitrary object. Download proxies through `/api/internal/chat-attachments/[id]`
+  (channel-membership gated, never a presigned URL — keeps the audit honest).
+  Composer supports the paperclip, paste, and drag-drop; images render inline
+  (bounded, aspect-ratio reserved to avoid CLS), other files as download chips.
+  The S3 module is a **server-only subpath** (`@studymind/core/chat/s3`) — it is
+  deliberately NOT re-exported from the `chat` barrel so the AWS SDK never leaks
+  into the client bundle (the client reaches the barrel for `CHAT_REACTION_EMOJI`).
+- **Message search** (`chat.search` + `searchMessages`): full-text-ish search
+  over message bodies, scoped to the viewer's visible channels (memberships ∪
+  public). Returns channel + author + a token-rendered snippet.
+- **Cmd-K palette** (`SearchPalette`): keyboard-first message search from
+  anywhere in the workspace; picking a result jumps to the channel and opens the
+  thread when the hit is a reply (deep-linked via `?c=&t=`).
+
+### Pins, saves & jump-to-message (Phase 4 — shipped)
+
+- **Pinned messages** (`ChatPin` + `chat.pin` / `chat.listPins`): shared,
+  channel-scoped (Slack's Pins tab). Any channel member may pin/unpin; everyone
+  sees the same set. Unique per message; cascades with the message/channel. A
+  pinned message shows a "Pinned" label in the feed.
+- **Saved items** (`ChatSavedItem` + `chat.save` / `chat.listSaves`): private
+  per-user bookmarks (Slack's "Later"), spanning all channels, visible only to
+  the owner. Unique per `(user, message)`.
+- Both `pinned` (shared) and `saved` (viewer-specific) are hydrated onto every
+  `ChatMessageView` in a batched lookup, surfaced as toggles in the hover action
+  bar, and opened as side panels (`PinsSavedPanel`) from the channel header.
+- **Jump-to-message**: message rows register a ref by id; the Pins/Saved panels
+  (and search) scroll the target into view with a brief highlight, paging older
+  messages in until it's loaded. Replies open their thread instead.
+
 ## Alternatives considered
 
 - **Keep using Slack.** Rejected: the whole point is to keep the conversation

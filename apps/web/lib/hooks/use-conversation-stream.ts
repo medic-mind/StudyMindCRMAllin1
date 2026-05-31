@@ -56,6 +56,8 @@ export function useConversationStream(): void {
           // contactId-scoped channel query is also invalidated so per-contact
           // pages stay in sync.
           void utils.inbox.conversations.list.invalidate()
+          // ADR 0021 Phase 4 — keep the /mail client live too.
+          void utils.mail.threads.list.invalidate()
           if (data.contactId) {
             void utils.contact.channels.trengoConversations.invalidate({
               contactId: data.contactId,

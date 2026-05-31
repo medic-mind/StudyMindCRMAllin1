@@ -14,6 +14,7 @@ import { ChannelHeader } from './ChannelHeader'
 import { Composer } from './Composer'
 import { ForwardDialog } from './ForwardDialog'
 import { MessageRow } from './MessageRow'
+import { PinsSavedPanel } from './PinsSavedPanel'
 import { ThreadPanel } from './ThreadPanel'
 import type { MessageView, ReactionEmoji } from './types'
 
@@ -24,6 +25,8 @@ interface Props {
   canManageChannels: boolean
   /** CEO + Senior Manager — permanent channel deletion. */
   canDeleteChannels: boolean
+  /** Open this thread on mount (deep-link from search). */
+  initialThreadRootId?: string | null
   /** Called after this channel is deleted so the workspace can reselect. */
   onChannelDeleted?: (channelId: string) => void
 }
@@ -55,12 +58,15 @@ export function ChannelView({
   canModerate,
   canManageChannels,
   canDeleteChannels,
+  initialThreadRootId,
   onChannelDeleted,
 }: Props) {
   const utils = trpc.useUtils()
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
-  const [threadRootId, setThreadRootId] = useState<string | null>(null)
+  const [threadRootId, setThreadRootId] = useState<string | null>(
+    initialThreadRootId ?? null,
+  )
   const [forwardId, setForwardId] = useState<string | null>(null)
   const atBottomRef = useRef(true)
 
@@ -148,6 +154,47 @@ export function ChannelView({
     onSuccess: () => utils.chat.listMessages.invalidate({ channelId }),
     onError: (e) => toast.error(e.message ?? 'Could not delete'),
   })
+  const pin = trpc.chat.pin.useMutation({
+    onSuccess: () => {
+      void utils.chat.listMessages.invalidate({ channelId })
+      void utils.chat.listPins.invalidate({ channelId })
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not pin'),
+  })
+  const save = trpc.chat.save.useMutation({
+    onSuccess: () => {
+      void utils.chat.listMessages.invalidate({ channelId })
+      void utils.chat.listSaves.invalidate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not save'),
+  })
+
+  // Jump-to-message: scroll a message into view and flash a highlight. Set by
+  // the Pins/Saved panels and by a deep-link. Message rows register a ref by id.
+  const [jumpToId, setJumpToId] = useState<string | null>(null)
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const registerMessageRef = (id: string, el: HTMLDivElement | null) => {
+    if (el) messageRefs.current.set(id, el)
+    else messageRefs.current.delete(id)
+  }
+  useEffect(() => {
+    if (!jumpToId) return
+    const el = messageRefs.current.get(jumpToId)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const clear = setTimeout(() => setJumpToId(null), 2200)
+      return () => clearTimeout(clear)
+    }
+    // The target isn't on the loaded page yet — page older messages in until it
+    // appears (bounded so we never loop forever).
+    if (messagesQuery.hasNextPage && !messagesQuery.isFetchingNextPage) {
+      void messagesQuery.fetchNextPage()
+    }
+    return undefined
+  }, [jumpToId, messages, messagesQuery])
+
+  // Side panel: which secondary view (thread / pins / saved) is open, if any.
+  const [panel, setPanel] = useState<'pins' | 'saved' | null>(null)
 
   const channel = channelQuery.data
 
@@ -160,6 +207,8 @@ export function ChannelView({
             canManage={canManageChannels}
             canDelete={canDeleteChannels}
             onDeleted={onChannelDeleted}
+            onOpenPins={() => setPanel((p) => (p === 'pins' ? null : 'pins'))}
+            onOpenSaved={() => setPanel((p) => (p === 'saved' ? null : 'saved'))}
           />
         ) : (
           <div className="h-14 shrink-0 border-b border-neutral-200 bg-white" />
@@ -199,22 +248,33 @@ export function ChannelView({
             messages.map((m, i) => {
               const prev = messages[i - 1]
               const showDivider = !prev || dayKey(prev.createdAt) !== dayKey(m.createdAt)
+              const highlighted = jumpToId === m.id
               return (
-                <div key={m.id}>
+                <div key={m.id} ref={(el) => registerMessageRef(m.id, el)}>
                   {showDivider ? <DayDivider date={m.createdAt} /> : null}
-                  <MessageRow
-                    message={m}
-                    viewerId={viewerId}
-                    canModerate={canModerate}
-                    userNames={userNames}
-                    onReact={(messageId, emoji) =>
-                      react.mutate({ messageId, emoji: emoji as ReactionEmoji })
+                  <div
+                    className={
+                      highlighted
+                        ? 'bg-amber-50 ring-1 ring-inset ring-amber-200 transition-colors'
+                        : 'transition-colors'
                     }
-                    onOpenThread={(rootId) => setThreadRootId(rootId)}
-                    onEdit={(id, body) => edit.mutate({ id, body })}
-                    onDelete={(id) => remove.mutate({ id })}
-                    onForward={(id) => setForwardId(id)}
-                  />
+                  >
+                    <MessageRow
+                      message={m}
+                      viewerId={viewerId}
+                      canModerate={canModerate}
+                      userNames={userNames}
+                      onReact={(messageId, emoji) =>
+                        react.mutate({ messageId, emoji: emoji as ReactionEmoji })
+                      }
+                      onOpenThread={(rootId) => setThreadRootId(rootId)}
+                      onEdit={(id, body) => edit.mutate({ id, body })}
+                      onDelete={(id) => remove.mutate({ id })}
+                      onForward={(id) => setForwardId(id)}
+                      onPin={(id, pinned) => pin.mutate({ messageId: id, pinned })}
+                      onSave={(id, saved) => save.mutate({ messageId: id, saved })}
+                    />
+                  </div>
                 </div>
               )
             })
@@ -233,7 +293,10 @@ export function ChannelView({
             }
             sending={send.isPending}
             disabled={channel?.archived}
-            onSend={(body) => send.mutate({ channelId, body })}
+            enableAttachments
+            onSend={(body, attachments) =>
+              send.mutate({ channelId, body, attachments })
+            }
           />
         </div>
       </div>
@@ -244,6 +307,20 @@ export function ChannelView({
           viewerId={viewerId}
           canModerate={canModerate}
           onClose={() => setThreadRootId(null)}
+        />
+      ) : panel ? (
+        <PinsSavedPanel
+          kind={panel}
+          channelId={channelId}
+          viewerId={viewerId}
+          onClose={() => setPanel(null)}
+          onJump={(messageId, parentId) => {
+            setPanel(null)
+            if (parentId) setThreadRootId(parentId)
+            else setJumpToId(messageId)
+          }}
+          onUnpin={(id) => pin.mutate({ messageId: id, pinned: false })}
+          onUnsave={(id) => save.mutate({ messageId: id, saved: false })}
         />
       ) : null}
 

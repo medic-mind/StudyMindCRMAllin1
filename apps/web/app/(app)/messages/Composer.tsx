@@ -11,6 +11,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+import type { StagedAttachmentInput } from '@studymind/core/chat'
+
 import {
   AtSignIcon,
   BoldIcon,
@@ -19,9 +21,11 @@ import {
   LinkIcon,
   ListIcon,
   ListOrderedIcon,
+  PaperclipIcon,
   QuoteIcon,
   SendIcon,
   StrikethroughIcon,
+  XIcon,
 } from '@/components/ui/icon'
 import { Avatar } from '@/components/ui/avatar'
 import { trpc } from '@/lib/trpc/client'
@@ -32,6 +36,7 @@ import {
   type DraftMention,
   type DraftRef,
 } from './compose'
+import { useAttachments } from './use-attachments'
 import type { RefSearchHit, UserHit } from './types'
 
 interface Props {
@@ -42,7 +47,10 @@ interface Props {
   /** Seed the editor (edit mode). The stored body's tokens stay literal text —
    *  the user edits the raw markdown/mentions, which re-resolve on send. */
   initialValue?: string
-  onSend: (body: string) => void
+  /** Enable file/image attachments (paperclip + paste + drag-drop). Off for the
+   *  edit composer, where re-attaching isn't supported. */
+  enableAttachments?: boolean
+  onSend: (body: string, attachments: StagedAttachmentInput[]) => void
 }
 
 const REF_TONE: Record<string, string> = {
@@ -52,18 +60,28 @@ const REF_TONE: Record<string, string> = {
   task: 'text-amber-800',
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
 export function Composer({
   placeholder,
   disabled,
   sending,
   autoFocus,
   initialValue,
+  enableAttachments = false,
   onSend,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [text, setText] = useState(initialValue ?? '')
   const [mentions, setMentions] = useState<DraftMention[]>([])
   const [refs, setRefs] = useState<DraftRef[]>([])
+  const [dragOver, setDragOver] = useState(false)
+  const att = useAttachments()
 
   // Mention autocomplete state.
   const [mentionQuery, setMentionQuery] = useState<{ query: string; start: number } | null>(null)
@@ -168,14 +186,28 @@ export function Composer({
     requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
+  const staged = att.readyStaged()
+  const hasContent = composeBody(text, mentions, refs).length > 0 || staged.length > 0
+  const blockedByUpload = enableAttachments && att.uploading
+
   function submit() {
     const body = composeBody(text, mentions, refs)
-    if (body.length === 0 || sending) return
-    onSend(body)
+    if ((body.length === 0 && staged.length === 0) || sending || blockedByUpload) return
+    onSend(body, staged)
     setText('')
     setMentions([])
     setRefs([])
     setMentionQuery(null)
+    att.clear()
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (!enableAttachments) return
+    const files = Array.from(e.clipboardData.files)
+    if (files.length > 0) {
+      e.preventDefault()
+      att.addFiles(files)
+    }
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -380,10 +412,92 @@ export function Composer({
           >
             <LinkIcon size={16} />
           </button>
+          {enableAttachments ? (
+            <button
+              type="button"
+              title="Attach a file"
+              aria-label="Attach a file"
+              disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+            >
+              <PaperclipIcon size={16} />
+            </button>
+          ) : null}
         </div>
 
+        {/* Attachment preview strip */}
+        {enableAttachments && att.attachments.length > 0 ? (
+          <div className="flex flex-wrap gap-2 border-b border-neutral-100 px-2 py-2">
+            {att.attachments.map((a) => (
+              <div
+                key={a.localId}
+                className="group relative flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 p-1.5 pr-2"
+              >
+                {a.previewUrl ? (
+                  <img
+                    src={a.previewUrl}
+                    alt={a.filename}
+                    className="h-10 w-10 shrink-0 rounded object-cover"
+                  />
+                ) : (
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-neutral-200 text-neutral-500">
+                    <PaperclipIcon size={16} />
+                  </span>
+                )}
+                <span className="min-w-0 max-w-[10rem]">
+                  <span className="block truncate text-xs font-medium text-neutral-800">
+                    {a.filename}
+                  </span>
+                  <span className="block text-[11px] text-neutral-500">
+                    {a.status === 'uploading'
+                      ? 'Uploading…'
+                      : a.status === 'error'
+                        ? (a.error ?? 'Failed')
+                        : formatBytes(a.sizeBytes)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${a.filename}`}
+                  onClick={() => att.remove(a.localId)}
+                  className="ml-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-neutral-200 text-neutral-600 hover:bg-neutral-300"
+                >
+                  <XIcon size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
         {/* Input row */}
-        <div className="flex items-end gap-2 p-2">
+        <div
+          className="relative flex items-end gap-2 p-2"
+          onDragOver={
+            enableAttachments
+              ? (e) => {
+                  e.preventDefault()
+                  setDragOver(true)
+                }
+              : undefined
+          }
+          onDragLeave={enableAttachments ? () => setDragOver(false) : undefined}
+          onDrop={
+            enableAttachments
+              ? (e) => {
+                  e.preventDefault()
+                  setDragOver(false)
+                  if (e.dataTransfer.files.length > 0) att.addFiles(e.dataTransfer.files)
+                }
+              : undefined
+          }
+        >
+          {dragOver ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary-400 bg-primary-50/80 text-sm font-medium text-primary-700">
+              Drop files to attach
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             rows={1}
@@ -393,26 +507,41 @@ export function Composer({
             placeholder={placeholder}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             className="max-h-44 min-h-[2rem] flex-1 resize-none bg-transparent py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none"
           />
 
           <button
             type="button"
             aria-label="Send message"
-            disabled={disabled || sending || composeBody(text, mentions, refs).length === 0}
+            disabled={disabled || sending || blockedByUpload || !hasContent}
             onClick={submit}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <SendIcon size={16} />
           </button>
         </div>
+
+        {enableAttachments ? (
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) att.addFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+        ) : null}
       </div>
       <p className="mt-1 px-1 text-[11px] text-neutral-400">
         <kbd className="font-sans">Enter</kbd> to send ·{' '}
         <kbd className="font-sans">Shift+Enter</kbd> for a new line ·{' '}
         <span className="font-medium text-neutral-500">**bold**</span>,{' '}
         <span className="font-medium text-neutral-500">*italic*</span>,{' '}
-        <span className="font-medium text-neutral-500">`code`</span> supported
+        <span className="font-medium text-neutral-500">`code`</span>
+        {enableAttachments ? ' · paste or drag files to attach' : ''}
       </p>
     </div>
   )

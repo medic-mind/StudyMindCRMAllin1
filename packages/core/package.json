@@ -19,6 +19,7 @@
     "./team": "./src/team/index.ts",
     "./chat": "./src/chat/index.ts",
     "./chat/parse": "./src/chat/parse.ts",
+    "./chat/s3": "./src/chat/s3.ts",
     "./finance": "./src/finance/index.ts",
     "./interaction": "./src/interaction/index.ts",
     "./lead": "./src/lead/index.ts",

@@ -94,7 +94,9 @@ export const trengoEventReceived = inngest.createFunction(
     if (
       eventName === 'ticket.closed' ||
       eventName === 'ticket.reopened' ||
-      eventName === 'ticket.assigned'
+      eventName === 'ticket.assigned' ||
+      eventName === 'label.added' ||
+      eventName === 'label.removed'
     ) {
       const ticketId = envelope.data.ticket_id
       if (typeof ticketId === 'number') {
@@ -103,12 +105,23 @@ export const trengoEventReceived = inngest.createFunction(
             ? 'ticket_closed'
             : eventName === 'ticket.reopened'
               ? 'ticket_reopened'
-              : 'ticket_assigned'
+              : eventName === 'ticket.assigned'
+                ? 'ticket_assigned'
+                : eventName === 'label.added'
+                  ? 'label_added'
+                  : 'label_removed'
+        // Label echoes must also match the label name — two different labels
+        // added in the same window must not collapse onto one row.
+        const labelName =
+          eventName === 'label.added' || eventName === 'label.removed'
+            ? (envelope.data.label?.name ?? null)
+            : null
         const linked = await step.run('echo-skip-state', async () =>
           linkCrmOutboundEcho({
             ticketId,
             interactionType: echoType,
             trengoEventId: eventId,
+            labelName,
           }),
         )
         if (linked) {
@@ -280,6 +293,18 @@ export const trengoEventReceived = inngest.createFunction(
           label: envelope.data.label?.name ?? null,
         }),
       )
+
+      // ADR 0020 Phase 6g — a new inbound message resurfaces a snoozed
+      // conversation immediately (the customer replied; don't keep it
+      // hidden until the timer). Outbound/lifecycle events leave the snooze.
+      if (eventName === 'message.inbound') {
+        await step.run('resurface-on-inbound', async () =>
+          db.conversation.updateMany({
+            where: { trengoTicketId: envelope.data.ticket_id as number, status: 'snoozed' },
+            data: { status: 'open', snoozedUntil: null },
+          }),
+        )
+      }
     }
 
     await step.run('mark-processed', async () => {
@@ -307,8 +332,16 @@ export const CRM_OUTBOUND_ECHO_WINDOW_MS = 5 * 60 * 1000
 
 interface LinkEchoInput {
   ticketId: number
-  interactionType: 'ticket_closed' | 'ticket_reopened' | 'ticket_assigned'
+  interactionType:
+    | 'ticket_closed'
+    | 'ticket_reopened'
+    | 'ticket_assigned'
+    | 'label_added'
+    | 'label_removed'
   trengoEventId: string
+  /** For label echoes — the label name must also match so two different
+   *  labels changed in the same window do not collapse onto one row. */
+  labelName?: string | null
 }
 
 /**
@@ -327,6 +360,9 @@ async function linkCrmOutboundEcho(input: LinkEchoInput): Promise<string | null>
       AND: [
         { payload: { path: ['ticketId'], equals: input.ticketId } },
         { payload: { path: ['source'], equals: 'crm_outbound' } },
+        ...(input.labelName
+          ? [{ payload: { path: ['label'], equals: input.labelName } }]
+          : []),
       ],
     },
     orderBy: { occurredAt: 'desc' },
@@ -633,11 +669,14 @@ import { trengoRetryPendingSend } from './retry-pending'
 // webhook carries an attachments array; idempotent on (interactionId,
 // attachmentId). Uploads via SSE:KMS to S3.
 import { trengoDownloadAttachments } from './attachments'
+// ADR 0020 Phase 6g: 5-minute cron that resurfaces due snoozed conversations.
+import { trengoUnsnoozeDue } from './snooze'
 
 export const FUNCTIONS = [
   trengoEventReceived,
   backfillConversationHeads,
   trengoRetryPendingSend,
   trengoDownloadAttachments,
+  trengoUnsnoozeDue,
   ...TRENGO_BACKFILL_FUNCTIONS,
 ] as const

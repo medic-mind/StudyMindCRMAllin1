@@ -14,6 +14,7 @@
 // mutations correctly use protectedProcedure.
 
 import { TRPCError } from '@trpc/server'
+import type { PrismaClient } from '@prisma/client'
 import { z } from 'zod'
 
 import {
@@ -32,22 +33,30 @@ import {
   ensureMembership,
   hydrateMessages,
   listMentions,
+  listPins,
+  listSaves,
   markAllMentionsRead,
   markChannelRead,
   markMentionRead,
   openDm,
+  pinMessage,
   removeMember,
   restoreChannel,
+  saveMessage,
+  searchMessages,
   searchRefTargets,
   sendMessage,
   setNotifyLevel,
   toChannelView,
   toggleReaction,
+  unpinMessage,
+  unsaveMessage,
   updateChannel,
   workspaceUnread,
   type ChatChannelView,
   type ChatNotifyLevel,
 } from '@studymind/core/chat'
+import { buildChatAttachmentKey } from '@studymind/core/chat/s3'
 import { bodyToPlainText } from '@studymind/core/chat/parse'
 import { publishChatActivity, type ChatActivityKind } from '@studymind/core/realtime'
 import { BusinessError } from '@studymind/core/errors'
@@ -107,6 +116,32 @@ const actor = (ctx: { user: { id: string }; requestId: string }) => ({
   actorId: ctx.user.id,
   requestId: ctx.requestId,
 })
+
+/**
+ * Read gate: public channels are open to all staff; private channels and DMs
+ * require a membership row. Throws FORBIDDEN / NOT_FOUND otherwise. Used by the
+ * pin/listPins surfaces (saves are personal and need no channel gate).
+ */
+async function assertCanAccessChannel(
+  ctx: { db: PrismaClient },
+  channelId: string,
+  userId: string,
+): Promise<void> {
+  const channel = await ctx.db.chatChannel.findUnique({
+    where: { id: channelId },
+    select: { kind: true },
+  })
+  if (!channel) throw new TRPCError({ code: 'NOT_FOUND' })
+  if (channel.kind !== 'public') {
+    const membership = await ctx.db.chatChannelMember.findUnique({
+      where: { channelId_userId: { channelId, userId } },
+      select: { id: true },
+    })
+    if (!membership) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'You are not a member of this channel' })
+    }
+  }
+}
 
 /**
  * Fire a realtime "something changed in this channel" hint so every connected
@@ -589,11 +624,25 @@ export const chatRouter = router({
     try {
       // Auto-join public channels on first post; private channels require a row.
       await ensureMembership(ctx.db, { channelId: input.channelId, userId: user.id })
+      // Bind staged attachments. Defence-in-depth: the client supplies the
+      // metadata it got back from the upload route, but we re-derive the S3 key
+      // from the (id, filename) so a client can never bind to an arbitrary
+      // object — the key is a pure function of the id we minted.
+      const attachments = (input.attachments ?? []).map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        contentType: a.contentType,
+        sizeBytes: a.sizeBytes,
+        s3Key: buildChatAttachmentKey({ attachmentId: a.id, filename: a.filename }),
+        width: a.width ?? null,
+        height: a.height ?? null,
+      }))
       const message = await sendMessage(ctx.db, {
         channelId: input.channelId,
         authorId: user.id,
         body: input.body,
         parentId: input.parentId ?? null,
+        attachments,
       })
       emitChatActivity({
         kind: 'message',
@@ -605,7 +654,9 @@ export const chatRouter = router({
         mentionUserIds: message.mentionUserIds,
         // One-line preview for the desktop notification; tokens render as
         // readable labels (@Name / #Ref) rather than raw <@id> markers.
-        preview: bodyToPlainText(input.body).slice(0, 140),
+        preview:
+          bodyToPlainText(input.body).slice(0, 140) ||
+          (attachments.length > 0 ? '📎 Attachment' : ''),
       })
       return message
     } catch (err) {
@@ -859,6 +910,94 @@ export const chatRouter = router({
     .query(async ({ ctx, input }) => {
       const results = await searchRefTargets(ctx.db, { query: input.q, limit: input.limit })
       return { results }
+    }),
+
+  /** Full message search across the viewer's visible channels (Cmd-K). */
+  search: protectedProcedure
+    .input(
+      z.object({
+        q: z.string().trim().min(2).max(200),
+        limit: z.number().int().min(1).max(50).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const hits = await searchMessages(ctx.db, {
+        viewerId: user.id,
+        query: input.q,
+        limit: input.limit,
+      })
+      return { hits }
+    }),
+
+  // --- Pins (shared, channel-scoped) -----------------------------------------
+
+  /** Pin / unpin a message. Any member of the channel may pin. */
+  pin: protectedProcedure
+    .input(z.object({ messageId: z.string(), pinned: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      try {
+        // Membership gate for private channels (public channels are open).
+        const message = await ctx.db.chatMessage.findFirst({
+          where: { id: input.messageId, deletedAt: null },
+          select: { channelId: true, parentId: true },
+        })
+        if (!message) throw new TRPCError({ code: 'NOT_FOUND' })
+        await assertCanAccessChannel(ctx, message.channelId, user.id)
+
+        const result = input.pinned
+          ? await pinMessage(ctx.db, { messageId: input.messageId, userId: user.id })
+          : await unpinMessage(ctx.db, { messageId: input.messageId })
+        emitChatActivity({
+          kind: 'pin',
+          channelId: message.channelId,
+          messageId: input.messageId,
+          parentId: message.parentId,
+          actorId: user.id,
+          actorName: user.email,
+        })
+        return result
+      } catch (err) {
+        mapChatError(err)
+      }
+    }),
+
+  /** A channel's pinned messages (the Pins tab). */
+  listPins: protectedProcedure
+    .input(z.object({ channelId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      await assertCanAccessChannel(ctx, input.channelId, user.id)
+      const items = await listPins(ctx.db, { channelId: input.channelId, viewerId: user.id })
+      return { items }
+    }),
+
+  // --- Saved items (private, per-user) ---------------------------------------
+
+  /** Save / unsave a message for the current user. */
+  save: protectedProcedure
+    .input(z.object({ messageId: z.string(), saved: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      try {
+        return input.saved
+          ? await saveMessage(ctx.db, { messageId: input.messageId, userId: user.id })
+          : await unsaveMessage(ctx.db, { messageId: input.messageId, userId: user.id })
+      } catch (err) {
+        mapChatError(err)
+      }
+    }),
+
+  /** The current user's saved messages (private bookmarks, across channels). */
+  listSaves: protectedProcedure
+    .input(
+      z.object({ limit: z.number().int().min(1).max(100).optional() }).default({}),
+    )
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const items = await listSaves(ctx.db, { userId: user.id, limit: input.limit })
+      return { items }
     }),
 })
 

@@ -109,6 +109,42 @@ export function ForwardIcon(props: IconProps) {
   )
 }
 
+export function PinIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 9V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v5a4 4 0 0 0 2 3.46V14H3v-1.54A4 4 0 0 0 5 9z" />
+    </svg>
+  )
+}
+
+export function PaperclipIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
+
+export function FileIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  )
+}
+
+export function DownloadIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  )
+}
+
 export function InboxIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -540,6 +576,24 @@ export function BellOffIcon(props: IconProps) {
       <path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" />
       <path d="M18 8a6 6 0 0 0-9.33-5" />
       <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  )
+}
+
+export function StarIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  )
+}
+
+export function ArchiveIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+      <path d="M10 12h4" />
     </svg>
   )
 }

@@ -12,6 +12,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { AccountEditor } from './AccountEditor'
 import { AccountContacts } from './AccountContacts'
+import { AccountStatsBand } from './AccountStatsBand'
 import { AccountStudents } from './AccountStudents'
 
 export const dynamic = 'force-dynamic'
@@ -83,6 +84,8 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
             </Link>
           )}
         </div>
+
+        <AccountStatsBand stats={account.stats} />
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <AccountEditor account={account} />
