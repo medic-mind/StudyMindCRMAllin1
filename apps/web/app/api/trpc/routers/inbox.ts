@@ -274,22 +274,28 @@ export const inboxRouter = router({
         })
         if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
 
-        const messageRows = await ctx.db.interaction.findMany({
-          where: {
-            deletedAt: null,
-            type: 'message',
-            payload: { path: ['ticketId'], equals: head.trengoTicketId },
-          },
-          orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
-          take: 100,
-          select: {
-            id: true,
-            occurredAt: true,
-            summary: true,
-            payload: true,
-            createdById: true,
-          },
-        })
+        // ADR 0021 Phase 3a — non-Trengo heads (email, future) won't have a
+        // ticketId; their message-row join key is `payload.gmailThreadId`
+        // (Phase 3b will branch here). For now they just render empty.
+        const messageRows =
+          head.trengoTicketId === null
+            ? []
+            : await ctx.db.interaction.findMany({
+                where: {
+                  deletedAt: null,
+                  type: 'message',
+                  payload: { path: ['ticketId'], equals: head.trengoTicketId },
+                },
+                orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+                take: 100,
+                select: {
+                  id: true,
+                  occurredAt: true,
+                  summary: true,
+                  payload: true,
+                  createdById: true,
+                },
+              })
 
         const messages = messageRows.map((r) => {
           const payload = (r.payload as Record<string, unknown> | null) ?? {}

@@ -29,8 +29,9 @@ export interface ConversationUpdatedEvent {
   /** Conversation row id (cuid2). */
   id: string
   /** Trengo ticket id — keyed in case the client wants to ignore irrelevant
-   *  conversations without a refetch round-trip. */
-  trengoTicketId: number
+   *  conversations without a refetch round-trip. Null for non-Trengo rows
+   *  (ADR 0021 Phase 3a — email and future providers). */
+  trengoTicketId: number | null
   /** ISO timestamp the row's lastMessageAt was advanced to (or null when the
    *  upsert touched only metadata). */
   lastMessageAt: string | null

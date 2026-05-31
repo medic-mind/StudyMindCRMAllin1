@@ -992,8 +992,21 @@ model Interaction {
 /// state from Interaction grouping until the comms-centre cutover.
 model Conversation {
   id               String             @id
-  /// Trengo's ticket id (conversation thread). Unique — one head per ticket.
-  trengoTicketId   Int                @unique
+  /// ADR 0021 Phase 3a: provider that owns this conversation. Null means the
+  /// row pre-dates the generalisation and is implicitly Trengo (only Trengo
+  /// rows existed before). New rows always set this explicitly. Values:
+  /// 'trengo' | 'email' | 'outlook' | 'imap' (future). Treat null = 'trengo'.
+  provider         String?
+  /// MailAccount this conversation belongs to (email-channel rows only).
+  /// Null for Trengo and any non-mail provider.
+  mailAccountId    String?
+  /// External thread/message id from the owning provider — Gmail threadId,
+  /// Outlook conversationId, IMAP thread root, etc. Combined with `provider`
+  /// it uniquely identifies the conversation for the channel.
+  externalThreadId String?
+  /// Trengo's ticket id (Trengo-channel rows only). Unique when set.
+  /// Nullable since ADR 0021 Phase 3a — email rows leave this null.
+  trengoTicketId   Int?               @unique
   /// CRM Contact we resolved this conversation to (phone first, email
   /// second). Null when the inbound didn't match any contact yet.
   contactId        String?
@@ -1027,15 +1040,19 @@ model Conversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  contact Contact? @relation("ContactConversations", fields: [contactId], references: [id])
-  family  Family?  @relation("FamilyConversations", fields: [familyId], references: [id])
+  contact     Contact?     @relation("ContactConversations", fields: [contactId], references: [id])
+  family      Family?      @relation("FamilyConversations", fields: [familyId], references: [id])
+  mailAccount MailAccount? @relation(fields: [mailAccountId], references: [id])
 
+  @@unique([provider, externalThreadId])
   @@index([status, lastMessageAt])
   @@index([assigneeUserId, status])
   @@index([channel, status])
   @@index([contactId])
   @@index([familyId])
   @@index([unreadCount])
+  @@index([mailAccountId, status])
+  @@index([provider, channel])
 }
 
 enum ConversationStatus {
@@ -2421,9 +2438,11 @@ model MailAccount {
   updatedById String?
   deletedAt   DateTime?
 
-  team         Team?         @relation(fields: [teamId], references: [id])
-  gmailMailbox GmailMailbox? @relation(fields: [gmailMailboxId], references: [id])
-  members      MailAccountMember[]
+  team          Team?               @relation(fields: [teamId], references: [id])
+  gmailMailbox  GmailMailbox?       @relation(fields: [gmailMailboxId], references: [id])
+  members       MailAccountMember[]
+  /// ADR 0021 Phase 3a: Conversation heads belonging to this account.
+  conversations Conversation[]
 
   @@index([ownerUserId, deletedAt])
   @@index([ownerKind, status])

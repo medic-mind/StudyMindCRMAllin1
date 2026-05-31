@@ -75,7 +75,7 @@ export default async function ConversationDetailPage({
     <>
       <PageHeader
         title={head.contactName ?? 'Unmatched conversation'}
-        subtitle={`${channelLabel} · Ticket #${head.trengoTicketId} · ${head.status}`}
+        subtitle={`${channelLabel}${head.trengoTicketId !== null ? ` · Ticket #${head.trengoTicketId}` : ''} · ${head.status}`}
       />
       <PageBody>
         <LiveUpdates />
@@ -214,7 +214,7 @@ export default async function ConversationDetailPage({
         )}
 
         <div className="mt-6">
-          {head.contactId ? (
+          {head.contactId && head.trengoTicketId !== null ? (
             <>
               <AssignControl
                 conversationId={head.id}
@@ -230,10 +230,14 @@ export default async function ConversationDetailPage({
                 latestInteractionId={messages[messages.length - 1]?.id ?? null}
               />
             </>
-          ) : (
+          ) : !head.contactId ? (
             <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600">
               This conversation is not yet matched to a contact. Open it in
               Trengo to match a contact before replying from the CRM.
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600">
+              Reply from the email client (coming in ADR 0021 Phase 4).
             </div>
           )}
         </div>

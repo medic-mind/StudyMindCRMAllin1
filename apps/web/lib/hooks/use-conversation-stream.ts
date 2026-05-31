@@ -16,7 +16,8 @@ const RECONNECT_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 15_000] as const
 
 interface ConversationUpdatedPayload {
   id: string
-  trengoTicketId: number
+  /** Null for non-Trengo rows — ADR 0021 Phase 3a. */
+  trengoTicketId: number | null
   lastMessageAt: string | null
   contactId: string | null
 }
