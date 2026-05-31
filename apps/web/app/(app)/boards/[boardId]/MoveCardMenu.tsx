@@ -7,7 +7,8 @@
 
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
@@ -48,6 +49,30 @@ export function MoveCardMenu({
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
+  // Portal mounts to document.body so the popover escapes each card's
+  // per-stacking-context (@dnd-kit applies a CSS transform on every <li>
+  // which creates one). Coordinates pin to the trigger's bounding rect.
+  const [mounted, setMounted] = useState(false)
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return
+    function place() {
+      const rect = triggerRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setCoords({ top: rect.bottom + 4, left: rect.left })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true) // capture scrolls in any ancestor
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -132,57 +157,61 @@ export function MoveCardMenu({
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
-      {open ? (
-        <div
-          ref={panelRef}
-          role="menu"
-          aria-label="Move card to"
-          onClick={(e) => e.stopPropagation()}
-          className="absolute left-0 z-50 mt-1 max-h-72 w-60 overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-lg"
-        >
-          {sameBoardTargets.length > 0 && (
-            <>
-              <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                This board
-              </p>
-              {sameBoardTargets.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => pick(s.id)}
-                  className="block w-full px-3 py-1.5 text-left text-sm text-neutral-800 hover:bg-primary-50 hover:text-primary-800"
-                >
-                  {s.name}
-                </button>
+      {open && mounted && coords
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="menu"
+              aria-label="Move card to"
+              onClick={(e) => e.stopPropagation()}
+              style={{ position: 'fixed', top: coords.top, left: coords.left }}
+              className="z-[100] max-h-72 w-60 overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-lg"
+            >
+              {sameBoardTargets.length > 0 && (
+                <>
+                  <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    This board
+                  </p>
+                  {sameBoardTargets.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => pick(s.id)}
+                      className="block w-full px-3 py-1.5 text-left text-sm text-neutral-800 hover:bg-primary-50 hover:text-primary-800"
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </>
+              )}
+              {crossBoardTargets.map((g) => (
+                <div key={g.boardName}>
+                  <p className="mt-1 border-t border-neutral-100 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    {g.boardName}
+                  </p>
+                  {g.stages.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => pick(s.id)}
+                      className="block w-full px-3 py-1.5 text-left text-sm text-neutral-800 hover:bg-primary-50 hover:text-primary-800"
+                    >
+                      → {s.name}
+                    </button>
+                  ))}
+                </div>
               ))}
-            </>
-          )}
-          {crossBoardTargets.map((g) => (
-            <div key={g.boardName}>
-              <p className="mt-1 border-t border-neutral-100 px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                {g.boardName}
-              </p>
-              {g.stages.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => pick(s.id)}
-                  className="block w-full px-3 py-1.5 text-left text-sm text-neutral-800 hover:bg-primary-50 hover:text-primary-800"
-                >
-                  → {s.name}
-                </button>
-              ))}
-            </div>
-          ))}
-          {crossBoardTargets.length === 0 && crossBoardStages.length === 0 && (
-            <p className="border-t border-neutral-100 px-3 pt-2 text-[10px] text-neutral-400">
-              Create another board to enable cross-pipeline moves.
-            </p>
-          )}
-        </div>
-      ) : null}
+              {crossBoardTargets.length === 0 && crossBoardStages.length === 0 && (
+                <p className="border-t border-neutral-100 px-3 pt-2 text-[10px] text-neutral-400">
+                  Create another board to enable cross-pipeline moves.
+                </p>
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }

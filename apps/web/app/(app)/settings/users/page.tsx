@@ -138,16 +138,15 @@ export default async function UsersSettingsPage({
       )}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {/* status filter tabs */}
-        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Filter by status">
+        {/* status filters — navigation links, not an ARIA tab widget */}
+        <nav className="flex flex-wrap gap-1" aria-label="Filter by status">
           {FILTERS.map((f) => {
             const activeTab = f.key === status
             return (
               <Link
                 key={f.key}
                 href={tabHref(f.key)}
-                role="tab"
-                aria-selected={activeTab}
+                aria-current={activeTab ? 'page' : undefined}
                 className={`rounded-full px-3 py-1 text-xs font-medium ${
                   activeTab
                     ? 'bg-primary-600 text-white'
@@ -158,7 +157,7 @@ export default async function UsersSettingsPage({
               </Link>
             )
           })}
-        </div>
+        </nav>
 
         <form className="ml-auto flex gap-2" method="GET">
           {status !== 'all' && <input type="hidden" name="status" value={status} />}

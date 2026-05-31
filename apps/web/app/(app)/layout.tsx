@@ -51,7 +51,7 @@ function buildNav(role: Role): NavItem[] {
       label: 'Accounts',
       children: [
         { href: '/accounts?kind=school', label: 'Schools' },
-        { href: '/accounts?kind=partnership', label: 'Partnerships' },
+        { href: '/accounts?kind=partnership', label: 'B2B Partners' },
       ],
     },
     { href: '/boards', label: 'Boards' },

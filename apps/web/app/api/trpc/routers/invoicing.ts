@@ -17,6 +17,8 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { inngest } from '@studymind/jobs'
+
 import {
   InvoicingApiError,
   InvoicingReadOnlyError,
@@ -232,6 +234,35 @@ const configRouter = router({
       version: info.version ?? null,
       scopes: info.scopes ?? [],
     }
+  }),
+
+  /**
+   * Pull all historic B2B customers from the platform into real CRM
+   * School / B2B Partner accounts (deduped, auto-classified, tray-flagged when
+   * uncertain). Fires the idempotent Inngest backfill and returns immediately —
+   * the import runs in the background and the accounts appear as it progresses.
+   * CEO / Senior Manager only.
+   */
+  importAccounts: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertConfig(user.role)
+    const cfg = await loadInvoicingConfigStatus()
+    if (!cfg.configured) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Connect the invoicing API key first.',
+      })
+    }
+    await inngest.send({
+      name: 'invoicing/accounts.import.requested',
+      data: { actorId: user.id, requestId: ctx.requestId },
+    })
+    await ctx.audit({
+      action: 'invoicing.accounts_imported',
+      target: { type: 'InvoicingSetting', id: 'default' },
+      after: { triggered: true },
+    })
+    return { ok: true, queued: true }
   }),
 })
 

@@ -76,6 +76,8 @@ export const CardUpdateInput = z.object({
   assigneeId: z.string().nullish(),
   /** Due date; pass null to clear. */
   dueAt: z.date().nullish(),
+  /** Scheduled call date+time (CLAUDE.md §6.4); pass null to clear. */
+  scheduledCallAt: z.date().nullish(),
   /** Priority 1 (highest) – 4. Pass null to clear. */
   priority: z.number().int().min(1).max(4).nullish(),
 })

@@ -53,7 +53,7 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
         breadcrumbs={[
           { label: 'Accounts', href: '/accounts' },
           {
-            label: account.kind === 'school' ? 'Schools' : 'Partnerships',
+            label: account.kind === 'school' ? 'Schools' : 'B2B Partners',
             href: `/accounts?kind=${account.kind}`,
           },
           { label: account.name, href: `/accounts/${account.id}` },
