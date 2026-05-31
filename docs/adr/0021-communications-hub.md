@@ -1,6 +1,6 @@
 # ADR 0021 — Communications Hub (multi-account email operating system)
 
-- Status: Proposed (Phases 1–2 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam)
+- Status: Proposed (Phases 1–3 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam; email in the unified Conversation head)
 - Date: 2026-05-30
 - Supersedes: none
 - Related: ADR 0012 (Gmail OAuth), ADR 0017 (comprehensive customer view + backfill), ADR 0020 (CRM as the operational layer on top of Trengo), CLAUDE.md §14
@@ -107,12 +107,23 @@ bridge is materialised by `syncFromGmail`).
 
 ### Phase 3 — Unified inbox (email into the Conversation head)
 
-Generalise `Conversation` beyond Trengo (`provider` + nullable external ids,
-`mailAccountId`), upsert an email thread → conversation head on every synced
-message, and surface email alongside Trengo in the Communication Centre with the
-existing SSE transport. Auto-link to Lead/Contact/Family reuses the current
-many-to-many matcher; **unmatched mail creates a `Lead`, never a ghost Contact**
-(§11 rule, applied to email).
+- **3a (implemented).** Generalised `Conversation` beyond Trengo: `provider`,
+  `mailAccountId`, `externalThreadId`, nullable `trengoTicketId`, composite
+  unique `(provider, externalThreadId)`.
+- **3b (implemented).** `applyMailToConversation`
+  (`packages/core/src/mail/conversation-head.ts`, pure + db-port, reusable by
+  Outlook/IMAP) upserts an email-thread head keyed on
+  `(provider='email', externalThreadId=gmailThreadId)`. The Gmail sync
+  (`processMessage`) calls it on every synced message after writing the
+  `Interaction`, resolving the owning `MailAccount` via the `GmailMailbox`
+  bridge. Email heads surface in the Communication Centre list automatically
+  (it reads all heads by status) and the thread view renders email messages
+  joined on `payload.gmailThreadId`. Reuses the existing SSE transport
+  (`publishConversationUpdate`). Auto-link reuses the many-to-many matcher;
+  unmatched mail still records the head with a null contact (a ghost Contact is
+  never created — §11/§3). **Deferred:** a backfill to stamp `provider='trengo'`
+  on legacy rows so the column can go `NOT NULL`; replying to an email thread
+  from the Comms Centre (Phase 4 client).
 
 ### Phase 4 — Full email client
 

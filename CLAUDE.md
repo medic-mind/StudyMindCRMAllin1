@@ -419,11 +419,12 @@ are connectable today — we **fail closed** (§8): only `gmail` is connectable;
 rest advertise the roadmap and reject connection attempts.
 
 **Phased plan (ADR 0021):** (1) multi-account foundation — *implemented*;
-(2) `MailSyncProvider` seam + Gmail behind it; (3) email into the `Conversation`
-head + Communication Centre (unified inbox); (4) full `/mail` client; (5) two-way
-action sync (read/archive/label/delete/drafts both directions); (6) shared-inbox
-operations; (7) Outlook/Exchange/IMAP providers (own ADR for new deps); (8)
-templates, automations, analytics, calendar, unified channels.
+(2) `MailSyncProvider` seam + Gmail behind it — *implemented*; (3) email into the
+`Conversation` head + Communication Centre (unified inbox) — *implemented*;
+(4) full `/mail` client; (5) two-way action sync (read/archive/label/delete/drafts
+both directions); (6) shared-inbox operations; (7) Outlook/Exchange/IMAP providers
+(own ADR for new deps); (8) templates, automations, analytics, calendar, unified
+channels.
 
 ### Gmail provider specifics (live today)
 
@@ -1059,6 +1060,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Assign a Trengo conversation to a teammate from the CRM | tRPC `interaction.trengo.assign` (Manager+); outbound `assignConversation` resolves the target's `User.trengoUserId`, calls Trengo `assignTicket`, writes a `ticket_assigned` Interaction (`source: 'crm_outbound'`) + mirrors the head. Echo folded back by `linkCrmOutboundEcho`. Assignee picker `AssignControl.tsx` on the comms-centre thread; assignable users come from `interaction.trengo.assignableUsers` (only users with a Trengo identity). Stuck assignments recovered by the `trengo/retry-pending-send` cron. |
 | Triage the inbox | tRPC `inbox.list` takes `filter: all \| mine \| unassigned \| snoozed` and respects `inboxAssigneeId` / `inboxSnoozedUntil` on the Interaction payload. UI chips at `/inbox` (`apps/web/app/(app)/inbox/page.tsx`). |
 | Read the current state of a Trengo conversation | `Conversation` table (ADR 0020 Phase 2). Upserted by the webhook job and the CRM outbound (`packages/integrations/trengo/src/conversation-head.ts`). Indexed columns: status, lastMessageAt, assigneeUserId, channel, unreadCount, tags. Message bodies stay in `Interaction` — the head is a queryable state layer, not a copy. |
+| Surface an email thread in the unified inbox | `Conversation` head with `provider='email'`, keyed on `(provider, externalThreadId=gmailThreadId)`, optional `mailAccountId` (ADR 0021 Phase 3). Upserter `applyMailToConversation` (`packages/core/src/mail/conversation-head.ts`, pure + db-port, reusable by Outlook/IMAP) is called by the Gmail sync `processMessage` after writing the `email_received`/`email_sent` Interaction. Email heads list in the Comms Centre automatically; `inbox.conversations.get` joins email messages on `payload.gmailThreadId`. |
 | Backfill the Conversation head from historic Interactions | Admin trigger `admin.backfill.conversationHeads.start` (CEO + Senior Manager only) fires `migration/backfill-conversation-heads.requested`. Self-recursive Inngest function `packages/integrations/trengo/src/backfill-conversation-heads.ts` walks 1000 rows per invocation ordered by `(occurredAt, id)`, scheduling the next batch with a cursor. Idempotent — replays converge to the same state. Audit at start + completion only. |
 | Live conversation updates in the UI | SSE endpoint `apps/web/app/api/realtime/conversations/route.ts` (Node.js runtime, staff-gated). Event bus `packages/core/src/realtime/bus.ts` is published to by `applyEventToConversation` on every head change. Lazy-init Redis pub/sub when `REDIS_URL` is set (`packages/core/src/realtime/redis.ts`) so multi-instance Railway deploys see each other; in-process EventEmitter otherwise. Client hook `useConversationStream` (`apps/web/lib/hooks/use-conversation-stream.ts`) invalidates the comms-centre + per-contact channel + notifications queries. |
 | Aggregate Trengo tags on a contact | View-model `trengoTagsForContact` in `apps/web/lib/view-models/contact-channels.ts`; tRPC `contact.channels.trengoTags`. Reads `Conversation.tags` directly, returns the frequency-ordered unique set. Rendered as chips above the contact's Trengo section. |
