@@ -19,12 +19,7 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 // Canonical sales-CRM roles (ADR 0014).
-type Role =
-  | 'ceo'
-  | 'senior_manager'
-  | 'manager'
-  | 'sales_executive'
-  | 'virtual_assistant'
+type Role = 'ceo' | 'senior_manager' | 'manager' | 'sales_executive' | 'virtual_assistant'
 
 interface NavItemDef extends NavItem {
   /**
@@ -51,10 +46,10 @@ function buildNav(role: Role): NavItem[] {
     // "Messages" for customer messages).
     { href: '/messages', label: 'Team chat' },
     { href: '/leads', label: 'Leads' },
-    { href: '/contacts', label: 'Contacts' },
+    { href: '/contacts', label: 'B2C Customers' },
     {
       href: '/accounts',
-      label: 'Accounts',
+      label: 'B2B / Schools',
       children: [
         { href: '/accounts?kind=school', label: 'Schools' },
         { href: '/accounts?kind=partnership', label: 'B2B Partners' },
