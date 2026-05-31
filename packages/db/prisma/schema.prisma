@@ -1085,6 +1085,11 @@ model Conversation {
   /// WhatsApp 24-hour reply window deadline derived from the most recent
   /// inbound on a whatsapp conversation. Null otherwise.
   replyDeadlineAt  DateTime?
+  /// ADR 0020 Phase 6g — when a `snoozed` conversation should resurface into
+  /// the active inbox. The `trengo/unsnooze-due` cron flips status back to
+  /// `open` once this passes; a new inbound also resurfaces it immediately.
+  /// Null when not snoozed.
+  snoozedUntil     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

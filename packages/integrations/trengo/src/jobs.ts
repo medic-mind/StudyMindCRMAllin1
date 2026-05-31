@@ -293,6 +293,18 @@ export const trengoEventReceived = inngest.createFunction(
           label: envelope.data.label?.name ?? null,
         }),
       )
+
+      // ADR 0020 Phase 6g — a new inbound message resurfaces a snoozed
+      // conversation immediately (the customer replied; don't keep it
+      // hidden until the timer). Outbound/lifecycle events leave the snooze.
+      if (eventName === 'message.inbound') {
+        await step.run('resurface-on-inbound', async () =>
+          db.conversation.updateMany({
+            where: { trengoTicketId: envelope.data.ticket_id as number, status: 'snoozed' },
+            data: { status: 'open', snoozedUntil: null },
+          }),
+        )
+      }
     }
 
     await step.run('mark-processed', async () => {
@@ -657,11 +669,14 @@ import { trengoRetryPendingSend } from './retry-pending'
 // webhook carries an attachments array; idempotent on (interactionId,
 // attachmentId). Uploads via SSE:KMS to S3.
 import { trengoDownloadAttachments } from './attachments'
+// ADR 0020 Phase 6g: 5-minute cron that resurfaces due snoozed conversations.
+import { trengoUnsnoozeDue } from './snooze'
 
 export const FUNCTIONS = [
   trengoEventReceived,
   backfillConversationHeads,
   trengoRetryPendingSend,
   trengoDownloadAttachments,
+  trengoUnsnoozeDue,
   ...TRENGO_BACKFILL_FUNCTIONS,
 ] as const
