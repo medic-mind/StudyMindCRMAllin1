@@ -21,6 +21,8 @@ import { toast } from 'sonner'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Toolbar } from '@/components/ui/toolbar'
 import {
   ChevronRightIcon,
   MailIcon,
@@ -274,11 +276,18 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
     <div className="mt-4 space-y-3">
       {/* Bulk-actions bar — appears when at least one row is selected. */}
       {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-sm">
-          <span className="font-medium text-primary-800">
-            {selected.size} selected
-          </span>
-          <span className="text-neutral-400">·</span>
+        <Toolbar
+          label={`${selected.size} selected`}
+          clear={
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-xs font-medium text-primary-700 hover:underline"
+            >
+              Clear selection
+            </button>
+          }
+        >
           {canPush && (
             <Button
               type="button"
@@ -317,17 +326,10 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
               Delete
             </Button>
           )}
-          <button
-            type="button"
-            onClick={() => setSelected(new Set())}
-            className="ml-auto text-xs text-neutral-600 hover:underline"
-          >
-            Clear selection
-          </button>
-        </div>
+        </Toolbar>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-card">
+      <Card className="overflow-x-auto">
         {rows.length === 0 ? (
           <div className="px-10 py-14 text-center">
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-neutral-100">
@@ -528,7 +530,7 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
             </tbody>
           </table>
         )}
-      </div>
+      </Card>
 
       {nextCursor && (
         <div className="flex justify-end">
