@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import {
   ArchiveIcon,
   CheckIcon,
@@ -168,7 +169,7 @@ export function MailWorkspace({
   }, [items, selectedId, composing, showHelp, kbdAction, kbArchive, kbRead, kbStar, kbTrash])
 
   return (
-    <div className="flex h-[calc(100vh-9.5rem)] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+    <Card className="flex h-[calc(100vh-9.5rem)] overflow-hidden">
       <Rail
         accounts={accounts}
         accountId={accountId}
@@ -274,7 +275,7 @@ export function MailWorkspace({
         <ComposeModal accounts={accounts} onClose={() => setComposing(false)} />
       ) : null}
       {showHelp ? <ShortcutsHelp onClose={() => setShowHelp(false)} /> : null}
-    </div>
+    </Card>
   )
 }
 

@@ -16,6 +16,7 @@ import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import {
   ActivityIcon,
   CoinsIcon,
@@ -78,7 +79,7 @@ function SectionCard({
   children: ReactNode
 }): JSX.Element {
   return (
-    <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card transition-shadow hover:shadow-card-hover">
+    <Card className="overflow-hidden transition-shadow hover:shadow-card-hover">
       <div className="flex items-center justify-between gap-2 border-b border-neutral-100 bg-gradient-to-b from-neutral-50/60 to-white px-4 py-3">
         <h2
           id={id}
@@ -95,7 +96,7 @@ function SectionCard({
         {action}
       </div>
       <div className="p-4">{children}</div>
-    </section>
+    </Card>
   )
 }
 
@@ -437,7 +438,7 @@ export default async function ContactDetailPage({
             </div>
           )}
 
-          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+          <Card className="overflow-hidden">
             {/* Identity group */}
             <div className="border-b border-neutral-100 p-4">
               <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
@@ -595,7 +596,7 @@ export default async function ContactDetailPage({
                 </DetailRow>
               </dl>
             </div>
-          </div>
+          </Card>
         </aside>
       </div>
     </div>

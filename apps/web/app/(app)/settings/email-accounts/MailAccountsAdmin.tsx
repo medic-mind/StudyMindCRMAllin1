@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -282,7 +283,7 @@ export function MailAccountsAdmin({ canManage, meId }: { canManage: boolean; meI
       ) : null}
 
       {/* Accounts list */}
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+      <Card className="overflow-hidden">
         {rows.length === 0 ? (
           <p className="p-6 text-sm text-neutral-500">
             No mail accounts yet. Import your connected Gmail above to get started.
@@ -354,7 +355,7 @@ export function MailAccountsAdmin({ canManage, meId }: { canManage: boolean; meI
             })}
           </ul>
         )}
-      </div>
+      </Card>
     </div>
   )
 }
