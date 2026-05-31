@@ -91,6 +91,14 @@ const GROUPS: Group[] = [
         icon: <MailIcon size={16} />,
       },
       {
+        href: '/settings/quick-replies',
+        title: 'Quick replies',
+        description:
+          'Canned responses agents insert into a conversation reply. Personalise with {{first_name}} / {{name}}.',
+        roles: 'Manager+',
+        icon: <MailIcon size={16} />,
+      },
+      {
         href: '/settings/board-quick-actions',
         title: 'Board quick actions',
         description:

@@ -17,10 +17,24 @@ interface Props {
   contactId: string
   ticketId: number
   status: 'open' | 'closed' | 'snoozed' | 'archived'
+  /** Channel of the conversation — filters which quick replies apply. */
+  channel: string | null
+  /** Contact display name — used to substitute {{first_name}} / {{name}}
+   *  in a quick reply at insert time. */
+  contactName: string | null
   /** Seed for the reply — we tell the server which inbound to thread
    *  against. Null when there are no messages yet (rare; we still allow
    *  the send to create the first outbound). */
   latestInteractionId: string | null
+}
+
+/** Substitute the supported placeholders with the contact's details. */
+function applyPlaceholders(body: string, contactName: string | null): string {
+  const name = contactName?.trim() ?? ''
+  const firstName = name.split(/\s+/)[0] ?? ''
+  return body
+    .replace(/\{\{\s*first_name\s*\}\}/gi, firstName)
+    .replace(/\{\{\s*name\s*\}\}/gi, name)
 }
 
 export function ConversationReply({
@@ -28,11 +42,23 @@ export function ConversationReply({
   contactId,
   ticketId,
   status,
+  channel,
+  contactName,
   latestInteractionId,
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
   const [body, setBody] = useState('')
+
+  const quickReplies = trpc.quickReply.list.useQuery(
+    channel ? { channel: channel as 'whatsapp' | 'sms' | 'email' | 'web_chat' } : undefined,
+    { staleTime: 5 * 60_000, retry: false },
+  )
+
+  const insertQuickReply = (replyBody: string) => {
+    const text = applyPlaceholders(replyBody, contactName)
+    setBody((cur) => (cur.trim() ? `${cur}\n${text}` : text))
+  }
 
   const send = trpc.interaction.trengo.reply.useMutation({
     onSuccess: () => {
@@ -66,10 +92,33 @@ export function ConversationReply({
 
   return (
     <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-      <label className="flex flex-col gap-1 text-sm">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
           Reply
         </span>
+        {(quickReplies.data?.length ?? 0) > 0 ? (
+          <select
+            defaultValue=""
+            onChange={(e) => {
+              const qr = quickReplies.data?.find((q) => q.id === e.target.value)
+              if (qr) insertQuickReply(qr.body)
+              e.currentTarget.value = ''
+            }}
+            className="max-w-[14rem] rounded border border-neutral-300 bg-white px-2 py-1 text-xs"
+            aria-label="Insert a quick reply"
+          >
+            <option value="" disabled>
+              Quick reply…
+            </option>
+            {quickReplies.data!.map((q) => (
+              <option key={q.id} value={q.id}>
+                {q.title}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
+      <label className="flex flex-col gap-1 text-sm">
         <textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}

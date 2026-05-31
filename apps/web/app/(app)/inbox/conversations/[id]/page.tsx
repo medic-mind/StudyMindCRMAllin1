@@ -260,6 +260,8 @@ export default async function ConversationDetailPage({
                 contactId={head.contactId}
                 ticketId={head.trengoTicketId}
                 status={head.status}
+                channel={head.channel}
+                contactName={head.contactName}
                 latestInteractionId={messages[messages.length - 1]?.id ?? null}
               />
             </>
