@@ -94,7 +94,9 @@ export const trengoEventReceived = inngest.createFunction(
     if (
       eventName === 'ticket.closed' ||
       eventName === 'ticket.reopened' ||
-      eventName === 'ticket.assigned'
+      eventName === 'ticket.assigned' ||
+      eventName === 'label.added' ||
+      eventName === 'label.removed'
     ) {
       const ticketId = envelope.data.ticket_id
       if (typeof ticketId === 'number') {
@@ -103,12 +105,23 @@ export const trengoEventReceived = inngest.createFunction(
             ? 'ticket_closed'
             : eventName === 'ticket.reopened'
               ? 'ticket_reopened'
-              : 'ticket_assigned'
+              : eventName === 'ticket.assigned'
+                ? 'ticket_assigned'
+                : eventName === 'label.added'
+                  ? 'label_added'
+                  : 'label_removed'
+        // Label echoes must also match the label name — two different labels
+        // added in the same window must not collapse onto one row.
+        const labelName =
+          eventName === 'label.added' || eventName === 'label.removed'
+            ? (envelope.data.label?.name ?? null)
+            : null
         const linked = await step.run('echo-skip-state', async () =>
           linkCrmOutboundEcho({
             ticketId,
             interactionType: echoType,
             trengoEventId: eventId,
+            labelName,
           }),
         )
         if (linked) {
@@ -307,8 +320,16 @@ export const CRM_OUTBOUND_ECHO_WINDOW_MS = 5 * 60 * 1000
 
 interface LinkEchoInput {
   ticketId: number
-  interactionType: 'ticket_closed' | 'ticket_reopened' | 'ticket_assigned'
+  interactionType:
+    | 'ticket_closed'
+    | 'ticket_reopened'
+    | 'ticket_assigned'
+    | 'label_added'
+    | 'label_removed'
   trengoEventId: string
+  /** For label echoes — the label name must also match so two different
+   *  labels changed in the same window do not collapse onto one row. */
+  labelName?: string | null
 }
 
 /**
@@ -327,6 +348,9 @@ async function linkCrmOutboundEcho(input: LinkEchoInput): Promise<string | null>
       AND: [
         { payload: { path: ['ticketId'], equals: input.ticketId } },
         { payload: { path: ['source'], equals: 'crm_outbound' } },
+        ...(input.labelName
+          ? [{ payload: { path: ['label'], equals: input.labelName } }]
+          : []),
       ],
     },
     orderBy: { occurredAt: 'desc' },
