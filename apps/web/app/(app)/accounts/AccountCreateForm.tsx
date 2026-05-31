@@ -57,7 +57,7 @@ export function AccountCreateForm({ kind, onClose, onCreated }: Props) {
         country: country.trim() || undefined,
         description: description.trim() || undefined,
       })
-      toast.success(`${kind === 'school' ? 'School' : 'Partnership'} created`)
+      toast.success(`${kind === 'school' ? 'School' : 'B2B Partner'} created`)
       onCreated(result.id)
       router.refresh()
     } catch (e) {
@@ -74,7 +74,7 @@ export function AccountCreateForm({ kind, onClose, onCreated }: Props) {
     >
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-neutral-900">
-          New {kind === 'school' ? 'school' : 'partnership'}
+          New {kind === 'school' ? 'school' : 'B2B partner'}
         </h3>
         <button
           type="button"
@@ -129,11 +129,7 @@ export function AccountCreateForm({ kind, onClose, onCreated }: Props) {
       </div>
 
       <Field label="Description (optional)">
-        <Textarea
-          rows={2}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
+        <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
 
       <div className="flex flex-wrap items-center gap-2 pt-1">

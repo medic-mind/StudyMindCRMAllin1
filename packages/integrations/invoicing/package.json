@@ -13,7 +13,9 @@
     "./config": "./src/config.ts",
     "./adapter": "./src/adapter.ts",
     "./sync": "./src/sync.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./classify-account": "./src/classify-account.ts",
+    "./import-accounts": "./src/import-accounts.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

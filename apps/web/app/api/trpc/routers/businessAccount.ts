@@ -28,11 +28,7 @@ import {
   type UserRole,
 } from '@/lib/trpc/builders'
 
-const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
-  'ceo',
-  'senior_manager',
-  'manager',
-])
+const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['ceo', 'senior_manager', 'manager'])
 
 function assertCanManage(role: UserRole): void {
   if (!MANAGE_ROLES.has(role)) {
@@ -259,125 +255,119 @@ const studentsRouter = router({
       }))
     }),
 
-  create: auditedProcedure
-    .input(StudentCreateInput)
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      const account = await ctx.db.businessAccount.findUnique({
-        where: { id: input.accountId },
-        select: { id: true },
-      })
-      if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
-      const id = createId()
-      const row = await ctx.db.businessAccountStudent.create({
-        data: {
-          id,
-          accountId: input.accountId,
-          firstName: input.firstName,
-          lastName: input.lastName ?? null,
-          yearGroup: input.yearGroup ?? null,
-          dateOfBirth: input.dateOfBirth ?? null,
-          program: input.program ?? null,
-          hoursContracted: input.hoursContracted ?? null,
-          hoursDelivered: input.hoursDelivered ?? null,
-          startDate: input.startDate ?? null,
-          endDate: input.endDate ?? null,
-          status: input.status ?? 'active',
-          subjects: input.subjects ?? null,
-          notes: input.notes ?? null,
-          bookingStudentId: input.bookingStudentId ?? null,
-          createdById: user.id,
-          updatedById: user.id,
-        },
-      })
-      await ctx.audit({
-        action: 'business_account.student_added',
-        target: { type: 'BusinessAccount', id: input.accountId },
-        after: {
-          studentId: row.id,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          program: row.program,
-        },
-      })
-      return { id: row.id }
-    }),
+  create: auditedProcedure.input(StudentCreateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const account = await ctx.db.businessAccount.findUnique({
+      where: { id: input.accountId },
+      select: { id: true },
+    })
+    if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
+    const id = createId()
+    const row = await ctx.db.businessAccountStudent.create({
+      data: {
+        id,
+        accountId: input.accountId,
+        firstName: input.firstName,
+        lastName: input.lastName ?? null,
+        yearGroup: input.yearGroup ?? null,
+        dateOfBirth: input.dateOfBirth ?? null,
+        program: input.program ?? null,
+        hoursContracted: input.hoursContracted ?? null,
+        hoursDelivered: input.hoursDelivered ?? null,
+        startDate: input.startDate ?? null,
+        endDate: input.endDate ?? null,
+        status: input.status ?? 'active',
+        subjects: input.subjects ?? null,
+        notes: input.notes ?? null,
+        bookingStudentId: input.bookingStudentId ?? null,
+        createdById: user.id,
+        updatedById: user.id,
+      },
+    })
+    await ctx.audit({
+      action: 'business_account.student_added',
+      target: { type: 'BusinessAccount', id: input.accountId },
+      after: {
+        studentId: row.id,
+        firstName: row.firstName,
+        lastName: row.lastName,
+        program: row.program,
+      },
+    })
+    return { id: row.id }
+  }),
 
-  update: auditedProcedure
-    .input(StudentUpdateInput)
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      const before = await ctx.db.businessAccountStudent.findUnique({
-        where: { id: input.id },
-        select: {
-          id: true,
-          accountId: true,
-          firstName: true,
-          lastName: true,
-          status: true,
-          hoursContracted: true,
-          hoursDelivered: true,
-        },
-      })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      const after = await ctx.db.businessAccountStudent.update({
-        where: { id: input.id },
-        data: {
-          ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
-          lastName: input.lastName,
-          yearGroup: input.yearGroup,
-          dateOfBirth: input.dateOfBirth,
-          program: input.program,
-          hoursContracted: input.hoursContracted,
-          hoursDelivered: input.hoursDelivered,
-          startDate: input.startDate,
-          endDate: input.endDate,
-          ...(input.status !== undefined ? { status: input.status } : {}),
-          subjects: input.subjects,
-          notes: input.notes,
-          bookingStudentId: input.bookingStudentId,
-          updatedById: user.id,
-        },
-      })
-      await ctx.audit({
-        action: 'business_account.student_updated',
-        target: { type: 'BusinessAccount', id: before.accountId },
-        before,
-        after: {
-          studentId: after.id,
-          firstName: after.firstName,
-          lastName: after.lastName,
-          status: after.status,
-          hoursContracted: after.hoursContracted,
-          hoursDelivered: after.hoursDelivered,
-        },
-      })
-      return { id: after.id }
-    }),
+  update: auditedProcedure.input(StudentUpdateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const before = await ctx.db.businessAccountStudent.findUnique({
+      where: { id: input.id },
+      select: {
+        id: true,
+        accountId: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        hoursContracted: true,
+        hoursDelivered: true,
+      },
+    })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    const after = await ctx.db.businessAccountStudent.update({
+      where: { id: input.id },
+      data: {
+        ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
+        lastName: input.lastName,
+        yearGroup: input.yearGroup,
+        dateOfBirth: input.dateOfBirth,
+        program: input.program,
+        hoursContracted: input.hoursContracted,
+        hoursDelivered: input.hoursDelivered,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        subjects: input.subjects,
+        notes: input.notes,
+        bookingStudentId: input.bookingStudentId,
+        updatedById: user.id,
+      },
+    })
+    await ctx.audit({
+      action: 'business_account.student_updated',
+      target: { type: 'BusinessAccount', id: before.accountId },
+      before,
+      after: {
+        studentId: after.id,
+        firstName: after.firstName,
+        lastName: after.lastName,
+        status: after.status,
+        hoursContracted: after.hoursContracted,
+        hoursDelivered: after.hoursDelivered,
+      },
+    })
+    return { id: after.id }
+  }),
 
-  archive: auditedProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      const before = await ctx.db.businessAccountStudent.findUnique({
-        where: { id: input.id },
-        select: { id: true, accountId: true, firstName: true, lastName: true },
-      })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      await ctx.db.businessAccountStudent.update({
-        where: { id: input.id },
-        data: { archivedAt: new Date(), updatedById: user.id },
-      })
-      await ctx.audit({
-        action: 'business_account.student_archived',
-        target: { type: 'BusinessAccount', id: before.accountId },
-        before,
-      })
-      return { id: input.id }
-    }),
+  archive: auditedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const before = await ctx.db.businessAccountStudent.findUnique({
+      where: { id: input.id },
+      select: { id: true, accountId: true, firstName: true, lastName: true },
+    })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    await ctx.db.businessAccountStudent.update({
+      where: { id: input.id },
+      data: { archivedAt: new Date(), updatedById: user.id },
+    })
+    await ctx.audit({
+      action: 'business_account.student_archived',
+      target: { type: 'BusinessAccount', id: before.accountId },
+      before,
+    })
+    return { id: input.id }
+  }),
 
   /**
    * Stub for the booking.studymind.co.uk sync — wired in a follow-up PR.
@@ -549,127 +539,233 @@ export const businessAccountRouter = router({
     }),
 
   /** Detail view-model. Lists linked contacts with their roles. */
-  get: protectedProcedure
-    .input(z.object({ id: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const a = await ctx.db.businessAccount.findUnique({
-        where: { id: input.id },
-        include: {
-          contacts: {
-            include: {
-              contact: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  phoneE164: true,
-                  jobTitle: true,
-                  kind: true,
-                },
+  get: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+    const a = await ctx.db.businessAccount.findUnique({
+      where: { id: input.id },
+      include: {
+        contacts: {
+          include: {
+            contact: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneE164: true,
+                jobTitle: true,
+                kind: true,
               },
             },
-            orderBy: { createdAt: 'asc' },
           },
-          companies: {
-            include: {
-              company: { select: { id: true, name: true, slug: true, color: true } },
-            },
+          orderBy: { createdAt: 'asc' },
+        },
+        companies: {
+          include: {
+            company: { select: { id: true, name: true, slug: true, color: true } },
           },
         },
+      },
+    })
+    if (!a) throw new TRPCError({ code: 'NOT_FOUND' })
+    return {
+      id: a.id,
+      kind: a.kind,
+      name: a.name,
+      slug: a.slug,
+      color: a.color,
+      description: a.description,
+      status: a.status,
+      contactEmail: a.contactEmail,
+      contactPhone: a.contactPhone,
+      website: a.website,
+      addressLine1: a.addressLine1,
+      addressLine2: a.addressLine2,
+      city: a.city,
+      postcode: a.postcode,
+      country: a.country,
+      notes: a.notes,
+      archived: a.archivedAt != null,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
+      contacts: a.contacts.map((link) => ({
+        contactId: link.contactId,
+        role: link.role,
+        firstName: link.contact.firstName,
+        lastName: link.contact.lastName,
+        email: link.contact.email,
+        phoneE164: link.contact.phoneE164,
+        jobTitle: link.contact.jobTitle,
+        kind: link.contact.kind,
+      })),
+      companies: a.companies.map((link) => ({
+        id: link.company.id,
+        name: link.company.name,
+        slug: link.company.slug,
+        color: link.company.color,
+      })),
+    }
+  }),
+
+  create: auditedProcedure.input(CreateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const slug = input.slug ?? slugify(input.name)
+    if (!slug) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Could not derive a slug' })
+    }
+    const id = createId()
+    try {
+      const created = await ctx.db.businessAccount.create({
+        data: {
+          id,
+          kind: input.kind,
+          name: input.name,
+          slug,
+          color: input.color ?? null,
+          description: input.description ?? null,
+          status: input.status ?? 'prospect',
+          contactEmail: emptyToNull(input.contactEmail) ?? null,
+          contactPhone: input.contactPhone ?? null,
+          website: emptyToNull(input.website) ?? null,
+          addressLine1: input.addressLine1 ?? null,
+          addressLine2: input.addressLine2 ?? null,
+          city: input.city ?? null,
+          postcode: input.postcode ?? null,
+          country: input.country ?? null,
+          notes: input.notes ?? null,
+          createdById: user.id,
+          updatedById: user.id,
+        },
       })
-      if (!a) throw new TRPCError({ code: 'NOT_FOUND' })
-      return {
+      await ctx.audit({
+        action: 'business_account.created',
+        target: { type: 'BusinessAccount', id: created.id },
+        after: created,
+      })
+      return { id: created.id }
+    } catch (err) {
+      if (err instanceof Error && /Unique.*slug/i.test(err.message)) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'A B2B account with that slug already exists for this kind.',
+        })
+      }
+      throw err
+    }
+  }),
+
+  update: auditedProcedure.input(UpdateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const before = await ctx.db.businessAccount.findUnique({ where: { id: input.id } })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    const after = await ctx.db.businessAccount.update({
+      where: { id: input.id },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.slug !== undefined ? { slug: input.slug } : {}),
+        color: input.color,
+        description: input.description,
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.contactEmail !== undefined
+          ? { contactEmail: emptyToNull(input.contactEmail) }
+          : {}),
+        ...(input.contactPhone !== undefined ? { contactPhone: input.contactPhone } : {}),
+        ...(input.website !== undefined ? { website: emptyToNull(input.website) } : {}),
+        ...(input.addressLine1 !== undefined ? { addressLine1: input.addressLine1 } : {}),
+        ...(input.addressLine2 !== undefined ? { addressLine2: input.addressLine2 } : {}),
+        ...(input.city !== undefined ? { city: input.city } : {}),
+        ...(input.postcode !== undefined ? { postcode: input.postcode } : {}),
+        ...(input.country !== undefined ? { country: input.country } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        updatedById: user.id,
+      },
+    })
+    await ctx.audit({
+      action: 'business_account.updated',
+      target: { type: 'BusinessAccount', id: after.id },
+      before,
+      after,
+    })
+    return { id: after.id }
+  }),
+
+  archive: auditedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const before = await ctx.db.businessAccount.findUnique({ where: { id: input.id } })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    const after = await ctx.db.businessAccount.update({
+      where: { id: input.id },
+      data: { archivedAt: new Date(), updatedById: user.id },
+    })
+    await ctx.audit({
+      action: 'business_account.archived',
+      target: { type: 'BusinessAccount', id: after.id },
+      before,
+      after,
+    })
+    return { id: after.id }
+  }),
+
+  restore: auditedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const before = await ctx.db.businessAccount.findUnique({ where: { id: input.id } })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    const after = await ctx.db.businessAccount.update({
+      where: { id: input.id },
+      data: { archivedAt: null, updatedById: user.id },
+    })
+    await ctx.audit({
+      action: 'business_account.restored',
+      target: { type: 'BusinessAccount', id: after.id },
+      before,
+      after,
+    })
+    return { id: after.id }
+  }),
+
+  // ---------------------------------------------------------------------------
+  // Unsorted tray (B2B Invoices Platform backfill). Accounts imported from the
+  // invoicing platform that the auto-classifier could not confidently file land
+  // here with one-click "Class as School / Class as B2B Partner" buttons.
+  // ---------------------------------------------------------------------------
+
+  /** Count of accounts awaiting classification (drives the tray badge). */
+  unsortedCount: protectedProcedure.query(async ({ ctx }) => {
+    return ctx.db.businessAccount.count({
+      where: { needsClassification: true, archivedAt: null },
+    })
+  }),
+
+  /** List accounts awaiting classification, with the classifier's rationale. */
+  unsortedList: protectedProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).default(100) }).default({}))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.businessAccount.findMany({
+        where: { needsClassification: true, archivedAt: null },
+        orderBy: [{ createdAt: 'desc' }],
+        take: input.limit,
+      })
+      return rows.map((a) => ({
         id: a.id,
-        kind: a.kind,
         name: a.name,
-        slug: a.slug,
-        color: a.color,
-        description: a.description,
-        status: a.status,
+        kind: a.kind,
         contactEmail: a.contactEmail,
         contactPhone: a.contactPhone,
-        website: a.website,
-        addressLine1: a.addressLine1,
-        addressLine2: a.addressLine2,
         city: a.city,
-        postcode: a.postcode,
         country: a.country,
-        notes: a.notes,
-        archived: a.archivedAt != null,
+        classificationReason: a.classificationReason,
+        classificationConfidence: a.classificationConfidence,
         createdAt: a.createdAt,
-        updatedAt: a.updatedAt,
-        contacts: a.contacts.map((link) => ({
-          contactId: link.contactId,
-          role: link.role,
-          firstName: link.contact.firstName,
-          lastName: link.contact.lastName,
-          email: link.contact.email,
-          phoneE164: link.contact.phoneE164,
-          jobTitle: link.contact.jobTitle,
-          kind: link.contact.kind,
-        })),
-        companies: a.companies.map((link) => ({
-          id: link.company.id,
-          name: link.company.name,
-          slug: link.company.slug,
-          color: link.company.color,
-        })),
-      }
+      }))
     }),
 
-  create: auditedProcedure
-    .input(CreateInput)
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      const slug = input.slug ?? slugify(input.name)
-      if (!slug) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Could not derive a slug' })
-      }
-      const id = createId()
-      try {
-        const created = await ctx.db.businessAccount.create({
-          data: {
-            id,
-            kind: input.kind,
-            name: input.name,
-            slug,
-            color: input.color ?? null,
-            description: input.description ?? null,
-            status: input.status ?? 'prospect',
-            contactEmail: emptyToNull(input.contactEmail) ?? null,
-            contactPhone: input.contactPhone ?? null,
-            website: emptyToNull(input.website) ?? null,
-            addressLine1: input.addressLine1 ?? null,
-            addressLine2: input.addressLine2 ?? null,
-            city: input.city ?? null,
-            postcode: input.postcode ?? null,
-            country: input.country ?? null,
-            notes: input.notes ?? null,
-            createdById: user.id,
-            updatedById: user.id,
-          },
-        })
-        await ctx.audit({
-          action: 'business_account.created',
-          target: { type: 'BusinessAccount', id: created.id },
-          after: created,
-        })
-        return { id: created.id }
-      } catch (err) {
-        if (err instanceof Error && /Unique.*slug/i.test(err.message)) {
-          throw new TRPCError({
-            code: 'CONFLICT',
-            message: 'A B2B account with that slug already exists for this kind.',
-          })
-        }
-        throw err
-      }
-    }),
-
-  update: auditedProcedure
-    .input(UpdateInput)
+  /** One-click classify: set the kind and clear the needs-classification flag.
+   *  Manager+ (same tier as other account writes). */
+  classify: auditedProcedure
+    .input(z.object({ id: z.string(), kind: KindEnum }))
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       assertCanManage(user.role)
@@ -678,24 +774,9 @@ export const businessAccountRouter = router({
       const after = await ctx.db.businessAccount.update({
         where: { id: input.id },
         data: {
-          ...(input.name !== undefined ? { name: input.name } : {}),
-          ...(input.slug !== undefined ? { slug: input.slug } : {}),
-          color: input.color,
-          description: input.description,
-          ...(input.status !== undefined ? { status: input.status } : {}),
-          ...(input.contactEmail !== undefined
-            ? { contactEmail: emptyToNull(input.contactEmail) }
-            : {}),
-          ...(input.contactPhone !== undefined ? { contactPhone: input.contactPhone } : {}),
-          ...(input.website !== undefined
-            ? { website: emptyToNull(input.website) }
-            : {}),
-          ...(input.addressLine1 !== undefined ? { addressLine1: input.addressLine1 } : {}),
-          ...(input.addressLine2 !== undefined ? { addressLine2: input.addressLine2 } : {}),
-          ...(input.city !== undefined ? { city: input.city } : {}),
-          ...(input.postcode !== undefined ? { postcode: input.postcode } : {}),
-          ...(input.country !== undefined ? { country: input.country } : {}),
-          ...(input.notes !== undefined ? { notes: input.notes } : {}),
+          kind: input.kind,
+          needsClassification: false,
+          classificationReason: `classified by ${user.id}`,
           updatedById: user.id,
         },
       })
@@ -705,47 +786,7 @@ export const businessAccountRouter = router({
         before,
         after,
       })
-      return { id: after.id }
-    }),
-
-  archive: auditedProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      const before = await ctx.db.businessAccount.findUnique({ where: { id: input.id } })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      const after = await ctx.db.businessAccount.update({
-        where: { id: input.id },
-        data: { archivedAt: new Date(), updatedById: user.id },
-      })
-      await ctx.audit({
-        action: 'business_account.archived',
-        target: { type: 'BusinessAccount', id: after.id },
-        before,
-        after,
-      })
-      return { id: after.id }
-    }),
-
-  restore: auditedProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      const before = await ctx.db.businessAccount.findUnique({ where: { id: input.id } })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      const after = await ctx.db.businessAccount.update({
-        where: { id: input.id },
-        data: { archivedAt: null, updatedById: user.id },
-      })
-      await ctx.audit({
-        action: 'business_account.restored',
-        target: { type: 'BusinessAccount', id: after.id },
-        before,
-        after,
-      })
-      return { id: after.id }
+      return { id: after.id, kind: after.kind }
     }),
 
   contacts: contactsRouter,

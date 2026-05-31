@@ -48,13 +48,7 @@ const STATUS_TONE: Record<Status, string> = {
   churned: 'bg-red-50 text-red-700 ring-1 ring-red-200',
 }
 
-export function AccountsList({
-  kind,
-  accounts,
-}: {
-  kind: Kind
-  accounts: AccountRow[]
-}) {
+export function AccountsList({ kind, accounts }: { kind: Kind; accounts: AccountRow[] }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [creating, setCreating] = useState(false)
@@ -104,7 +98,7 @@ export function AccountsList({
         </div>
         {!creating && (
           <Button type="button" size="sm" onClick={() => setCreating(true)}>
-            New {kind === 'school' ? 'school' : 'partnership'}
+            New {kind === 'school' ? 'school' : 'B2B partner'}
           </Button>
         )}
       </div>
@@ -122,8 +116,9 @@ export function AccountsList({
 
       {accounts.length === 0 ? (
         <p className="text-sm text-neutral-600">
-          No {kind === 'school' ? 'schools' : 'partnerships'} yet — start by
-          clicking <em>New {kind === 'school' ? 'school' : 'partnership'}</em>.
+          No {kind === 'school' ? 'schools' : 'B2B partners'} yet — start by clicking{' '}
+          <em>New {kind === 'school' ? 'school' : 'B2B partner'}</em>, or pull existing customers
+          from the invoicing platform in <em>Settings → Invoicing</em>.
         </p>
       ) : (
         <ul className="space-y-2">

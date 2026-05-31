@@ -48,8 +48,20 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
 
   const save = trpc.invoicing.config.save.useMutation()
   const test = trpc.invoicing.config.test.useMutation()
+  const importAccounts = trpc.invoicing.config.importAccounts.useMutation()
 
   const [testResult, setTestResult] = useState<string | null>(null)
+
+  async function handleImport() {
+    try {
+      await importAccounts.mutateAsync()
+      toast.success(
+        'Import started — schools and B2B partners will appear in Accounts over the next minute.',
+      )
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start import')
+    }
+  }
 
   // The webhook receiver URL is this CRM's own origin + the route path. We read
   // it from the browser so it is always correct for whatever domain the app is
@@ -155,10 +167,23 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
           >
             {test.isPending ? 'Testing…' : 'Send test event'}
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={importAccounts.isPending || !data.configured}
+            onClick={handleImport}
+          >
+            {importAccounts.isPending ? 'Starting…' : 'Pull historic data'}
+          </Button>
           {testResult && (
             <span className="font-mono text-[11px] text-neutral-600">{testResult}</span>
           )}
         </div>
+        <p className="mt-2 text-xs text-neutral-500">
+          “Pull historic data” imports every B2B customer from the invoicing platform as a School or
+          B2B Partner account. Safe to run more than once — it never creates duplicates. Anything it
+          can’t auto-classify lands in the Unsorted tray on the Accounts page.
+        </p>
       </div>
 
       {/* Credentials */}
@@ -239,9 +264,9 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
           Webhook receiver
         </h3>
         <p className="mt-2 text-sm text-neutral-600">
-          In the invoicing platform → Settings → API &amp; Integrations → Add webhook, set the
-          URL to this CRM&rsquo;s receiver and subscribe to <span className="font-mono">*</span>{' '}
-          (all topics):
+          In the invoicing platform → Settings → API &amp; Integrations → Add webhook, set the URL
+          to this CRM&rsquo;s receiver and subscribe to <span className="font-mono">*</span> (all
+          topics):
         </p>
         <div className="mt-2 flex items-center gap-2">
           <code className="block flex-1 rounded bg-white px-3 py-2 font-mono text-xs text-neutral-800 ring-1 ring-neutral-200">
@@ -252,10 +277,10 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
           </Button>
         </div>
         <p className="mt-3 text-xs text-neutral-500">
-          When you save that webhook, the platform generates a signing secret
-          (<span className="font-mono">whsec_…</span>) and shows it to you once. Copy it and
-          paste it into the <strong>Webhook secret</strong> field above, then Save. You
-          don&rsquo;t create the secret yourself — it comes from them.
+          When you save that webhook, the platform generates a signing secret (
+          <span className="font-mono">whsec_…</span>) and shows it to you once. Copy it and paste it
+          into the <strong>Webhook secret</strong> field above, then Save. You don&rsquo;t create
+          the secret yourself — it comes from them.
         </p>
       </div>
     </div>
