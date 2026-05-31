@@ -110,20 +110,15 @@ export default async function ConversationsPage({
             whenever a webhook lands or the CRM itself updates the head.
             Renders nothing visible. */}
         <LiveUpdates />
-        {/* Sub-nav between Messages list and Conversations head list. Keeps
-            the existing /inbox stable and makes the new head discoverable. */}
+        {/* One customer inbox. The legacy raw-message list was collapsed into
+            this head-backed view; the only sibling is the field-edit review
+            queue. */}
         <nav
           aria-label="Inbox view"
           className="mb-3 flex flex-wrap items-center gap-1"
         >
           <Link
             href="/inbox"
-            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
-          >
-            Messages
-          </Link>
-          <Link
-            href="/inbox/conversations"
             aria-current="page"
             className="rounded-md bg-primary-600 px-2.5 py-1 text-xs font-medium text-white"
           >

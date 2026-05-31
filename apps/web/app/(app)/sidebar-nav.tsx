@@ -15,12 +15,14 @@ import {
   BuildingIcon,
   CoinsIcon,
   GitBranchIcon,
+  HashIcon,
   HomeIcon,
   InboxIcon,
   ListTodoIcon,
-  MessageSquareIcon,
+  MailIcon,
   SettingsIcon,
   UserCircleIcon,
+  UserPlusIcon,
   UsersIcon,
 } from '@/components/ui/icon'
 
@@ -61,9 +63,13 @@ type IconComp = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>
 
 const ICONS: Record<string, IconComp> = {
   '/': HomeIcon,
+  // Communications — customer channels.
   '/inbox': InboxIcon,
-  '/messages': MessageSquareIcon,
-  '/leads': InboxIcon,
+  '/settings/email-accounts': MailIcon,
+  // Internal — staff↔staff (distinct glyph from the customer Inbox).
+  '/messages': HashIcon,
+  // Work.
+  '/leads': UserPlusIcon,
   '/contacts': UsersIcon,
   '/accounts': BuildingIcon,
   '/pipeline': GitBranchIcon,
@@ -75,13 +81,18 @@ const ICONS: Record<string, IconComp> = {
   '/account': UserCircleIcon,
 }
 
-// Section assignments. Anything not listed defaults to "Work" so the nav
-// still renders cleanly if a new top-level page is added. Account pages live
-// in the user menu (top right) — not here.
+// Section assignments. Customer comms and internal chat are deliberately
+// split into separate groups so it is always obvious what is a customer
+// channel vs staff↔staff. Anything not listed defaults to "Work". Account
+// pages live in the user menu (top right) — not here.
 const SECTION: Record<string, string> = {
-  '/': 'Work',
-  '/inbox': 'Work',
-  '/messages': 'Work',
+  '/': 'Overview',
+  // Communications — everything that talks to customers.
+  '/inbox': 'Communications',
+  '/settings/email-accounts': 'Communications',
+  // Internal — staff↔staff only.
+  '/messages': 'Internal',
+  // Work — CRM records.
   '/leads': 'Work',
   '/contacts': 'Work',
   '/accounts': 'Work',
@@ -91,7 +102,14 @@ const SECTION: Record<string, string> = {
   '/reports': 'Operations',
   '/settings': 'Admin',
 }
-const SECTION_ORDER = ['Work', 'Operations', 'Admin'] as const
+const SECTION_ORDER = [
+  'Overview',
+  'Communications',
+  'Internal',
+  'Work',
+  'Operations',
+  'Admin',
+] as const
 
 function isActive(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/'

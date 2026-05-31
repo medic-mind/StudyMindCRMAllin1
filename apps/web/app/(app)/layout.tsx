@@ -41,8 +41,12 @@ function buildNav(role: Role): NavItem[] {
   // sidebar stays focused on actual work surfaces.
   const items: NavItemDef[] = [
     { href: '/', label: 'Dashboard' },
+    // Communications — customer channels (Inbox unifies WhatsApp / SMS /
+    // web-chat / email; Email accounts is where mailboxes are connected).
     { href: '/inbox', label: 'Inbox' },
-    { href: '/messages', label: 'Messages' },
+    { href: '/settings/email-accounts', label: 'Email accounts' },
+    // Internal — staff↔staff chat. Renamed from the colliding "Messages".
+    { href: '/messages', label: 'Team chat' },
     { href: '/leads', label: 'Leads' },
     { href: '/contacts', label: 'Contacts' },
     {
