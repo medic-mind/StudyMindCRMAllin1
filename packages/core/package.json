@@ -24,6 +24,7 @@
     "./mail": "./src/mail/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
     "./backfill": "./src/backfill/index.ts",
+    "./cache/redis-rate-limit": "./src/cache/redis-rate-limit.ts",
     "./auth/policies": "./src/auth/policies.ts",
     "./auth/passwords": "./src/auth/passwords.ts",
     "./auth/lockout": "./src/auth/lockout.ts",
