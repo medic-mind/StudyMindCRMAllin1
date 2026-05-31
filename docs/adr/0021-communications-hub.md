@@ -136,9 +136,14 @@ renders the full email thread, Phase 3b). RSC + `Link` navigation, consistent
 with the Comms Centre pages. **Reply (implemented):** the email thread view has
 a reply box (`EmailReply` → `mail.thread.reply`) that sends via the account
 owner's mailbox using the existing Gmail `sendReply` outbound, threaded against
-the latest inbound message; the sent reply lands in Gmail too. **Still to come:**
-new-message compose, multi-select + bulk actions, preview pane, command-palette
-search, keyboard shortcuts.
+the latest inbound message; the sent reply lands in Gmail too. **Compose
+(implemented):** a `MailCompose` panel on `/mail` (`mail.compose` → Gmail
+`sendEmail`) starts a brand-new thread from the chosen account, links matched
+Contacts, and creates the email Conversation head so it shows immediately.
+**Search (implemented):** `mail.threads.list` takes a `q` that matches
+subject / sender / account (composed as an AND clause so it coexists with the
+keyset cursor); a search box on `/mail` drives it via the URL. **Still to come:**
+multi-select + bulk actions, side-by-side preview pane, keyboard shortcuts.
 
 ### Phase 5 — Two-way action sync (implemented)
 
@@ -155,11 +160,17 @@ Gmail (our sync only ingests new messages today; mirroring provider-side flag
 changes back needs Gmail history `labelAdded/Removed` ingestion with the same
 echo-guard the Trengo layer uses).
 
-### Phase 6 — Shared-inbox operations
+### Phase 6 — Shared-inbox operations (partly implemented)
 
-Assign / claim / transfer a conversation within a shared inbox; internal notes
-and @mentions (never sent outbound); one-click task creation. Reuses the ADR
-0020 assignee/notification plumbing.
+Assign / claim / transfer already exist (`AssignControl`, ADR 0020). **Internal
+notes + @mentions (implemented):** `inbox.conversations.notes.{list,add}` store
+a staff-only `note` Interaction scoped by `payload.conversationId` (never sent
+outbound); a mention writes an audit row targeting the colleague so it surfaces
+in their notifications (the audit-log-backed feed). All staff may add notes
+(§20 — VA "writes notes"). UI: `ConversationNotes` on the conversation thread
+view. **One-click task (implemented):** `ConversationTaskButton` creates a CRM
+`Task` from a conversation (reuses `task.create`, links the matched contact,
+defaults the assignee to the agent). Phase 6 complete.
 
 ### Phase 7 — Outlook / Exchange / IMAP
 
