@@ -2852,18 +2852,49 @@ model ChatMessage {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  channel   ChatChannel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  parent    ChatMessage?     @relation("ChatThread", fields: [parentId], references: [id], onDelete: Cascade)
-  replies   ChatMessage[]    @relation("ChatThread")
-  mentions  ChatMention[]
-  refs      ChatMessageRef[]
-  reactions ChatReaction[]
+  channel     ChatChannel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  parent      ChatMessage?        @relation("ChatThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies     ChatMessage[]       @relation("ChatThread")
+  mentions    ChatMention[]
+  refs        ChatMessageRef[]
+  reactions   ChatReaction[]
+  attachments ChatAttachment[]
 
   /// Channel timeline (top-level rows have parentId IS NULL) ordered by recency.
   @@index([channelId, parentId, createdAt])
   /// Thread replies ordered oldest-first.
   @@index([parentId, createdAt])
   @@index([channelId, createdAt])
+}
+
+/// A file or image attached to a chat message (ADR 0022 — richer messages).
+/// Bytes live in S3 with SSE:KMS (CLAUDE.md §21.1), never in Postgres; this row
+/// holds the metadata + the S3 key. Uploaded in two phases: the bytes are
+/// staged to S3 first (returning an attachmentId + s3Key), then the ids are
+/// passed to `chat.send`, which creates these rows bound to the new message.
+/// Cascades with the message (and so with the channel).
+model ChatAttachment {
+  id          String  @id
+  messageId   String
+  /// Original filename, sanitised for display.
+  filename    String
+  /// MIME type as reported at upload (sniffed/validated server-side).
+  contentType String
+  /// Byte size — surfaced in the UI and used to enforce the per-file ceiling.
+  sizeBytes   Int
+  /// S3 object key under chat/attachments/{messageId}/{id}/{filename}.
+  s3Key       String
+  /// Image pixel dimensions when known, so the client can reserve layout space
+  /// and avoid CLS. Null for non-images.
+  width       Int?
+  height      Int?
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
 }
 
 model ChatMention {

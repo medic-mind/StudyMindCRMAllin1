@@ -16,6 +16,7 @@ import type { Db } from './ctx'
 import { extractMentionUserIds, extractRefs } from './parse'
 import { resolveRefs } from './refs'
 import type {
+  ChatAttachmentView,
   ChatMessageView,
   ChatReactionView,
   ChatRefView,
@@ -42,12 +43,34 @@ async function requireOpenChannel(db: Db, channelId: string): Promise<void> {
  * Extracts @mentions and entity refs, persists them, bumps the parent thread's
  * reply counters, and returns the rendered message view-model.
  */
+export interface StagedAttachment {
+  /** Pre-minted id (also the S3 key segment). */
+  id: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+  s3Key: string
+  width?: number | null
+  height?: number | null
+}
+
 export async function sendMessage(
   db: Db,
-  input: { channelId: string; authorId: string; body: string; parentId?: string | null },
+  input: {
+    channelId: string
+    authorId: string
+    body: string
+    parentId?: string | null
+    attachments?: ReadonlyArray<StagedAttachment>
+  },
 ): Promise<ChatMessageView> {
   const body = input.body.trim()
-  if (body.length === 0) throw new BusinessError('MESSAGE_EMPTY', 'Type a message')
+  const attachments = input.attachments ?? []
+  // A message must carry text OR at least one attachment (Slack-style — you can
+  // post an image with no caption).
+  if (body.length === 0 && attachments.length === 0) {
+    throw new BusinessError('MESSAGE_EMPTY', 'Type a message or attach a file')
+  }
   if (body.length > MAX_BODY) throw new BusinessError('MESSAGE_EMPTY', 'Message is too long')
 
   await requireOpenChannel(db, input.channelId)
@@ -95,6 +118,22 @@ export async function sendMessage(
             },
           }
         : {}),
+      ...(attachments.length > 0
+        ? {
+            attachments: {
+              create: attachments.map((a) => ({
+                id: a.id,
+                filename: a.filename,
+                contentType: a.contentType,
+                sizeBytes: a.sizeBytes,
+                s3Key: a.s3Key,
+                width: a.width ?? null,
+                height: a.height ?? null,
+                createdById: input.authorId,
+              })),
+            },
+          }
+        : {}),
     },
   })
 
@@ -137,6 +176,16 @@ export async function sendMessage(
       .filter((x): x is ChatRefView => x != null),
     reactions: [],
     replyAuthorNames: [],
+    attachments: attachments.map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      contentType: a.contentType,
+      sizeBytes: a.sizeBytes,
+      width: a.width ?? null,
+      height: a.height ?? null,
+      isImage: /^image\//i.test(a.contentType),
+      url: `/api/internal/chat-attachments/${a.id}`,
+    })),
   }
 }
 
@@ -295,27 +344,41 @@ export async function hydrateMessages(
   const messageIds = rows.map((r) => r.id)
   const rootIds = rows.filter((r) => r.replyCount > 0).map((r) => r.id)
 
-  const [reactions, refRows, authorRows, replyPreviewRows] = await Promise.all([
-    db.chatReaction.findMany({
-      where: { messageId: { in: messageIds } },
-      select: { messageId: true, userId: true, emoji: true },
-    }),
-    db.chatMessageRef.findMany({
-      where: { messageId: { in: messageIds } },
-      select: { messageId: true, refType: true, refId: true },
-    }),
-    db.user.findMany({
-      where: { id: { in: [...new Set(rows.map((r) => r.authorId))] } },
-      select: { id: true, name: true, email: true },
-    }),
-    rootIds.length > 0
-      ? db.chatMessage.findMany({
-          where: { parentId: { in: rootIds }, deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-          select: { parentId: true, authorId: true },
-        })
-      : Promise.resolve([] as { parentId: string | null; authorId: string }[]),
-  ])
+  const [reactions, refRows, authorRows, replyPreviewRows, attachmentRows] =
+    await Promise.all([
+      db.chatReaction.findMany({
+        where: { messageId: { in: messageIds } },
+        select: { messageId: true, userId: true, emoji: true },
+      }),
+      db.chatMessageRef.findMany({
+        where: { messageId: { in: messageIds } },
+        select: { messageId: true, refType: true, refId: true },
+      }),
+      db.user.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.authorId))] } },
+        select: { id: true, name: true, email: true },
+      }),
+      rootIds.length > 0
+        ? db.chatMessage.findMany({
+            where: { parentId: { in: rootIds }, deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            select: { parentId: true, authorId: true },
+          })
+        : Promise.resolve([] as { parentId: string | null; authorId: string }[]),
+      db.chatAttachment.findMany({
+        where: { messageId: { in: messageIds } },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          messageId: true,
+          filename: true,
+          contentType: true,
+          sizeBytes: true,
+          width: true,
+          height: true,
+        },
+      }),
+    ])
 
   // Collect reactor + reply-author ids so we resolve every needed name once.
   const nameIds = new Set<string>()
@@ -358,6 +421,24 @@ export async function hydrateMessages(
     replyAuthorsByRoot.set(r.parentId, list)
   }
 
+  // Group attachments per message into their view-models (proxy download URL,
+  // image flag for inline rendering).
+  const attachmentsByMessage = new Map<string, ChatAttachmentView[]>()
+  for (const a of attachmentRows) {
+    const list = attachmentsByMessage.get(a.messageId) ?? []
+    list.push({
+      id: a.id,
+      filename: a.filename,
+      contentType: a.contentType,
+      sizeBytes: a.sizeBytes,
+      width: a.width,
+      height: a.height,
+      isImage: /^image\//i.test(a.contentType),
+      url: `/api/internal/chat-attachments/${a.id}`,
+    })
+    attachmentsByMessage.set(a.messageId, list)
+  }
+
   // Body re-parse gives the ordered token list for the client; we only need the
   // mention ids here (the renderer re-tokenises with parse.ts on its side).
   return rows.map((row) => {
@@ -386,6 +467,7 @@ export async function hydrateMessages(
       refs: row.deletedAt ? [] : (refsByMessage.get(row.id) ?? []),
       reactions: reactionViews,
       replyAuthorNames: replyAuthorsByRoot.get(row.id) ?? [],
+      attachments: row.deletedAt ? [] : (attachmentsByMessage.get(row.id) ?? []),
     }
   })
 }

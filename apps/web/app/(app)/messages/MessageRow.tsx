@@ -18,6 +18,7 @@ import {
 import { CHAT_REACTION_EMOJI } from '@studymind/core/chat'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 
+import { Attachments } from './Attachments'
 import { Composer } from './Composer'
 import { MessageBody } from './MessageBody'
 import { Reactions } from './Reactions'
@@ -128,12 +129,17 @@ export function MessageRow({
           </div>
         ) : (
           <div className="mt-0.5">
-            <MessageBody
-              body={message.body}
-              userNames={userNames}
-              refs={message.refs}
-              viewerId={viewerId}
-            />
+            {message.body ? (
+              <MessageBody
+                body={message.body}
+                userNames={userNames}
+                refs={message.refs}
+                viewerId={viewerId}
+              />
+            ) : null}
+            {message.attachments.length > 0 ? (
+              <Attachments attachments={message.attachments} />
+            ) : null}
           </div>
         )}
 

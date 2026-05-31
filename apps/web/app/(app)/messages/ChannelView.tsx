@@ -24,6 +24,8 @@ interface Props {
   canManageChannels: boolean
   /** CEO + Senior Manager — permanent channel deletion. */
   canDeleteChannels: boolean
+  /** Open this thread on mount (deep-link from search). */
+  initialThreadRootId?: string | null
   /** Called after this channel is deleted so the workspace can reselect. */
   onChannelDeleted?: (channelId: string) => void
 }
@@ -55,12 +57,15 @@ export function ChannelView({
   canModerate,
   canManageChannels,
   canDeleteChannels,
+  initialThreadRootId,
   onChannelDeleted,
 }: Props) {
   const utils = trpc.useUtils()
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
-  const [threadRootId, setThreadRootId] = useState<string | null>(null)
+  const [threadRootId, setThreadRootId] = useState<string | null>(
+    initialThreadRootId ?? null,
+  )
   const [forwardId, setForwardId] = useState<string | null>(null)
   const atBottomRef = useRef(true)
 
@@ -233,7 +238,10 @@ export function ChannelView({
             }
             sending={send.isPending}
             disabled={channel?.archived}
-            onSend={(body) => send.mutate({ channelId, body })}
+            enableAttachments
+            onSend={(body, attachments) =>
+              send.mutate({ channelId, body, attachments })
+            }
           />
         </div>
       </div>

@@ -18,6 +18,7 @@ import { trpc } from '@/lib/trpc/client'
 
 import { ChannelList } from './ChannelList'
 import { ChannelView } from './ChannelView'
+import { SearchPalette } from './SearchPalette'
 import { MentionsView } from './MentionsView'
 
 interface Props {
@@ -37,6 +38,19 @@ export function MessagesWorkspace({
   const searchParams = useSearchParams()
   const view = searchParams.get('view')
   const channelParam = searchParams.get('c')
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  // Cmd/Ctrl-K opens message search while the workspace is mounted.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // SSE drives freshness now, so the channel-list poll is a slow safety net
   // rather than the primary update path.
@@ -98,14 +112,18 @@ export function MessagesWorkspace({
   })
 
   const setUrl = useCallback(
-    (params: { c?: string; view?: string }) => {
+    (params: { c?: string; view?: string; t?: string | null }) => {
       const next = new URLSearchParams(searchParams.toString())
       if (params.view) {
         next.set('view', params.view)
         next.delete('c')
+        next.delete('t')
       } else if (params.c) {
         next.set('c', params.c)
         next.delete('view')
+        // Thread param travels with the channel: set it, or clear it.
+        if (params.t) next.set('t', params.t)
+        else next.delete('t')
       }
       router.replace(`/messages?${next.toString()}`, { scroll: false })
     },
@@ -139,6 +157,7 @@ export function MessagesWorkspace({
         }}
         onSelect={(id) => setUrl({ c: id })}
         onSelectMentions={() => setUrl({ view: 'mentions' })}
+        onOpenSearch={() => setSearchOpen(true)}
       />
 
       {mentionsActive ? (
@@ -151,6 +170,7 @@ export function MessagesWorkspace({
           canModerate={canModerate}
           canManageChannels={canManageChannels}
           canDeleteChannels={canDeleteChannels}
+          initialThreadRootId={searchParams.get('t')}
           onChannelDeleted={() => router.replace('/messages', { scroll: false })}
         />
       ) : (
@@ -160,6 +180,17 @@ export function MessagesWorkspace({
             : 'No channels yet. Create one to get started.'}
         </div>
       )}
+
+      <SearchPalette
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onPick={(hit) => {
+          setSearchOpen(false)
+          // Open the channel; only open a thread when the hit is a reply
+          // (a top-level match just scrolls the channel to it later).
+          setUrl({ c: hit.channelId, t: hit.parentId ?? null })
+        }}
+      />
     </div>
   )
 }

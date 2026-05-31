@@ -59,12 +59,32 @@ export const UpdateChannelInput = z.object({
 })
 export type UpdateChannelInput = z.infer<typeof UpdateChannelInput>
 
-export const SendMessageInput = z.object({
-  channelId: z.string().min(1),
-  body: z.string().trim().min(1, 'Type a message').max(8000, 'Message is too long'),
-  /** Set to post into a thread (the id of the thread's root message). */
-  parentId: z.string().min(1).nullish(),
+/** Metadata for an attachment already staged to S3 (two-phase upload). */
+export const StagedAttachmentInput = z.object({
+  id: z.string().min(1),
+  filename: z.string().min(1).max(255),
+  contentType: z.string().min(1).max(255),
+  sizeBytes: z.number().int().nonnegative(),
+  s3Key: z.string().min(1),
+  width: z.number().int().positive().nullish(),
+  height: z.number().int().positive().nullish(),
 })
+export type StagedAttachmentInput = z.infer<typeof StagedAttachmentInput>
+
+export const SendMessageInput = z
+  .object({
+    channelId: z.string().min(1),
+    // Body may be empty when at least one attachment is present (image with no
+    // caption). The domain enforces the "text OR attachment" rule.
+    body: z.string().trim().max(8000, 'Message is too long').default(''),
+    /** Set to post into a thread (the id of the thread's root message). */
+    parentId: z.string().min(1).nullish(),
+    attachments: z.array(StagedAttachmentInput).max(10).optional(),
+  })
+  .refine((v) => v.body.length > 0 || (v.attachments?.length ?? 0) > 0, {
+    message: 'Type a message or attach a file',
+    path: ['body'],
+  })
 export type SendMessageInput = z.infer<typeof SendMessageInput>
 
 export const EditMessageInput = z.object({
@@ -106,6 +126,19 @@ export interface ChatReactionView {
   names: string[]
 }
 
+export interface ChatAttachmentView {
+  id: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+  width: number | null
+  height: number | null
+  /** Images render inline; everything else as a download chip. */
+  isImage: boolean
+  /** Proxy download URL (never a raw S3 link — keeps the audit honest). */
+  url: string
+}
+
 export interface ChatMessageView {
   id: string
   channelId: string
@@ -123,6 +156,7 @@ export interface ChatMessageView {
   reactions: ChatReactionView[]
   /** Names of the latest few thread repliers, for the "N replies" affordance. */
   replyAuthorNames: string[]
+  attachments: ChatAttachmentView[]
 }
 
 export interface ChatChannelView {

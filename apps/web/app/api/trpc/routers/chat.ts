@@ -38,6 +38,7 @@ import {
   openDm,
   removeMember,
   restoreChannel,
+  searchMessages,
   searchRefTargets,
   sendMessage,
   setNotifyLevel,
@@ -48,6 +49,7 @@ import {
   type ChatChannelView,
   type ChatNotifyLevel,
 } from '@studymind/core/chat'
+import { buildChatAttachmentKey } from '@studymind/core/chat/s3'
 import { bodyToPlainText } from '@studymind/core/chat/parse'
 import { publishChatActivity, type ChatActivityKind } from '@studymind/core/realtime'
 import { BusinessError } from '@studymind/core/errors'
@@ -589,11 +591,25 @@ export const chatRouter = router({
     try {
       // Auto-join public channels on first post; private channels require a row.
       await ensureMembership(ctx.db, { channelId: input.channelId, userId: user.id })
+      // Bind staged attachments. Defence-in-depth: the client supplies the
+      // metadata it got back from the upload route, but we re-derive the S3 key
+      // from the (id, filename) so a client can never bind to an arbitrary
+      // object — the key is a pure function of the id we minted.
+      const attachments = (input.attachments ?? []).map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        contentType: a.contentType,
+        sizeBytes: a.sizeBytes,
+        s3Key: buildChatAttachmentKey({ attachmentId: a.id, filename: a.filename }),
+        width: a.width ?? null,
+        height: a.height ?? null,
+      }))
       const message = await sendMessage(ctx.db, {
         channelId: input.channelId,
         authorId: user.id,
         body: input.body,
         parentId: input.parentId ?? null,
+        attachments,
       })
       emitChatActivity({
         kind: 'message',
@@ -605,7 +621,9 @@ export const chatRouter = router({
         mentionUserIds: message.mentionUserIds,
         // One-line preview for the desktop notification; tokens render as
         // readable labels (@Name / #Ref) rather than raw <@id> markers.
-        preview: bodyToPlainText(input.body).slice(0, 140),
+        preview:
+          bodyToPlainText(input.body).slice(0, 140) ||
+          (attachments.length > 0 ? '📎 Attachment' : ''),
       })
       return message
     } catch (err) {
@@ -859,6 +877,24 @@ export const chatRouter = router({
     .query(async ({ ctx, input }) => {
       const results = await searchRefTargets(ctx.db, { query: input.q, limit: input.limit })
       return { results }
+    }),
+
+  /** Full message search across the viewer's visible channels (Cmd-K). */
+  search: protectedProcedure
+    .input(
+      z.object({
+        q: z.string().trim().min(2).max(200),
+        limit: z.number().int().min(1).max(50).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const hits = await searchMessages(ctx.db, {
+        viewerId: user.id,
+        query: input.q,
+        limit: input.limit,
+      })
+      return { hits }
     }),
 })
 

@@ -130,8 +130,10 @@ export function ThreadPanel({ rootId, viewerId, canModerate, onClose }: Props) {
         <Composer
           placeholder="Reply…"
           sending={send.isPending}
-          onSend={(body) =>
-            root && send.mutate({ channelId: root.channelId, body, parentId: root.id })
+          enableAttachments
+          onSend={(body, attachments) =>
+            root &&
+            send.mutate({ channelId: root.channelId, body, parentId: root.id, attachments })
           }
         />
       </div>
