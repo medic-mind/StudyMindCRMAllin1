@@ -136,8 +136,11 @@ renders the full email thread, Phase 3b). RSC + `Link` navigation, consistent
 with the Comms Centre pages. **Reply (implemented):** the email thread view has
 a reply box (`EmailReply` → `mail.thread.reply`) that sends via the account
 owner's mailbox using the existing Gmail `sendReply` outbound, threaded against
-the latest inbound message; the sent reply lands in Gmail too. **Still to come:**
-new-message compose, multi-select + bulk actions, preview pane, command-palette
+the latest inbound message; the sent reply lands in Gmail too. **Compose
+(implemented):** a `MailCompose` panel on `/mail` (`mail.compose` → Gmail
+`sendEmail`) starts a brand-new thread from the chosen account, links matched
+Contacts, and creates the email Conversation head so it shows immediately.
+**Still to come:** multi-select + bulk actions, preview pane, command-palette
 search, keyboard shortcuts.
 
 ### Phase 5 — Two-way action sync (implemented)

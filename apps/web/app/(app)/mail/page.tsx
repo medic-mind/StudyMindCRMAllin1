@@ -15,6 +15,7 @@ import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { LiveUpdates } from '../inbox/conversations/LiveUpdates'
+import { MailCompose } from './MailCompose'
 
 type FilterValue = 'all' | 'unread'
 
@@ -79,6 +80,15 @@ export default async function MailPage({
       />
       <PageBody>
         <LiveUpdates />
+        <div className="mb-4">
+          <MailCompose
+            accounts={accounts.map((a) => ({
+              id: a.id,
+              address: a.address,
+              displayName: a.displayName,
+            }))}
+          />
+        </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[200px_1fr]">
           {/* Folder / account rail */}
           <aside className="flex flex-col gap-4">

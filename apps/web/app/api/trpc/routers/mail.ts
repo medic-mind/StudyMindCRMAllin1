@@ -9,8 +9,9 @@
 import { z } from 'zod'
 import { TRPCError } from '@trpc/server'
 
+import { applyMailToConversation } from '@studymind/core/mail'
 import { publishConversationUpdate } from '@studymind/core/realtime'
-import { sendReply } from '@studymind/integration-gmail/outbound'
+import { sendEmail, sendReply } from '@studymind/integration-gmail/outbound'
 
 import { getMailSyncProvider } from '@/lib/mail/get-sync-provider'
 import {
@@ -234,6 +235,75 @@ export const mailRouter = router({
         return { items, nextCursor }
       }),
   }),
+
+  // ADR 0021 Phase 4 — compose a brand-new email from the CRM. Sends from the
+  // chosen account's mailbox via the Gmail outbound, links matched Contacts,
+  // and creates the email Conversation head so the new thread shows in /mail
+  // immediately. Sales Executive+ (VA read-only). Gmail today; other providers
+  // arrive with Phase 7.
+  compose: auditedProcedure
+    .input(
+      z.object({
+        mailAccountId: z.string(),
+        to: z.array(z.string().trim().email()).min(1).max(50),
+        cc: z.array(z.string().trim().email()).max(50).optional(),
+        subject: z.string().trim().min(1).max(500),
+        body: z.string().trim().min(1).max(50_000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const me = requireUser(ctx)
+      assertCanMutate(me.role)
+      const account = await ctx.db.mailAccount.findFirst({
+        where: { id: input.mailAccountId, deletedAt: null },
+        select: { id: true, provider: true, ownerUserId: true, address: true, status: true },
+      })
+      if (!account) throw new TRPCError({ code: 'NOT_FOUND' })
+      if (account.provider !== 'gmail') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Composing is only available on Gmail accounts today.',
+        })
+      }
+      if (!account.ownerUserId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'This mailbox has no connected owner to send as.',
+        })
+      }
+
+      const result = await sendEmail({
+        agentId: account.ownerUserId,
+        fromAddress: account.address,
+        subject: input.subject,
+        body: input.body,
+        toAddresses: input.to,
+        cc: input.cc,
+        requestId: ctx.requestId,
+      })
+
+      // Create the email Conversation head for the new thread so it appears in
+      // the unified inbox without waiting for the next Gmail sync.
+      if (result.gmailThreadId) {
+        await applyMailToConversation(ctx.db, {
+          provider: 'email',
+          externalThreadId: result.gmailThreadId,
+          mailAccountId: account.id,
+          direction: 'sent',
+          occurredAt: new Date(),
+          contactId: null,
+          familyId: null,
+          subject: input.subject,
+        })
+      }
+
+      await ctx.audit({
+        action: 'mail.composed',
+        target: { type: 'MailAccount', id: account.id },
+        after: { to: input.to, cc: input.cc ?? [], threadId: result.gmailThreadId },
+      })
+      return { id: account.id, threadId: result.gmailThreadId }
+    }),
 
   // ADR 0021 Phase 5 — two-way action sync. Each mutation performs the action
   // on the live mailbox via the provider seam, then reflects it on the
