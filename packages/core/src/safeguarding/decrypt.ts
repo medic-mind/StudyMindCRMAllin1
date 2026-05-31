@@ -127,7 +127,7 @@ export interface DecryptByIdInput {
     assignedDslUserId?: string | null
   }
   /**
-   * Optional dispatcher for break-glass alerts (Slack, PagerDuty, Resend).
+   * Optional dispatcher for break-glass alerts (Slack, PagerDuty).
    * Injection avoids a core ↔ integrations cycle; the worker boundary wires
    * up the real implementation. When omitted, audit is still written.
    */

@@ -19,6 +19,25 @@
 
 Parents, students, tutors do **not** log in. They use the booking site, Trengo, email, phone.
 
+> **TOP PRIORITY INITIATIVE — Communications Hub (Gmail replacement).** Much of
+> the CRM already exists; the highest-value work now is the **Email &
+> Communications Operating System**, not more CRM surface. The goal in one line:
+> **build a Gmail replacement that stays fully synchronised with Gmail** — staff
+> can spend the whole day in the CRM and never open Gmail, and if they do open
+> Gmail everything stays in step. The CRM and the mailbox become two interfaces
+> onto the same data. This means: **multi-account, multi-provider** (Gmail,
+> Workspace, Outlook 365, Exchange, IMAP — no practical limit on connected
+> inboxes), **true two-way sync** (mail, sent, drafts, read/unread, labels,
+> folders, stars, archive, delete, threading — both directions, near-real-time),
+> a **full email client** (Gmail/Superhuman class), **shared team inboxes** with
+> assign/claim/transfer/notes/@mentions, **auto-linking** every message to the
+> existing Lead/Contact/Family (no duplicate records), and a path to fold
+> WhatsApp/Trengo/SMS/social into one unified conversation list. **Reuse what
+> exists — do not rebuild it.** Architecture and the phased plan: **ADR 0021**;
+> the email playbook is §14. Phase 1 (the provider-agnostic multi-account
+> foundation: `MailAccount`/`MailAccountMember`, Settings → Email accounts) is
+> implemented.
+
 ---
 
 ## 2. Golden rules (read every time)
@@ -47,7 +66,7 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 | Auth | Auth.js v5 (next-auth) — self-hosted, Postgres-backed | Email + bcrypt password, optional TOTP MFA, sessions in our DB; no third-party processor for staff identity (ADR 0010) |
 | File and audio storage | AWS S3 (eu-west-2) | Call recordings, email attachments, DSAR exports |
 | Encryption (field level) | AWS KMS envelope encryption | Safeguarding notes, EHCP extracts |
-| Email transactional | Resend | Outbound system email, not Gmail sync |
+| Email transactional | Gmail API (Google OAuth) | Outbound system email (account welcome, password reset, forwarding) sent from the configured system mailbox via `packages/integrations/gmail/src/system-send.ts`. **No third-party email API — never use Resend.** |
 | Observability | Sentry (errors), Axiom (logs), OpenTelemetry traces | Required from day one |
 | AI | OpenAI gpt-4o, gpt-4o-mini, Whisper | Mini for cheap classification, 4o for drafting |
 | Hosting | Railway (services: web, worker, postgres; Redis via Railway plugin) | Single platform for the whole stack |
@@ -337,11 +356,11 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 **Inbound webhook events:** new inbound message, new outbound message (so we capture replies sent from Trengo native UI), ticket assigned, ticket closed, ticket reopened, label added or removed.
 
-**Contact matching.** Phone (E.164 normalised) first, email second. If neither matches, create a `Lead` row, not a `Contact`. Leads sit in the unassigned tray for an agent to triage. Never auto-create a Contact from an unmatched Trengo conversation — we have been bitten by spam routes creating ghost Contacts.
+**Contact matching.** Phone (E.164 normalised) first, email second. If neither matches, create a `Lead` row, not a `Contact`. Leads sit in the unassigned tray for an agent to triage. Never auto-create a Contact from an unmatched Trengo conversation — we have been bitten by spam routes creating ghost Contacts. (The **web-lead funnel** `/api/leads` is a deliberate exception that *does* auto-onboard, with a 24h dedupe + email/phone gate as the anti-spam control — see §16 and ADR 0023. This Trengo rule is unchanged.)
 
 **Channels.** WhatsApp, SMS, email, web chat. Each has its own per-channel quirk (WhatsApp 24-hour window, SMS character cost, email threading via `Message-ID`). Channel-specific rules in `packages/integrations/trengo/channels/`.
 
-**Outbound.** Always go through `outbound.ts` so we attach metadata (Interaction id, agent id) to the Trengo message custom fields. This lets us reconcile Trengo events back to our timeline without ambiguity.
+**Outbound.** Always go through `outbound.ts` so we attach metadata (Interaction id, agent id) to the Trengo message custom fields. This lets us reconcile Trengo events back to our timeline without ambiguity. Agents reply to a conversation from the CRM via `interaction.trengo.reply` (Sales Executive+; Virtual Assistant cannot send), which resolves the contact's active ticket+channel via the shared `resolveActiveTrengoConversation` helper (`packages/integrations/trengo/src/conversations.ts`) and calls `sendMessage`. The roadmap to a full two-way operational layer (conversation head, real-time SSE, Communication Centre, assign/close/tag sync) is ADR 0020 + `docs/audit/trengo-operational-layer-audit.md`.
 
 **Token rotation.** Per-agent tokens rotate every 90 days. Renewal flow lives in agent settings; we surface a banner 14 days before expiry. **Expired tokens fail closed:** outbound aborts with a `TOKEN_EXPIRED` BusinessError, the Interaction stays in `pending_send`, and the agent sees an inline banner. We never fall back to a shared service token — it would break agent attribution.
 
@@ -375,17 +394,52 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 ---
 
-## 14. Gmail playbook
+## 14. Email & Communications Hub playbook (Gmail today)
+
+This section is the email engine of the **Communications Hub** top-priority
+initiative (see §1 callout and **ADR 0021**). The target is a Gmail-class client
+inside the CRM that stays fully two-way-synchronised with the real mailbox,
+across many accounts and many providers. Gmail is the only live provider today;
+the design is provider-agnostic so Outlook/Exchange/IMAP slot in without
+touching the domain.
+
+**The connected-inbox unit is `MailAccount` (ADR 0021), not `GmailMailbox`.**
+`MailAccount` is provider-agnostic (`provider ∈ gmail|google_workspace|outlook|exchange|imap`),
+is either `personal` (one agent) or `shared` (a team inbox: info@, admissions@,
+…), and carries generic sync state (`syncCursor`, `watchExpiresAt`,
+`lastSyncedAt`). Shared-inbox access is granted via `MailAccountMember` (mirrors
+`TeamMember`); an optional `teamId` ties it to an ops `Team`. For `provider=gmail`
+a row **bridges** to the legacy `GmailMailbox` via `gmailMailboxId`, so the live
+Gmail sync below is reused with no destructive migration (§19.1). **Secrets
+(OAuth refresh tokens, IMAP passwords) never live on `MailAccount` — they stay in
+`EncryptedField` (§21).** Domain: `packages/core/src/mail`; tRPC: `mailAccount.*`;
+UI: Settings → Email accounts (`/settings/email-accounts`). The provider
+capability registry (`MAIL_PROVIDERS`) is the single source of which providers
+are connectable today — we **fail closed** (§8): only `gmail` is connectable; the
+rest advertise the roadmap and reject connection attempts.
+
+**Phased plan (ADR 0021):** (1) multi-account foundation — *implemented*;
+(2) `MailSyncProvider` seam + Gmail behind it — *implemented*; (3) email into the
+`Conversation` head + Communication Centre (unified inbox) — *implemented*;
+(4) full `/mail` client — *v1 implemented* (account-aware reading workspace;
+compose / bulk / search still to come); (5) two-way action sync
+(read/archive/star/label/delete) — *implemented* (outbound CRM→Gmail; inbound
+flag-mirroring + drafts still to come); (6) shared-inbox operations;
+(7) Outlook/Exchange/IMAP providers — design in **ADR 0024** (deps not added
+until approved); (8) templates, automations, analytics, calendar, unified
+channels.
+
+### Gmail provider specifics (live today)
 
 **Auth.** OAuth 2.0 per agent. Refresh tokens encrypted with KMS, never logged. Granular scopes only — `gmail.readonly`, `gmail.send`, `gmail.modify` (no full account access).
 
 **Real-time push.** Google Cloud Pub/Sub `watch` for real-time delivery. Watch expires after 7 days, so we renew every 6 days via the `gmail/refresh-watch` job.
 
-**Phase 1 scope.** Read sync, reply from CRM, sent items reflect in Gmail. **Not in phase 1:** labels, drafts, snooze, undo send, scheduled send. Phase 2.
+**Sync surface today.** Read sync, reply from CRM, sent items reflect in Gmail, attachments, 90-day backfill. Labels/drafts/snooze/archive/delete two-way mirroring is ADR 0021 Phase 5 — not yet live.
 
 **Threading.** Use Gmail's `thread_id` directly. Do not invent our own threading.
 
-**Contact matching.** Match by `from`, `to`, `cc`, `bcc` addresses. Many to many — one email touches several Contacts. Persist all links so each Contact's timeline shows the full thread regardless of which address was matched.
+**Contact matching.** Match by `from`, `to`, `cc`, `bcc` addresses. Many to many — one email touches several Contacts. Persist all links so each Contact's timeline shows the full thread regardless of which address was matched. Unmatched mail must **never** auto-create a Contact (§11 rule, applied to email — create a `Lead` instead).
 
 **Attachments.** Stream to S3 on first sync; do not store payloads in Postgres. Reference by S3 key in `Interaction.payload`.
 
@@ -401,13 +455,13 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 ---
 
-## 16. Zapier playbook
+## 16. Lead capture (Zapier + universal endpoint)
 
-**Endpoint.** `/api/webhooks/lead` is a stable, versioned endpoint with a JSON schema documented in `docs/api/lead-webhook.md`.
+**Universal endpoint (ADR 0023).** `POST /api/leads` is the dynamic ingestion engine for Contact Form 7 and any other source. It accepts JSON, form-encoded, multipart, and CF7 webhooks with **any** field names — never hardcode CF7 field ids (`text-618`, `tel-146`). A pure normaliser (`packages/core/src/lead/normalise.ts`) detects each field's role from `webhook:<role>` mappings → name synonyms → CF7 type prefixes → value sniffing, and lifts landing-page intelligence (domain, slug, form title, UTM). The thin handler authenticates by a per-site `LeadSource` API key (or the global fallback token), persists raw → `ProviderEvent` + `Lead`, audits, and enqueues `lead/classify.requested`. Async, the classify job classifies (brand → `Company`, products/categories from configurable `BrandDomainRule`/`UrlClassificationRule`/`ProductCatalogueItem`, score, advisory AI summary) and routes onto the Sales Pipeline. Contract: `docs/api/leads-endpoint.md`. UI: Settings → Integrations → Lead webhook (URL, API keys, test generator) + the Leads tray (`/leads`).
 
-**Auth.** Static bearer token rotated quarterly. Stored in Railway env, mirrored from 1Password.
+**Auto-onboarding + dedupe (overrides §11 for web leads).** First enquiry auto-creates a Contact (brand-tagged) + a card on the default board's "New leads" stage. A re-enquiry matched by email/phone never creates a duplicate Contact — it annotates the existing contact and adds a fresh card only if >24h since the last enquiry (within 24h is one card, anti-spam). A submission with neither email nor phone, or an ambiguous match, goes to the Leads tray instead of creating a ghost contact. Matching never auto-merges (§41.1). This is the deliberate web-lead exception to "never auto-create a Contact" (ADR 0023).
 
-**Schema discipline.** Additive only. Never remove or rename fields without bumping to `/api/webhooks/lead/v2`. Old endpoint stays alive for 12 months after a v2 ships.
+**Legacy Zapier endpoint.** `/api/webhooks/lead` (+`/v2`) is the older stable, versioned bearer-token endpoint with a fixed JSON schema (`docs/api/lead-webhook.md`). Additive only; bump to `/v2` for breaking changes; old endpoint stays alive 12 months. It remains for existing Zaps; new integrations use `/api/leads`.
 
 **Trust.** Zapier is fine for partner integrations and lead capture. It is **not** the source of truth for anything financial, safeguarding, or operational. Anything critical lives in a first-party integration with full audit and contract tests.
 
@@ -439,8 +493,11 @@ Every async unit of work is an Inngest function. Conventions:
 | `ai/regenerate-status-summaries` | every 30 min for changed contacts | Refresh the 2 sentence "Current Status" header |
 | `aircall/recover-disabled-webhook` | hourly | Re-enable Aircall webhook if it was disabled by failures |
 | `gocardless/reconcile-late-failures` | every 4 hours | Walk recent confirmations and surface any new late failures |
+| `trengo/retry-pending-send` | every 5 min | Re-send outbound Trengo Interactions stuck in `pending_send` (ADR 0020 Phase 7a). Bounded at 5 attempts per row; skips TOKEN_EXPIRED (the agent must reconnect). |
 
 **Event-triggered backfill workers (ADR 0017).** Not recurring — fired once on first-connect (Gmail/Trengo) or by an admin button (Aircall/Slack). `gmail/backfill.requested`, `aircall/backfill.requested`, `trengo/backfill.requested`, `slack/backfill.requested` each pull the last 90 days of history and write retroactive Interactions for matched Contacts. Idempotent on the provider's native id; concurrency-capped (Slack 3 as it is AI-heavy, others 2). One summary audit row per job — never per imported message.
+
+**Lead classify + route (`lead/classify.requested`).** Event-triggered, not cron — fired by the universal `/api/leads` endpoint (and the legacy lead webhook path) once per submission (ADR 0023, §16). The pure orchestration is `packages/jobs/src/leads/process-lead.ts`; the worker boundary (`apps/web/app/api/inngest/_boundary/process-lead.ts`) injects the advisory AI enrichment. Normalises → classifies (rules + optional AI) → matches/onboards a Contact → routes onto the Sales Pipeline with the 24h re-enquiry dedupe. Idempotent (skips once `Lead.classifiedAt` is set); concurrency-capped at 3 (AI-touching). Pure decisions live in `packages/core/src/lead/`.
 
 **Direct Debit defaulter scan (`finance/flag-dd-defaulters`).** Event-triggered, not cron — runs on `finance/reconcile.completed` (§17.3) so it reads consistent invoice/payment state. Recomputes the GoCardless defaulter set (`listDefaulters` in `packages/core/src/finance/dd-defaulters.ts`) and raises a `direct_debit_default` `ReconciliationDiscrepancy` (idempotent on `(familyId, category, contextHash)`) for any newly-defaulted family; the pure aggregator is `packages/jobs/src/finance/flag-dd-defaulters.ts`. The worker boundary (`apps/web/app/api/inngest/_boundary/flag-dd-defaulters.ts`) posts a summary to `#crm-finops`. Read-only analysis — never auto-charges or auto-duns (§3). Surfaced at `/finance/direct-debit`; per-customer payments are surfaced on the Family and Contact pages via `finance.customerPayments.*` (`packages/core/src/finance/customer-payments.ts`).
 
@@ -516,7 +573,7 @@ OpenAI for everything AI today. Models per task:
 
 ### 19.2 Schema reference (top tables)
 
-`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018), `BrandingSetting` (custom logo, §4). Definitive shape: `prisma/schema.prisma`.
+`Contact`, `Family`, `FamilyMember`, `FinancialAccount`, `Interaction`, `ProviderEvent`, `AuditLogEntry`, `RetentionPolicy`, `SafeguardingFlag`, `Booking`, `BookingSession`, `Allocation`, `RefundIntent`, `ReconciliationDiscrepancy`, `Mandate` (`GcMandate`), `Subscription` (`StripeSubscription`), `Invoice`, `Payment`, `Lead`, `Task`, `User`, `RoleAssignment`, `EncryptedField`, `PipelineStage`, `Board`, `Card`, `Label`, `CardLabel`, `Subject` (ADR 0018), `BrandingSetting` (custom logo, §4), `MailAccount` + `MailAccountMember` (Communications Hub multi-account foundation, ADR 0021), `ChatChannel`, `ChatChannelMember`, `ChatMessage`, `ChatMention`, `ChatMessageRef`, `ChatReaction` (internal team messaging, ADR 0022), `LeadSource` · `BrandDomainRule` · `UrlClassificationRule` · `ProductCatalogueItem` · `LeadClassificationCorrection` (lead ingestion + classification, ADR 0023). Definitive shape: `prisma/schema.prisma`.
 
 ---
 
@@ -560,7 +617,9 @@ Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `
 | `dsar.export` | ✓ | ✓ | — | — | — |
 | `audit.read` | ✓ | ✓ | ✓ | — | — |
 | `settings.write` | ✓ | ✓ | — | — | — |
-| `user.invite` | ✓ | ✓ | ✓ | — | — |
+| `user.invite` | ✓ | ✓ | — | — | — |
+| `user.manage` | ✓ | ✓ | ✓ | — | — |
+| `user.grant_manage` | ✓ | ✓ | ✓ | — | — |
 | `user.deactivate` | ✓ | ✓ | — | — | — |
 | `user.role.grant_senior_manager` | ✓ | — | — | — | — |
 | `user.role.grant_ceo` | ✓ | — | — | — | — |
@@ -569,6 +628,8 @@ Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `
 | `tenant.config.write` | ✓ | — | — | — | — |
 
 The canonical version of this table is generated from `packages/core/auth/policies.ts` so the doc and the code never drift. CI fails on mismatch (`pnpm policy:check`).
+
+**User management (ADR 0021).** Account **creation** is CEO + Senior Manager only (`user.invite`; public self-service sign-up is disabled). **Editing** details, changing email, and **resetting passwords** require `user.manage` — held by role by CEO/Senior Manager/Manager, and additionally **grantable to any individual** via a `UserPermission` row (the only member of `GRANTABLE_ACTIONS`). `user.grant_manage` (CEO/Senior Manager/Manager) governs who may delegate that permission. Deactivation and role changes stay CEO + Senior Manager. A non-(CEO/Senior Manager) actor may never act on a CEO or Senior Manager account. New accounts and admin resets issue a **temporary password** (forced reset on first login via `mustResetPassword`) delivered in a branded welcome email plus a credentials PDF (templates + PDF in `packages/core/src/email/`, sent via Gmail (Google OAuth) through `sendSystemEmail` — never Resend).
 
 ---
 
@@ -995,11 +1056,31 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a field to Contact | `prisma/schema.prisma`, then `packages/core/contact/types.ts` |
 | Change the timeline display | `apps/web/components/timeline/` |
 | Change a per-channel customer view | `apps/web/lib/view-models/contact-channels.ts` (ADR 0017) |
+| Reply to a Trengo conversation from the CRM | tRPC `interaction.trengo.reply`; resolver `resolveActiveTrengoConversation` in `packages/integrations/trengo/src/conversations.ts`; reuses `outbound.ts` `sendMessage`. Send button on `components/contact/draft-reply-panel.tsx`. Roadmap: ADR 0020. |
+| Connect or manage email accounts (personal + shared team inboxes) | Settings → Email accounts (`/settings/email-accounts`). Domain `packages/core/src/mail`; tRPC `mailAccount.*` (list / get / providers / createShared / update / setDefault / disconnect / members.\* / syncFromGmail); schema `MailAccount` + `MailAccountMember` (ADR 0021). `syncFromGmail` imports the agent's existing `GmailMailbox` rows via the bridge — reuse, not rebuild. Architecture + phased plan: ADR 0021. The legacy per-agent Gmail connect stays at `/settings/mailbox`. |
+| Add a new email provider (Outlook / Exchange / IMAP) | ADR 0021 Phase 7 + a new ADR for the dependency. Add the entry to the `MAIL_PROVIDERS` capability registry (`packages/core/src/mail`, flip `connectable`); implement the `MailSyncProvider` seam (`packages/core/src/mail/sync-provider.ts`) under `packages/integrations/<provider>/src/mail-provider.ts`; add a case to the dispatcher `apps/web/lib/mail/get-sync-provider.ts`. Gmail is the live reference implementation (`packages/integrations/gmail/src/mail-provider.ts`). |
+| Close / reopen a Trengo conversation from the CRM | tRPC `interaction.trengo.{close,reopen}`; outbound `closeConversation` / `reopenConversation` write a `ticket_closed` / `ticket_reopened` Interaction with `payload.source = 'crm_outbound'`; the webhook job's `linkCrmOutboundEcho` (`packages/integrations/trengo/src/jobs.ts`) stamps the trengoEventId onto that row so the echo never duplicates. Per-card buttons live in `apps/web/app/(app)/contacts/[id]/sections/TrengoConversationActions.tsx`. |
+| Assign a Trengo conversation to a teammate from the CRM | tRPC `interaction.trengo.assign` (Manager+); outbound `assignConversation` resolves the target's `User.trengoUserId`, calls Trengo `assignTicket`, writes a `ticket_assigned` Interaction (`source: 'crm_outbound'`) + mirrors the head. Echo folded back by `linkCrmOutboundEcho`. Assignee picker `AssignControl.tsx` on the comms-centre thread; assignable users come from `interaction.trengo.assignableUsers` (only users with a Trengo identity). Stuck assignments recovered by the `trengo/retry-pending-send` cron. |
+| Triage the inbox | tRPC `inbox.list` takes `filter: all \| mine \| unassigned \| snoozed` and respects `inboxAssigneeId` / `inboxSnoozedUntil` on the Interaction payload. UI chips at `/inbox` (`apps/web/app/(app)/inbox/page.tsx`). |
+| Read the current state of a Trengo conversation | `Conversation` table (ADR 0020 Phase 2). Upserted by the webhook job and the CRM outbound (`packages/integrations/trengo/src/conversation-head.ts`). Indexed columns: status, lastMessageAt, assigneeUserId, channel, unreadCount, tags. Message bodies stay in `Interaction` — the head is a queryable state layer, not a copy. |
+| Surface an email thread in the unified inbox | `Conversation` head with `provider='email'`, keyed on `(provider, externalThreadId=gmailThreadId)`, optional `mailAccountId` (ADR 0021 Phase 3). Upserter `applyMailToConversation` (`packages/core/src/mail/conversation-head.ts`, pure + db-port, reusable by Outlook/IMAP) is called by the Gmail sync `processMessage` after writing the `email_received`/`email_sent` Interaction. Email heads list in the Comms Centre automatically; `inbox.conversations.get` joins email messages on `payload.gmailThreadId`. |
+| Open the dedicated email workspace | `/mail` (ADR 0021 Phase 4 v1, `apps/web/app/(app)/mail/page.tsx`). Account-aware reading client over the email Conversation heads: folder rail (All / Unread) + account switcher + thread list. tRPC `mail.accounts` + `mail.threads.list` (`apps/web/app/api/trpc/routers/mail.ts`, staff-gated). Rows open the unified conversation thread view. Compose / bulk / search land with later phases. |
+| Act on an email thread (mark read / archive / star / trash / label) | tRPC `mail.thread.{setRead,setArchived,setStarred,setTrashed,setLabels,labels}` (ADR 0021 Phase 5, Sales Executive+; VA read-only). Performs the action on the live mailbox via the `MailSyncProvider` seam (`getMailSyncProvider` → Gmail `users.threads.modify` / `trash`), reflects it on the Conversation head, publishes the SSE delta, audits `mail.thread_*`. Reversible (trash → Gmail Trash). UI: `MailThreadActions` bar on the conversation view (email rows only). |
+| Reply to an email thread from the CRM | tRPC `mail.thread.reply` ({conversationId, body, cc?}) — reuses the Gmail `sendReply` outbound (`@studymind/integration-gmail/outbound`, idempotent on `(threadId, requestId)`), threaded against the latest inbound's `Message-ID`, sent from the account owner's mailbox; reflects the outbound on the head + audits `mail.thread_replied`. Sales Executive+. UI: `EmailReply` box on the conversation view (email rows). New-message compose is a later phase. |
+| Backfill the Conversation head from historic Interactions | Admin trigger `admin.backfill.conversationHeads.start` (CEO + Senior Manager only) fires `migration/backfill-conversation-heads.requested`. Self-recursive Inngest function `packages/integrations/trengo/src/backfill-conversation-heads.ts` walks 1000 rows per invocation ordered by `(occurredAt, id)`, scheduling the next batch with a cursor. Idempotent — replays converge to the same state. Audit at start + completion only. |
+| Live conversation updates in the UI | SSE endpoint `apps/web/app/api/realtime/conversations/route.ts` (Node.js runtime, staff-gated). Event bus `packages/core/src/realtime/bus.ts` is published to by `applyEventToConversation` on every head change. Lazy-init Redis pub/sub when `REDIS_URL` is set (`packages/core/src/realtime/redis.ts`) so multi-instance Railway deploys see each other; in-process EventEmitter otherwise. Client hook `useConversationStream` (`apps/web/lib/hooks/use-conversation-stream.ts`) invalidates the comms-centre + per-contact channel + notifications queries. |
+| Aggregate Trengo tags on a contact | View-model `trengoTagsForContact` in `apps/web/lib/view-models/contact-channels.ts`; tRPC `contact.channels.trengoTags`. Reads `Conversation.tags` directly, returns the frequency-ordered unique set. Rendered as chips above the contact's Trengo section. |
+| Review a contact-field edit suggested by Trengo | `/inbox/suggestions` (staff-read, Manager+ accept/reject). Schema `ContactFieldSuggestion` keyed on `(source, sourceEventId, field)` for replay-safety. Pure diff in `packages/integrations/trengo/src/contact-suggestions.ts`; webhook job writes via `persistContactSuggestions` on `contact.updated`. tRPC `contactSuggestion.{list,accept,reject}`. Accepting writes the Contact + the suggestion row in one transaction; never silent-merge (CLAUDE.md §3). |
+| Persist a Trengo message attachment | Webhook job fires `trengo/download-attachments.requested` when a message carries `attachments`. Worker `packages/integrations/trengo/src/attachments.ts` fetches via `safeFetch` (host already allowlisted), uploads to S3 with SSE:KMS via `packages/integrations/trengo/src/s3.ts` under `trengo/attachments/{interactionId}/{attachmentId}/{filename}`, then writes the result list onto `Interaction.payload.attachments[]`. Idempotent on the deterministic key. 20 MB per-file ceiling. |
+| Download a Trengo attachment | Internal route `apps/web/app/api/internal/trengo-attachments/[interactionId]/[attachmentId]/route.ts` (Node runtime, staff-gated, restricted-access enforced via `contact.get`). Streams the S3 object back — never redirects to a presigned URL so the audit trail stays honest. Surfaced as chips in the comms-centre thread. |
+| Map a CRM user to their Trengo identity | `User.trengoUserId` (Int, nullable, unique). Stamped at token-connect from `/me`; the webhook job resolves `assignee_id` → `User.id` via this column. Comms-centre badges render the resolved CRM name. |
+| Recover a stuck outbound message | Cron `trengo/retry-pending-send` (every 5 min). Walks Interactions still in `pending_send`, re-attempts via the audited outbound, caps at 5 attempts per row. TOKEN_EXPIRED rows are skipped (the rotation banner is the recovery surface). |
 | Start a backfill | `packages/core/src/backfill/index.ts` (workers in `packages/integrations/<svc>/backfill.ts`) |
 | Tweak an AI prompt | `packages/ai/prompts/<task>.ts` |
 | Add a new background job | `packages/jobs/` |
 | Change reconciliation logic | `packages/core/finance/reconcile.ts` |
 | Update RBAC rules | `packages/core/auth/policies.ts` |
+| Manage staff users (create / edit / reset password / delegate `user.manage`) | Settings → Users (`/settings/users`). tRPC `admin.users.*` (`apps/web/app/api/trpc/routers/admin/users.ts`); welcome email + credentials PDF in `packages/core/src/email/`; ADR 0021. Account creation is CEO + Senior Manager only; self-service sign-up is disabled. |
 | Add a runbook | `docs/runbooks/` |
 | Record an architecture decision | `docs/adr/` |
 | Adjust a brand token | `packages/ui/tokens/` |
@@ -1015,10 +1096,13 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a pipeline stage helper | `packages/core/src/pipeline/stages.ts` |
 | Change how Family.stageId is written | `packages/core/src/family/pipeline.ts` (`moveFamily`) |
 | Work on boards / cards / labels / subjects (ADR 0018) | `packages/core/src/board/` (domain), `apps/web/app/api/trpc/routers/board.ts` (tRPC), `apps/web/app/(app)/boards/` (UI). `/pipeline` redirects to the default board. |
+| Ingest / classify web leads (Contact Form 7) — ADR 0023 | Endpoint `apps/web/app/api/leads/route.ts` + shared `apps/web/lib/leads/ingest.ts`; pure engine `packages/core/src/lead/` (normalise / classify / score / match); job `packages/jobs/src/leads/process-lead.ts` + boundary `apps/web/app/api/inngest/_boundary/process-lead.ts`; tRPC `lead.*`; UI `apps/web/app/(app)/leads/` + Settings → Integrations → Lead webhook panel. Event `lead/classify.requested`. |
+| Add/edit a brand-domain or URL classification rule, or a product | Tables `BrandDomainRule` / `UrlClassificationRule` / `ProductCatalogueItem` (seeded in migration `20260603120000_add_lead_classification`). Editable in the DB today; a Settings UI is a fast follow. Brand detection resolves to a `Company`. |
+| Manage lead-source API keys (Contact Form 7 sites) | Settings → Integrations → Lead webhook (`LeadIngestionPanel`, Manager+). tRPC `lead.sources.*` (list / create / rotate / archive); schema `LeadSource` (sha256 key hash + last4, optional pinned brand). Raw key shown once. |
 | Card sub-tasks (Todoist-style checklist on a card) | Schema `CardSubtask` (`cardId`, `title`, `completed`, `position`). Domain `packages/core/src/board/subtasks.ts`; tRPC `card.subtasks.*` (list / add / update / delete, Sales Executive+). UI `apps/web/app/(app)/boards/[boardId]/CardSubtasks.tsx` in the card modal. Distinct from CRM `Task` + contact-synced tasks. |
 | Manage a board's quick-action buttons | `/settings/board-quick-actions` (Manager+) lists boards → links to `/boards/[boardId]/settings` where the `BoardQuickAction` catalogue is edited. Firing is `card.applyQuickAction` (Sales Executive+). |
 | Bulk-merge duplicate contacts | `/contacts` table → select 2+ → Merge (Manager+). tRPC `contact.bulkMerge` ({survivorId, loserIds}); first selected row is the survivor, the rest merge in via `mergeContacts` (`apps/web/lib/services/contact-merge.ts`) one at a time. |
-| Manage "Forward to <team>" quick actions | `/settings/forwarding` (Manager+). Domain `packages/core/src/forwarding/`, tRPC `forwarding.*`, sender `apps/web/lib/forwarding/senders.ts` (Resend). UI lives on the contact page (`ForwardingSection`). Records `email_forwarded` Interactions; defaults seeded by migration `20260529120000_add_forwarding_rules`. |
+| Manage "Forward to <team>" quick actions | `/settings/forwarding` (Manager+). Domain `packages/core/src/forwarding/`, tRPC `forwarding.*`, sender `apps/web/lib/forwarding/senders.ts` (Gmail OAuth via `sendSystemEmail`). UI lives on the contact page (`ForwardingSection`). Records `email_forwarded` Interactions; defaults seeded by migration `20260529120000_add_forwarding_rules`. |
 | Group ops staff into teams (one user → many teams) | Settings → Teams (`/settings/teams`, CEO + Senior Manager). Domain `packages/core/src/team/`, tRPC `team.*`, schema `Team` + `TeamMember` (M:N junction). |
 | Track B2B partnerships and schools | `/accounts` (kind tabs). tRPC `businessAccount.*` (`apps/web/app/api/trpc/routers/businessAccount.ts`); schema `BusinessAccount` (kind: `school | partnership`, status lifecycle, address, notes) + `BusinessAccountContact` (M:N to Contact, optional `role`). Manager+ for writes; all roles read. |
 | Manage call summary templates (UCAT, Medical Interview, Dental Interview, …) | `/settings/call-summary-templates` (Manager+). Schema `CallSummaryTemplate` carries the prefill body + optional inline PDF; tRPC `callSummaryTemplate.*` (list / pickList / get / create / update / archive / restore / attachPdf / removePdf). PDFs served at `/api/call-summary-templates/[id]/pdf` (authenticated, inline). Contact-page `CallSummarySection` reads the live catalogue via `pickList` and surfaces "Open PDF" on the chosen template. |
@@ -1032,6 +1116,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Set / read the booking lifecycle for a Contact | `Contact.bookingStatus` enum (`lead | registered_no_hours | registered_with_hours`, default `lead`). Drives the Status column + filter on `/contacts`. The booking.studymind.co.uk puller (CLAUDE.md §15) is the only writer once wired; the CRM never auto-promotes a contact off `lead`. |
 | Per-contact engagement metrics (hours / last lesson / spend) | `Contact.hoursBooked`, `Contact.hoursDelivered`, `Contact.lastLessonAt`, `Contact.amountSpentMinor`. Written per-contact by the booking site sync — explicitly NOT rolled up through Family (product direction, May 2026: contacts are students or parents/guardians, linked via contact relations rather than grouped into a Family). Null until first sync; the UI renders "—". |
 | Schedule a call on a board card (date + time, UK) | `Card.scheduledCallAt` (UTC). UI picks/renders Europe/London via `apps/web/lib/format/london-time.ts` (`londonWallToUtc` / `utcToLondonWall` / `formatLondon` — no tz library, leans on `Intl`). Sidebar field in `CardSidebar`; chip on `BoardCard`. Distinct from `Card.dueAt` (date-only), which stays as the generic deadline. |
+| Work in the internal team chat (Slack-style) | `/messages` (ADR 0022). Domain `packages/core/src/chat/` (channels, messages, mentions, reactions, refs, read-state; the client-safe body grammar is `chat/parse.ts`, imported via `@studymind/core/chat/parse`). tRPC `chat.*` (`apps/web/app/api/trpc/routers/chat.ts`). UI in `apps/web/app/(app)/messages/`. Channels (public/private), DMs, threaded replies, @mentions, emoji reactions, and inline `<~type:id>` references to Contact/Family/Card/Task. Channel admin is Manager+ and audited (`chat.channel_*`, `chat.member_*`); messages are staff↔staff and deliberately NOT written to the customer timeline or the compliance AuditLog. |
 
 ---
 

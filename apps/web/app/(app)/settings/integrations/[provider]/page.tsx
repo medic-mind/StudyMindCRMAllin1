@@ -20,6 +20,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 import { IntegrationTestButton } from '../IntegrationTestButton'
 
 import { BackfillButton } from './BackfillButton'
+import { LeadIngestionPanel } from './LeadIngestionPanel'
 
 const BACKFILL_PROVIDERS = new Set(['gmail', 'aircall', 'trengo', 'slack'])
 const SHARED_TOKEN_BACKFILL = new Set(['aircall', 'slack'])
@@ -147,6 +148,8 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
       />
       <PageBody>
         <div className="space-y-8">
+          {provider === 'lead' ? <LeadIngestionPanel /> : null}
+
           {detail.status === 'not_configured' ? (
             <section>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">

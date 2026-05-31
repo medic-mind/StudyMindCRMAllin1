@@ -14,6 +14,7 @@ import {
 import { brandingRouter } from './routers/branding'
 import { businessAccountRouter } from './routers/businessAccount'
 import { callSummaryTemplateRouter } from './routers/callSummaryTemplate'
+import { chatRouter } from './routers/chat'
 import { companyRouter } from './routers/company'
 import { contactRouter } from './routers/contact'
 import { contactChannelsRouter } from './routers/contact-channels'
@@ -42,8 +43,13 @@ import { dashboardRouter } from './routers/dashboard'
 import { familyRouter } from './routers/family'
 import { financeRouter } from './routers/finance'
 import { forwardingRouter } from './routers/forwarding'
+import { contactSuggestionsRouter } from './routers/contact-suggestions'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
+import { invoicingRouter } from './routers/invoicing'
+import { leadRouter } from './routers/lead'
+import { mailRouter } from './routers/mail'
+import { mailAccountRouter } from './routers/mailAccount'
 import { notificationsRouter } from './routers/notifications'
 import { oauthRouter } from './routers/oauth'
 import { pipelineRouter } from './routers/pipeline'
@@ -61,6 +67,7 @@ export const appRouter = router({
   branding: brandingRouter,
   businessAccount: businessAccountRouter,
   callSummaryTemplate: callSummaryTemplateRouter,
+  chat: chatRouter,
   company: companyRouter,
   card: cardRouter,
   contact: contactWithChannels,
@@ -71,8 +78,13 @@ export const appRouter = router({
   family: familyRouter,
   finance: financeRouter,
   forwarding: forwardingRouter,
+  contactSuggestion: contactSuggestionsRouter,
   inbox: inboxRouter,
   interaction: interactionRouter,
+  invoicing: invoicingRouter,
+  lead: leadRouter,
+  mail: mailRouter,
+  mailAccount: mailAccountRouter,
   notifications: notificationsRouter,
   oauth: oauthRouter,
   pipeline: pipelineRouter,

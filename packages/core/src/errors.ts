@@ -48,6 +48,19 @@ export type BusinessErrorCode =
   | 'SUBTASK_EMPTY'
   | 'SUBTASK_TOO_LONG'
   | 'SUBTASK_NOT_FOUND'
+  // Internal team messaging (ADR 0022).
+  | 'CHANNEL_NOT_FOUND'
+  | 'CHANNEL_NAME_TAKEN'
+  | 'CHANNEL_ARCHIVED'
+  | 'CHANNEL_IS_GENERAL'
+  | 'NOT_CHANNEL_MEMBER'
+  | 'MESSAGE_NOT_FOUND'
+  | 'MESSAGE_EMPTY'
+  | 'CHAT_FORBIDDEN'
+  | 'DM_NEEDS_MEMBER'
+  // ADR 0020 Phase 6e: assigning a Trengo conversation to a CRM user.
+  | 'UNKNOWN_USER'
+  | 'NO_TRENGO_IDENTITY'
   | 'UNKNOWN'
 
 export class BusinessError extends Error {

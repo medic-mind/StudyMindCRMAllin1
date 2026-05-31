@@ -109,3 +109,10 @@ export {
   type StatusSummary,
   type StatusSummaryPromptInput,
 } from './prompts/status-summary'
+export {
+  buildLeadClassificationPrompt,
+  leadClassificationSchema,
+  VERSION as LEAD_CLASSIFICATION_PROMPT_VERSION,
+  type LeadClassificationAi,
+  type LeadClassificationPromptInput,
+} from './prompts/lead-classification'

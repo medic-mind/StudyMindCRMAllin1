@@ -127,17 +127,27 @@ export default async function ContactDetailPage({
   if (!contact) notFound()
 
   // One round-trip for the KPI tiles, then per-channel lists in parallel.
-  const [summary, emailThreads, calls, slackMentions, trengo, tasks, notes, timeline] =
-    await Promise.all([
-      caller.contact.channels.summary({ contactId: id }),
-      caller.contact.channels.emailThreads({ contactId: id, limit: 25 }),
-      caller.contact.channels.calls({ contactId: id, limit: 25 }),
-      caller.contact.channels.slackMentions({ contactId: id, limit: 25 }),
-      caller.contact.channels.trengoConversations({ contactId: id, limit: 25 }),
-      caller.contact.channels.tasks({ contactId: id }),
-      caller.contact.channels.notes({ contactId: id, limit: 25 }),
-      caller.interaction.list({ contactId: id, limit: 25 }),
-    ])
+  const [
+    summary,
+    emailThreads,
+    calls,
+    slackMentions,
+    trengo,
+    trengoTags,
+    tasks,
+    notes,
+    timeline,
+  ] = await Promise.all([
+    caller.contact.channels.summary({ contactId: id }),
+    caller.contact.channels.emailThreads({ contactId: id, limit: 25 }),
+    caller.contact.channels.calls({ contactId: id, limit: 25 }),
+    caller.contact.channels.slackMentions({ contactId: id, limit: 25 }),
+    caller.contact.channels.trengoConversations({ contactId: id, limit: 25 }),
+    caller.contact.channels.trengoTags({ contactId: id }),
+    caller.contact.channels.tasks({ contactId: id }),
+    caller.contact.channels.notes({ contactId: id, limit: 25 }),
+    caller.interaction.list({ contactId: id, limit: 25 }),
+  ])
 
   const kindTone = KIND_TONE[contact.kind] ?? 'neutral'
 
@@ -320,7 +330,28 @@ export default async function ContactDetailPage({
             title="Trengo conversations"
             icon={<SmartphoneIcon size={16} />}
           >
-            <TrengoSection conversations={trengo.items} />
+            {trengoTags.length > 0 ? (
+              <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                <span className="text-xs uppercase tracking-wide text-neutral-500">
+                  Tags
+                </span>
+                {trengoTags.map((t) => (
+                  <span
+                    key={t.name}
+                    className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-700"
+                    title={`${t.conversationCount} conversation${t.conversationCount === 1 ? '' : 's'}`}
+                  >
+                    {t.name}
+                    {t.conversationCount > 1 ? (
+                      <span className="font-mono text-[10px] text-neutral-500">
+                        ×{t.conversationCount}
+                      </span>
+                    ) : null}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <TrengoSection contactId={contact.id} conversations={trengo.items} />
           </SectionCard>
 
           {contact.family && (

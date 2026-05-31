@@ -42,6 +42,9 @@ function buildNav(role: Role): NavItem[] {
   const items: NavItemDef[] = [
     { href: '/', label: 'Dashboard' },
     { href: '/inbox', label: 'Inbox' },
+    { href: '/mail', label: 'Mail' },
+    { href: '/messages', label: 'Messages' },
+    { href: '/leads', label: 'Leads' },
     { href: '/contacts', label: 'Contacts' },
     {
       href: '/accounts',
@@ -92,6 +95,7 @@ function buildNav(role: Role): NavItem[] {
         { href: '/settings/companies', label: 'Companies' },
         { href: '/settings/branding', label: 'Branding' },
         { href: '/settings/integrations', label: 'Integrations' },
+        { href: '/settings/invoicing', label: 'Invoicing' },
         { href: '/settings/flags', label: 'Feature flags' },
       ],
     },

@@ -21,7 +21,8 @@ const { auth: authMiddleware } = NextAuth(authEdgeConfig)
 
 const PUBLIC_PATH_PREFIXES = [
   '/sign-in',
-  '/sign-up',
+  // '/sign-up' intentionally omitted — public self-service sign-up is disabled
+  // (ADR 0021). Accounts are created only by a CEO or Senior Manager.
   '/verify',
   '/verify-email-sent',
   '/forgot',
@@ -29,6 +30,9 @@ const PUBLIC_PATH_PREFIXES = [
   '/auth/error',
   '/api/auth',
   '/api/webhooks',
+  // Universal lead ingestion (ADR 0020) — authenticated by a per-source API
+  // key, not a session, so WordPress / Contact-Form-7 sites can POST to it.
+  '/api/leads',
   '/api/oauth/gmail/callback',
   '/api/health',
   // Custom brand logo bytes — rendered on the unauthenticated sign-in screen.

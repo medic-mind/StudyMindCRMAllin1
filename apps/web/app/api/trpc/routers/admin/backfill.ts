@@ -155,6 +155,31 @@ export const adminBackfillRouter = router({
       return { ok: true as const }
     }),
 
+  // ADR 0020 Phase 2c — one-shot Conversation-head backfill. Distinct from
+  // the provider backfills above: this re-derives the queryable conversation
+  // state from rows we already have in Interaction, rather than pulling new
+  // history from a provider. CEO + Senior Manager only. Fires the
+  // self-recursive Inngest function (concurrency 1 — the function id is the
+  // advisory lock, so a duplicate trigger is harmless but warned about).
+  conversationHeads: router({
+    start: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!WRITE_ROLES.has(user.role)) throw new TRPCError({ code: 'FORBIDDEN' })
+      const { inngest } = await import('@studymind/jobs')
+      const jobId = `chbf_${Date.now().toString(36)}_${user.id.slice(-6)}`
+      await inngest.send({
+        name: 'migration/backfill-conversation-heads.requested',
+        data: { jobId },
+      })
+      await ctx.audit({
+        action: 'migration.conversation_head_backfill_requested',
+        target: { type: 'System', id: jobId },
+        after: { initiatedBy: user.id },
+      })
+      return { jobId }
+    }),
+  }),
+
   /** Running jobs for the current user — drives the progress banner. */
   mine: protectedProcedure.query(async ({ ctx }) => {
     const user = requireUser(ctx)

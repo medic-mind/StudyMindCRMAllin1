@@ -43,8 +43,8 @@
   },
   "devDependencies": {
     "@aws-sdk/client-kms": "^3.658.0",
-    "@eslint/js": "^9.13.0",
     "@axe-core/playwright": "^4.10.0",
+    "@eslint/js": "^9.13.0",
     "@lhci/cli": "^0.14.0",
     "@playwright/test": "^1.48.0",
     "@types/archiver": "^6.0.0",
@@ -65,6 +65,7 @@
     "@paralleldrive/cuid2": "^3.3.0",
     "@studymind/ai": "workspace:*",
     "@studymind/core": "workspace:*",
+    "@studymind/integration-invoicing": "workspace:*",
     "@studymind/jobs": "workspace:*"
   }
 }

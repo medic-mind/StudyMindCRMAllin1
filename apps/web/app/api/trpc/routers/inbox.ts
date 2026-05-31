@@ -32,6 +32,11 @@ const InboxListInput = z.object({
     })
     .nullish(),
   limit: z.number().min(1).max(100).default(25),
+  /** Triage filter. `all` (default) surfaces everything not currently snoozed
+   *  past `now`. `mine` returns rows where `inboxAssigneeId` equals the caller
+   *  (i.e. messages the agent picked up). `unassigned` returns rows with no
+   *  assignee. `snoozed` returns rows whose snooze is still in the future. */
+  filter: z.enum(['all', 'mine', 'unassigned', 'snoozed']).default('all'),
 })
 
 export interface InboxListItem {
@@ -43,6 +48,10 @@ export interface InboxListItem {
   preview: string | null
   contactId: string | null
   familyId: string | null
+  /** Who picked up the row, if anyone. Drives the "assigned to me" badge. */
+  inboxAssigneeId: string | null
+  /** When the row comes back into the active inbox. Null when not snoozed. */
+  inboxSnoozedUntil: Date | null
 }
 
 export const inboxRouter = router({
@@ -54,7 +63,13 @@ export const inboxRouter = router({
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
       }
 
-      const rows = await ctx.db.interaction.findMany({
+      // Triage filters are applied post-fetch in JS. Prisma JSON predicates
+      // cannot cleanly express "key missing", and the inbox is paginated
+      // small enough (≤100/page) that filtering in-process is cheaper than
+      // working around the predicate gap. We over-fetch by 4× to keep the
+      // page full when the filter drops rows.
+      const sweep = Math.min(input.limit * 4 + 1, 400)
+      const rawRows = await ctx.db.interaction.findMany({
         where: {
           deletedAt: null,
           // The Prisma enum reuses `message` for both inbound and outbound;
@@ -80,7 +95,7 @@ export const inboxRouter = router({
             : {}),
         },
         orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
+        take: sweep,
         select: {
           id: true,
           type: true,
@@ -92,12 +107,49 @@ export const inboxRouter = router({
         },
       })
 
-      const hasMore = rows.length > input.limit
-      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      const now = Date.now()
+      const isSnoozedFuture = (raw: string | null): boolean =>
+        raw !== null && new Date(raw).getTime() > now
+      const filtered = rawRows.filter((r) => {
+        const payload = (r.payload as Record<string, unknown> | null) ?? {}
+        const assignee =
+          typeof payload['inboxAssigneeId'] === 'string'
+            ? (payload['inboxAssigneeId'] as string)
+            : null
+        const snoozedRaw =
+          typeof payload['inboxSnoozedUntil'] === 'string'
+            ? (payload['inboxSnoozedUntil'] as string)
+            : null
+        const snoozedNow = isSnoozedFuture(snoozedRaw)
+
+        switch (input.filter) {
+          case 'mine':
+            return assignee === user.id && !snoozedNow
+          case 'unassigned':
+            return assignee === null && !snoozedNow
+          case 'snoozed':
+            return snoozedNow
+          case 'all':
+          default:
+            return !snoozedNow
+        }
+      })
+
+      const hasMore = filtered.length > input.limit
+      const sliced = hasMore ? filtered.slice(0, input.limit) : filtered
       const items: InboxListItem[] = sliced.map((r) => {
         const payload = (r.payload as Record<string, unknown> | null) ?? {}
         const channel = typeof payload['channel'] === 'string' ? (payload['channel'] as string) : null
         const body = typeof payload['body'] === 'string' ? (payload['body'] as string) : null
+        const inboxAssigneeId =
+          typeof payload['inboxAssigneeId'] === 'string'
+            ? (payload['inboxAssigneeId'] as string)
+            : null
+        const snoozedRaw =
+          typeof payload['inboxSnoozedUntil'] === 'string'
+            ? (payload['inboxSnoozedUntil'] as string)
+            : null
+        const inboxSnoozedUntil = snoozedRaw ? new Date(snoozedRaw) : null
         return {
           id: r.id,
           type: r.type,
@@ -107,6 +159,8 @@ export const inboxRouter = router({
           preview: body ? body.slice(0, 160) : null,
           contactId: r.contactId,
           familyId: r.familyId,
+          inboxAssigneeId,
+          inboxSnoozedUntil,
         }
       })
 
@@ -181,4 +235,298 @@ export const inboxRouter = router({
       })
       return { id: row.id, snoozedUntil: until.toISOString() }
     }),
+
+  // ADR 0020 Phase 2b — Communication Centre seed. Reads the Conversation
+  // head (not the polymorphic Interaction list) so the UI gets the
+  // conversation's *current* status / assignee / channel / unread in a
+  // single indexed query. The filter set mirrors inbox.list so the user's
+  // mental model stays consistent across the two views.
+  conversations: router({
+    // ADR 0020 Phase 4 — single-conversation thread view for the Comms
+    // Centre. Reads the head and the latest ~50 messages from Interaction
+    // (the head references, never copies — CLAUDE.md §35).
+    get: protectedProcedure
+      .input(z.object({ conversationId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        const head = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: {
+            id: true,
+            provider: true,
+            externalThreadId: true,
+            trengoTicketId: true,
+            contactId: true,
+            familyId: true,
+            channel: true,
+            status: true,
+            assigneeUserId: true,
+            lastMessageAt: true,
+            unreadCount: true,
+            subject: true,
+            tags: true,
+            replyDeadlineAt: true,
+            contact: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        })
+        if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
+
+        // ADR 0021 Phase 3b — email heads join their messages on
+        // `payload.gmailThreadId`; Trengo heads on `payload.ticketId`.
+        const messageRows =
+          head.provider === 'email' && head.externalThreadId
+            ? await ctx.db.interaction.findMany({
+                where: {
+                  deletedAt: null,
+                  type: { in: ['email_received', 'email_sent'] },
+                  payload: {
+                    path: ['gmailThreadId'],
+                    equals: head.externalThreadId,
+                  },
+                },
+                orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+                take: 100,
+                select: {
+                  id: true,
+                  occurredAt: true,
+                  summary: true,
+                  payload: true,
+                  createdById: true,
+                },
+              })
+            : head.trengoTicketId === null
+              ? []
+              : await ctx.db.interaction.findMany({
+                  where: {
+                    deletedAt: null,
+                    type: 'message',
+                    payload: { path: ['ticketId'], equals: head.trengoTicketId },
+                  },
+                  orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+                  take: 100,
+                  select: {
+                    id: true,
+                    occurredAt: true,
+                    summary: true,
+                    payload: true,
+                    createdById: true,
+                  },
+                })
+
+        const messages = messageRows.map((r) => {
+          const payload = (r.payload as Record<string, unknown> | null) ?? {}
+          const interactionType =
+            typeof payload['interactionType'] === 'string'
+              ? (payload['interactionType'] as string)
+              : null
+          // Email interactions (ADR 0021 Phase 3b) carry `event: email.sent|
+          // email.received` instead of a Trengo `interactionType`.
+          const emailEvent =
+            typeof payload['event'] === 'string' ? (payload['event'] as string) : null
+          const direction: 'inbound' | 'outbound' | 'unknown' =
+            interactionType === 'message.outbound' || emailEvent === 'email.sent'
+              ? 'outbound'
+              : interactionType === 'message.inbound' || emailEvent === 'email.received'
+                ? 'inbound'
+                : 'unknown'
+          const body =
+            typeof payload['body'] === 'string'
+              ? (payload['body'] as string)
+              : typeof payload['subject'] === 'string'
+                ? (payload['subject'] as string)
+                : null
+          // ADR 0020 Phase 6d — attachments are written by the download
+          // worker as payload.attachments[]; surface enough for the UI to
+          // render chips + link to the internal stream route.
+          const rawAttachments = Array.isArray(payload['attachments'])
+            ? (payload['attachments'] as Array<Record<string, unknown>>)
+            : []
+          const attachments = rawAttachments
+            .filter((a) => a && typeof a === 'object')
+            .map((a) => ({
+              attachmentId:
+                typeof a['attachmentId'] === 'string' ? (a['attachmentId'] as string) : '',
+              filename:
+                typeof a['filename'] === 'string' ? (a['filename'] as string) : 'file',
+              mimeType:
+                typeof a['mimeType'] === 'string'
+                  ? (a['mimeType'] as string)
+                  : 'application/octet-stream',
+              sizeBytes:
+                typeof a['sizeBytes'] === 'number' ? (a['sizeBytes'] as number) : null,
+              status:
+                typeof a['status'] === 'string' ? (a['status'] as string) : 'pending',
+            }))
+            .filter((a) => a.attachmentId !== '')
+          return {
+            id: r.id,
+            occurredAt: r.occurredAt,
+            direction,
+            body: body ?? r.summary,
+            authorId: r.createdById,
+            attachments,
+          }
+        })
+
+        return {
+          head: {
+            id: head.id,
+            provider: head.provider,
+            trengoTicketId: head.trengoTicketId,
+            contactId: head.contactId,
+            familyId: head.familyId,
+            channel: head.channel,
+            status: head.status,
+            assigneeUserId: head.assigneeUserId,
+            lastMessageAt: head.lastMessageAt,
+            unreadCount: head.unreadCount,
+            subject: head.subject,
+            tags: head.tags,
+            replyDeadlineAt: head.replyDeadlineAt,
+            contactName: head.contact
+              ? [head.contact.firstName, head.contact.lastName]
+                  .filter((x): x is string => !!x)
+                  .join(' ') || head.contact.email || null
+              : null,
+          },
+          messages,
+        }
+      }),
+    list: protectedProcedure
+      .input(
+        z.object({
+          filter: z
+            .enum(['active', 'mine', 'unassigned', 'closed', 'snoozed'])
+            .default('active'),
+          channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
+          cursor: z
+            .object({ id: z.string(), lastMessageAt: z.date() })
+            .nullish(),
+          limit: z.number().int().min(1).max(100).default(25),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Inbox is staff-only.',
+          })
+        }
+
+        const where: Record<string, unknown> = {}
+        switch (input.filter) {
+          case 'mine':
+            where['assigneeUserId'] = user.id
+            where['status'] = { in: ['open', 'snoozed'] }
+            break
+          case 'unassigned':
+            where['assigneeUserId'] = null
+            where['status'] = 'open'
+            break
+          case 'closed':
+            where['status'] = 'closed'
+            break
+          case 'snoozed':
+            where['status'] = 'snoozed'
+            break
+          case 'active':
+          default:
+            where['status'] = 'open'
+            break
+        }
+        if (input.channel) where['channel'] = input.channel
+        if (input.cursor) {
+          where['OR'] = [
+            { lastMessageAt: { lt: input.cursor.lastMessageAt } },
+            {
+              AND: [
+                { lastMessageAt: input.cursor.lastMessageAt },
+                { id: { lt: input.cursor.id } },
+              ],
+            },
+          ]
+        }
+
+        const rows = await ctx.db.conversation.findMany({
+          where,
+          orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+          take: input.limit + 1,
+          select: {
+            id: true,
+            trengoTicketId: true,
+            contactId: true,
+            familyId: true,
+            channel: true,
+            status: true,
+            assigneeUserId: true,
+            lastMessageAt: true,
+            unreadCount: true,
+            subject: true,
+            tags: true,
+            replyDeadlineAt: true,
+            contact: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        })
+
+        // ADR 0020 Phase 6 — resolve assignee user ids to display names in
+        // one round-trip rather than N+1 joins. Empty when no row carries an
+        // assignee.
+        const assigneeIds = Array.from(
+          new Set(
+            rows
+              .map((r) => r.assigneeUserId)
+              .filter((id): id is string => typeof id === 'string'),
+          ),
+        )
+        const assignees =
+          assigneeIds.length > 0
+            ? await ctx.db.user.findMany({
+                where: { id: { in: assigneeIds } },
+                select: { id: true, name: true, email: true },
+              })
+            : []
+        const assigneeNameById = new Map(
+          assignees.map((u) => [u.id, u.name ?? u.email] as const),
+        )
+
+        const hasMore = rows.length > input.limit
+        const sliced = hasMore ? rows.slice(0, input.limit) : rows
+        const items = sliced.map((r) => ({
+          id: r.id,
+          trengoTicketId: r.trengoTicketId,
+          contactId: r.contactId,
+          familyId: r.familyId,
+          channel: r.channel,
+          status: r.status,
+          assigneeUserId: r.assigneeUserId,
+          assigneeName: r.assigneeUserId
+            ? (assigneeNameById.get(r.assigneeUserId) ?? null)
+            : null,
+          lastMessageAt: r.lastMessageAt,
+          unreadCount: r.unreadCount,
+          subject: r.subject,
+          tags: r.tags,
+          replyDeadlineAt: r.replyDeadlineAt,
+          contactName: r.contact
+            ? [r.contact.firstName, r.contact.lastName]
+                .filter((x): x is string => !!x)
+                .join(' ') || r.contact.email || null
+            : null,
+        }))
+        const last = sliced[sliced.length - 1]
+        const nextCursor =
+          hasMore && last
+            ? { id: last.id, lastMessageAt: last.lastMessageAt }
+            : null
+        return { items, nextCursor }
+      }),
+  }),
 })

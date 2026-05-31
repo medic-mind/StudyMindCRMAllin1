@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordField } from '@/components/ui/password-field'
 
 const Schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -187,9 +188,8 @@ export function SignInForm({
             Forgot?
           </Link>
         </div>
-        <Input
+        <PasswordField
           id="password"
-          type="password"
           autoComplete="current-password"
           {...register('password')}
         />
@@ -201,13 +201,6 @@ export function SignInForm({
       <Button type="submit" disabled={busy} className="w-full">
         {busy ? 'Signing in…' : 'Sign in'}
       </Button>
-
-      <p className="text-center text-xs text-neutral-600">
-        New here?{' '}
-        <Link href="/sign-up" className="font-medium text-neutral-900 hover:underline">
-          Create an account
-        </Link>
-      </p>
     </form>
   )
 }

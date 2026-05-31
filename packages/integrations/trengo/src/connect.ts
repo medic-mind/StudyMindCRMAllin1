@@ -118,6 +118,17 @@ export async function connectTrengoToken(
     },
   })
 
+  // ADR 0020 Phase 6 — stamp the user's Trengo numeric id so the webhook
+  // can map `assignee_id` events to a CRM User. Best-effort: a `/me` that
+  // does not return an id is a Trengo quirk, not an auth failure — we keep
+  // the token registered and skip the mapping.
+  if (typeof trengoUserId === 'number') {
+    await db.user.update({
+      where: { id: input.agentId },
+      data: { trengoUserId },
+    })
+  }
+
   await writeAuditLogEntry(db, {
     actorId: input.agentId,
     action: 'trengo.token_connected',

@@ -40,13 +40,13 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   '*.amazonaws.com',
   // Booking site
   'booking.studymind.co.uk',
+  // B2B Invoices Platform (CRM ↔ invoicing two-way sync)
+  'b2b.studymind.co.uk',
   // Axiom (log ingest)
   'api.axiom.co',
   // Sentry ingest
   '*.ingest.sentry.io',
   '*.sentry.io',
-  // Resend
-  'api.resend.com',
   // PagerDuty (Events API v2)
   'events.pagerduty.com',
 ]

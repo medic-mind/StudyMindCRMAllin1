@@ -462,6 +462,41 @@ export async function trengoConversationsForContact(
 }
 
 // -----------------------------------------------------------------------------
+// Trengo tags — aggregated across the contact's conversations (ADR 0020 Phase
+// 6b). Reads the `Conversation` head where `tags` is an indexed column;
+// returns the unique set ordered by frequency, with the per-tag conversation
+// count so the UI can dim infrequent tags. Pure read — no contact mutation.
+// -----------------------------------------------------------------------------
+
+export interface ContactTrengoTag {
+  /** Tag name as Trengo sent it (label.name). */
+  name: string
+  /** How many of the contact's Conversation heads carry this tag. */
+  conversationCount: number
+}
+
+export async function trengoTagsForContact(
+  db: PrismaClient,
+  contactId: string,
+): Promise<ContactTrengoTag[]> {
+  const rows = await db.conversation.findMany({
+    where: { contactId },
+    select: { tags: true },
+  })
+  const counts = new Map<string, number>()
+  for (const r of rows) {
+    for (const t of r.tags) {
+      counts.set(t, (counts.get(t) ?? 0) + 1)
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([name, conversationCount]) => ({ name, conversationCount }))
+    .sort((a, b) =>
+      b.conversationCount - a.conversationCount || a.name.localeCompare(b.name),
+    )
+}
+
+// -----------------------------------------------------------------------------
 // Tasks
 // -----------------------------------------------------------------------------
 

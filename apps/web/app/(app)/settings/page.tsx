@@ -57,8 +57,7 @@ const GROUPS: Group[] = [
       {
         href: '/settings/companies',
         title: 'Companies',
-        description:
-          'Sister-brand tags (Medic Mind, Oxbridge Mind, Study Mind, anything you add).',
+        description: 'Sister-brand tags (Medic Mind, Oxbridge Mind, Study Mind, anything you add).',
         roles: 'CEO · Senior Manager',
         icon: <CoinsIcon size={16} />,
       },
@@ -106,11 +105,27 @@ const GROUPS: Group[] = [
     description: 'Operational state of the system itself.',
     tiles: [
       {
+        href: '/settings/email-accounts',
+        title: 'Email accounts',
+        description:
+          'Connect personal mailboxes and shared team inboxes (info@, admissions@…). The Communications Hub foundation (ADR 0021).',
+        roles: 'all · Manager+ for shared',
+        icon: <MailIcon size={16} />,
+      },
+      {
         href: '/settings/integrations',
         title: 'Integrations status',
         description: 'Webhook recency, Gmail watch expiry, Asana webhook health.',
         roles: 'CEO · Senior Manager',
         icon: <BarChartIcon size={16} />,
+      },
+      {
+        href: '/settings/invoicing',
+        title: 'Invoicing platform',
+        description:
+          'Connect the B2B Invoices Platform for live two-way customer, invoice, and payment sync.',
+        roles: 'CEO · Senior Manager',
+        icon: <CoinsIcon size={16} />,
       },
       {
         href: '/settings/flags',
@@ -162,9 +177,7 @@ export default function SettingsPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <h3 className="font-medium text-neutral-900">{t.title}</h3>
-                        <span className="shrink-0 text-[11px] text-neutral-500">
-                          {t.roles}
-                        </span>
+                        <span className="shrink-0 text-[11px] text-neutral-500">{t.roles}</span>
                       </div>
                       <p className="mt-1 text-sm text-neutral-600">{t.description}</p>
                     </div>

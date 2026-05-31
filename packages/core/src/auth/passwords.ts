@@ -4,7 +4,7 @@
 // before persistence so a database leak never reveals plaintext credentials.
 // CLAUDE.md §44.2 (controls), §21.1 (encryption posture).
 
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomInt } from 'node:crypto'
 
 import bcrypt from 'bcryptjs'
 
@@ -12,6 +12,16 @@ import { BusinessError } from '../errors'
 
 const BCRYPT_COST = 12
 const MIN_PASSWORD_LENGTH = 12
+
+// Character classes for generated temporary passwords. We deliberately drop
+// 0/O/1/l/I so a human can transcribe the password from the welcome PDF
+// without ambiguity (ADR 0021).
+const TEMP_PW_LOWER = 'abcdefghijkmnpqrstuvwxyz'
+const TEMP_PW_UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+const TEMP_PW_DIGIT = '23456789'
+const TEMP_PW_SYMBOL = '!@#$%^&*?-_+='
+const TEMP_PW_ALL = TEMP_PW_LOWER + TEMP_PW_UPPER + TEMP_PW_DIGIT + TEMP_PW_SYMBOL
+const TEMP_PW_LENGTH = 16
 
 /** Bcrypt-hash a plaintext password at cost 12. */
 export async function hashPassword(plaintext: string): Promise<string> {
@@ -62,6 +72,39 @@ export function assertStrongPassword(plaintext: string): void {
       'Password must include at least 3 of: lowercase, uppercase, digit, symbol.',
     )
   }
+}
+
+/**
+ * Generate a strong, human-transcribable temporary password for an
+ * admin-created account or an admin-triggered reset (ADR 0021). The result
+ * always satisfies `assertStrongPassword` (16 chars, one of each class) and is
+ * shown to the new user once — in the welcome email and PDF — then must be
+ * changed on first login (the `mustResetPassword` gate).
+ */
+export function generateTemporaryPassword(): string {
+  // Seed one character from each class so the policy always passes, fill to
+  // length from the union, then Fisher–Yates shuffle with unbiased crypto
+  // indices so the guaranteed characters are not in fixed positions.
+  const chars: string[] = [
+    pickChar(TEMP_PW_LOWER),
+    pickChar(TEMP_PW_UPPER),
+    pickChar(TEMP_PW_DIGIT),
+    pickChar(TEMP_PW_SYMBOL),
+  ]
+  while (chars.length < TEMP_PW_LENGTH) {
+    chars.push(pickChar(TEMP_PW_ALL))
+  }
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = randomInt(i + 1)
+    const tmp = chars[i] as string
+    chars[i] = chars[j] as string
+    chars[j] = tmp
+  }
+  return chars.join('')
+}
+
+function pickChar(alphabet: string): string {
+  return alphabet[randomInt(alphabet.length)] as string
 }
 
 function base64Url(buf: Buffer): string {

@@ -10,7 +10,9 @@
     "./webhook": "./src/webhook.ts",
     "./jobs": "./src/jobs.ts",
     "./outbound": "./src/outbound.ts",
+    "./system-send": "./src/system-send.ts",
     "./mailbox": "./src/mailbox.ts",
+    "./mail-provider": "./src/mail-provider.ts",
     "./types": "./src/types.ts",
     "./s3": "./src/s3.ts"
   },

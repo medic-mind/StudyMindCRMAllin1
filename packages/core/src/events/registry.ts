@@ -85,6 +85,16 @@ export const EVENT_NAMES = [
   'team.member_removed',
   'task.team_changed',
 
+  // Internal team messaging (ADR 0022). Channel administration is audited;
+  // individual messages are high-volume staff↔staff chat and are deliberately
+  // NOT written to the compliance AuditLog or the customer timeline.
+  'chat.channel_created',
+  'chat.channel_updated',
+  'chat.channel_archived',
+  'chat.channel_restored',
+  'chat.member_added',
+  'chat.member_removed',
+
   // Forwarding (Settings → Forwarding): configurable "Forward to <team>"
   // quick actions on a contact. Rule CRUD is Manager+; sending is
   // Sales Executive+.
@@ -125,6 +135,19 @@ export const EVENT_NAMES = [
   'uploaded_invoice.restored',
   'uploaded_invoice.deleted',
 
+  // B2B Invoices Platform sync (b2b.studymind.co.uk). Outbound writes, inbound
+  // mirror upserts, and config/connection management. CLAUDE.md §2, §6, §21.
+  'invoicing.config_updated',
+  'invoicing.connection_tested',
+  'invoicing.customer_pushed',
+  'invoicing.customer_synced',
+  'invoicing.invoice_raised',
+  'invoicing.invoice_sent',
+  'invoicing.invoice_synced',
+  'invoicing.payment_recorded',
+  'invoicing.payment_synced',
+  'invoicing.invoice_marked_paid',
+
   // Interactions
   'interaction.created',
   'interaction.deleted',
@@ -152,6 +175,25 @@ export const EVENT_NAMES = [
   'lead.created',
   'lead.received',
   'trengo.message_sent',
+
+  // Dynamic lead ingestion + classification (ADR 0023). The universal
+  // /api/leads endpoint normalises any Contact-Form-7 payload; an Inngest job
+  // classifies (brand / products / categories / score) and routes onto the
+  // Sales Pipeline, deduping re-enquiries onto the existing contact.
+  'lead.classified',
+  'lead.converted',
+  'lead.reenquiry_recorded',
+  'lead.dismissed',
+  'lead.classification_corrected',
+  'lead.source_created',
+  'lead.source_updated',
+  'lead.source_archived',
+  'lead.rule_created',
+  'lead.rule_updated',
+  'lead.rule_archived',
+  'lead.product_created',
+  'lead.product_updated',
+  'lead.product_archived',
 
   // Finance
   'payment.created',
@@ -217,6 +259,12 @@ export const EVENT_NAMES = [
   'auth.user_deactivated',
   'auth.user_reactivated',
   'auth.super_admin_seeded',
+  // User management (admin-created accounts + grantable user.manage permission).
+  'auth.user_created',
+  'auth.user_updated',
+  'auth.password_reset_by_admin',
+  'auth.permission_granted',
+  'auth.permission_revoked',
   // Audit-A2 / CLAUDE.md §20: TOTP MFA lifecycle and authn events.
   'auth.totp_setup_started',
   'auth.totp_enabled',
@@ -232,6 +280,29 @@ export const EVENT_NAMES = [
   'gmail.oauth_invalid_state',
   'gmail.oauth_needs_reconnect',
 
+  // Communications Hub — multi-account mail (ADR 0021). MailAccount lifecycle
+  // (personal + shared team inboxes) and shared-inbox membership. Reuses the
+  // existing Gmail sync via the GmailMailbox bridge; secrets stay in
+  // EncryptedField (§21).
+  'mail_account.created',
+  'mail_account.imported',
+  'mail_account.updated',
+  'mail_account.disconnected',
+  'mail_account.default_changed',
+  'mail_account.member_added',
+  'mail_account.member_removed',
+  // ADR 0021 Phase 5 — two-way action sync. A CRM action mutates the live
+  // mailbox (read/archive/star/trash/label), mirrored to Gmail and reflected on
+  // the Conversation head. All reversible (trash → Gmail Trash, recoverable).
+  'mail.thread_read_changed',
+  'mail.thread_archived',
+  'mail.thread_starred',
+  'mail.thread_trashed',
+  'mail.thread_labeled',
+  // ADR 0021 Phase 4 — reply to an email thread from the CRM (reuses the Gmail
+  // sendReply outbound, which additionally writes gmail.email_sent).
+  'mail.thread_replied',
+
   // Audit-B2: payment links, allocations, gmail outbound, trengo connect
   'charge.payment_link_created',
   'charge.payment_link_requested',
@@ -242,6 +313,17 @@ export const EVENT_NAMES = [
   'gmail.reply_requested',
   'trengo.token_connected',
   'trengo.token_connect_requested',
+  // CRM → Trengo outbound reply (procedure-level record; the integration
+  // additionally writes `trengo.message_sent` on success). Mirrors the Gmail
+  // `*.reply_requested` shape.
+  'trengo.reply_requested',
+  // CRM → Trengo ticket state changes. Audited at the integration layer once
+  // the PATCH succeeds; the webhook echo is then linked onto the same
+  // Interaction (jobs.ts linkCrmOutboundEcho) rather than duplicated.
+  'trengo.ticket_close_requested',
+  'trengo.ticket_reopen_requested',
+  // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
+  'trengo.ticket_assign_requested',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',
@@ -255,6 +337,18 @@ export const EVENT_NAMES = [
   'backfill.failed',
   'backfill.cancelled',
   'interaction.recording_streamed',
+  // ADR 0020 Phase 2c: one-shot Conversation-head backfill. Distinct from
+  // provider backfills (which fill Interaction) — this re-derives queryable
+  // state from rows we already have.
+  'migration.conversation_head_backfill_requested',
+  'migration.conversation_head_backfill_started',
+  'migration.conversation_head_backfill_completed',
+  // ADR 0020 Phase 6c — contact-field suggestions from upstream providers.
+  // We NEVER silent-merge (CLAUDE.md §3); these events track the human
+  // review of a Trengo `contact.updated` (or other source).
+  'contact.suggestion_created',
+  'contact.suggestion_accepted',
+  'contact.suggestion_rejected',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
@@ -298,6 +392,21 @@ export const INNGEST_EVENT_NAMES = [
   'backfill/aircall.requested',
   'backfill/trengo.requested',
   'backfill/slack.requested',
+  // B2B Invoices Platform sync. One bus event per inbound webhook (processed
+  // async like every other provider), plus the nightly events-feed reconcile.
+  'invoicing/event.received',
+  'invoicing/reconcile.requested',
+  // ADR 0020 Phase 2c — one-shot conversation-head backfill. Self-recursive
+  // (the function reschedules with a cursor) so a single Inngest event name
+  // covers the initial trigger and every continuation.
+  'migration/backfill-conversation-heads.requested',
+  // ADR 0020 Phase 6d — fan out attachment downloads off the webhook.
+  // Concurrency capped on the worker (4) so a burst of attachments doesn't
+  // starve the rest of the queue.
+  'trengo/download-attachments.requested',
+  // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
+  // persists a Lead then hands off async classification + pipeline routing.
+  'lead/classify.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]
@@ -321,6 +430,15 @@ export const INTERACTION_TYPES = [
   'payment',
   'system',
   'slack_summary',
+  // Trengo ticket / label lifecycle (CLAUDE.md §11). These are written by the
+  // Trengo webhook job (packages/integrations/trengo/src/jobs.ts) and exist in
+  // the Prisma InteractionType enum; registered here so the taxonomy and the
+  // schema agree.
+  'ticket_assigned',
+  'ticket_closed',
+  'ticket_reopened',
+  'label_added',
+  'label_removed',
   'family_state_changed',
   'family_pipeline_moved',
   'card_moved',
@@ -343,6 +461,10 @@ export const INTERACTION_TYPES = [
   // Forwarding quick action: agent forwarded a query about this contact to
   // an internal address (AP team, CEOs, schools, partnerships, etc).
   'email_forwarded',
+  // ADR 0023: a web enquiry captured via the universal /api/leads endpoint.
+  // First contact and every re-enquiry land on the contact's timeline so the
+  // page shows how many times they have reached out.
+  'lead_enquiry',
 ] as const
 
 export type InteractionType = (typeof INTERACTION_TYPES)[number]

@@ -12,6 +12,7 @@
 import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
+import { applyMailToConversation } from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -47,7 +48,7 @@ export const gmailHistoryChanged = inngest.createFunction(
     const mailbox = await step.run('load-mailbox', async () =>
       db.gmailMailbox.findUnique({
         where: { address: emailAddress },
-        select: { agentId: true, historyId: true },
+        select: { id: true, agentId: true, historyId: true },
       }),
     )
     if (!mailbox) {
@@ -96,6 +97,7 @@ export const gmailHistoryChanged = inngest.createFunction(
       await step.run(`process-${added.messageId}`, async () =>
         processMessage({
           agentId: mailbox.agentId,
+          mailboxId: mailbox.id,
           messageId: added.messageId,
           requestId: eventId,
         }),
@@ -116,6 +118,9 @@ export const gmailHistoryChanged = inngest.createFunction(
 
 interface ProcessMessageInput {
   agentId: string
+  /** GmailMailbox.id the sync is running for — used to resolve the MailAccount
+   *  this thread belongs to (ADR 0021 Phase 3b). */
+  mailboxId: string
   messageId: string
   requestId: string
 }
@@ -230,7 +235,6 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
       requestId: input.requestId,
       after: { gmailMessageId: message.id, matchedContacts: 0 },
     })
-    return
   }
 
   for (const contact of matchedContacts) {
@@ -269,6 +273,26 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
       },
     })
   }
+
+  // ADR 0021 Phase 3b — upsert the email Conversation head so the thread shows
+  // in the unified Comms Centre next to Trengo conversations. Keyed on
+  // (provider='email', externalThreadId=gmailThreadId); never duplicates the
+  // message body (that lives in the Interaction above). Resolve the owning
+  // MailAccount via the GmailMailbox bridge when it has been imported.
+  const account = await db.mailAccount.findFirst({
+    where: { gmailMailboxId: input.mailboxId, deletedAt: null },
+    select: { id: true },
+  })
+  await applyMailToConversation(db, {
+    provider: 'email',
+    externalThreadId: message.threadId,
+    mailAccountId: account?.id ?? null,
+    direction: direction === 'sent' ? 'sent' : 'received',
+    occurredAt,
+    contactId: matchedContacts[0]?.id ?? null,
+    familyId: null,
+    subject: subject || null,
+  })
 }
 
 // -----------------------------------------------------------------------------

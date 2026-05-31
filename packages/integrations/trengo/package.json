@@ -11,6 +11,10 @@
     "./jobs": "./src/jobs.ts",
     "./outbound": "./src/outbound.ts",
     "./connect": "./src/connect.ts",
+    "./conversations": "./src/conversations.ts",
+    "./conversation-head": "./src/conversation-head.ts",
+    "./attachments": "./src/attachments.ts",
+    "./s3": "./src/s3.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {
@@ -20,6 +24,8 @@
     "test": "echo 'no tests yet'"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@aws-sdk/s3-request-presigner": "^3.658.0",
     "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/client": "^5.22.0",
     "@studymind/audit": "workspace:*",
