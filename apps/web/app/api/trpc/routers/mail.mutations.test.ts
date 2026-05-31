@@ -19,10 +19,21 @@ const { fakeProvider } = vi.hoisted(() => ({
   },
 }))
 
+const { sendReplyMock } = vi.hoisted(() => ({
+  sendReplyMock: vi.fn(async () => ({
+    outboundEmailIntentId: 'oei_1',
+    gmailMessageId: 'm_sent',
+    gmailThreadId: 'thread_1',
+    status: 'sent' as const,
+    replayed: false,
+  })),
+}))
+
 vi.mock('@/lib/mail/get-sync-provider', () => ({
   getMailSyncProvider: vi.fn(async () => fakeProvider),
 }))
 vi.mock('@studymind/core/realtime', () => ({ publishConversationUpdate: vi.fn() }))
+vi.mock('@studymind/integration-gmail/outbound', () => ({ sendReply: sendReplyMock }))
 
 import { mailRouter } from './mail'
 
@@ -72,6 +83,18 @@ function makeCtx(opts: { role?: UserRole; head?: Head | null }): {
         updates.push(data)
         return { ...head, ...data }
       },
+    },
+    mailAccount: {
+      findUnique: async () => ({ ownerUserId: 'u_owner' }),
+    },
+    interaction: {
+      findFirst: async () => ({
+        payload: {
+          from: ['parent@example.test'],
+          subject: 'UCAT help',
+          messageIdHeader: '<abc@mail.gmail.com>',
+        },
+      }),
     },
   }
   const user: SessionUser = { id: 'u_me', email: 'me@studymind.co.uk', role: opts.role ?? 'sales_executive' }
@@ -145,6 +168,38 @@ describe('preconditions', () => {
     await expect(
       mailRouter.createCaller(ctx).thread.setStarred({ conversationId: 'cv_x', starred: true }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('mail.thread.reply', () => {
+  it('replies to the latest inbound via Gmail, updates the head, audits', async () => {
+    const { ctx, audit, updates } = makeCtx({})
+    await mailRouter
+      .createCaller(ctx)
+      .thread.reply({ conversationId: 'cv_1', body: 'Thanks, here are the details.' })
+    expect(sendReplyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'u_owner',
+        threadId: 'thread_1',
+        toAddresses: ['parent@example.test'],
+        originalMessageId: '<abc@mail.gmail.com>',
+        body: 'Thanks, here are the details.',
+      }),
+    )
+    expect(updates[0]).toEqual(
+      expect.objectContaining({ unreadCount: 0, status: 'open' }),
+    )
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'mail.thread_replied' }),
+    )
+  })
+
+  it('is forbidden for a Virtual Assistant', async () => {
+    const { ctx } = makeCtx({ role: 'virtual_assistant' })
+    await expect(
+      mailRouter.createCaller(ctx).thread.reply({ conversationId: 'cv_1', body: 'hi' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(sendReplyMock).not.toHaveBeenCalled()
   })
 })
 

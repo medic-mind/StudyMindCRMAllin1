@@ -133,9 +133,12 @@ agent can see), and a newest-first thread list over the email Conversation
 heads (tRPC `mail.accounts` + `mail.threads.list`, staff-gated, keyset
 paginated). Rows open the existing conversation thread view (which already
 renders the full email thread, Phase 3b). RSC + `Link` navigation, consistent
-with the Comms Centre pages. **Still to come:** multi-select + bulk actions,
-preview pane, command-palette search, keyboard shortcuts, and compose/reply
-from `/mail` (which depends on the Phase 5 two-way action sync).
+with the Comms Centre pages. **Reply (implemented):** the email thread view has
+a reply box (`EmailReply` → `mail.thread.reply`) that sends via the account
+owner's mailbox using the existing Gmail `sendReply` outbound, threaded against
+the latest inbound message; the sent reply lands in Gmail too. **Still to come:**
+new-message compose, multi-select + bulk actions, preview pane, command-palette
+search, keyboard shortcuts.
 
 ### Phase 5 — Two-way action sync (implemented)
 

@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { TRPCError } from '@trpc/server'
 
 import { publishConversationUpdate } from '@studymind/core/realtime'
+import { sendReply } from '@studymind/integration-gmail/outbound'
 
 import { getMailSyncProvider } from '@/lib/mail/get-sync-provider'
 import {
@@ -373,6 +374,92 @@ export const mailRouter = router({
           action: 'mail.thread_trashed',
           target: { type: 'Conversation', id: head.id },
           after: { trashed: input.trashed },
+        })
+        return { id: head.id }
+      }),
+
+    /**
+     * Reply to an email thread from the CRM. Reuses the Gmail `sendReply`
+     * outbound (idempotent on (threadId, requestId)); it writes the
+     * `email_sent` Interaction + audits `gmail.email_sent`. We additionally
+     * reflect the outbound on the head and audit `mail.thread_replied`.
+     */
+    reply: auditedProcedure
+      .input(
+        z.object({
+          conversationId: z.string(),
+          body: z.string().trim().min(1).max(50_000),
+          cc: z.array(z.string().email()).max(50).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+
+        const account = await ctx.db.mailAccount.findUnique({
+          where: { id: head.mailAccountId },
+          select: { ownerUserId: true },
+        })
+        if (!account?.ownerUserId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'This mailbox has no connected owner to send as.',
+          })
+        }
+
+        // Latest inbound message on the thread gives us who to reply to, the
+        // subject, and the Message-ID to thread against.
+        const latestInbound = await ctx.db.interaction.findFirst({
+          where: {
+            deletedAt: null,
+            type: 'email_received',
+            payload: { path: ['gmailThreadId'], equals: head.externalThreadId },
+          },
+          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+          select: { payload: true },
+        })
+        const p = (latestInbound?.payload as Record<string, unknown> | null) ?? {}
+        const from = Array.isArray(p['from']) ? (p['from'] as string[]) : []
+        const toAddresses = from.filter((a) => typeof a === 'string' && a.length > 0)
+        if (toAddresses.length === 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'No inbound message to reply to on this thread yet.',
+          })
+        }
+        const subject = typeof p['subject'] === 'string' ? (p['subject'] as string) : ''
+        const originalMessageId =
+          typeof p['messageIdHeader'] === 'string'
+            ? (p['messageIdHeader'] as string)
+            : undefined
+
+        await sendReply({
+          agentId: account.ownerUserId,
+          threadId: head.externalThreadId,
+          subject,
+          body: input.body,
+          toAddresses,
+          cc: input.cc,
+          requestId: ctx.requestId,
+          originalMessageId,
+        })
+
+        const now = new Date()
+        await ctx.db.conversation.update({
+          where: { id: head.id },
+          data: { lastOutboundAt: now, lastMessageAt: now, unreadCount: 0, status: 'open' },
+        })
+        publishConversationUpdate({
+          id: head.id,
+          trengoTicketId: null,
+          lastMessageAt: now.toISOString(),
+          contactId: head.contactId,
+        })
+        await ctx.audit({
+          action: 'mail.thread_replied',
+          target: { type: 'Conversation', id: head.id },
+          after: { to: toAddresses, cc: input.cc ?? [] },
         })
         return { id: head.id }
       }),

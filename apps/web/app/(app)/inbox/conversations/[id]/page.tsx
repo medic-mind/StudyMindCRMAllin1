@@ -19,6 +19,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 import { LiveUpdates } from '../LiveUpdates'
 import { AssignControl } from './AssignControl'
 import { ConversationReply } from './ConversationReply'
+import { EmailReply } from './EmailReply'
 import { MailThreadActions } from './MailThreadActions'
 
 const CHANNEL_LABEL: Record<string, string> = {
@@ -223,7 +224,9 @@ export default async function ConversationDetailPage({
         )}
 
         <div className="mt-6">
-          {head.contactId && head.trengoTicketId !== null ? (
+          {head.provider === 'email' ? (
+            <EmailReply conversationId={head.id} />
+          ) : head.contactId && head.trengoTicketId !== null ? (
             <>
               <AssignControl
                 conversationId={head.id}
@@ -239,14 +242,10 @@ export default async function ConversationDetailPage({
                 latestInteractionId={messages[messages.length - 1]?.id ?? null}
               />
             </>
-          ) : !head.contactId ? (
+          ) : (
             <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600">
               This conversation is not yet matched to a contact. Open it in
               Trengo to match a contact before replying from the CRM.
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600">
-              Reply from the email client (coming in ADR 0021 Phase 4).
             </div>
           )}
         </div>
