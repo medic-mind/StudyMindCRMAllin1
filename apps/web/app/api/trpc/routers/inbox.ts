@@ -601,11 +601,37 @@ export const inboxRouter = router({
           }
           const convo = await ctx.db.conversation.findUnique({
             where: { id: input.conversationId },
-            select: { id: true, contactId: true },
+            select: { id: true, contactId: true, trengoTicketId: true },
           })
           if (!convo) throw new TRPCError({ code: 'NOT_FOUND' })
 
           const mentions = Array.from(new Set(input.mentionUserIds ?? []))
+
+          // ADR 0020 Phase 6f — when this is a Trengo conversation, also push
+          // the note to Trengo's internal-notes endpoint so colleagues working
+          // there see it. Best-effort: a Trengo failure must not lose the
+          // note, which is already the CRM source of truth. We stamp the sync
+          // outcome onto the note payload for transparency.
+          let trengoNoteId: number | null = null
+          let trengoSync: 'synced' | 'failed' | null = null
+          if (convo.trengoTicketId !== null) {
+            try {
+              const { pushInternalNoteToTrengo } = await import(
+                '@studymind/integration-trengo/outbound'
+              )
+              const r = await pushInternalNoteToTrengo({
+                agentId: user.id,
+                ticketId: convo.trengoTicketId,
+                body: input.body,
+                requestId: ctx.requestId,
+              })
+              trengoNoteId = r.trengoNoteId
+              trengoSync = 'synced'
+            } catch {
+              trengoSync = 'failed'
+            }
+          }
+
           const noteId = createId()
           await ctx.db.interaction.create({
             data: {
@@ -619,6 +645,7 @@ export const inboxRouter = router({
                 body: input.body,
                 mentionedUserIds: mentions,
                 internal: true,
+                ...(trengoSync ? { trengoSync, trengoNoteId } : {}),
               },
               createdById: user.id,
               updatedById: user.id,

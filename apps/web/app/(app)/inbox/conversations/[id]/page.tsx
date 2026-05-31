@@ -21,6 +21,7 @@ import { getCurrentUser } from '@/lib/auth/server'
 
 import { AssignControl } from './AssignControl'
 import { ConversationNotes } from './ConversationNotes'
+import { TrengoThreadActions } from './TrengoThreadActions'
 import { ConversationReply } from './ConversationReply'
 import { ConversationTaskButton } from './ConversationTaskButton'
 import { EmailReply } from './EmailReply'
@@ -130,11 +131,6 @@ export default async function ConversationDetailPage({
                 {replyWindowOpen ? '24h window open' : '24h window closed'}
               </span>
             ) : null}
-            {head.tags.map((t) => (
-              <Badge key={t} tone="neutral">
-                {t}
-              </Badge>
-            ))}
           </div>
           {head.subject ? (
             <p className="mt-2 text-sm text-neutral-700">{head.subject}</p>
@@ -158,7 +154,15 @@ export default async function ConversationDetailPage({
             unread={head.unreadCount > 0}
             archived={head.status === 'archived'}
           />
-        ) : null}
+        ) : (
+          <TrengoThreadActions
+            conversationId={head.id}
+            contactId={head.contactId}
+            ticketId={head.trengoTicketId}
+            tags={head.tags}
+            unread={head.unreadCount > 0}
+          />
+        )}
 
         {messages.length === 0 ? (
           <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-center text-sm text-neutral-600">
