@@ -33,7 +33,10 @@ export interface ConversationHeadDb {
 
 export interface ConversationRow {
   id: string
-  trengoTicketId: number
+  /** Null for non-Trengo conversation heads (ADR 0021 Phase 3a). The Trengo
+   *  upserter only operates on Trengo rows, so at runtime this is always set
+   *  inside this module — the union is structural for Prisma compatibility. */
+  trengoTicketId: number | null
   contactId: string | null
   familyId: string | null
   channel: string | null
