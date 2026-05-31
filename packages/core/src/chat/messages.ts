@@ -186,6 +186,9 @@ export async function sendMessage(
       isImage: /^image\//i.test(a.contentType),
       url: `/api/internal/chat-attachments/${a.id}`,
     })),
+    // A freshly-sent message is never pinned or saved yet.
+    pinned: false,
+    saved: false,
   }
 }
 
@@ -344,7 +347,7 @@ export async function hydrateMessages(
   const messageIds = rows.map((r) => r.id)
   const rootIds = rows.filter((r) => r.replyCount > 0).map((r) => r.id)
 
-  const [reactions, refRows, authorRows, replyPreviewRows, attachmentRows] =
+  const [reactions, refRows, authorRows, replyPreviewRows, attachmentRows, pinRows, saveRows] =
     await Promise.all([
       db.chatReaction.findMany({
         where: { messageId: { in: messageIds } },
@@ -378,7 +381,18 @@ export async function hydrateMessages(
           height: true,
         },
       }),
+      db.chatPin.findMany({
+        where: { messageId: { in: messageIds } },
+        select: { messageId: true },
+      }),
+      db.chatSavedItem.findMany({
+        where: { userId: viewerId, messageId: { in: messageIds } },
+        select: { messageId: true },
+      }),
     ])
+
+  const pinnedSet = new Set(pinRows.map((p) => p.messageId))
+  const savedSet = new Set(saveRows.map((s) => s.messageId))
 
   // Collect reactor + reply-author ids so we resolve every needed name once.
   const nameIds = new Set<string>()
@@ -468,6 +482,8 @@ export async function hydrateMessages(
       reactions: reactionViews,
       replyAuthorNames: replyAuthorsByRoot.get(row.id) ?? [],
       attachments: row.deletedAt ? [] : (attachmentsByMessage.get(row.id) ?? []),
+      pinned: pinnedSet.has(row.id),
+      saved: savedSet.has(row.id),
     }
   })
 }

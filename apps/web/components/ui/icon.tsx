@@ -109,6 +109,15 @@ export function ForwardIcon(props: IconProps) {
   )
 }
 
+export function PinIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 9V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v5a4 4 0 0 0 2 3.46V14H3v-1.54A4 4 0 0 0 5 9z" />
+    </svg>
+  )
+}
+
 export function PaperclipIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

@@ -2859,6 +2859,8 @@ model ChatMessage {
   refs        ChatMessageRef[]
   reactions   ChatReaction[]
   attachments ChatAttachment[]
+  pins        ChatPin[]
+  saves       ChatSavedItem[]
 
   /// Channel timeline (top-level rows have parentId IS NULL) ordered by recency.
   @@index([channelId, parentId, createdAt])
@@ -2895,6 +2897,38 @@ model ChatAttachment {
   message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([messageId])
+}
+
+/// A pinned message in a channel (ADR 0022 — pins & saves). Shared, channel-
+/// scoped (like Slack's Pins tab): any member can pin/unpin; everyone in the
+/// channel sees the same set. One pin per message (a message is pinned or not).
+/// Cascades with the message and the channel.
+model ChatPin {
+  id          String   @id
+  messageId   String   @unique
+  channelId   String
+  /// Who pinned it, for the "pinned by …" line.
+  pinnedById  String
+  createdAt   DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, createdAt])
+}
+
+/// A personal saved/bookmarked message (ADR 0022 — pins & saves). Per-user and
+/// private (like Slack's "Later" / saved items): only the owner sees their
+/// saves. One save per (user, message). Cascades with the message.
+model ChatSavedItem {
+  id        String   @id
+  userId    String
+  messageId String
+  createdAt DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([userId, createdAt])
 }
 
 model ChatMention {

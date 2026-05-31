@@ -14,6 +14,8 @@ export * from './messages'
 export * from './read-state'
 export * from './mentions'
 export * from './search'
+export * from './pins'
+export * from './saves'
 export {
   resolveRefs,
   searchRefTargets,
