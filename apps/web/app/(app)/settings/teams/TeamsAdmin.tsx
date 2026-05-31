@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -213,7 +214,7 @@ export function TeamsAdmin() {
         </div>
       </form>
 
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+      <Card className="overflow-hidden">
         {data.length === 0 ? (
           <p className="p-6 text-sm text-neutral-500">
             No teams yet. Create one above to start scoping tasks per squad.
@@ -250,7 +251,7 @@ export function TeamsAdmin() {
             ))}
           </ul>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

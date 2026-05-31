@@ -11,6 +11,7 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -643,7 +644,7 @@ export default async function AircallReportPage({
 
           {/* Missed + voicemail trays side-by-side */}
           <div className="grid gap-6 lg:grid-cols-2">
-            <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+            <Card className="overflow-hidden">
               <div className="border-b border-neutral-100 bg-rose-50/60 px-4 py-3">
                 <h2 className="text-sm font-semibold text-neutral-900">
                   Recent missed calls
@@ -653,9 +654,9 @@ export default async function AircallReportPage({
               <div className="px-4 py-2">
                 <TrayList rows={data.missedTray} emptyText="No missed calls in this period." />
               </div>
-            </section>
+            </Card>
 
-            <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+            <Card className="overflow-hidden">
               <div className="border-b border-neutral-100 bg-amber-50/60 px-4 py-3">
                 <h2 className="text-sm font-semibold text-neutral-900">
                   Recent voicemails
@@ -665,11 +666,11 @@ export default async function AircallReportPage({
               <div className="px-4 py-2">
                 <TrayList rows={data.voicemailTray} emptyText="No voicemails in this period." />
               </div>
-            </section>
+            </Card>
           </div>
 
           {/* Top contacts */}
-          <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+          <Card className="overflow-hidden">
             <div className="border-b border-neutral-100 bg-neutral-50/60 px-4 py-3">
               <h2 className="text-sm font-semibold text-neutral-900">
                 Top contacts by call volume
@@ -720,7 +721,7 @@ export default async function AircallReportPage({
                 </Tbody>
               </Table>
             )}
-          </section>
+          </Card>
         </div>
       </PageBody>
     </>
