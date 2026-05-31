@@ -364,6 +364,24 @@ export const inboxRouter = router({
                 typeof a['status'] === 'string' ? (a['status'] as string) : 'pending',
             }))
             .filter((a) => a.attachmentId !== '')
+          // ADR 0021 Phase 4 — email attachments (payload.attachments[] carry
+          // an `s3Key`, no Trengo attachmentId). Surface them by index so the
+          // /mail reading pane can link to the download route. Keep the
+          // (S3-stored) ones only.
+          const mailAttachments = rawAttachments
+            .map((a, i) => ({
+              index: i,
+              filename:
+                typeof a['filename'] === 'string' ? (a['filename'] as string) : 'file',
+              mimeType:
+                typeof a['mimeType'] === 'string'
+                  ? (a['mimeType'] as string)
+                  : 'application/octet-stream',
+              sizeBytes:
+                typeof a['sizeBytes'] === 'number' ? (a['sizeBytes'] as number) : null,
+              stored: typeof a['s3Key'] === 'string' && (a['s3Key'] as string).length > 0,
+            }))
+            .filter((a) => a.stored)
           return {
             id: r.id,
             occurredAt: r.occurredAt,
@@ -371,6 +389,7 @@ export const inboxRouter = router({
             body: body ?? r.summary,
             authorId: r.createdById,
             attachments,
+            mailAttachments,
           }
         })
 
