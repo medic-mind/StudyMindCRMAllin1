@@ -140,8 +140,10 @@ the latest inbound message; the sent reply lands in Gmail too. **Compose
 (implemented):** a `MailCompose` panel on `/mail` (`mail.compose` → Gmail
 `sendEmail`) starts a brand-new thread from the chosen account, links matched
 Contacts, and creates the email Conversation head so it shows immediately.
-**Still to come:** multi-select + bulk actions, preview pane, command-palette
-search, keyboard shortcuts.
+**Search (implemented):** `mail.threads.list` takes a `q` that matches
+subject / sender / account (composed as an AND clause so it coexists with the
+keyset cursor); a search box on `/mail` drives it via the URL. **Still to come:**
+multi-select + bulk actions, side-by-side preview pane, keyboard shortcuts.
 
 ### Phase 5 — Two-way action sync (implemented)
 

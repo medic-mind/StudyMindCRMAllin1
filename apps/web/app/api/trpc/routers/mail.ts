@@ -165,6 +165,7 @@ export const mailRouter = router({
         z.object({
           mailAccountId: z.string().nullish(),
           filter: z.enum(['all', 'unread']).default('all'),
+          q: z.string().trim().min(1).max(120).nullish(),
           cursor: z
             .object({ id: z.string(), lastMessageAt: z.date() })
             .nullish(),
@@ -178,17 +179,36 @@ export const mailRouter = router({
         const where: Record<string, unknown> = { provider: 'email' }
         if (input.mailAccountId) where['mailAccountId'] = input.mailAccountId
         if (input.filter === 'unread') where['unreadCount'] = { gt: 0 }
+        // Compose cursor + search as AND clauses so neither clobbers the other.
+        const and: unknown[] = []
         if (input.cursor) {
-          where['OR'] = [
-            { lastMessageAt: { lt: input.cursor.lastMessageAt } },
-            {
-              AND: [
-                { lastMessageAt: input.cursor.lastMessageAt },
-                { id: { lt: input.cursor.id } },
-              ],
-            },
-          ]
+          and.push({
+            OR: [
+              { lastMessageAt: { lt: input.cursor.lastMessageAt } },
+              {
+                AND: [
+                  { lastMessageAt: input.cursor.lastMessageAt },
+                  { id: { lt: input.cursor.id } },
+                ],
+              },
+            ],
+          })
         }
+        if (input.q) {
+          const c = { contains: input.q, mode: 'insensitive' as const }
+          and.push({
+            OR: [
+              { subject: c },
+              { mailAccount: { is: { address: c } } },
+              {
+                contact: {
+                  is: { OR: [{ firstName: c }, { lastName: c }, { email: c }] },
+                },
+              },
+            ],
+          })
+        }
+        if (and.length > 0) where['AND'] = and
 
         const rows = await ctx.db.conversation.findMany({
           where,

@@ -421,8 +421,8 @@ rest advertise the roadmap and reject connection attempts.
 **Phased plan (ADR 0021):** (1) multi-account foundation — *implemented*;
 (2) `MailSyncProvider` seam + Gmail behind it — *implemented*; (3) email into the
 `Conversation` head + Communication Centre (unified inbox) — *implemented*;
-(4) `/mail` client — *v1 + compose/reply implemented* (bulk / search / preview
-still to come); (5) two-way action sync
+(4) `/mail` client — *v1 + compose/reply/search implemented* (bulk / preview /
+shortcuts still to come); (5) two-way action sync
 (read/archive/star/label/delete) — *implemented* (outbound CRM→Gmail; inbound
 flag-mirroring + drafts still to come); (6) shared-inbox operations — *implemented*
 (assign already existed; + notes/@mentions + one-click task-from-conversation);

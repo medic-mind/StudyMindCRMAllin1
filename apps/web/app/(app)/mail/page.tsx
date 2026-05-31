@@ -22,11 +22,12 @@ type FilterValue = 'all' | 'unread'
 export default async function MailPage({
   searchParams,
 }: {
-  searchParams: Promise<{ account?: string; filter?: string }>
+  searchParams: Promise<{ account?: string; filter?: string; q?: string }>
 }) {
   const params = await searchParams
   const filter: FilterValue = params.filter === 'unread' ? 'unread' : 'all'
   const accountId = typeof params.account === 'string' ? params.account : null
+  const q = typeof params.q === 'string' && params.q.trim() ? params.q.trim() : null
 
   const caller = await createServerCaller()
   let accounts: Awaited<ReturnType<typeof caller.mail.accounts>> = []
@@ -37,6 +38,7 @@ export default async function MailPage({
     const res = await caller.mail.threads.list({
       mailAccountId: accountId,
       filter,
+      q,
       limit: 50,
     })
     items = res.items
@@ -62,12 +64,18 @@ export default async function MailPage({
   }
 
   const now = new Date()
-  const qs = (next: { account?: string | null; filter?: FilterValue }) => {
+  const qs = (next: {
+    account?: string | null
+    filter?: FilterValue
+    q?: string | null
+  }) => {
     const sp = new URLSearchParams()
     const acc = next.account === undefined ? accountId : next.account
     const f = next.filter ?? filter
+    const query = next.q === undefined ? q : next.q
     if (acc) sp.set('account', acc)
     if (f !== 'all') sp.set('filter', f)
+    if (query) sp.set('q', query)
     const s = sp.toString()
     return s ? `/mail?${s}` : '/mail'
   }
@@ -80,7 +88,7 @@ export default async function MailPage({
       />
       <PageBody>
         <LiveUpdates />
-        <div className="mb-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <MailCompose
             accounts={accounts.map((a) => ({
               id: a.id,
@@ -88,6 +96,24 @@ export default async function MailPage({
               displayName: a.displayName,
             }))}
           />
+          {/* Search — RSC GET form; preserves the current account/filter. */}
+          <form method="get" action="/mail" className="flex items-center gap-1.5">
+            {accountId ? <input type="hidden" name="account" value={accountId} /> : null}
+            {filter !== 'all' ? <input type="hidden" name="filter" value={filter} /> : null}
+            <input
+              type="search"
+              name="q"
+              defaultValue={q ?? ''}
+              placeholder="Search subject, sender, account…"
+              aria-label="Search mail"
+              className="h-8 w-56 rounded-md border border-neutral-200 px-3 text-sm focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
+            />
+            {q ? (
+              <Link href={qs({ q: null })} className="text-xs text-neutral-500 hover:underline">
+                Clear
+              </Link>
+            ) : null}
+          </form>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[200px_1fr]">
           {/* Folder / account rail */}
@@ -171,9 +197,11 @@ export default async function MailPage({
               <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-sm">
                 <MailIcon size={24} className="mx-auto text-neutral-300" />
                 <p className="mt-2 text-sm font-medium text-neutral-700">
-                  {filter === 'unread'
-                    ? 'No unread email.'
-                    : 'No email here yet.'}
+                  {q
+                    ? `No mail matches “${q}”.`
+                    : filter === 'unread'
+                      ? 'No unread email.'
+                      : 'No email here yet.'}
                 </p>
                 <p className="mt-1 text-sm text-neutral-500">
                   Email synced from your connected accounts appears here
