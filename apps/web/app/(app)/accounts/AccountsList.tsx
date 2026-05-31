@@ -69,6 +69,31 @@ const STATUS_TONE: Record<Status, string> = {
   churned: 'bg-red-50 text-red-700 ring-1 ring-red-200',
 }
 
+type SortKey =
+  | 'name'
+  | 'studentCount'
+  | 'hoursContracted'
+  | 'activity'
+  | 'amountPaidMinor'
+  | 'lastContactedAt'
+
+function sortValue(a: AccountRow, key: SortKey): number | string {
+  switch (key) {
+    case 'name':
+      return a.name.toLowerCase()
+    case 'studentCount':
+      return a.studentCount
+    case 'hoursContracted':
+      return a.hoursContracted
+    case 'activity':
+      return a.callCount + a.textCount + a.emailCount
+    case 'amountPaidMinor':
+      return a.amountPaidMinor
+    case 'lastContactedAt':
+      return a.lastContactedAt ? new Date(a.lastContactedAt).getTime() : 0
+  }
+}
+
 export function AccountsList({ kind, accounts }: { kind: Kind; accounts: AccountRow[] }) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -76,6 +101,33 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
   const [q, setQ] = useState(searchParams.get('q') ?? '')
   const status = (searchParams.get('status') ?? '') as Status | ''
   const now = new Date()
+
+  // Client-side column sort — the page already holds every row in memory, so
+  // sorting is instant and needs no round-trip. Name defaults ascending;
+  // numeric/recency columns default to "most first" (descending).
+  const [sortKey, setSortKey] = useState<SortKey>('name')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir(key === 'name' ? 'asc' : 'desc')
+    }
+  }
+
+  const sortedAccounts = [...accounts].sort((a, b) => {
+    const av = sortValue(a, sortKey)
+    const bv = sortValue(b, sortKey)
+    let cmp: number
+    if (typeof av === 'string' && typeof bv === 'string') {
+      cmp = av.localeCompare(bv)
+    } else {
+      cmp = (av as number) - (bv as number)
+    }
+    return sortDir === 'asc' ? cmp : -cmp
+  })
 
   function pushParam(key: string, value: string | null) {
     const params = new URLSearchParams(searchParams.toString())
@@ -145,9 +197,8 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
             No {kind === 'school' ? 'schools' : 'B2B partners'} yet.
           </p>
           <p className="mx-auto mt-1 max-w-md text-xs text-neutral-500">
-            Click <em>New {kind === 'school' ? 'school' : 'B2B partner'}</em> to
-            add one, or pull existing customers from the invoicing platform in{' '}
-            <em>Settings → Invoicing</em>.
+            Click <em>New {kind === 'school' ? 'school' : 'B2B partner'}</em> to add one, or pull
+            existing customers from the invoicing platform in <em>Settings → Invoicing</em>.
           </p>
         </div>
       ) : (
@@ -157,39 +208,65 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                 headings stay visible while the agent scrolls a long list. */}
             <thead className="sticky top-0 z-10 bg-neutral-50/95 text-left backdrop-blur supports-[backdrop-filter]:bg-neutral-50/80">
               <tr className="border-b border-neutral-200">
-                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  {kind === 'school' ? 'School' : 'B2B Partner'}
-                </th>
+                <SortableTh
+                  label={kind === 'school' ? 'School' : 'B2B Partner'}
+                  sortKey="name"
+                  active={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                />
                 <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Email
                 </th>
                 <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Phone
                 </th>
-                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Students
-                </th>
-                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Hours
-                </th>
-                <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Activity
-                </th>
-                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Paid
-                </th>
-                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Last contact
-                </th>
+                <SortableTh
+                  label="Students"
+                  sortKey="studentCount"
+                  align="right"
+                  active={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                />
+                <SortableTh
+                  label="Hours"
+                  sortKey="hoursContracted"
+                  align="right"
+                  active={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                />
+                <SortableTh
+                  label="Activity"
+                  sortKey="activity"
+                  align="center"
+                  active={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                />
+                <SortableTh
+                  label="Paid"
+                  sortKey="amountPaidMinor"
+                  align="right"
+                  active={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                />
+                <SortableTh
+                  label="Last contact"
+                  sortKey="lastContactedAt"
+                  align="right"
+                  active={sortKey}
+                  dir={sortDir}
+                  onSort={toggleSort}
+                />
                 <th className="w-8" />
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {accounts.map((a) => (
-                <tr
-                  key={a.id}
-                  className="group transition-colors hover:bg-neutral-50/80"
-                >
+              {sortedAccounts.map((a) => (
+                <tr key={a.id} className="group transition-colors hover:bg-neutral-50/80">
                   <td className="px-3 py-2 align-top">
                     <Link href={`/accounts/${a.id}`} className="block min-w-0">
                       <span className="flex items-center gap-1.5">
@@ -285,6 +362,48 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
         </div>
       )}
     </div>
+  )
+}
+
+/** A clickable, sortable table header cell. Shows a ▲/▼ caret on the active
+ *  column. Keyboard-accessible (it's a real button). */
+function SortableTh({
+  label,
+  sortKey,
+  active,
+  dir,
+  onSort,
+  align = 'left',
+}: {
+  label: string
+  sortKey: SortKey
+  active: SortKey
+  dir: 'asc' | 'desc'
+  onSort: (key: SortKey) => void
+  align?: 'left' | 'right' | 'center'
+}) {
+  const isActive = active === sortKey
+  const alignClass =
+    align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'
+  return (
+    <th
+      className={`px-3 py-2 font-medium text-neutral-600 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'}`}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`group/sort inline-flex w-full items-center gap-1 ${alignClass} hover:text-neutral-900`}
+        aria-label={`Sort by ${label}`}
+      >
+        <span>{label}</span>
+        <span
+          aria-hidden
+          className={`text-[9px] leading-none ${isActive ? 'text-primary-600' : 'text-neutral-300 group-hover/sort:text-neutral-400'}`}
+        >
+          {isActive ? (dir === 'asc' ? '▲' : '▼') : '▲'}
+        </span>
+      </button>
+    </th>
   )
 }
 
