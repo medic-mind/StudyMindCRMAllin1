@@ -38,6 +38,7 @@ interface CardData {
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
   dueAt?: Date | string | null
+  scheduledCallAt?: Date | string | null
   priority?: number | null
   assigneeId?: string | null
   assigneeName?: string | null

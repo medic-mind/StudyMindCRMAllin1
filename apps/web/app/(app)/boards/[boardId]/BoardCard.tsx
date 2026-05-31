@@ -13,6 +13,9 @@ import Link from 'next/link'
 import { useState, type CSSProperties, type HTMLAttributes, type Ref } from 'react'
 
 import { Badge } from '@/components/ui/badge'
+import { PhoneIcon } from '@/components/ui/icon'
+import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
+import { formatLondon } from '@/lib/format/london-time'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
@@ -55,6 +58,7 @@ interface CardData {
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
   dueAt?: Date | string | null
+  scheduledCallAt?: Date | string | null
   priority?: number | null
   assigneeId?: string | null
   assigneeName?: string | null
@@ -161,16 +165,14 @@ export function BoardCard({
             </span>
           ))}
         </div>
-        {/* Contact preview — phone + email so the agent can dial / mail
-            without opening the card. */}
+        {/* Contact preview — phone + email, directly clickable to dial / mail
+            without opening the card. `pointer-events-auto` re-enables clicks
+            inside the otherwise click-through card body; the links
+            stopPropagation so they don't also open the modal. */}
         {(card.contactEmail || card.contactPhone) && (
-          <div className="mt-1 flex flex-col gap-0.5 text-[11px] text-neutral-600">
-            {card.contactPhone && (
-              <span className="font-mono">{card.contactPhone}</span>
-            )}
-            {card.contactEmail && (
-              <span className="truncate">{card.contactEmail}</span>
-            )}
+          <div className="pointer-events-auto mt-1 flex flex-col gap-0.5 text-[11px] text-neutral-600">
+            {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
+            {card.contactEmail && <EmailLink email={card.contactEmail} />}
           </div>
         )}
         {/* Note preview — first 2 lines of the card description so the
@@ -187,6 +189,24 @@ export function BoardCard({
               title={card.assigneeName ?? card.assigneeEmail ?? 'Assigned'}
             >
               {initialsOf(card.assigneeName, card.assigneeEmail)}
+            </span>
+          )}
+          {card.scheduledCallAt && (
+            <span
+              className={
+                new Date(card.scheduledCallAt).getTime() < now.getTime()
+                  ? 'inline-flex items-center gap-0.5 rounded bg-red-50 px-1 font-semibold text-red-700'
+                  : 'inline-flex items-center gap-0.5 rounded bg-primary-50 px-1 font-medium text-primary-700'
+              }
+              title="Scheduled call (UK time)"
+            >
+              <PhoneIcon size={10} />
+              {formatLondon(card.scheduledCallAt, {
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
             </span>
           )}
           {card.dueAt && (

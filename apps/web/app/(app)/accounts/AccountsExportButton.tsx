@@ -28,6 +28,14 @@ interface Row {
   city: string | null
   country: string | null
   contactCount: number
+  studentCount: number
+  hoursContracted: number
+  hoursDelivered: number
+  amountPaidMinor: number
+  callCount: number
+  textCount: number
+  emailCount: number
+  lastContactedAt: Date | string | null
   companies: ReadonlyArray<RowCompany>
   createdAt: Date | string
 }
@@ -44,6 +52,22 @@ const COLUMNS: CsvColumn<Row>[] = [
   { header: 'City', value: (r) => r.city ?? '' },
   { header: 'Country', value: (r) => r.country ?? '' },
   { header: 'Contacts', value: (r) => r.contactCount },
+  { header: 'Students', value: (r) => r.studentCount },
+  { header: 'Hours contracted', value: (r) => r.hoursContracted },
+  { header: 'Hours delivered', value: (r) => r.hoursDelivered },
+  // Pence → pounds at the boundary; CLAUDE.md §19 keeps the in-app figure
+  // as integer minor units.
+  {
+    header: 'Amount paid (GBP)',
+    value: (r) => (r.amountPaidMinor / 100).toFixed(2),
+  },
+  { header: 'Calls', value: (r) => r.callCount },
+  { header: 'Texts', value: (r) => r.textCount },
+  { header: 'Emails', value: (r) => r.emailCount },
+  {
+    header: 'Last contacted',
+    value: (r) => (r.lastContactedAt ? new Date(r.lastContactedAt) : ''),
+  },
   { header: 'Companies', value: (r) => r.companies.map((c) => c.name).join(' · ') },
   { header: 'Created at', value: (r) => (r.createdAt ? new Date(r.createdAt) : '') },
 ]

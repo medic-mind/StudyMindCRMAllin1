@@ -1,17 +1,20 @@
 'use client'
 
-// Per-row user controls + the create/edit dialogs for Settings → Users.
-// Buttons are filtered by the caller's capabilities (ADR 0021):
-//   - create / resend-invite / deactivate : CEO + Senior Manager
-//   - edit details / change email / reset password : CEO/SM/Manager or a
-//     `user.manage` grant (and never against a CEO/Senior Manager unless you
-//     are one)
-//   - role grant/revoke : gated per-role by canGrantRole / canRevokeRole
-//   - delegate the manage permission : CEO/SM/Manager
-// The server re-checks every one of these — the UI only hides what it must.
+// Settings → Users: create dialog + per-row actions. ADR 0021.
+//
+// UI niceties (no new deps — hand-rolled menu mirroring MoveCardMenu, shared
+// modal shell, on-brand confirm dialogs):
+//   - a per-row "⋯" actions menu instead of a cluster of inline buttons
+//   - proper in-app confirm dialogs (deactivate reason, reset password) rather
+//     than window.prompt/confirm
+//   - a credentials modal with "copy all login details" + email-status note
+//   - a roles editor dialog instead of +/- toggle soup
+//
+// Buttons/menu items are filtered by the caller's capabilities; the server
+// re-checks every one.
 
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
 import { toast } from 'sonner'
 
 import {
@@ -24,10 +27,12 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { formatRoleLabel } from '@/lib/format/role-label'
 import { trpc } from '@/lib/trpc/client'
 
-type UserStatus = 'active' | 'invited' | 'deactivated' | 'locked'
+export type UserStatus = 'active' | 'invited' | 'deactivated' | 'locked'
+export type EmailStatus = 'sent' | 'skipped' | 'failed'
 
 export interface AccessFlags {
   role: Role
@@ -36,68 +41,214 @@ export interface AccessFlags {
   canGrantManage: boolean
   canDeactivate: boolean
   canManageRoles: boolean
+  systemEmailReady?: boolean
 }
 
-const LEADERSHIP: ReadonlySet<string> = new Set(['ceo', 'senior_manager'])
-const MANAGE_BY_ROLE: ReadonlySet<string> = new Set(['ceo', 'senior_manager', 'manager'])
+const LEADERSHIP = new Set(['ceo', 'senior_manager'])
+const MANAGE_BY_ROLE = new Set(['ceo', 'senior_manager', 'manager'])
 
-/** Whether the actor may edit/reset a target with these roles (mirrors the server). */
 function actorCanActOn(access: AccessFlags, targetRoles: string[]): boolean {
   if (access.role === 'ceo' || access.role === 'senior_manager') return true
   return !targetRoles.some((r) => LEADERSHIP.has(r))
 }
 
+async function copy(value: string, label: string): Promise<void> {
+  try {
+    await navigator.clipboard?.writeText(value)
+    toast.success(`${label} copied`)
+  } catch {
+    toast.error('Could not copy')
+  }
+}
+
 /* -------------------------------------------------------------------------- */
-/* credential reveal — shown after create / reset                              */
+/* shared modal shell                                                          */
+/* -------------------------------------------------------------------------- */
+
+function ModalShell({
+  title,
+  onClose,
+  children,
+  width = 'max-w-md',
+}: {
+  title: string
+  onClose: () => void
+  children: ReactNode
+  width?: string
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onMouseDown={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`w-full ${width} rounded-lg border border-neutral-200 bg-white p-4 shadow-xl`}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-neutral-500 hover:text-neutral-900"
+          >
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* credential reveal                                                           */
 /* -------------------------------------------------------------------------- */
 
 function CredentialReveal({
   email,
   temporaryPassword,
+  emailStatus,
 }: {
   email: string
   temporaryPassword: string
+  emailStatus?: EmailStatus
 }) {
-  const copy = (value: string, label: string) => {
-    void navigator.clipboard?.writeText(value).then(
-      () => toast.success(`${label} copied`),
-      () => toast.error('Could not copy'),
-    )
-  }
-  return (
-    <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm">
-      <p className="mb-2 font-medium text-green-900">
-        Account ready. A welcome email with these details (and a PDF) has been sent.
-      </p>
-      <p className="mb-2 text-green-900">
-        Share the temporary password securely if the email does not arrive — it must be changed on
-        first sign-in.
-      </p>
-      <dl className="space-y-1">
-        <div className="flex items-center gap-2">
-          <dt className="w-40 text-green-800">Email / username</dt>
-          <dd className="font-mono text-xs">{email}</dd>
-          <button
-            type="button"
-            className="text-xs text-green-800 underline"
-            onClick={() => copy(email, 'Email')}
-          >
-            copy
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <dt className="w-40 text-green-800">Temporary password</dt>
-          <dd className="font-mono text-sm font-semibold">{temporaryPassword}</dd>
-          <button
-            type="button"
-            className="text-xs text-green-800 underline"
-            onClick={() => copy(temporaryPassword, 'Password')}
-          >
-            copy
-          </button>
-        </div>
-      </dl>
+  const signInUrl =
+    typeof window !== 'undefined' ? `${window.location.origin}/sign-in` : '/sign-in'
+  const all =
+    `StudyMind CRM login\n` +
+    `Sign in: ${signInUrl}\n` +
+    `Email: ${email}\n` +
+    `Temporary password: ${temporaryPassword}\n` +
+    `You'll be asked to set your own password on first sign-in.`
+
+  const note =
+    emailStatus === 'sent'
+      ? { tone: 'text-green-800', text: `A welcome email with these details (and a PDF) was sent to ${email}.` }
+      : emailStatus === 'failed'
+        ? { tone: 'text-amber-800', text: `We couldn't send the email — copy these details and share them securely.` }
+        : { tone: 'text-amber-800', text: `Email isn't connected yet, so nothing was sent — copy these details and share them securely.` }
+
+  const Row = ({ label, value, mono }: { label: string; value: string; mono?: boolean }) => (
+    <div className="flex items-center gap-2">
+      <span className="w-40 shrink-0 text-neutral-500">{label}</span>
+      <span className={`flex-1 break-all ${mono ? 'font-mono text-sm font-semibold' : 'text-sm'}`}>
+        {value}
+      </span>
+      <button type="button" className="text-xs text-primary-700 underline" onClick={() => void copy(value, label)}>
+        copy
+      </button>
     </div>
+  )
+
+  return (
+    <div className="space-y-3">
+      <p className={`text-sm ${note.tone}`}>{note.text}</p>
+      <div className="space-y-1.5 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+        <Row label="Email / username" value={email} />
+        <Row label="Temporary password" value={temporaryPassword} mono />
+        <Row label="Sign-in address" value={signInUrl} />
+      </div>
+      <Button type="button" className="w-full" onClick={() => void copy(all, 'Login details')}>
+        Copy all login details
+      </Button>
+      <p className="text-xs text-neutral-500">
+        The temporary password is single-use and must be changed on first sign-in.
+      </p>
+    </div>
+  )
+}
+
+function CredentialModal(props: {
+  title: string
+  email: string
+  temporaryPassword: string
+  emailStatus?: EmailStatus
+  onClose: () => void
+}) {
+  return (
+    <ModalShell title={props.title} onClose={props.onClose}>
+      <CredentialReveal
+        email={props.email}
+        temporaryPassword={props.temporaryPassword}
+        emailStatus={props.emailStatus}
+      />
+      <div className="mt-4 flex justify-end">
+        <Button type="button" onClick={props.onClose}>
+          Done
+        </Button>
+      </div>
+    </ModalShell>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* confirm dialog (optional reason)                                            */
+/* -------------------------------------------------------------------------- */
+
+function ConfirmModal({
+  title,
+  body,
+  confirmLabel,
+  danger,
+  reason,
+  pending,
+  onConfirm,
+  onClose,
+}: {
+  title: string
+  body: string
+  confirmLabel: string
+  danger?: boolean
+  reason?: { label: string; placeholder?: string }
+  pending?: boolean
+  onConfirm: (reason: string) => void
+  onClose: () => void
+}) {
+  const [value, setValue] = useState('')
+  const disabled = pending || (reason ? value.trim().length === 0 : false)
+  return (
+    <ModalShell title={title} onClose={onClose}>
+      <p className="text-sm text-neutral-700">{body}</p>
+      {reason && (
+        <div className="mt-3 space-y-1.5">
+          <Label htmlFor="confirm-reason">{reason.label}</Label>
+          <Textarea
+            id="confirm-reason"
+            value={value}
+            placeholder={reason.placeholder}
+            onChange={(e) => setValue(e.target.value)}
+            rows={3}
+          />
+        </div>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          variant={danger ? 'destructive' : 'default'}
+          disabled={disabled}
+          onClick={() => onConfirm(value.trim())}
+        >
+          {pending ? 'Working…' : confirmLabel}
+        </Button>
+      </div>
+    </ModalShell>
   )
 }
 
@@ -112,13 +263,21 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
   const [name, setName] = useState('')
   const [roles, setRoles] = useState<Role[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [created, setCreated] = useState<{ email: string; temporaryPassword: string } | null>(null)
+  const [created, setCreated] = useState<{
+    email: string
+    temporaryPassword: string
+    emailStatus: EmailStatus
+  } | null>(null)
 
   const grantable = ROLES.filter((r) => canGrantRole(access.role, r))
 
   const create = trpc.admin.users.create.useMutation({
     onSuccess: (res) => {
-      setCreated({ email: res.email, temporaryPassword: res.temporaryPassword })
+      setCreated({
+        email: res.email,
+        temporaryPassword: res.temporaryPassword,
+        emailStatus: res.emailStatus,
+      })
       toast.success('Account created')
       router.refresh()
     },
@@ -138,7 +297,6 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
   }
 
   if (!access.canCreate) return null
-
   if (!open) {
     return (
       <Button type="button" onClick={() => setOpen(true)}>
@@ -148,107 +306,97 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-md border border-neutral-200 bg-white p-4 shadow-lg">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{created ? 'Account created' : 'Create a user'}</h2>
-          <button
-            type="button"
-            onClick={close}
-            aria-label="Close"
-            className="text-neutral-500 hover:text-neutral-900"
-          >
-            ×
-          </button>
+    <ModalShell title={created ? 'Account created' : 'Create a user'} onClose={close}>
+      {created ? (
+        <div className="space-y-4">
+          <CredentialReveal
+            email={created.email}
+            temporaryPassword={created.temporaryPassword}
+            emailStatus={created.emailStatus}
+          />
+          <div className="flex justify-end">
+            <Button type="button" onClick={close}>
+              Done
+            </Button>
+          </div>
         </div>
-
-        {created ? (
-          <div className="space-y-4">
-            <CredentialReveal email={created.email} temporaryPassword={created.temporaryPassword} />
-            <div className="flex justify-end">
-              <Button type="button" onClick={close}>
-                Done
-              </Button>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            setError(null)
+            if (!email || roles.length === 0) {
+              setError('Email and at least one role are required.')
+              return
+            }
+            create.mutate({ email, name: name || undefined, roles })
+          }}
+          className="space-y-3"
+        >
+          {error && (
+            <div
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+          <p className="text-xs text-neutral-600">
+            The new user gets a temporary password (emailed with a PDF when Gmail is connected) and
+            must set their own password on first sign-in.
+          </p>
+          <div className="space-y-1.5">
+            <Label htmlFor="create-email">Email</Label>
+            <Input
+              id="create-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="create-name">Name (optional)</Label>
+            <Input id="create-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Roles</Label>
+            <div className="flex flex-wrap gap-2">
+              {grantable.map((r) => (
+                <label key={r} className="flex items-center gap-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={roles.includes(r)}
+                    onChange={(e) =>
+                      setRoles((prev) =>
+                        e.target.checked ? [...prev, r] : prev.filter((x) => x !== r),
+                      )
+                    }
+                  />
+                  {formatRoleLabel(r)}
+                </label>
+              ))}
             </div>
           </div>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              setError(null)
-              if (!email || roles.length === 0) {
-                setError('Email and at least one role are required.')
-                return
-              }
-              create.mutate({ email, name: name || undefined, roles })
-            }}
-            className="space-y-3"
-          >
-            {error && (
-              <div
-                className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
-                role="alert"
-              >
-                {error}
-              </div>
-            )}
-            <p className="text-xs text-neutral-600">
-              The new user receives a welcome email with a temporary password (and a PDF) and must
-              set their own password on first sign-in.
-            </p>
-            <div className="space-y-1.5">
-              <Label htmlFor="create-email">Email</Label>
-              <Input
-                id="create-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="create-name">Name (optional)</Label>
-              <Input id="create-name" value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Roles</Label>
-              <div className="flex flex-wrap gap-2">
-                {grantable.map((r) => (
-                  <label key={r} className="flex items-center gap-1 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={roles.includes(r)}
-                      onChange={(e) =>
-                        setRoles((prev) =>
-                          e.target.checked ? [...prev, r] : prev.filter((x) => x !== r),
-                        )
-                      }
-                    />
-                    {formatRoleLabel(r)}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="ghost" onClick={close}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={create.isPending}>
-                {create.isPending ? 'Creating…' : 'Create user'}
-              </Button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={close}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={create.isPending}>
+              {create.isPending ? 'Creating…' : 'Create user'}
+            </Button>
+          </div>
+        </form>
+      )}
+    </ModalShell>
   )
 }
 
 /* -------------------------------------------------------------------------- */
-/* edit user dialog (name + email)                                             */
+/* edit user (name + email)                                                    */
 /* -------------------------------------------------------------------------- */
 
-function EditUserDialog({
+function EditUserModal({
   userId,
   currentName,
   currentEmail,
@@ -277,77 +425,148 @@ function EditUserDialog({
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-md border border-neutral-200 bg-white p-4 shadow-lg">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Edit user</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="text-neutral-500 hover:text-neutral-900"
+    <ModalShell title="Edit user" onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          setError(null)
+          const trimmedName = name.trim()
+          const trimmedEmail = email.trim().toLowerCase()
+          update.mutate({
+            userId,
+            name: trimmedName ? trimmedName : undefined,
+            email: trimmedEmail !== currentEmail.toLowerCase() ? trimmedEmail : undefined,
+          })
+        }}
+        className="space-y-3"
+      >
+        {error && (
+          <div
+            className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+            role="alert"
           >
-            ×
-          </button>
+            {error}
+          </div>
+        )}
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-name">Name</Label>
+          <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            setError(null)
-            const trimmedName = name.trim()
-            const trimmedEmail = email.trim().toLowerCase()
-            update.mutate({
-              userId,
-              name: trimmedName ? trimmedName : undefined,
-              email: trimmedEmail !== currentEmail.toLowerCase() ? trimmedEmail : undefined,
-            })
-          }}
-          className="space-y-3"
-        >
-          {error && (
-            <div
-              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
-              role="alert"
-            >
-              {error}
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-name">Name</Label>
-            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-email">Email</Label>
-            <Input
-              id="edit-email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-            <p className="text-xs text-neutral-500">
-              Changing the email also changes the address used to sign in.
-            </p>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={update.isPending}>
-              {update.isPending ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-email">Email</Label>
+          <Input
+            id="edit-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <p className="text-xs text-neutral-500">
+            Changing the email also changes the address used to sign in.
+          </p>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save changes'}
+          </Button>
+        </div>
+      </form>
+    </ModalShell>
   )
 }
 
 /* -------------------------------------------------------------------------- */
-/* per-row controls                                                            */
+/* roles editor                                                                */
 /* -------------------------------------------------------------------------- */
 
-export interface UserRowControlsProps {
+function RolesModal({
+  userId,
+  currentRoles,
+  access,
+  isSelf,
+  onClose,
+}: {
+  userId: string
+  currentRoles: string[]
+  access: AccessFlags
+  isSelf: boolean
+  onClose: () => void
+}) {
+  const router = useRouter()
+  const [pending, setPending] = useState<string | null>(null)
+  const refresh = () => router.refresh()
+  const assign = trpc.admin.users.assignRole.useMutation({
+    onSuccess: () => {
+      setPending(null)
+      toast.success('Role granted')
+      refresh()
+    },
+    onError: (e) => {
+      setPending(null)
+      toast.error(e.message ?? 'Failed')
+    },
+  })
+  const revoke = trpc.admin.users.revokeRole.useMutation({
+    onSuccess: () => {
+      setPending(null)
+      toast.success('Role revoked')
+      refresh()
+    },
+    onError: (e) => {
+      setPending(null)
+      toast.error(e.message ?? 'Failed')
+    },
+  })
+
+  return (
+    <ModalShell title="Manage roles" onClose={onClose}>
+      <div className="space-y-2">
+        {ROLES.map((role) => {
+          const has = currentRoles.includes(role)
+          const canAct = has ? canRevokeRole(access.role, role) : canGrantRole(access.role, role)
+          const selfLock = isSelf && has && (role === 'ceo' || role === 'senior_manager')
+          return (
+            <label
+              key={role}
+              className={`flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2 text-sm ${
+                canAct && !selfLock ? '' : 'opacity-60'
+              }`}
+            >
+              <span>{formatRoleLabel(role)}</span>
+              <input
+                type="checkbox"
+                checked={has}
+                disabled={!canAct || selfLock || pending !== null}
+                onChange={() => {
+                  setPending(role)
+                  if (has) revoke.mutate({ userId, role })
+                  else assign.mutate({ userId, role })
+                }}
+              />
+            </label>
+          )
+        })}
+      </div>
+      <p className="mt-3 text-xs text-neutral-500">
+        You can only grant or revoke roles at or below your own level.
+      </p>
+      <div className="mt-4 flex justify-end">
+        <Button type="button" onClick={onClose}>
+          Done
+        </Button>
+      </div>
+    </ModalShell>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* per-row "⋯" actions menu                                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface RowActionsProps {
   userId: string
   email: string
   name: string | null
@@ -358,231 +577,217 @@ export interface UserRowControlsProps {
   access: AccessFlags
 }
 
-export function UserRowControls({
-  userId,
-  email,
-  name,
-  currentRoles,
-  extraPermissions,
-  status,
-  isSelf,
-  access,
-}: UserRowControlsProps) {
+type DialogKind = 'edit' | 'roles' | 'reset' | 'deactivate' | 'cancelInvite' | null
+
+export function RowActions(props: RowActionsProps) {
+  const { userId, email, name, currentRoles, extraPermissions, status, isSelf, access } = props
   const router = useRouter()
-  const [pending, setPending] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
-  const [resetResult, setResetResult] = useState<{ email: string; temporaryPassword: string } | null>(
+  const [open, setOpen] = useState(false)
+  const [dialog, setDialog] = useState<DialogKind>(null)
+  const [reveal, setReveal] = useState<{ temporaryPassword: string; emailStatus: EmailStatus } | null>(
     null,
   )
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
 
-  const canActOnTarget = actorCanActOn(access, currentRoles)
-  const hasManageGrant = extraPermissions.includes('user.manage')
-  const targetManagesByRole = currentRoles.some((r) => MANAGE_BY_ROLE.has(r))
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node
+      if (panelRef.current?.contains(t) || triggerRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
 
   const ok = (msg: string) => () => {
-    setPending(null)
-    setError(null)
     toast.success(msg)
     router.refresh()
   }
-  const onErr = (e: { message: string }) => {
-    setPending(null)
-    setError(e.message)
-    toast.error(e.message ?? 'Action failed')
-  }
+  const onErr = (e: { message: string }) => toast.error(e.message ?? 'Action failed')
 
-  const assign = trpc.admin.users.assignRole.useMutation({ onSuccess: ok('Role granted'), onError: onErr })
-  const revoke = trpc.admin.users.revokeRole.useMutation({ onSuccess: ok('Role revoked'), onError: onErr })
   const resend = trpc.admin.users.resendInvite.useMutation({ onSuccess: ok('Invite resent'), onError: onErr })
-  const cancel = trpc.admin.users.cancelInvite.useMutation({ onSuccess: ok('Invite cancelled'), onError: onErr })
-  const deactivate = trpc.admin.users.deactivate.useMutation({ onSuccess: ok('User deactivated'), onError: onErr })
+  const cancelInvite = trpc.admin.users.cancelInvite.useMutation({
+    onSuccess: () => {
+      setDialog(null)
+      ok('Invite cancelled')()
+    },
+    onError: onErr,
+  })
   const reactivate = trpc.admin.users.reactivate.useMutation({ onSuccess: ok('User reactivated'), onError: onErr })
-  const grantPerm = trpc.admin.users.grantPermission.useMutation({ onSuccess: ok('Permission granted'), onError: onErr })
-  const revokePerm = trpc.admin.users.revokePermission.useMutation({ onSuccess: ok('Permission revoked'), onError: onErr })
+  const grantPerm = trpc.admin.users.grantPermission.useMutation({ onSuccess: ok('Marked as user manager'), onError: onErr })
+  const revokePerm = trpc.admin.users.revokePermission.useMutation({ onSuccess: ok('Removed user manager'), onError: onErr })
+  const deactivate = trpc.admin.users.deactivate.useMutation({
+    onSuccess: () => {
+      setDialog(null)
+      ok('User deactivated')()
+    },
+    onError: onErr,
+  })
   const resetPassword = trpc.admin.users.resetPassword.useMutation({
     onSuccess: (res) => {
-      setPending(null)
-      setError(null)
-      setResetResult({ email: res.email, temporaryPassword: res.temporaryPassword })
+      setDialog(null)
+      setReveal({ temporaryPassword: res.temporaryPassword, emailStatus: res.emailStatus })
       toast.success('Password reset')
       router.refresh()
     },
     onError: onErr,
   })
 
+  const canAct = actorCanActOn(access, currentRoles)
+  const hasManageGrant = extraPermissions.includes('user.manage')
+  const targetManagesByRole = currentRoles.some((r) => MANAGE_BY_ROLE.has(r))
+
+  // Build the menu item list from capabilities.
+  const items: Array<{ key: string; label: string; danger?: boolean; run: () => void }> = []
+  if (access.canManage && canAct && status !== 'deactivated') {
+    items.push({ key: 'edit', label: 'Edit details', run: () => setDialog('edit') })
+  }
+  if (access.canManage && canAct && (status === 'active' || status === 'locked')) {
+    items.push({ key: 'reset', label: 'Reset password', run: () => setDialog('reset') })
+  }
+  if (access.canManageRoles) {
+    items.push({ key: 'roles', label: 'Manage roles', run: () => setDialog('roles') })
+  }
+  if (access.canGrantManage && canAct && !targetManagesByRole) {
+    items.push({
+      key: 'perm',
+      label: hasManageGrant ? 'Remove user-manager' : 'Make user-manager',
+      run: () => {
+        setOpen(false)
+        if (hasManageGrant) revokePerm.mutate({ userId, permission: 'user.manage' })
+        else grantPerm.mutate({ userId, permission: 'user.manage' })
+      },
+    })
+  }
+  if (access.canCreate && status === 'invited') {
+    items.push({ key: 'resend', label: 'Resend invite', run: () => { setOpen(false); resend.mutate({ userId }) } })
+    items.push({ key: 'cancel', label: 'Cancel invite', danger: true, run: () => setDialog('cancelInvite') })
+  }
+  if (access.canDeactivate && (status === 'active' || status === 'locked') && !isSelf) {
+    items.push({ key: 'deact', label: 'Deactivate', danger: true, run: () => setDialog('deactivate') })
+  }
+  if (access.canDeactivate && status === 'deactivated') {
+    items.push({ key: 'react', label: 'Reactivate', run: () => { setOpen(false); reactivate.mutate({ userId }) } })
+  }
+
   return (
-    <div className="space-y-1">
-      {/* role grant / revoke — only for CEO + Senior Manager */}
-      {access.canManageRoles && (
-        <div className="flex flex-wrap gap-1">
-          {ROLES.map((role) => {
-            const has = currentRoles.includes(role)
-            const canAct = has ? canRevokeRole(access.role, role) : canGrantRole(access.role, role)
-            if (!canAct) return null
-            if (isSelf && has && (role === 'ceo' || role === 'senior_manager')) return null
-            const key = `${role}:${has ? 'rev' : 'asg'}`
-            return (
-              <Button
-                key={role}
-                type="button"
-                variant={has ? 'secondary' : 'ghost'}
-                disabled={pending === key || status === 'deactivated'}
-                onClick={() => {
-                  setError(null)
-                  setPending(key)
-                  if (has) revoke.mutate({ userId, role })
-                  else assign.mutate({ userId, role })
-                }}
-                className="h-7 px-2 text-xs"
-              >
-                {has ? `− ${formatRoleLabel(role)}` : `+ ${formatRoleLabel(role)}`}
-              </Button>
-            )
-          })}
+    <div className="relative flex justify-end">
+      {items.length === 0 ? (
+        <span className="text-xs text-neutral-400">—</span>
+      ) : (
+        <button
+          ref={triggerRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="User actions"
+          onClick={() => setOpen((v) => !v)}
+          className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-200 text-neutral-600 hover:bg-neutral-50"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <circle cx="5" cy="12" r="1.6" />
+            <circle cx="12" cy="12" r="1.6" />
+            <circle cx="19" cy="12" r="1.6" />
+          </svg>
+        </button>
+      )}
+
+      {open && (
+        <div
+          ref={panelRef}
+          role="menu"
+          aria-label="User actions"
+          className="absolute right-0 top-8 z-50 w-48 overflow-hidden rounded-lg border border-neutral-200 bg-white py-1 shadow-lg"
+        >
+          {items.map((it) => (
+            <button
+              key={it.key}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false)
+                it.run()
+              }}
+              className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-50 ${
+                it.danger ? 'text-red-700' : 'text-neutral-800'
+              }`}
+            >
+              {it.label}
+            </button>
+          ))}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-1">
-        {/* edit + reset password — manage capability, and not against leadership */}
-        {access.canManage && canActOnTarget && status !== 'deactivated' && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            onClick={() => setEditing(true)}
-          >
-            edit
-          </Button>
-        )}
-        {access.canManage &&
-          canActOnTarget &&
-          (status === 'active' || status === 'locked') && (
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-7 px-2 text-xs"
-              disabled={pending === 'reset' || resetPassword.isPending}
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    'Reset this user’s password? A new temporary password will be issued and emailed, and their current sessions will end.',
-                  )
-                )
-                  return
-                setError(null)
-                setPending('reset')
-                resetPassword.mutate({ userId })
-              }}
-            >
-              reset password
-            </Button>
-          )}
-
-        {/* delegate the user.manage permission to an individual */}
-        {access.canGrantManage && canActOnTarget && !targetManagesByRole && (
-          <Button
-            type="button"
-            variant={hasManageGrant ? 'secondary' : 'ghost'}
-            className="h-7 px-2 text-xs"
-            disabled={pending === 'perm'}
-            onClick={() => {
-              setError(null)
-              setPending('perm')
-              if (hasManageGrant) revokePerm.mutate({ userId, permission: 'user.manage' })
-              else grantPerm.mutate({ userId, permission: 'user.manage' })
-            }}
-          >
-            {hasManageGrant ? '− user manager' : '+ user manager'}
-          </Button>
-        )}
-
-        {/* pending-invite actions — CEO + Senior Manager */}
-        {access.canCreate && status === 'invited' && (
-          <>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-7 px-2 text-xs"
-              disabled={pending === 'resend'}
-              onClick={() => {
-                setError(null)
-                setPending('resend')
-                resend.mutate({ userId })
-              }}
-            >
-              resend invite
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-7 px-2 text-xs text-red-700"
-              disabled={pending === 'cancel'}
-              onClick={() => {
-                setError(null)
-                setPending('cancel')
-                cancel.mutate({ userId })
-              }}
-            >
-              cancel invite
-            </Button>
-          </>
-        )}
-
-        {/* deactivate / reactivate — CEO + Senior Manager */}
-        {access.canDeactivate && (status === 'active' || status === 'locked') && !isSelf && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-7 px-2 text-xs text-red-700"
-            disabled={pending === 'deact'}
-            onClick={() => {
-              const reason = window.prompt('Reason for deactivation?')
-              if (!reason) return
-              setError(null)
-              setPending('deact')
-              deactivate.mutate({ userId, reason })
-            }}
-          >
-            deactivate
-          </Button>
-        )}
-        {access.canDeactivate && status === 'deactivated' && (
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            disabled={pending === 'react'}
-            onClick={() => {
-              setError(null)
-              setPending('react')
-              reactivate.mutate({ userId })
-            }}
-          >
-            reactivate
-          </Button>
-        )}
-      </div>
-
-      {resetResult && (
-        <CredentialReveal
-          email={resetResult.email}
-          temporaryPassword={resetResult.temporaryPassword}
-        />
-      )}
-
-      {error ? (
-        <p className="text-xs text-red-600" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      {editing && (
-        <EditUserDialog
+      {dialog === 'edit' && (
+        <EditUserModal
           userId={userId}
           currentName={name}
           currentEmail={email}
-          onClose={() => setEditing(false)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'roles' && (
+        <RolesModal
+          userId={userId}
+          currentRoles={currentRoles}
+          access={access}
+          isSelf={isSelf}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'reset' && (
+        <ConfirmModal
+          title="Reset password"
+          body={`Issue a new temporary password for ${email}? Their current sessions will end and they must set a new password on next sign-in.`}
+          confirmLabel="Reset password"
+          pending={resetPassword.isPending}
+          onConfirm={() => resetPassword.mutate({ userId })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'deactivate' && (
+        <ConfirmModal
+          title="Deactivate user"
+          body={`Deactivate ${email}? They will be signed out and lose access until reactivated.`}
+          confirmLabel="Deactivate"
+          danger
+          reason={{ label: 'Reason', placeholder: 'e.g. left the company' }}
+          pending={deactivate.isPending}
+          onConfirm={(reason) => deactivate.mutate({ userId, reason })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'cancelInvite' && (
+        <ConfirmModal
+          title="Cancel invite"
+          body={`Cancel the pending invite for ${email}? The invite link will stop working.`}
+          confirmLabel="Cancel invite"
+          danger
+          pending={cancelInvite.isPending}
+          onConfirm={() => cancelInvite.mutate({ userId })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
+      {reveal && (
+        <CredentialModal
+          title="New temporary password"
+          email={email}
+          temporaryPassword={reveal.temporaryPassword}
+          emailStatus={reveal.emailStatus}
+          onClose={() => setReveal(null)}
         />
       )}
     </div>

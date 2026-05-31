@@ -1,5 +1,6 @@
-// B2B accounts (schools + partnerships). Tabbed list of tracked
-// organisations. CLAUDE.md §26 (RSC), §20.1 (view-by-all).
+// B2B accounts (schools + B2B partners). Tabbed list of tracked
+// organisations, plus the Unsorted tray for accounts imported from the B2B
+// Invoices Platform that still need classifying. CLAUDE.md §26 (RSC).
 
 import Link from 'next/link'
 
@@ -8,6 +9,7 @@ import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 import { AccountsExportButton } from './AccountsExportButton'
 import { AccountsList } from './AccountsList'
+import { UnsortedTray } from './UnsortedTray'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,33 +17,37 @@ interface Props {
   searchParams: Promise<{ kind?: string; status?: string; q?: string }>
 }
 
+// UI labels. "B2B Partner" replaces the old "Partnership" wording everywhere;
+// the underlying enum value stays `partnership` (forward-only, CLAUDE.md §19).
 const KIND_LABELS: Record<string, string> = {
   school: 'Schools',
-  partnership: 'Partnerships',
+  partnership: 'B2B Partners',
 }
 
 export default async function AccountsPage({ searchParams }: Props) {
   const params = await searchParams
-  const kind: 'school' | 'partnership' =
-    params.kind === 'partnership' ? 'partnership' : 'school'
+  const kind: 'school' | 'partnership' = params.kind === 'partnership' ? 'partnership' : 'school'
   const caller = await createServerCaller()
-  const accounts = await caller.businessAccount.list({
-    kind,
-    includeArchived: false,
-    q: params.q?.trim() ? params.q.trim() : undefined,
-    ...(params.status === 'prospect' ||
-    params.status === 'active' ||
-    params.status === 'paused' ||
-    params.status === 'churned'
-      ? { status: params.status }
-      : {}),
-  })
+  const [accounts, unsortedCount] = await Promise.all([
+    caller.businessAccount.list({
+      kind,
+      includeArchived: false,
+      q: params.q?.trim() ? params.q.trim() : undefined,
+      ...(params.status === 'prospect' ||
+      params.status === 'active' ||
+      params.status === 'paused' ||
+      params.status === 'churned'
+        ? { status: params.status }
+        : {}),
+    }),
+    caller.businessAccount.unsortedCount(),
+  ])
 
   return (
     <>
       <PageHeader
         title="Accounts"
-        subtitle="B2B partnerships and schools we work with"
+        subtitle="Schools and B2B partners we work with"
         breadcrumbs={[{ label: 'Accounts', href: '/accounts' }]}
         actions={
           <AccountsExportButton
@@ -59,6 +65,7 @@ export default async function AccountsPage({ searchParams }: Props) {
         }
       />
       <PageBody>
+        {unsortedCount > 0 && <UnsortedTray initialCount={unsortedCount} />}
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div
             role="tablist"

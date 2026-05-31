@@ -7,13 +7,15 @@
 //                                  (GET /api/v1/events?since=<cursor>), the
 //                                  backstop for any webhook the receiver missed.
 
+import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { createClientFromConfig } from './client'
 import { loadInvoicingConfig, saveEventsCursor } from './config'
+import { importBusinessAccountsFromInvoicing } from './import-accounts'
 import { upsertCustomerFromRecord, upsertInvoiceFromRecord, upsertPaymentFromRecord } from './sync'
-import { mapEntityType, mapEventSource, RawEvent } from './types'
+import { mapCustomerCategory, mapEntityType, mapEventSource, RawCustomer, RawEvent } from './types'
 
 interface EventReceivedData {
   eventId: string
@@ -52,9 +54,17 @@ async function applyEvent(raw: unknown): Promise<{ applied: boolean; reason: str
   )
 
   switch (entityType) {
-    case 'partner':
+    case 'partner': {
+      // AP/council clients are invoicing-only — explicitly ack-and-drop rather
+      // than pollute the CRM (same pattern as task/student). b2b + b2c are
+      // mirrored; b2b additionally feeds the accounts backfill/classifier.
+      const cat = mapCustomerCategory(RawCustomer.safeParse(record).data?.category)
+      if (cat === 'alt_provision') {
+        return { applied: false, reason: 'acknowledged_not_mirrored:alt_provision' }
+      }
       await upsertCustomerFromRecord(db, record, source)
       return { applied: true, reason: 'partner' }
+    }
     case 'invoice':
     case 'invoice_line_item':
       await upsertInvoiceFromRecord(db, record, source)
@@ -132,7 +142,11 @@ export const invoicingReconcile = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 3,
   },
-  [{ cron: '0 1 * * *' }, { event: 'invoicing/reconcile.requested' }],
+  // Every 5 minutes (was nightly) so the CRM stays close to the platform even
+  // if a webhook is missed — the user asked for far more frequent sync. Still
+  // cheap: each run walks forward from the persisted cursor and stops as soon
+  // as it catches up (usually 0 new events).
+  [{ cron: '*/5 * * * *' }, { event: 'invoicing/reconcile.requested' }],
   async ({ step, logger }) => {
     const cfg = await step.run('load-config', async () => loadInvoicingConfig())
     if (!cfg.apiKey) {
@@ -180,4 +194,61 @@ export const invoicingReconcile = inngest.createFunction(
   },
 )
 
-export const FUNCTIONS = [invoicingEventReceived, invoicingReconcile] as const
+/**
+ * Admin-triggered backfill: pull every B2B customer into real CRM School /
+ * B2B Partner accounts (deduped, classified, tray-flagged when uncertain).
+ * Idempotent — safe to re-run. Concurrency 1 so two clicks don't race.
+ */
+interface ImportRequestedData {
+  actorId?: string | null
+  requestId?: string
+}
+
+export const invoicingAccountsImport = inngest.createFunction(
+  {
+    id: 'invoicing/accounts.import',
+    name: 'Import B2B customers into CRM accounts',
+    concurrency: { limit: 1 },
+    retries: 3,
+  },
+  { event: 'invoicing/accounts.import.requested' },
+  async ({ event, step, logger }) => {
+    const data = (event.data ?? {}) as ImportRequestedData
+
+    const cfg = await step.run('load-config', async () => loadInvoicingConfig())
+    if (!cfg.apiKey) {
+      logger.warn({}, 'invoicing.accounts.import.skipped: not configured')
+      return { skipped: true, reason: 'not_configured' }
+    }
+
+    // The import is one logical unit (it paginates + reconciles); run it inside
+    // a single step so a retry re-runs the whole idempotent pass.
+    const result = await step.run('import', async () =>
+      importBusinessAccountsFromInvoicing(db, {
+        ctx: {
+          actorId: data.actorId ?? null,
+          requestId: data.requestId ?? `invoicing-import:${event.id ?? 'manual'}`,
+        },
+      }),
+    )
+
+    await step.run('audit', async () => {
+      await writeAuditLogEntry(db, {
+        actorId: data.actorId ?? null,
+        action: 'invoicing.accounts_imported',
+        target: { type: 'InvoicingSetting', id: 'default' },
+        requestId: data.requestId,
+        after: result,
+      })
+    })
+
+    logger.info(result, 'invoicing.accounts.import.completed')
+    return result
+  },
+)
+
+export const FUNCTIONS = [
+  invoicingEventReceived,
+  invoicingReconcile,
+  invoicingAccountsImport,
+] as const

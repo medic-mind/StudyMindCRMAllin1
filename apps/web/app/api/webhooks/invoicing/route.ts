@@ -23,8 +23,33 @@ async function handlePost(req: Request): Promise<Response> {
     const raw = await req.text()
     const signature = req.headers.get(SIGNATURE_HEADER)
 
-    const cfg = await loadInvoicingConfig()
-    const result = verifyAndParse(raw, signature, { webhookSecret: cfg.webhookSecret })
+    // Cheapest rejection first: no signature header → 400, no need to touch the
+    // (encrypted) config at all.
+    if (!signature) {
+      return new Response('missing signature', { status: 400 })
+    }
+
+    // Loading the config decrypts the stored webhook secret. If the
+    // field-encryption backend is misconfigured (e.g. AWS_KMS_KEY_ID set to a
+    // placeholder with no real AWS account), that throws — but a webhook
+    // handler must never 500 on a config problem (it makes the sender retry
+    // forever and shows up as a server error on their side). Return 503 so the
+    // platform retries later, once the secret is configured correctly.
+    let webhookSecret: string | null
+    try {
+      const cfg = await loadInvoicingConfig()
+      webhookSecret = cfg.webhookSecret
+    } catch {
+      return new Response('webhook secret unavailable', { status: 503 })
+    }
+
+    if (!webhookSecret) {
+      // Configured-but-empty: we cannot verify, so reject cleanly rather than
+      // accept an unverified event.
+      return new Response('webhook secret not configured', { status: 503 })
+    }
+
+    const result = verifyAndParse(raw, signature, { webhookSecret })
     if (!result.ok) {
       // CLAUDE.md §8: never log the raw body of an unverified event.
       return new Response('invalid signature', { status: 400 })

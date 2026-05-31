@@ -256,6 +256,8 @@ export const inboxRouter = router({
           where: { id: input.conversationId },
           select: {
             id: true,
+            provider: true,
+            externalThreadId: true,
             trengoTicketId: true,
             contactId: true,
             familyId: true,
@@ -274,22 +276,47 @@ export const inboxRouter = router({
         })
         if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
 
-        const messageRows = await ctx.db.interaction.findMany({
-          where: {
-            deletedAt: null,
-            type: 'message',
-            payload: { path: ['ticketId'], equals: head.trengoTicketId },
-          },
-          orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
-          take: 100,
-          select: {
-            id: true,
-            occurredAt: true,
-            summary: true,
-            payload: true,
-            createdById: true,
-          },
-        })
+        // ADR 0021 Phase 3b — email heads join their messages on
+        // `payload.gmailThreadId`; Trengo heads on `payload.ticketId`.
+        const messageRows =
+          head.provider === 'email' && head.externalThreadId
+            ? await ctx.db.interaction.findMany({
+                where: {
+                  deletedAt: null,
+                  type: { in: ['email_received', 'email_sent'] },
+                  payload: {
+                    path: ['gmailThreadId'],
+                    equals: head.externalThreadId,
+                  },
+                },
+                orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+                take: 100,
+                select: {
+                  id: true,
+                  occurredAt: true,
+                  summary: true,
+                  payload: true,
+                  createdById: true,
+                },
+              })
+            : head.trengoTicketId === null
+              ? []
+              : await ctx.db.interaction.findMany({
+                  where: {
+                    deletedAt: null,
+                    type: 'message',
+                    payload: { path: ['ticketId'], equals: head.trengoTicketId },
+                  },
+                  orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+                  take: 100,
+                  select: {
+                    id: true,
+                    occurredAt: true,
+                    summary: true,
+                    payload: true,
+                    createdById: true,
+                  },
+                })
 
         const messages = messageRows.map((r) => {
           const payload = (r.payload as Record<string, unknown> | null) ?? {}
@@ -297,14 +324,22 @@ export const inboxRouter = router({
             typeof payload['interactionType'] === 'string'
               ? (payload['interactionType'] as string)
               : null
+          // Email interactions (ADR 0021 Phase 3b) carry `event: email.sent|
+          // email.received` instead of a Trengo `interactionType`.
+          const emailEvent =
+            typeof payload['event'] === 'string' ? (payload['event'] as string) : null
           const direction: 'inbound' | 'outbound' | 'unknown' =
-            interactionType === 'message.outbound'
+            interactionType === 'message.outbound' || emailEvent === 'email.sent'
               ? 'outbound'
-              : interactionType === 'message.inbound'
+              : interactionType === 'message.inbound' || emailEvent === 'email.received'
                 ? 'inbound'
                 : 'unknown'
           const body =
-            typeof payload['body'] === 'string' ? (payload['body'] as string) : null
+            typeof payload['body'] === 'string'
+              ? (payload['body'] as string)
+              : typeof payload['subject'] === 'string'
+                ? (payload['subject'] as string)
+                : null
           // ADR 0020 Phase 6d — attachments are written by the download
           // worker as payload.attachments[]; surface enough for the UI to
           // render chips + link to the internal stream route.
@@ -341,6 +376,7 @@ export const inboxRouter = router({
         return {
           head: {
             id: head.id,
+            provider: head.provider,
             trengoTicketId: head.trengoTicketId,
             contactId: head.contactId,
             familyId: head.familyId,

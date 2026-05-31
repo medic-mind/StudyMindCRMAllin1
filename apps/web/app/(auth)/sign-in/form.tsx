@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordField } from '@/components/ui/password-field'
 
 const Schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -187,9 +188,8 @@ export function SignInForm({
             Forgot?
           </Link>
         </div>
-        <Input
+        <PasswordField
           id="password"
-          type="password"
           autoComplete="current-password"
           {...register('password')}
         />

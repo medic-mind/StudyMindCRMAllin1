@@ -65,7 +65,7 @@ const ICONS: Record<string, IconComp> = {
   '/': HomeIcon,
   // Communications — customer channels.
   '/inbox': InboxIcon,
-  '/settings/email-accounts': MailIcon,
+  '/mail': MailIcon,
   // Internal — staff↔staff (distinct glyph from the customer Inbox).
   '/messages': HashIcon,
   // Work.
@@ -89,7 +89,7 @@ const SECTION: Record<string, string> = {
   '/': 'Overview',
   // Communications — everything that talks to customers.
   '/inbox': 'Communications',
-  '/settings/email-accounts': 'Communications',
+  '/mail': 'Communications',
   // Internal — staff↔staff only.
   '/messages': 'Internal',
   // Work — CRM records.

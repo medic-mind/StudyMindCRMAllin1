@@ -1,6 +1,7 @@
 // @studymind/core — pure domain logic, no I/O.
 
 export * as contact from './contact/index'
+export * as stats from './stats/index'
 export * as family from './family/index'
 export * as finance from './finance/index'
 export * as interaction from './interaction/index'

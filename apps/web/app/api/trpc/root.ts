@@ -48,6 +48,7 @@ import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
 import { invoicingRouter } from './routers/invoicing'
 import { leadRouter } from './routers/lead'
+import { mailRouter } from './routers/mail'
 import { mailAccountRouter } from './routers/mailAccount'
 import { notificationsRouter } from './routers/notifications'
 import { oauthRouter } from './routers/oauth'
@@ -82,6 +83,7 @@ export const appRouter = router({
   interaction: interactionRouter,
   invoicing: invoicingRouter,
   lead: leadRouter,
+  mail: mailRouter,
   mailAccount: mailAccountRouter,
   notifications: notificationsRouter,
   oauth: oauthRouter,

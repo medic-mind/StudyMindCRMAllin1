@@ -1,10 +1,14 @@
 // Communications Hub domain — multi-account email (ADR 0021).
 //
-// Provider-agnostic mail-account types, the provider capability registry, and
-// pure invariants. No I/O: the tRPC router does the DB work, mirroring the
-// `team` module. CLAUDE.md §14, ADR 0021.
+// Provider-agnostic mail-account types, the provider capability registry, the
+// `MailSyncProvider` seam, and pure invariants. No I/O: the tRPC router does
+// the DB work and `apps/web/lib/mail/get-sync-provider.ts` dispatches the
+// seam to per-provider adapters. CLAUDE.md §14, ADR 0021.
 
 import { z } from 'zod'
+
+export * from './sync-provider'
+export * from './conversation-head'
 
 // -----------------------------------------------------------------------------
 // Enumerations — mirror the Prisma enums one-for-one.

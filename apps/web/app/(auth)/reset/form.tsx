@@ -8,8 +8,8 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordField } from '@/components/ui/password-field'
 
 import { resetPassword } from '@/lib/auth/server-actions'
 
@@ -88,14 +88,17 @@ export function ResetForm({ token }: { token: string }) {
       )}
       <div className="space-y-1.5">
         <Label htmlFor="password">New password</Label>
-        <Input
+        <PasswordField
           id="password"
-          type="password"
           autoComplete="new-password"
           {...register('password')}
         />
-        {formState.errors.password && (
+        {formState.errors.password ? (
           <p className="text-xs text-red-600">{formState.errors.password.message}</p>
+        ) : (
+          <p className="text-xs text-neutral-500">
+            At least 12 characters, with 3 of: lowercase, uppercase, number, symbol.
+          </p>
         )}
       </div>
       <Button type="submit" disabled={busy || !token} className="w-full">

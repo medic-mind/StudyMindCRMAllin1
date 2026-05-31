@@ -147,6 +147,10 @@ export const EVENT_NAMES = [
   'invoicing.payment_recorded',
   'invoicing.payment_synced',
   'invoicing.invoice_marked_paid',
+  // Backfill → real School / B2B Partner accounts, auto-classification, and the
+  // Unsorted tray (one-click classify). CLAUDE.md §2 (idempotent), §6.
+  'invoicing.accounts_imported',
+  'invoicing.account_classified',
 
   // Interactions
   'interaction.created',
@@ -291,6 +295,17 @@ export const EVENT_NAMES = [
   'mail_account.default_changed',
   'mail_account.member_added',
   'mail_account.member_removed',
+  // ADR 0021 Phase 5 — two-way action sync. A CRM action mutates the live
+  // mailbox (read/archive/star/trash/label), mirrored to Gmail and reflected on
+  // the Conversation head. All reversible (trash → Gmail Trash, recoverable).
+  'mail.thread_read_changed',
+  'mail.thread_archived',
+  'mail.thread_starred',
+  'mail.thread_trashed',
+  'mail.thread_labeled',
+  // ADR 0021 Phase 4 — reply to an email thread from the CRM (reuses the Gmail
+  // sendReply outbound, which additionally writes gmail.email_sent).
+  'mail.thread_replied',
 
   // Audit-B2: payment links, allocations, gmail outbound, trengo connect
   'charge.payment_link_created',
@@ -385,6 +400,9 @@ export const INNGEST_EVENT_NAMES = [
   // async like every other provider), plus the nightly events-feed reconcile.
   'invoicing/event.received',
   'invoicing/reconcile.requested',
+  // Admin-triggered one-shot backfill: pull every B2B customer into real CRM
+  // accounts. Idempotent; safe to re-run.
+  'invoicing/accounts.import.requested',
   // ADR 0020 Phase 2c — one-shot conversation-head backfill. Self-recursive
   // (the function reschedules with a cursor) so a single Inngest event name
   // covers the initial trigger and every continuation.

@@ -57,6 +57,11 @@ export interface GmailWatchResult {
   expirationMs: number
 }
 
+export interface GmailLabelRef {
+  id: string
+  name: string
+}
+
 export interface GmailClient {
   readonly agentId: string
   getMessage(messageId: string): Promise<GmailMessage>
@@ -65,6 +70,16 @@ export interface GmailClient {
   setupWatch(input: { topicName: string }): Promise<GmailWatchResult>
   stopWatch(): Promise<void>
   getAttachment(messageId: string, attachmentId: string): Promise<Buffer>
+  // ADR 0021 Phase 5 — two-way action sync. All idempotent: adding/removing a
+  // label already in the desired state is a Gmail no-op.
+  modifyThread(input: {
+    threadId: string
+    addLabelIds?: string[]
+    removeLabelIds?: string[]
+  }): Promise<void>
+  trashThread(threadId: string): Promise<void>
+  untrashThread(threadId: string): Promise<void>
+  listLabels(): Promise<GmailLabelRef[]>
 }
 
 export interface CreateGmailClientOptions {
@@ -202,6 +217,28 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
       })
       const data = res.data.data ?? ''
       return Buffer.from(data, 'base64url')
+    },
+    async modifyThread(input) {
+      await gmail.users.threads.modify({
+        userId: 'me',
+        id: input.threadId,
+        requestBody: {
+          addLabelIds: input.addLabelIds ?? [],
+          removeLabelIds: input.removeLabelIds ?? [],
+        },
+      })
+    },
+    async trashThread(threadId) {
+      await gmail.users.threads.trash({ userId: 'me', id: threadId })
+    },
+    async untrashThread(threadId) {
+      await gmail.users.threads.untrash({ userId: 'me', id: threadId })
+    },
+    async listLabels() {
+      const res = await gmail.users.labels.list({ userId: 'me' })
+      return (res.data.labels ?? [])
+        .filter((l): l is { id: string; name: string } => !!l.id && !!l.name)
+        .map((l) => ({ id: l.id, name: l.name }))
     },
   }
 }

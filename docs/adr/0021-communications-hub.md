@@ -1,6 +1,6 @@
 # ADR 0021 — Communications Hub (multi-account email operating system)
 
-- Status: Proposed (Phase 1, multi-account foundation: Accepted & implemented)
+- Status: Proposed (Phases 1–3, 4 v1, and 5 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam; email in the unified Conversation head; `/mail` reading client; two-way action sync)
 - Date: 2026-05-30
 - Supersedes: none
 - Related: ADR 0012 (Gmail OAuth), ADR 0017 (comprehensive customer view + backfill), ADR 0020 (CRM as the operational layer on top of Trengo), CLAUDE.md §14
@@ -93,35 +93,67 @@ inbox", generalising the Gmail-only `GmailMailbox`:
 
 This phase ships no irreversible action and changes no existing Gmail code path.
 
-### Phase 2 — Provider sync interface + Gmail behind it
+### Phase 2 — Provider sync interface + Gmail behind it (implemented)
 
-Define a `MailSyncProvider` interface in `packages/integrations/mail` (read
-window, fetch message, send, mutate flags/labels, watch/poll). Refactor the
-existing Gmail client to **implement** it; point `gmail/history.changed` at the
-`MailAccount` row (via the bridge). No behaviour change — pure seam.
+`MailSyncProvider` interface lives in `packages/core/src/mail/sync-provider.ts`
+(type-only seam, no I/O — fits §5: `core` cannot import `integrations`). Gmail
+implements it in `packages/integrations/gmail/src/mail-provider.ts` as a thin
+pass-through to the existing `GmailClient` — no behaviour change. The runtime
+dispatcher `apps/web/lib/mail/get-sync-provider.ts` resolves a `MailAccount.id`
+to its provider and fails closed (`MailProviderUnavailableError`) for
+non-connectable providers and disconnected accounts. Pointing the live
+`gmail/history.changed` job at `MailAccount` is deferred to Phase 3 (when the
+bridge is materialised by `syncFromGmail`).
 
 ### Phase 3 — Unified inbox (email into the Conversation head)
 
-Generalise `Conversation` beyond Trengo (`provider` + nullable external ids,
-`mailAccountId`), upsert an email thread → conversation head on every synced
-message, and surface email alongside Trengo in the Communication Centre with the
-existing SSE transport. Auto-link to Lead/Contact/Family reuses the current
-many-to-many matcher; **unmatched mail creates a `Lead`, never a ghost Contact**
-(§11 rule, applied to email).
+- **3a (implemented).** Generalised `Conversation` beyond Trengo: `provider`,
+  `mailAccountId`, `externalThreadId`, nullable `trengoTicketId`, composite
+  unique `(provider, externalThreadId)`.
+- **3b (implemented).** `applyMailToConversation`
+  (`packages/core/src/mail/conversation-head.ts`, pure + db-port, reusable by
+  Outlook/IMAP) upserts an email-thread head keyed on
+  `(provider='email', externalThreadId=gmailThreadId)`. The Gmail sync
+  (`processMessage`) calls it on every synced message after writing the
+  `Interaction`, resolving the owning `MailAccount` via the `GmailMailbox`
+  bridge. Email heads surface in the Communication Centre list automatically
+  (it reads all heads by status) and the thread view renders email messages
+  joined on `payload.gmailThreadId`. Reuses the existing SSE transport
+  (`publishConversationUpdate`). Auto-link reuses the many-to-many matcher;
+  unmatched mail still records the head with a null contact (a ghost Contact is
+  never created — §11/§3). **Deferred:** a backfill to stamp `provider='trengo'`
+  on legacy rows so the column can go `NOT NULL`; replying to an email thread
+  from the Comms Centre (Phase 4 client).
 
 ### Phase 4 — Full email client
 
-`/mail` two/three-pane workspace: account switcher (all accounts the agent can
-see), folder/label rail, thread list with multi-select + bulk actions, thread +
-preview pane, command-palette search, keyboard shortcuts. RSC list + view-model
-shapers; mutations through tRPC.
+**v1 (implemented).** `/mail` is a dedicated, account-aware email workspace:
+a folder rail (All / Unread), an account switcher (own + shared accounts the
+agent can see), and a newest-first thread list over the email Conversation
+heads (tRPC `mail.accounts` + `mail.threads.list`, staff-gated, keyset
+paginated). Rows open the existing conversation thread view (which already
+renders the full email thread, Phase 3b). RSC + `Link` navigation, consistent
+with the Comms Centre pages. **Reply (implemented):** the email thread view has
+a reply box (`EmailReply` → `mail.thread.reply`) that sends via the account
+owner's mailbox using the existing Gmail `sendReply` outbound, threaded against
+the latest inbound message; the sent reply lands in Gmail too. **Still to come:**
+new-message compose, multi-select + bulk actions, preview pane, command-palette
+search, keyboard shortcuts.
 
-### Phase 5 — Two-way action sync
+### Phase 5 — Two-way action sync (implemented)
 
-Mirror read/unread, archive, star, label/folder, delete and drafts in **both**
-directions (Gmail `users.messages.modify` / drafts; Graph equivalents).
-Idempotent, echo-protected (our own writes are skipped on the inbound side,
-exactly like the Trengo `interactionId` echo guard), audited.
+The `MailSyncProvider` seam gained `setReadState` / `setArchived` / `setStarred`
+/ `setTrashed` / `modifyLabels` / `listLabels`; the Gmail adapter maps them to
+`users.threads.modify` (system labels `UNREAD` / `INBOX` / `STARRED`) and
+`threads.trash` / `threads.untrash` (delete → Gmail Trash, recoverable). tRPC
+`mail.thread.{setRead,setArchived,setStarred,setTrashed,setLabels,labels}` run
+the action on the live mailbox, reflect it on the Conversation head, publish the
+SSE delta, and audit (`mail.thread_*`). Sales Executive+ (VA read-only). A
+`MailThreadActions` bar on the conversation view drives it. All idempotent +
+reversible. **Deferred:** drafts sync, and inbound label/read mirroring **from**
+Gmail (our sync only ingests new messages today; mirroring provider-side flag
+changes back needs Gmail history `labelAdded/Removed` ingestion with the same
+echo-guard the Trengo layer uses).
 
 ### Phase 6 — Shared-inbox operations
 
@@ -133,7 +165,7 @@ and @mentions (never sent outbound); one-click task creation. Reuses the ADR
 
 New `MailSyncProvider` implementations behind the Phase-2 seam. Microsoft Graph
 (delta query + change notifications) for Outlook/Exchange; an IMAP/SMTP provider
-for everything else. **Requires its own ADR** for the new dependencies (§3).
+for everything else. Design is **ADR 0024** (deps not added until approved).
 
 ### Phase 8 — Templates, automations, analytics, calendar, unified channels
 
