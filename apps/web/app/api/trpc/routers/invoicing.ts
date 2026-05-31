@@ -181,7 +181,28 @@ const configRouter = router({
   test: auditedProcedure.mutation(async ({ ctx }) => {
     const user = requireUser(ctx)
     assertConfig(user.role)
-    const cfg = await loadInvoicingConfig()
+    // Decrypting the stored key can fail if the field-encryption backend is
+    // misconfigured (e.g. AWS_KMS_KEY_ID set to a placeholder with no real AWS
+    // account). Surface that as an actionable BAD_REQUEST rather than a 500
+    // that pages on-call (CLAUDE.md §27).
+    let cfg
+    try {
+      cfg = await loadInvoicingConfig()
+    } catch {
+      await ctx.audit({
+        action: 'invoicing.connection_tested',
+        target: { type: 'InvoicingSetting', id: 'default' },
+        after: { ok: false, reason: 'decrypt_failed' },
+      })
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          'Could not decrypt the stored API key. The field-encryption key is ' +
+          'misconfigured — if you are not using AWS, leave AWS_KMS_KEY_ID blank ' +
+          'in Railway (it falls back to a local key from AUTH_SECRET), then ' +
+          're-save the API key.',
+      })
+    }
     if (!cfg.apiKey) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
