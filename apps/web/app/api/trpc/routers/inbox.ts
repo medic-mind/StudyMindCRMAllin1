@@ -530,6 +530,106 @@ export const inboxRouter = router({
         return { items, nextCursor }
       }),
 
+    // ADR 0020 Phase 6i — bulk triage actions on the conversation list.
+    // markRead / snooze / unsnooze are fast head-only `updateMany`s; close
+    // loops the audited Trengo outbound per conversation (capped, sequential)
+    // so each close genuinely syncs to Trengo. Returns a per-action summary.
+    bulk: auditedProcedure
+      .input(
+        z.object({
+          conversationIds: z.array(z.string().min(1)).min(1).max(100),
+          action: z.enum(['markRead', 'close', 'snooze', 'unsnooze']),
+          minutes: z.number().int().min(5).max(60 * 24 * 30).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        const ids = Array.from(new Set(input.conversationIds))
+        const { publishConversationUpdate } = await import('@studymind/core/realtime')
+
+        if (input.action === 'markRead') {
+          const r = await ctx.db.conversation.updateMany({
+            where: { id: { in: ids }, unreadCount: { gt: 0 } },
+            data: { unreadCount: 0 },
+          })
+          for (const id of ids) {
+            publishConversationUpdate({ id, trengoTicketId: null, lastMessageAt: null, contactId: null })
+          }
+          await ctx.audit({
+            action: 'trengo.conversation_read',
+            target: { type: 'System', id: 'bulk' },
+            after: { count: r.count, ids: ids.length },
+          })
+          return { action: input.action, succeeded: r.count, failed: 0 }
+        }
+
+        if (input.action === 'snooze' || input.action === 'unsnooze') {
+          const until =
+            input.action === 'snooze'
+              ? new Date(Date.now() + (input.minutes ?? 60) * 60_000)
+              : null
+          const r = await ctx.db.conversation.updateMany({
+            where: { id: { in: ids } },
+            data:
+              input.action === 'snooze'
+                ? { status: 'snoozed', snoozedUntil: until }
+                : { status: 'open', snoozedUntil: null },
+          })
+          for (const id of ids) {
+            publishConversationUpdate({ id, trengoTicketId: null, lastMessageAt: null, contactId: null })
+          }
+          await ctx.audit({
+            action:
+              input.action === 'snooze'
+                ? 'trengo.conversation_snoozed'
+                : 'trengo.conversation_unsnoozed',
+            target: { type: 'System', id: 'bulk' },
+            after: { count: r.count, snoozedUntil: until?.toISOString() ?? null },
+          })
+          return { action: input.action, succeeded: r.count, failed: 0 }
+        }
+
+        // close — loop the audited Trengo outbound. Only Trengo conversations
+        // with a contact + ticket can be closed; others are skipped.
+        const rows = await ctx.db.conversation.findMany({
+          where: { id: { in: ids }, status: { not: 'closed' } },
+          select: { id: true, contactId: true, trengoTicketId: true },
+        })
+        const { closeConversation } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        let succeeded = 0
+        let failed = 0
+        let skipped = 0
+        for (const row of rows) {
+          if (!row.contactId || row.trengoTicketId === null) {
+            skipped += 1
+            continue
+          }
+          try {
+            await closeConversation({
+              contactId: row.contactId,
+              agentId: user.id,
+              ticketId: row.trengoTicketId,
+              requestId: `${ctx.requestId}:${row.id}`,
+            })
+            succeeded += 1
+          } catch {
+            // Left in pending_send by the outbound; the retry cron recovers it.
+            failed += 1
+          }
+        }
+        await ctx.audit({
+          action: 'trengo.ticket_close_requested',
+          target: { type: 'System', id: 'bulk' },
+          after: { succeeded, failed, skipped, selected: ids.length },
+        })
+        return { action: 'close', succeeded, failed, skipped }
+      }),
+
     // ADR 0021 Phase 6 — internal notes + @mentions on a conversation. Notes
     // are staff↔staff (a `note` Interaction scoped by `payload.conversationId`)
     // and never sent outbound. A mention writes an audit row targeting the
