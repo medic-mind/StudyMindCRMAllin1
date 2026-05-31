@@ -19,6 +19,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 import { LiveUpdates } from '../LiveUpdates'
 import { AssignControl } from './AssignControl'
 import { ConversationReply } from './ConversationReply'
+import { MailThreadActions } from './MailThreadActions'
 
 const CHANNEL_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
@@ -133,6 +134,14 @@ export default async function ConversationDetailPage({
             <p className="mt-2 text-sm text-neutral-700">{head.subject}</p>
           ) : null}
         </header>
+
+        {head.provider === 'email' ? (
+          <MailThreadActions
+            conversationId={head.id}
+            unread={head.unreadCount > 0}
+            archived={head.status === 'archived'}
+          />
+        ) : null}
 
         {messages.length === 0 ? (
           <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-center text-sm text-neutral-600">

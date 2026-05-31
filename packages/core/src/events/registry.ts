@@ -291,6 +291,14 @@ export const EVENT_NAMES = [
   'mail_account.default_changed',
   'mail_account.member_added',
   'mail_account.member_removed',
+  // ADR 0021 Phase 5 — two-way action sync. A CRM action mutates the live
+  // mailbox (read/archive/star/trash/label), mirrored to Gmail and reflected on
+  // the Conversation head. All reversible (trash → Gmail Trash, recoverable).
+  'mail.thread_read_changed',
+  'mail.thread_archived',
+  'mail.thread_starred',
+  'mail.thread_trashed',
+  'mail.thread_labeled',
 
   // Audit-B2: payment links, allocations, gmail outbound, trengo connect
   'charge.payment_link_created',

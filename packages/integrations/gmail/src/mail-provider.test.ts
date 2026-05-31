@@ -57,6 +57,21 @@ function fakeSdk() {
           },
         })),
       },
+      threads: {
+        modify: vi.fn(async () => ({ data: {} })),
+        trash: vi.fn(async () => ({ data: {} })),
+        untrash: vi.fn(async () => ({ data: {} })),
+      },
+      labels: {
+        list: vi.fn(async () => ({
+          data: {
+            labels: [
+              { id: 'INBOX', name: 'INBOX' },
+              { id: 'Label_7', name: 'Admissions' },
+            ],
+          },
+        })),
+      },
       watch: vi.fn(async () => ({
         data: { historyId: '4242', expiration: '1700000000000' },
       })),
@@ -145,5 +160,71 @@ describe('createGmailMailSyncProvider', () => {
     expect(new MailFeatureUnsupportedError('imap', 'push').code).toBe(
       'MAIL_FEATURE_UNSUPPORTED',
     )
+  })
+
+  // --- Phase 5 two-way action sync: Gmail system-label mappings ---
+  function providerWithSpy() {
+    const sdk = fakeSdk()
+    const p = createGmailMailSyncProvider({
+      accountId: 'acc_1',
+      agentId: 'u_1',
+      clientOptions: { factory: () => sdk as never },
+    })
+    return { p, modify: sdk.users.threads.modify, sdk }
+  }
+
+  it('setReadState removes/adds the UNREAD label', async () => {
+    const { p, modify } = providerWithSpy()
+    await p.setReadState('t_1', true)
+    expect(modify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 't_1',
+        requestBody: { addLabelIds: [], removeLabelIds: ['UNREAD'] },
+      }),
+    )
+    await p.setReadState('t_1', false)
+    expect(modify).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requestBody: { addLabelIds: ['UNREAD'], removeLabelIds: [] },
+      }),
+    )
+  })
+
+  it('setArchived removes/adds INBOX', async () => {
+    const { p, modify } = providerWithSpy()
+    await p.setArchived('t_1', true)
+    expect(modify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestBody: { addLabelIds: [], removeLabelIds: ['INBOX'] },
+      }),
+    )
+  })
+
+  it('setStarred adds/removes STARRED', async () => {
+    const { p, modify } = providerWithSpy()
+    await p.setStarred('t_1', true)
+    expect(modify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestBody: { addLabelIds: ['STARRED'], removeLabelIds: [] },
+      }),
+    )
+  })
+
+  it('setTrashed routes to trash / untrash', async () => {
+    const { p, sdk } = providerWithSpy()
+    await p.setTrashed('t_1', true)
+    expect(sdk.users.threads.trash).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't_1' }),
+    )
+    await p.setTrashed('t_1', false)
+    expect(sdk.users.threads.untrash).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 't_1' }),
+    )
+  })
+
+  it('listLabels surfaces id + name', async () => {
+    const { p } = providerWithSpy()
+    const labels = await p.listLabels()
+    expect(labels).toContainEqual({ id: 'Label_7', name: 'Admissions' })
   })
 })

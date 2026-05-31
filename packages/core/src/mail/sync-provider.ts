@@ -102,6 +102,31 @@ export interface MailSyncProvider {
   setupPush(input: { topicOrUrl: string }): Promise<MailPushSubscription>
   /** Tear down the push subscription. Best effort — never throws. */
   stopPush(): Promise<void>
+
+  // ADR 0021 Phase 5 — two-way action sync. Operate on a whole thread
+  // (externalThreadId). All idempotent. Providers that cannot perform an
+  // action throw `MailFeatureUnsupportedError`.
+
+  /** Mark every message in the thread read / unread. */
+  setReadState(threadId: string, read: boolean): Promise<void>
+  /** Archive (remove from inbox) / un-archive (restore to inbox). */
+  setArchived(threadId: string, archived: boolean): Promise<void>
+  /** Star / un-star the thread. */
+  setStarred(threadId: string, starred: boolean): Promise<void>
+  /** Move the thread to Trash (recoverable) / restore it. */
+  setTrashed(threadId: string, trashed: boolean): Promise<void>
+  /** Add / remove a custom label by provider label id. */
+  modifyLabels(
+    threadId: string,
+    change: { add?: string[]; remove?: string[] },
+  ): Promise<void>
+  /** List the account's labels/folders as `{ id, name }`. */
+  listLabels(): Promise<MailLabelRef[]>
+}
+
+export interface MailLabelRef {
+  id: string
+  name: string
 }
 
 // -----------------------------------------------------------------------------
