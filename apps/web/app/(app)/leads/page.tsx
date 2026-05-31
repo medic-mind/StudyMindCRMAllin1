@@ -1,7 +1,9 @@
-// Leads tray (ADR 0023). Incoming web enquiries, auto-classified and routed to
-// the Sales Pipeline. Most leads onboard automatically (first contact) or
-// dedupe onto an existing contact (re-enquiry); this tray is the light review
-// surface for what came in and the few that need a human (needs_triage).
+// Leads triage (ADR 0023). Incoming web enquiries are saved as Contacts
+// automatically and routed to the Sales Pipeline. This page defaults to the
+// few that a human needs to look at (needs_triage: no email/phone, or a
+// possible duplicate) — the other tabs are an audit view over everything
+// that came in. It is NOT a parallel home for leads; onboarded leads live as
+// real Contacts + pipeline cards.
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { PageBody } from '@/components/shell/page-body'
@@ -22,8 +24,8 @@ export default async function LeadsPage() {
   return (
     <>
       <PageHeader
-        title="Leads"
-        subtitle="Incoming web enquiries — auto-classified by brand, product and intent, then routed to the pipeline."
+        title="Lead triage"
+        subtitle="New web enquiries are saved as contacts automatically and dropped onto the New leads pipeline. This is where the few that can't be matched wait for a human."
       />
       <PageBody>
         <LeadsTray initialStats={stats} canWrite={Boolean(me && WRITE_ROLES.has(me.role))} />
