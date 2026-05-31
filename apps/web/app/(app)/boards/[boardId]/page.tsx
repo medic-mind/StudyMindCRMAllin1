@@ -80,6 +80,7 @@ export default async function BoardPage({ params }: PageProps) {
     labels: c.labels,
     lastActivityAt: c.lastActivityAt,
     dueAt: c.dueAt,
+    scheduledCallAt: c.scheduledCallAt,
     priority: c.priority,
     assigneeId: c.assigneeId,
     assigneeName: c.assigneeName,

@@ -1,5 +1,8 @@
-// Client island for the B2B accounts list. Inline status filter + create
-// button + live search. Rows link to the detail page.
+// Client island for the B2B accounts list. Dense table (CLAUDE.md §4) with
+// inline status filter + live search + create button. Each row surfaces the
+// org, clickable email + phone, student count + contracted hours, the
+// call/text/email counts across the account's linked contacts, amount paid
+// (paid uploaded invoices), and when we last contacted them.
 
 'use client'
 
@@ -9,8 +12,17 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import {
+  ChevronRightIcon,
+  MailIcon,
+  MessageSquareIcon,
+  PhoneIcon,
+} from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
+import { formatMoneyMinor } from '@/lib/format/money'
+import { formatRelativeTime } from '@/lib/format/relative-time'
 
 import { AccountCreateForm } from './AccountCreateForm'
 
@@ -37,6 +49,14 @@ interface AccountRow {
     slug: string
     color: string | null
   }>
+  studentCount: number
+  hoursContracted: number
+  hoursDelivered: number
+  amountPaidMinor: number
+  callCount: number
+  textCount: number
+  emailCount: number
+  lastContactedAt: Date | string | null
   archived: boolean
   createdAt: Date | string
 }
@@ -54,6 +74,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
   const [creating, setCreating] = useState(false)
   const [q, setQ] = useState(searchParams.get('q') ?? '')
   const status = (searchParams.get('status') ?? '') as Status | ''
+  const now = new Date()
 
   function pushParam(key: string, value: string | null) {
     const params = new URLSearchParams(searchParams.toString())
@@ -121,57 +142,133 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
           from the invoicing platform in <em>Settings → Invoicing</em>.
         </p>
       ) : (
-        <ul className="space-y-2">
-          {accounts.map((a) => (
-            <li
-              key={a.id}
-              className="rounded-lg border border-neutral-200 bg-white shadow-card transition-shadow hover:shadow-card-hover"
-            >
-              <Link
-                href={`/accounts/${a.id}`}
-                className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {a.color && (
-                      <span
-                        aria-hidden
-                        className="inline-block h-2.5 w-2.5 rounded-full"
-                        style={{ backgroundColor: a.color }}
-                      />
-                    )}
-                    <h3 className="text-sm font-semibold text-neutral-900">{a.name}</h3>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_TONE[a.status]}`}
-                    >
-                      {a.status}
-                    </span>
-                    {a.companies.slice(0, 4).map((c) => (
-                      <span
-                        key={c.id}
-                        className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
-                        style={{ backgroundColor: c.color ?? '#475569' }}
-                      >
-                        {c.name}
+        <div className="overflow-x-auto rounded-xl border border-neutral-200 bg-white shadow-card">
+          <table className="w-full min-w-[1080px] border-collapse text-sm">
+            <thead className="bg-neutral-50 text-left">
+              <tr>
+                <th className="px-3 py-2 font-medium text-neutral-600">
+                  {kind === 'school' ? 'School' : 'Partnership'}
+                </th>
+                <th className="px-3 py-2 font-medium text-neutral-600">Email</th>
+                <th className="px-3 py-2 font-medium text-neutral-600">Phone</th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Students
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Hours
+                </th>
+                <th className="px-3 py-2 text-center font-medium text-neutral-600">
+                  Activity
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Paid
+                </th>
+                <th className="px-3 py-2 text-right font-medium text-neutral-600">
+                  Last contact
+                </th>
+                <th className="w-8" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {accounts.map((a) => (
+                <tr key={a.id} className="group">
+                  <td className="px-3 py-2 align-top">
+                    <Link href={`/accounts/${a.id}`} className="block min-w-0">
+                      <span className="flex items-center gap-1.5">
+                        {a.color && (
+                          <span
+                            aria-hidden
+                            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: a.color }}
+                          />
+                        )}
+                        <span className="truncate font-medium text-neutral-900 group-hover:text-primary-700">
+                          {a.name}
+                        </span>
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_TONE[a.status]}`}
+                        >
+                          {a.status}
+                        </span>
                       </span>
-                    ))}
-                  </div>
-                  {a.description && (
-                    <p className="mt-0.5 text-xs text-neutral-600">{a.description}</p>
-                  )}
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-neutral-500">
-                    {a.city && <span>{[a.city, a.country].filter(Boolean).join(', ')}</span>}
-                    {a.contactEmail && <span>{a.contactEmail}</span>}
-                    {a.contactPhone && <span className="font-mono">{a.contactPhone}</span>}
-                  </div>
-                </div>
-                <div className="text-xs text-neutral-500">
-                  {a.contactCount} {a.contactCount === 1 ? 'contact' : 'contacts'}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-neutral-500">
+                        {a.city && (
+                          <span>{[a.city, a.country].filter(Boolean).join(', ')}</span>
+                        )}
+                        {a.companies.slice(0, 3).map((c) => (
+                          <span
+                            key={c.id}
+                            aria-hidden
+                            title={c.name}
+                            className="h-2 w-2 rounded-full"
+                            style={{ backgroundColor: c.color ?? '#94a3b8' }}
+                          />
+                        ))}
+                      </span>
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2 align-top text-xs">
+                    <EmailLink email={a.contactEmail} />
+                  </td>
+                  <td className="px-3 py-2 align-top text-xs">
+                    <PhoneLink phone={a.contactPhone} />
+                  </td>
+                  <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-700">
+                    {a.studentCount}
+                  </td>
+                  <td
+                    className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-700"
+                    title={`${a.hoursDelivered}h delivered of ${a.hoursContracted}h contracted`}
+                  >
+                    {a.hoursContracted > 0 ? `${a.hoursContracted}h` : '—'}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex items-center justify-center gap-2 text-xs tabular-nums text-neutral-600">
+                      <span
+                        className="inline-flex items-center gap-0.5"
+                        title={`${a.callCount} calls`}
+                      >
+                        <PhoneIcon size={12} className="text-neutral-400" />
+                        {a.callCount}
+                      </span>
+                      <span
+                        className="inline-flex items-center gap-0.5"
+                        title={`${a.textCount} messages`}
+                      >
+                        <MessageSquareIcon size={12} className="text-neutral-400" />
+                        {a.textCount}
+                      </span>
+                      <span
+                        className="inline-flex items-center gap-0.5"
+                        title={`${a.emailCount} emails`}
+                      >
+                        <MailIcon size={12} className="text-neutral-400" />
+                        {a.emailCount}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-700">
+                    {a.amountPaidMinor > 0 ? formatMoneyMinor(a.amountPaidMinor) : '—'}
+                  </td>
+                  <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
+                    {a.lastContactedAt
+                      ? formatRelativeTime(new Date(a.lastContactedAt), now)
+                      : '—'}
+                  </td>
+                  <td className="px-3 py-2 align-top text-right">
+                    <Link
+                      href={`/accounts/${a.id}`}
+                      aria-label={`Open ${a.name}`}
+                      className="inline-flex text-neutral-300 transition-colors group-hover:text-primary-600"
+                    >
+                      <ChevronRightIcon size={16} />
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )

@@ -475,6 +475,34 @@ model Contact {
   /// "GCSE Year 11 Maths", "A-Level Biology", "11+ English"…
   examTarget             String?
 
+  /// Booking lifecycle on booking.studymind.co.uk (CLAUDE.md §15). Defaults
+  /// to `lead` for every new contact — the booking site puller is the only
+  /// writer that flips it to `registered_no_hours` (account created, no
+  /// sessions booked yet) or `registered_with_hours` (account created and
+  /// has at least one upcoming or delivered session). The CRM list filters
+  /// on this column so the sales team can split fresh leads from the rest.
+  bookingStatus       ContactBookingStatus @default(lead)
+  /// External id on booking.studymind.co.uk once the contact has signed up
+  /// there. Populated by the booking puller; null for pure CRM-only leads.
+  bookingContactId    String?
+  /// Most recent successful sync from booking.studymind.co.uk. Mirrors the
+  /// `bookingLastSyncAt` pattern on BusinessAccountStudent.
+  bookingLastSyncAt   DateTime?
+  /// Booking-derived engagement metrics, written per-contact by the
+  /// booking.studymind.co.uk sync (CLAUDE.md §15). Kept directly on Contact
+  /// — not rolled up through Family — so the Contacts table reads them in a
+  /// single query and a contact carries its own figures regardless of any
+  /// parent/guardian link. Null until the booking sync first runs for the
+  /// contact; the list renders "—" for nulls.
+  hoursBooked         Int?
+  hoursDelivered      Int?
+  /// Timestamp of the contact's most recent delivered lesson on the booking
+  /// site. Drives the "Last lesson" column + filter.
+  lastLessonAt        DateTime?
+  /// Total confirmed spend in pence (CLAUDE.md §19 — money is integer minor
+  /// units, never floats). Written by the booking/finance sync per-contact.
+  amountSpentMinor    Int?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?
@@ -517,6 +545,20 @@ model Contact {
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
+  @@index([bookingStatus])
+  @@index([bookingContactId])
+}
+
+/// Booking lifecycle for a Contact relative to booking.studymind.co.uk.
+/// Default for every new contact is `lead` — the booking site sync flips
+/// it once a registration / lesson is observed. CLAUDE.md §15.
+enum ContactBookingStatus {
+  /// Default state: no booking-site account or no signal yet.
+  lead
+  /// Has a booking-site account but no sessions booked.
+  registered_no_hours
+  /// Has a booking-site account and at least one upcoming or delivered session.
+  registered_with_hours
 }
 
 /// Preferred contact channel (CLAUDE.md §11, §14). 'any' means agent picks.
@@ -826,6 +868,12 @@ model Card {
   /// Optional due date. Surfaced as a chip on the board (red when
   /// overdue) and editable from the modal side rail.
   dueAt       DateTime?
+  /// Scheduled call date+time (UTC; the UI picks/renders in Europe/London).
+  /// Distinct from `dueAt` — this is WHEN the agent will phone the contact,
+  /// which is the whole point of the call-scheduling boards (CLAUDE.md §6.4:
+  /// "Scheduled 9am-1pm / 1pm-4pm / 4pm-8pm"). Surfaced as a chip on the card
+  /// and a datetime picker in the modal side rail.
+  scheduledCallAt DateTime?
   /// Priority 1 (highest) – 4. Null when unset. Surfaced as a P-chip on
   /// the board and selectable from the modal side rail.
   priority    Int?
@@ -848,6 +896,7 @@ model Card {
   @@index([contactId])
   @@index([assigneeId])
   @@index([dueAt])
+  @@index([scheduledCallAt])
 }
 
 /// A checklist item ON a card (Todoist-style sub-tasks). Distinct from the

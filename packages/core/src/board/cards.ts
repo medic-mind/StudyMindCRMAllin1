@@ -37,6 +37,7 @@ const cardSelect = {
   subjectId: true,
   assigneeId: true,
   dueAt: true,
+  scheduledCallAt: true,
   priority: true,
   position: true,
 } as const
@@ -317,6 +318,7 @@ export async function updateCard(
     subjectId?: string | null
     assigneeId?: string | null
     dueAt?: Date | null
+    scheduledCallAt?: Date | null
     priority?: number | null
   },
   ctx: ActorCtx,
@@ -350,6 +352,9 @@ export async function updateCard(
       ...(input.subjectId !== undefined ? { subjectId: input.subjectId } : {}),
       ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
       ...(input.dueAt !== undefined ? { dueAt: input.dueAt } : {}),
+      ...(input.scheduledCallAt !== undefined
+        ? { scheduledCallAt: input.scheduledCallAt }
+        : {}),
       ...(input.priority !== undefined ? { priority: input.priority } : {}),
     },
     select: cardSelect,

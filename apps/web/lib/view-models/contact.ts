@@ -3,6 +3,7 @@
 
 import type {
   CompanyRef,
+  ContactBookingStatus,
   ContactKind,
   ContactPreferredContactMethod,
   ContactSendStatus,
@@ -10,6 +11,7 @@ import type {
   SubjectRef,
 } from '@studymind/core/contact'
 import { displayNameOf } from '@studymind/core/contact'
+import type { ContactCommsCounts } from '@studymind/core/stats'
 
 export type { ContactSummary } from '@studymind/core/contact'
 
@@ -91,9 +93,19 @@ interface ContactSummaryRow extends ContactRow {
   interactions: Array<{ occurredAt: Date }>
   companies: ContactCompanyJoin[]
   createdAt: Date
+  bookingStatus: ContactBookingStatus
+  hoursBooked: number | null
+  hoursDelivered: number | null
+  lastLessonAt: Date | null
+  amountSpentMinor: number | null
 }
 
-export function toContactSummary(row: ContactSummaryRow): ContactSummary {
+const NO_COUNTS: ContactCommsCounts = { callCount: 0, emailCount: 0, textCount: 0 }
+
+export function toContactSummary(
+  row: ContactSummaryRow,
+  counts: ContactCommsCounts = NO_COUNTS,
+): ContactSummary {
   const family = row.familyMembers[0]?.family ?? null
   const last = row.interactions[0]?.occurredAt ?? null
   return {
@@ -107,6 +119,14 @@ export function toContactSummary(row: ContactSummaryRow): ContactSummary {
     lastInteractionAt: last,
     createdAt: row.createdAt,
     companies: row.companies.map((cc) => cc.company),
+    bookingStatus: row.bookingStatus,
+    hoursBooked: row.hoursBooked,
+    hoursDelivered: row.hoursDelivered,
+    lastLessonAt: row.lastLessonAt,
+    amountSpentMinor: row.amountSpentMinor,
+    callCount: counts.callCount,
+    emailCount: counts.emailCount,
+    textCount: counts.textCount,
   }
 }
 

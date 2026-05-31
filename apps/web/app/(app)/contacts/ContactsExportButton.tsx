@@ -11,14 +11,26 @@ import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { trpc } from '@/lib/trpc/client'
 import type { CsvColumn } from '@/lib/csv'
 
+const STATUS_LABEL: Record<string, string> = {
+  lead: 'Lead',
+  registered_no_hours: 'Registered (no hours)',
+  registered_with_hours: 'Registered (booked hours)',
+}
+
 interface Row {
   id: string
   displayName: string
   email: string | null
   phoneE164: string | null
   kind: string
-  familyName: string | null
+  bookingStatus: string
   companyNames: string
+  callCount: number
+  textCount: number
+  emailCount: number
+  hoursBooked: number | null
+  lastLessonAt: Date | string | null
+  amountSpentMinor: number | null
   lastInteractionAt: Date | string | null
 }
 
@@ -27,10 +39,24 @@ const COLUMNS: CsvColumn<Row>[] = [
   { header: 'Email', value: (r) => r.email ?? '' },
   { header: 'Phone (E.164)', value: (r) => r.phoneE164 ?? '' },
   { header: 'Type', value: (r) => r.kind },
-  { header: 'Family', value: (r) => r.familyName ?? '' },
+  { header: 'Status', value: (r) => STATUS_LABEL[r.bookingStatus] ?? r.bookingStatus },
   { header: 'Companies', value: (r) => r.companyNames },
+  { header: 'Calls', value: (r) => r.callCount },
+  { header: 'Texts', value: (r) => r.textCount },
+  { header: 'Emails', value: (r) => r.emailCount },
+  { header: 'Hours booked', value: (r) => (r.hoursBooked ?? '') },
   {
-    header: 'Last interaction at',
+    header: 'Last lesson',
+    value: (r) => (r.lastLessonAt ? new Date(r.lastLessonAt) : ''),
+  },
+  {
+    header: 'Amount spent (GBP)',
+    // Minor units → pounds with 2dp; blank until the booking sync writes it.
+    value: (r) =>
+      r.amountSpentMinor != null ? (r.amountSpentMinor / 100).toFixed(2) : '',
+  },
+  {
+    header: 'Last contacted',
     value: (r) => (r.lastInteractionAt ? new Date(r.lastInteractionAt) : ''),
   },
 ]
@@ -66,8 +92,14 @@ export function ContactsExportButton({ q, companyId }: Props) {
             email: c.email,
             phoneE164: c.phoneE164,
             kind: c.kind,
-            familyName: c.familyName ?? null,
+            bookingStatus: c.bookingStatus,
             companyNames: c.companies.map((cc) => cc.name).join(' · '),
+            callCount: c.callCount,
+            textCount: c.textCount,
+            emailCount: c.emailCount,
+            hoursBooked: c.hoursBooked,
+            lastLessonAt: c.lastLessonAt,
+            amountSpentMinor: c.amountSpentMinor,
             lastInteractionAt: c.lastInteractionAt,
           })
           if (all.length >= MAX_ROWS) break

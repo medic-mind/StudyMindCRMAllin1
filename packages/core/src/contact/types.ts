@@ -13,6 +13,14 @@ export const Email = z.string().email().max(254)
 export const ContactKind = z.enum(['parent', 'student', 'tutor', 'la_caseworker', 'other'])
 export type ContactKind = z.infer<typeof ContactKind>
 
+/** Booking lifecycle relative to booking.studymind.co.uk (CLAUDE.md §15). */
+export const ContactBookingStatus = z.enum([
+  'lead',
+  'registered_no_hours',
+  'registered_with_hours',
+])
+export type ContactBookingStatus = z.infer<typeof ContactBookingStatus>
+
 const NameField = z
   .string()
   .trim()
@@ -64,6 +72,17 @@ export const ContactSummary = z.object({
   createdAt: z.date(),
   /** Up to three for the list dot strip; first one is the primary. */
   companies: CompanyRef.array(),
+  // Booking + engagement columns (CLAUDE.md §15). Booking-derived figures are
+  // null until the booking.studymind.co.uk sync first writes them; the comms
+  // counts come from the contact's own timeline and are always present.
+  bookingStatus: ContactBookingStatus,
+  hoursBooked: z.number().nullable(),
+  hoursDelivered: z.number().nullable(),
+  lastLessonAt: z.date().nullable(),
+  amountSpentMinor: z.number().nullable(),
+  callCount: z.number(),
+  emailCount: z.number(),
+  textCount: z.number(),
 })
 export type ContactSummary = z.infer<typeof ContactSummary>
 

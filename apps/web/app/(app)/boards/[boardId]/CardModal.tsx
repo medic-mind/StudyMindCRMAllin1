@@ -295,6 +295,7 @@ export function CardModal({
               assigneeName: card.assigneeName,
               assigneeEmail: card.assigneeEmail,
               dueAt: card.dueAt,
+              scheduledCallAt: card.scheduledCallAt,
               priority: card.priority,
               labels: card.labels,
             }}
