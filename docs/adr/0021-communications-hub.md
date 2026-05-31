@@ -1,6 +1,6 @@
 # ADR 0021 — Communications Hub (multi-account email operating system)
 
-- Status: Proposed (Phases 1–3 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam; email in the unified Conversation head)
+- Status: Proposed (Phases 1–3 + Phase 4 v1 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam; email in the unified Conversation head; `/mail` reading client)
 - Date: 2026-05-30
 - Supersedes: none
 - Related: ADR 0012 (Gmail OAuth), ADR 0017 (comprehensive customer view + backfill), ADR 0020 (CRM as the operational layer on top of Trengo), CLAUDE.md §14
@@ -127,10 +127,15 @@ bridge is materialised by `syncFromGmail`).
 
 ### Phase 4 — Full email client
 
-`/mail` two/three-pane workspace: account switcher (all accounts the agent can
-see), folder/label rail, thread list with multi-select + bulk actions, thread +
-preview pane, command-palette search, keyboard shortcuts. RSC list + view-model
-shapers; mutations through tRPC.
+**v1 (implemented).** `/mail` is a dedicated, account-aware email workspace:
+a folder rail (All / Unread), an account switcher (own + shared accounts the
+agent can see), and a newest-first thread list over the email Conversation
+heads (tRPC `mail.accounts` + `mail.threads.list`, staff-gated, keyset
+paginated). Rows open the existing conversation thread view (which already
+renders the full email thread, Phase 3b). RSC + `Link` navigation, consistent
+with the Comms Centre pages. **Still to come:** multi-select + bulk actions,
+preview pane, command-palette search, keyboard shortcuts, and compose/reply
+from `/mail` (which depends on the Phase 5 two-way action sync).
 
 ### Phase 5 — Two-way action sync
 
