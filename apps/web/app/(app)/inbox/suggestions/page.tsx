@@ -72,19 +72,13 @@ export default async function SuggestionsPage({
         subtitle="Inbound edits from Trengo (and other channels) are surfaced here for human confirmation — we never silently overwrite a contact."
       />
       <PageBody>
-        {/* Sub-nav with Messages / Conversations / Suggestions. */}
+        {/* Sub-nav: the customer inbox + this field-edit review queue. */}
         <nav
           aria-label="Inbox view"
           className="mb-3 flex flex-wrap items-center gap-1"
         >
           <Link
             href="/inbox"
-            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
-          >
-            Messages
-          </Link>
-          <Link
-            href="/inbox/conversations"
             className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
           >
             Conversations

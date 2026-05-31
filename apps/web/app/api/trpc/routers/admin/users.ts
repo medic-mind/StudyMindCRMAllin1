@@ -38,6 +38,7 @@ import {
 } from '@studymind/core/auth/policies'
 import { assertNotLastCeo } from '@studymind/core/auth/guards'
 import {
+  assertStrongPassword,
   generateTemporaryPassword,
   generateToken,
   hashPassword,
@@ -156,22 +157,26 @@ interface IssueArgs {
   actorName: string
   isReset: boolean
   invalidateSessions: boolean
+  /** Explicit admin-chosen password. When omitted, a strong one is generated. */
+  password?: string
+  /** Force a change on first sign-in. Defaults to true. */
+  requireChange?: boolean
 }
 
 /**
- * Set a fresh temporary password on the user, force a reset on next sign-in,
- * mark the email verified (an admin vouches for the address), and email the
- * branded welcome/reset message with the credentials PDF attached. Returns the
- * plaintext temporary password so the caller can surface it to the admin
- * (useful while the outbound mailbox is still being connected). The password
- * is never logged.
+ * Set a password on the user (admin-chosen or generated), optionally force a
+ * reset on next sign-in, mark the email verified (an admin vouches for the
+ * address), and email the branded welcome/reset message with the credentials
+ * PDF attached. Returns the plaintext password so the caller can surface it to
+ * the admin — useful while the outbound mailbox is still being connected, or
+ * when the user has lost access to their email. The password is never logged.
  */
 async function issueTemporaryCredentials(
   db: Db,
   actor: SessionUser,
   args: IssueArgs,
 ): Promise<{ temporaryPassword: string; emailStatus: 'sent' | 'skipped' | 'failed' }> {
-  const temporaryPassword = generateTemporaryPassword()
+  const temporaryPassword = args.password ?? generateTemporaryPassword()
   const passwordHash = await hashPassword(temporaryPassword)
   const now = new Date()
 
@@ -179,7 +184,7 @@ async function issueTemporaryCredentials(
     where: { id: args.userId },
     data: {
       passwordHash,
-      mustResetPassword: true,
+      mustResetPassword: args.requireChange ?? true,
       emailVerifiedAt: now,
       failedSignInAttempts: 0,
       lockedUntil: null,
@@ -516,10 +521,21 @@ export const adminUsersRouter = router({
     }),
 
   /* ------------------------------------------------------------------ */
-  /* resetPassword — admin-issued temp password + email/PDF              */
+  /* resetPassword — generate a temp password, or set one manually        */
   /* ------------------------------------------------------------------ */
+  // Two ways to reset (ADR 0021): omit `password` to generate a strong
+  // temporary one (emailed + PDF), or pass `password` to set a specific one
+  // yourself — useful when the user has lost access to their email and you
+  // need to give them working credentials directly. `requireChange` (default
+  // true) forces a change on first sign-in.
   resetPassword: auditedProcedure
-    .input(z.object({ userId: z.string().min(1) }))
+    .input(
+      z.object({
+        userId: z.string().min(1),
+        password: z.string().optional(),
+        requireChange: z.boolean().default(true),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const actor = requireUser(ctx)
       assertCanManage(actor, await loadActorGrants(ctx.db, actor.id))
@@ -539,6 +555,18 @@ export const adminUsersRouter = router({
         throw new TRPCError({ code: 'CONFLICT', message: 'Reactivate the user before resetting their password.' })
       }
 
+      // Validate an admin-chosen password against the same strength policy.
+      if (input.password !== undefined) {
+        try {
+          assertStrongPassword(input.password)
+        } catch (e) {
+          if (e instanceof BusinessError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: e.message })
+          }
+          throw e
+        }
+      }
+
       const { temporaryPassword, emailStatus } = await issueTemporaryCredentials(
         ctx.db,
         actor,
@@ -549,14 +577,17 @@ export const adminUsersRouter = router({
           actorName: actor.email,
           isReset: true,
           invalidateSessions: true,
+          password: input.password,
+          requireChange: input.requireChange,
         },
       )
 
       await ctx.audit({
         action: 'auth.password_reset_by_admin',
         target: { type: 'User', id: target.id },
+        after: { manualPassword: input.password !== undefined, requireChange: input.requireChange },
       })
-      return { ok: true, email: target.email, temporaryPassword, emailStatus }
+      return { ok: true, email: target.email, temporaryPassword, emailStatus, requireChange: input.requireChange }
     }),
 
   /* ------------------------------------------------------------------ */

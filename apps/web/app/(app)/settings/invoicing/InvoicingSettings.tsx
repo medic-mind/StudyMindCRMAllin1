@@ -52,14 +52,31 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
 
   const [testResult, setTestResult] = useState<string | null>(null)
 
+  const [importResult, setImportResult] = useState<string | null>(null)
+
   async function handleImport() {
+    setImportResult(null)
     try {
-      await importAccounts.mutateAsync()
-      toast.success(
-        'Import started — schools and B2B partners will appear in Accounts over the next minute.',
-      )
+      const r = await importAccounts.mutateAsync()
+      const total = (r.created ?? 0) + (r.adopted ?? 0) + (r.updated ?? 0)
+      if ((r.scanned ?? 0) === 0) {
+        const msg =
+          'Connected, but the platform returned no B2B customers to import. (b2c and AP/council customers are not imported here.)'
+        setImportResult(msg)
+        toast.message(msg)
+      } else {
+        const msg = `Imported ${total} account${total === 1 ? '' : 's'} — ${r.created ?? 0} new, ${r.adopted ?? 0} linked, ${r.updated ?? 0} updated${
+          (r.needsClassification ?? 0) > 0 ? `, ${r.needsClassification} to classify` : ''
+        }.`
+        setImportResult(msg)
+        toast.success(msg)
+      }
+      await status.refetch()
+      router.refresh()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not start import')
+      const msg = e instanceof Error ? e.message : 'Could not import'
+      setImportResult(msg)
+      toast.error(msg)
     }
   }
 
@@ -179,6 +196,11 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
             <span className="font-mono text-[11px] text-neutral-600">{testResult}</span>
           )}
         </div>
+        {importResult && (
+          <p className="mt-2 rounded-md bg-neutral-50 px-3 py-2 text-xs text-neutral-700 ring-1 ring-neutral-200">
+            {importResult}
+          </p>
+        )}
         <p className="mt-2 text-xs text-neutral-500">
           “Pull historic data” imports every B2B customer from the invoicing platform as a School or
           B2B Partner account. Safe to run more than once — it never creates duplicates. Anything it

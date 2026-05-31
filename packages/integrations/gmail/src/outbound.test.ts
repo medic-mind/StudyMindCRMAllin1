@@ -141,6 +141,20 @@ describe('buildRawReply', () => {
     expect(subject).toBe('Re: Original')
   })
 
+  it('uses the subject verbatim for a brand-new email (literalSubject)', () => {
+    const { raw, subject } = buildRawReply({
+      subject: 'Welcome to StudyMind',
+      toAddresses: ['parent@example.com'],
+      body: 'Hello.',
+      literalSubject: true,
+    })
+    expect(subject).toBe('Welcome to StudyMind')
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8')
+    expect(decoded).toMatch(/^Subject: Welcome to StudyMind\r\n/m)
+    // No threading headers on a fresh compose.
+    expect(decoded).not.toMatch(/In-Reply-To:/)
+  })
+
   it('emits a multipart/mixed body with base64 attachments when given some', () => {
     const pdfBytes = Buffer.from('%PDF-1.4 minimal pdf bytes for the test')
     const { raw, headers } = buildRawReply({

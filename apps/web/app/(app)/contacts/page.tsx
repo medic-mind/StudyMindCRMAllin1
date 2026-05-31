@@ -54,18 +54,13 @@ export default async function ContactsPage({
   const role = me?.role ?? 'virtual_assistant'
   const caller = await createServerCaller()
   const cursor =
-    sp.cursorId && sp.cursorAt
-      ? { id: sp.cursorId, createdAt: new Date(sp.cursorAt) }
-      : undefined
+    sp.cursorId && sp.cursorAt ? { id: sp.cursorId, createdAt: new Date(sp.cursorAt) } : undefined
   const companies: CompanyOption[] = await caller.company.pickList()
   const bySlug = new Map(companies.map((c) => [c.slug, c]))
   const activeCompany =
     sp.company && bySlug.has(sp.company) ? (bySlug.get(sp.company) as CompanyOption) : undefined
   const kind =
-    sp.kind === 'parent' ||
-    sp.kind === 'student' ||
-    sp.kind === 'tutor' ||
-    sp.kind === 'other'
+    sp.kind === 'parent' || sp.kind === 'student' || sp.kind === 'tutor' || sp.kind === 'other'
       ? sp.kind
       : undefined
   const bookingStatus: BookingStatus | undefined =
@@ -100,7 +95,7 @@ export default async function ContactsPage({
   return (
     <>
       <PageHeader
-        title="Contacts"
+        title="B2C Customers"
         subtitle={`${data.items.length} on this page${sp.q ? ` matching “${sp.q}”` : ''}`}
         actions={
           <div className="flex items-center gap-2">
@@ -262,7 +257,6 @@ export default async function ContactsPage({
           }}
           role={role}
         />
-
       </PageBody>
     </>
   )

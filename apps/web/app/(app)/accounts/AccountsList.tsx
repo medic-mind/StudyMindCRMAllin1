@@ -158,7 +158,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
             <thead className="sticky top-0 z-10 bg-neutral-50/95 text-left backdrop-blur supports-[backdrop-filter]:bg-neutral-50/80">
               <tr className="border-b border-neutral-200">
                 <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  {kind === 'school' ? 'School' : 'Partnership'}
+                  {kind === 'school' ? 'School' : 'B2B Partner'}
                 </th>
                 <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Email
@@ -210,9 +210,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                         </span>
                       </span>
                       <span className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-neutral-500">
-                        {a.city && (
-                          <span>{[a.city, a.country].filter(Boolean).join(', ')}</span>
-                        )}
+                        {a.city && <span>{[a.city, a.country].filter(Boolean).join(', ')}</span>}
                         {a.companies.slice(0, 3).map((c) => (
                           <span
                             key={c.id}
@@ -269,9 +267,7 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                     {a.amountPaidMinor > 0 ? formatMoneyMinor(a.amountPaidMinor) : '—'}
                   </td>
                   <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
-                    {a.lastContactedAt
-                      ? formatRelativeTime(new Date(a.lastContactedAt), now)
-                      : '—'}
+                    {a.lastContactedAt ? formatRelativeTime(new Date(a.lastContactedAt), now) : '—'}
                   </td>
                   <td className="px-3 py-2 align-top text-right">
                     <Link

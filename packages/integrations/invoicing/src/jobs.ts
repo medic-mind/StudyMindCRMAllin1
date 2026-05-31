@@ -142,11 +142,14 @@ export const invoicingReconcile = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 3,
   },
-  // Every 5 minutes (was nightly) so the CRM stays close to the platform even
-  // if a webhook is missed — the user asked for far more frequent sync. Still
-  // cheap: each run walks forward from the persisted cursor and stops as soon
-  // as it catches up (usually 0 new events).
-  [{ cron: '*/5 * * * *' }, { event: 'invoicing/reconcile.requested' }],
+  // Every 2 minutes so the CRM tracks the platform closely even if a webhook is
+  // missed. This is only a SAFETY NET — live changes already arrive within ~1s
+  // via webhooks. A tighter interval (e.g. 10s) would be wasteful: thousands of
+  // redundant API calls/day for changes that already landed by webhook, and it
+  // would rate-limit against the platform. The manual "Sync now" path covers
+  // on-demand freshness. Each run walks forward from the cursor and stops as
+  // soon as it catches up (usually 0 new events).
+  [{ cron: '*/2 * * * *' }, { event: 'invoicing/reconcile.requested' }],
   async ({ step, logger }) => {
     const cfg = await step.run('load-config', async () => loadInvoicingConfig())
     if (!cfg.apiKey) {

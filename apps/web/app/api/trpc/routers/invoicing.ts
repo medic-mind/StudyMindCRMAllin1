@@ -17,8 +17,6 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
-import { inngest } from '@studymind/jobs'
-
 import {
   InvoicingApiError,
   InvoicingReadOnlyError,
@@ -30,6 +28,7 @@ import {
   loadInvoicingConfigStatus,
   saveInvoicingConfig,
 } from '@studymind/integration-invoicing/config'
+import { importBusinessAccountsFromInvoicing } from '@studymind/integration-invoicing/import-accounts'
 import {
   ensureCustomerForBusinessAccount,
   ensureCustomerForContact,
@@ -239,8 +238,9 @@ const configRouter = router({
   /**
    * Pull all historic B2B customers from the platform into real CRM
    * School / B2B Partner accounts (deduped, auto-classified, tray-flagged when
-   * uncertain). Fires the idempotent Inngest backfill and returns immediately —
-   * the import runs in the background and the accounts appear as it progresses.
+   * uncertain). Runs INLINE and returns the real counts so the user gets
+   * immediate, honest feedback (a queued background job gave no signal when the
+   * worker wasn't processing). The import is idempotent — safe to re-run.
    * CEO / Senior Manager only.
    */
   importAccounts: auditedProcedure.mutation(async ({ ctx }) => {
@@ -253,16 +253,29 @@ const configRouter = router({
         message: 'Connect the invoicing API key first.',
       })
     }
-    await inngest.send({
-      name: 'invoicing/accounts.import.requested',
-      data: { actorId: user.id, requestId: ctx.requestId },
-    })
+
+    let result
+    try {
+      result = await importBusinessAccountsFromInvoicing(ctx.db, {
+        ctx: { actorId: user.id, requestId: ctx.requestId },
+      })
+    } catch (err) {
+      await ctx.audit({
+        action: 'invoicing.accounts_imported',
+        target: { type: 'InvoicingSetting', id: 'default' },
+        after: { ok: false },
+      })
+      // Surface the real failure (auth / decrypt / API error) rather than a 500.
+      mapApiError(err)
+    }
+
     await ctx.audit({
       action: 'invoicing.accounts_imported',
       target: { type: 'InvoicingSetting', id: 'default' },
-      after: { triggered: true },
+      after: result,
     })
-    return { ok: true, queued: true }
+
+    return { ok: true as const, ...result }
   }),
 })
 

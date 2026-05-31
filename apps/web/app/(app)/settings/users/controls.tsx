@@ -27,6 +27,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PasswordField } from '@/components/ui/password-field'
 import { Textarea } from '@/components/ui/textarea'
 import { formatRoleLabel } from '@/lib/format/role-label'
 import { trpc } from '@/lib/trpc/client'
@@ -166,7 +167,7 @@ function CredentialReveal({
         Copy all login details
       </Button>
       <p className="text-xs text-neutral-500">
-        The temporary password is single-use and must be changed on first sign-in.
+        Keep these details private and share them over a channel you trust.
       </p>
     </div>
   )
@@ -563,6 +564,135 @@ function RolesModal({
 }
 
 /* -------------------------------------------------------------------------- */
+/* reset password — generate a temporary one, or set one manually              */
+/* -------------------------------------------------------------------------- */
+
+function ResetPasswordModal({
+  userId,
+  email,
+  onClose,
+  onReset,
+}: {
+  userId: string
+  email: string
+  onClose: () => void
+  onReset: (res: { temporaryPassword: string; emailStatus: EmailStatus }) => void
+}) {
+  const router = useRouter()
+  const [mode, setMode] = useState<'generate' | 'manual'>('generate')
+  const [password, setPassword] = useState('')
+  const [requireChange, setRequireChange] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const reset = trpc.admin.users.resetPassword.useMutation({
+    onSuccess: (res) => {
+      router.refresh()
+      onReset({ temporaryPassword: res.temporaryPassword, emailStatus: res.emailStatus })
+    },
+    onError: (e) => setError(e.message),
+  })
+
+  const disabled = reset.isPending || (mode === 'manual' && password.trim().length === 0)
+
+  return (
+    <ModalShell title="Reset password" onClose={onClose}>
+      <form
+        className="space-y-3"
+        onSubmit={(e) => {
+          e.preventDefault()
+          setError(null)
+          reset.mutate({
+            userId,
+            password: mode === 'manual' ? password : undefined,
+            requireChange,
+          })
+        }}
+      >
+        {error && (
+          <div
+            className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
+        <p className="text-sm text-neutral-700">
+          Issue a new password for <span className="font-medium">{email}</span>. Their current
+          sessions end immediately.
+        </p>
+
+        <fieldset className="space-y-2">
+          <legend className="sr-only">Password method</legend>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="radio"
+              name="reset-mode"
+              className="mt-0.5"
+              checked={mode === 'generate'}
+              onChange={() => setMode('generate')}
+            />
+            <span>
+              <span className="font-medium">Generate a temporary password</span>
+              <span className="block text-xs text-neutral-500">
+                Random, emailed with a PDF when Gmail is connected.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="radio"
+              name="reset-mode"
+              className="mt-0.5"
+              checked={mode === 'manual'}
+              onChange={() => setMode('manual')}
+            />
+            <span>
+              <span className="font-medium">Set a password myself</span>
+              <span className="block text-xs text-neutral-500">
+                Useful if they&rsquo;ve lost access to their email — share it with them directly.
+              </span>
+            </span>
+          </label>
+        </fieldset>
+
+        {mode === 'manual' && (
+          <div className="space-y-1.5">
+            <Label htmlFor="reset-password">New password</Label>
+            <PasswordField
+              id="reset-password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <p className="text-xs text-neutral-500">
+              At least 12 characters, with 3 of: lowercase, uppercase, number, symbol.
+            </p>
+          </div>
+        )}
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={requireChange}
+            onChange={(e) => setRequireChange(e.target.checked)}
+          />
+          Require a password change on first sign-in
+        </label>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={disabled}>
+            {reset.isPending ? 'Resetting…' : 'Reset password'}
+          </Button>
+        </div>
+      </form>
+    </ModalShell>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
 /* per-row "⋯" actions menu                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -583,6 +713,9 @@ export function RowActions(props: RowActionsProps) {
   const { userId, email, name, currentRoles, extraPermissions, status, isSelf, access } = props
   const router = useRouter()
   const [open, setOpen] = useState(false)
+  // The menu is rendered position:fixed (anchored to the trigger) so it is not
+  // clipped by the table's overflow-auto/rounded container. ADR 0021.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const [dialog, setDialog] = useState<DialogKind>(null)
   const [reveal, setReveal] = useState<{ temporaryPassword: string; emailStatus: EmailStatus } | null>(
     null,
@@ -603,13 +736,33 @@ export function RowActions(props: RowActionsProps) {
         triggerRef.current?.focus()
       }
     }
+    // A fixed-position menu detaches from the trigger when the page scrolls or
+    // resizes, so close it on those.
+    function close() {
+      setOpen(false)
+    }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
     }
   }, [open])
+
+  function toggleMenu() {
+    setOpen((v) => {
+      const next = !v
+      if (next && triggerRef.current) {
+        const r = triggerRef.current.getBoundingClientRect()
+        setMenuPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) })
+      }
+      return next
+    })
+  }
 
   const ok = (msg: string) => () => {
     toast.success(msg)
@@ -632,15 +785,6 @@ export function RowActions(props: RowActionsProps) {
     onSuccess: () => {
       setDialog(null)
       ok('User deactivated')()
-    },
-    onError: onErr,
-  })
-  const resetPassword = trpc.admin.users.resetPassword.useMutation({
-    onSuccess: (res) => {
-      setDialog(null)
-      setReveal({ temporaryPassword: res.temporaryPassword, emailStatus: res.emailStatus })
-      toast.success('Password reset')
-      router.refresh()
     },
     onError: onErr,
   })
@@ -693,7 +837,7 @@ export function RowActions(props: RowActionsProps) {
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label="User actions"
-          onClick={() => setOpen((v) => !v)}
+          onClick={toggleMenu}
           className="inline-flex h-7 w-7 items-center justify-center rounded border border-neutral-200 text-neutral-600 hover:bg-neutral-50"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -704,12 +848,13 @@ export function RowActions(props: RowActionsProps) {
         </button>
       )}
 
-      {open && (
+      {open && menuPos && (
         <div
           ref={panelRef}
           role="menu"
           aria-label="User actions"
-          className="absolute right-0 top-8 z-50 w-48 overflow-hidden rounded-lg border border-neutral-200 bg-white py-1 shadow-lg"
+          style={{ position: 'fixed', top: menuPos.top, right: menuPos.right }}
+          className="z-50 w-48 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg"
         >
           {items.map((it) => (
             <button
@@ -748,13 +893,15 @@ export function RowActions(props: RowActionsProps) {
         />
       )}
       {dialog === 'reset' && (
-        <ConfirmModal
-          title="Reset password"
-          body={`Issue a new temporary password for ${email}? Their current sessions will end and they must set a new password on next sign-in.`}
-          confirmLabel="Reset password"
-          pending={resetPassword.isPending}
-          onConfirm={() => resetPassword.mutate({ userId })}
+        <ResetPasswordModal
+          userId={userId}
+          email={email}
           onClose={() => setDialog(null)}
+          onReset={(res) => {
+            setDialog(null)
+            setReveal(res)
+            toast.success('Password reset')
+          }}
         />
       )}
       {dialog === 'deactivate' && (
@@ -783,7 +930,7 @@ export function RowActions(props: RowActionsProps) {
 
       {reveal && (
         <CredentialModal
-          title="New temporary password"
+          title="New password set"
           email={email}
           temporaryPassword={reveal.temporaryPassword}
           emailStatus={reveal.emailStatus}
