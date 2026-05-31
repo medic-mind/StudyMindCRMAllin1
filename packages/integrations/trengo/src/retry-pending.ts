@@ -28,7 +28,9 @@ import {
   removeConversationLabel,
   reopenConversation,
   sendMessage,
+  startConversation,
 } from './outbound'
+import type { TrengoChannel } from './types'
 
 const MAX_ATTEMPTS = 5
 /** Skip rows whose last failure is too recent — give Trengo time to recover
@@ -49,6 +51,8 @@ interface RetryablePayload {
   assigneeUserId?: string
   label?: string
   internalNote?: boolean
+  newConversation?: boolean
+  recipient?: string
   attempts?: number
   lastError?: { code?: string; message?: string }
 }
@@ -109,6 +113,39 @@ export const trengoRetryPendingSend = inngest.createFunction(
         skipped += 1
         continue
       }
+
+      // New-conversation rows have a recipient but no ticket yet — recover
+      // them via startConversation (which creates the ticket). Handled before
+      // the ticketId guard below.
+      if (payload.newConversation === true) {
+        if (
+          !row.contactId ||
+          typeof payload.agentId !== 'string' ||
+          typeof payload.recipient !== 'string' ||
+          typeof payload.channel !== 'string' ||
+          typeof payload.body !== 'string' ||
+          typeof payload.outboundRequestId !== 'string'
+        ) {
+          skipped += 1
+          continue
+        }
+        try {
+          await startConversation({
+            contactId: row.contactId,
+            agentId: payload.agentId,
+            channel: payload.channel as TrengoChannel,
+            recipient: payload.recipient,
+            body: payload.body,
+            requestId: payload.outboundRequestId,
+          })
+          recovered += 1
+        } catch (err) {
+          await bumpAttemptCounter(row.id, attempts + 1, err)
+          retried += 1
+        }
+        continue
+      }
+
       if (
         !row.contactId ||
         typeof payload.agentId !== 'string' ||
