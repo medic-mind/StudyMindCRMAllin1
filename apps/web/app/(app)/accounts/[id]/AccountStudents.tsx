@@ -194,10 +194,10 @@ function StudentRow({
     setBusy(true)
     try {
       const result = await sync.mutateAsync({ id: student.id })
-      if (result.status === 'not_implemented') {
-        toast(result.message)
+      if (result.status === 'synced') {
+        toast.success(result.message)
       } else {
-        toast.success('Hours synced from booking site')
+        toast(result.message)
       }
       await onChanged()
     } catch (e) {

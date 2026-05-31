@@ -226,7 +226,12 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
     label: 'Booking site',
     description: 'Pull-based sync from booking.studymind.co.uk. CLAUDE.md §15.',
     envVars: ['BOOKING_API_BASE_URL', 'BOOKING_API_TOKEN'],
-    cronFunctionIds: ['booking/sync-active-families', 'booking/sync-inactive-families'],
+    cronFunctionIds: [
+      'booking/sync-students',
+      'booking/sync-lessons',
+      'booking/sync-balance-ledger',
+      'booking/sync-credit-ledger',
+    ],
     perAgentTokens: null,
     runbook: '/docs/runbooks/secret-rotation.md',
     setupSteps: [
