@@ -1,6 +1,6 @@
 # ADR 0021 — Communications Hub (multi-account email operating system)
 
-- Status: Proposed (Phases 1–3 + Phase 4 v1 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam; email in the unified Conversation head; `/mail` reading client)
+- Status: Proposed (Phases 1–3, 4 v1, and 5 Accepted & implemented: multi-account foundation; `MailSyncProvider` seam; email in the unified Conversation head; `/mail` reading client; two-way action sync)
 - Date: 2026-05-30
 - Supersedes: none
 - Related: ADR 0012 (Gmail OAuth), ADR 0017 (comprehensive customer view + backfill), ADR 0020 (CRM as the operational layer on top of Trengo), CLAUDE.md §14
@@ -137,12 +137,20 @@ with the Comms Centre pages. **Still to come:** multi-select + bulk actions,
 preview pane, command-palette search, keyboard shortcuts, and compose/reply
 from `/mail` (which depends on the Phase 5 two-way action sync).
 
-### Phase 5 — Two-way action sync
+### Phase 5 — Two-way action sync (implemented)
 
-Mirror read/unread, archive, star, label/folder, delete and drafts in **both**
-directions (Gmail `users.messages.modify` / drafts; Graph equivalents).
-Idempotent, echo-protected (our own writes are skipped on the inbound side,
-exactly like the Trengo `interactionId` echo guard), audited.
+The `MailSyncProvider` seam gained `setReadState` / `setArchived` / `setStarred`
+/ `setTrashed` / `modifyLabels` / `listLabels`; the Gmail adapter maps them to
+`users.threads.modify` (system labels `UNREAD` / `INBOX` / `STARRED`) and
+`threads.trash` / `threads.untrash` (delete → Gmail Trash, recoverable). tRPC
+`mail.thread.{setRead,setArchived,setStarred,setTrashed,setLabels,labels}` run
+the action on the live mailbox, reflect it on the Conversation head, publish the
+SSE delta, and audit (`mail.thread_*`). Sales Executive+ (VA read-only). A
+`MailThreadActions` bar on the conversation view drives it. All idempotent +
+reversible. **Deferred:** drafts sync, and inbound label/read mirroring **from**
+Gmail (our sync only ingests new messages today; mirroring provider-side flag
+changes back needs Gmail history `labelAdded/Removed` ingestion with the same
+echo-guard the Trengo layer uses).
 
 ### Phase 6 — Shared-inbox operations
 
@@ -154,7 +162,7 @@ and @mentions (never sent outbound); one-click task creation. Reuses the ADR
 
 New `MailSyncProvider` implementations behind the Phase-2 seam. Microsoft Graph
 (delta query + change notifications) for Outlook/Exchange; an IMAP/SMTP provider
-for everything else. **Requires its own ADR** for the new dependencies (§3).
+for everything else. Design is **ADR 0024** (deps not added until approved).
 
 ### Phase 8 — Templates, automations, analytics, calendar, unified channels
 

@@ -423,9 +423,10 @@ rest advertise the roadmap and reject connection attempts.
 `Conversation` head + Communication Centre (unified inbox) — *implemented*;
 (4) full `/mail` client — *v1 implemented* (account-aware reading workspace;
 compose / bulk / search still to come); (5) two-way action sync
-(read/archive/label/delete/drafts both directions); (6) shared-inbox operations;
-(7) Outlook/Exchange/IMAP providers
-(own ADR for new deps); (8) templates, automations, analytics, calendar, unified
+(read/archive/star/label/delete) — *implemented* (outbound CRM→Gmail; inbound
+flag-mirroring + drafts still to come); (6) shared-inbox operations;
+(7) Outlook/Exchange/IMAP providers — design in **ADR 0024** (deps not added
+until approved); (8) templates, automations, analytics, calendar, unified
 channels.
 
 ### Gmail provider specifics (live today)
@@ -1064,6 +1065,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Read the current state of a Trengo conversation | `Conversation` table (ADR 0020 Phase 2). Upserted by the webhook job and the CRM outbound (`packages/integrations/trengo/src/conversation-head.ts`). Indexed columns: status, lastMessageAt, assigneeUserId, channel, unreadCount, tags. Message bodies stay in `Interaction` — the head is a queryable state layer, not a copy. |
 | Surface an email thread in the unified inbox | `Conversation` head with `provider='email'`, keyed on `(provider, externalThreadId=gmailThreadId)`, optional `mailAccountId` (ADR 0021 Phase 3). Upserter `applyMailToConversation` (`packages/core/src/mail/conversation-head.ts`, pure + db-port, reusable by Outlook/IMAP) is called by the Gmail sync `processMessage` after writing the `email_received`/`email_sent` Interaction. Email heads list in the Comms Centre automatically; `inbox.conversations.get` joins email messages on `payload.gmailThreadId`. |
 | Open the dedicated email workspace | `/mail` (ADR 0021 Phase 4 v1, `apps/web/app/(app)/mail/page.tsx`). Account-aware reading client over the email Conversation heads: folder rail (All / Unread) + account switcher + thread list. tRPC `mail.accounts` + `mail.threads.list` (`apps/web/app/api/trpc/routers/mail.ts`, staff-gated). Rows open the unified conversation thread view. Compose / bulk / search land with later phases. |
+| Act on an email thread (mark read / archive / star / trash / label) | tRPC `mail.thread.{setRead,setArchived,setStarred,setTrashed,setLabels,labels}` (ADR 0021 Phase 5, Sales Executive+; VA read-only). Performs the action on the live mailbox via the `MailSyncProvider` seam (`getMailSyncProvider` → Gmail `users.threads.modify` / `trash`), reflects it on the Conversation head, publishes the SSE delta, audits `mail.thread_*`. Reversible (trash → Gmail Trash). UI: `MailThreadActions` bar on the conversation view (email rows only). |
 | Backfill the Conversation head from historic Interactions | Admin trigger `admin.backfill.conversationHeads.start` (CEO + Senior Manager only) fires `migration/backfill-conversation-heads.requested`. Self-recursive Inngest function `packages/integrations/trengo/src/backfill-conversation-heads.ts` walks 1000 rows per invocation ordered by `(occurredAt, id)`, scheduling the next batch with a cursor. Idempotent — replays converge to the same state. Audit at start + completion only. |
 | Live conversation updates in the UI | SSE endpoint `apps/web/app/api/realtime/conversations/route.ts` (Node.js runtime, staff-gated). Event bus `packages/core/src/realtime/bus.ts` is published to by `applyEventToConversation` on every head change. Lazy-init Redis pub/sub when `REDIS_URL` is set (`packages/core/src/realtime/redis.ts`) so multi-instance Railway deploys see each other; in-process EventEmitter otherwise. Client hook `useConversationStream` (`apps/web/lib/hooks/use-conversation-stream.ts`) invalidates the comms-centre + per-contact channel + notifications queries. |
 | Aggregate Trengo tags on a contact | View-model `trengoTagsForContact` in `apps/web/lib/view-models/contact-channels.ts`; tRPC `contact.channels.trengoTags`. Reads `Conversation.tags` directly, returns the frequency-ordered unique set. Rendered as chips above the contact's Trengo section. |

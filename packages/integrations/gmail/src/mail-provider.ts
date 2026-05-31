@@ -10,6 +10,7 @@ import type {
   MailAttachmentMeta,
   MailChangeBatch,
   MailHeader,
+  MailLabelRef,
   MailMessage,
   MailMessageRef,
   MailPushSubscription,
@@ -122,6 +123,46 @@ export function createGmailMailSyncProvider(
     async stopPush(): Promise<void> {
       // Use the standalone helper that already silences errors.
       await stopWatchForUser(opts.agentId)
+    },
+
+    // --- ADR 0021 Phase 5 — two-way action sync (Gmail system labels) ---
+    async setReadState(threadId, read): Promise<void> {
+      const c = await client()
+      await c.modifyThread({
+        threadId,
+        ...(read ? { removeLabelIds: ['UNREAD'] } : { addLabelIds: ['UNREAD'] }),
+      })
+    },
+    async setArchived(threadId, archived): Promise<void> {
+      const c = await client()
+      await c.modifyThread({
+        threadId,
+        ...(archived ? { removeLabelIds: ['INBOX'] } : { addLabelIds: ['INBOX'] }),
+      })
+    },
+    async setStarred(threadId, starred): Promise<void> {
+      const c = await client()
+      await c.modifyThread({
+        threadId,
+        ...(starred ? { addLabelIds: ['STARRED'] } : { removeLabelIds: ['STARRED'] }),
+      })
+    },
+    async setTrashed(threadId, trashed): Promise<void> {
+      const c = await client()
+      if (trashed) await c.trashThread(threadId)
+      else await c.untrashThread(threadId)
+    },
+    async modifyLabels(threadId, change): Promise<void> {
+      const c = await client()
+      await c.modifyThread({
+        threadId,
+        ...(change.add ? { addLabelIds: change.add } : {}),
+        ...(change.remove ? { removeLabelIds: change.remove } : {}),
+      })
+    },
+    async listLabels(): Promise<MailLabelRef[]> {
+      const c = await client()
+      return c.listLabels()
     },
   }
 }

@@ -9,10 +9,15 @@
 import { z } from 'zod'
 import { TRPCError } from '@trpc/server'
 
+import { publishConversationUpdate } from '@studymind/core/realtime'
+
+import { getMailSyncProvider } from '@/lib/mail/get-sync-provider'
 import {
+  auditedProcedure,
   protectedProcedure,
   requireUser,
   router,
+  type TrpcContext,
   type UserRole,
 } from '@/lib/trpc/builders'
 
@@ -33,6 +38,74 @@ const MANAGE_SHARED_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
 function assertStaff(role: UserRole): void {
   if (!STAFF_ROLES.has(role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Mail is staff-only.' })
+  }
+}
+
+// Mutating the live mailbox (read/archive/star/trash/label) is a write —
+// Virtual Assistant is read-only (§20). Sales Executive and above may act.
+const MUTATE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+])
+
+function assertCanMutate(role: UserRole): void {
+  if (!MUTATE_ROLES.has(role)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Virtual Assistant cannot change mail.',
+    })
+  }
+}
+
+interface EmailThreadRef {
+  id: string
+  externalThreadId: string
+  mailAccountId: string
+  contactId: string | null
+  lastMessageAt: Date
+  unreadCount: number
+  status: string
+}
+
+/** Resolve an actionable email thread head, or throw a typed error. */
+async function resolveEmailThread(
+  ctx: TrpcContext,
+  conversationId: string,
+): Promise<EmailThreadRef> {
+  const head = await ctx.db.conversation.findUnique({
+    where: { id: conversationId },
+    select: {
+      id: true,
+      provider: true,
+      externalThreadId: true,
+      mailAccountId: true,
+      contactId: true,
+      lastMessageAt: true,
+      unreadCount: true,
+      status: true,
+    },
+  })
+  if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
+  if (head.provider !== 'email' || !head.externalThreadId) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Not an email thread.' })
+  }
+  if (!head.mailAccountId) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        'Import this mailbox in Settings → Email accounts before acting on it.',
+    })
+  }
+  return {
+    id: head.id,
+    externalThreadId: head.externalThreadId,
+    mailAccountId: head.mailAccountId,
+    contactId: head.contactId,
+    lastMessageAt: head.lastMessageAt,
+    unreadCount: head.unreadCount,
+    status: head.status,
   }
 }
 
@@ -158,6 +231,185 @@ export const mailRouter = router({
             ? { id: last.id, lastMessageAt: last.lastMessageAt }
             : null
         return { items, nextCursor }
+      }),
+  }),
+
+  // ADR 0021 Phase 5 — two-way action sync. Each mutation performs the action
+  // on the live mailbox via the provider seam, then reflects it on the
+  // Conversation head and audits. All idempotent + reversible (trash → Gmail
+  // Trash). Sales Executive and above (VA is read-only).
+  thread: router({
+    /** The account's labels/folders, for the label picker. */
+    labels: protectedProcedure
+      .input(z.object({ conversationId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertStaff(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const provider = await getMailSyncProvider({
+          accountId: head.mailAccountId,
+          requestId: ctx.requestId,
+          purpose: 'mail.labels',
+        })
+        const labels = await provider.listLabels()
+        // Hide Gmail system labels the UI exposes as first-class actions.
+        const SYSTEM = new Set([
+          'INBOX',
+          'UNREAD',
+          'STARRED',
+          'TRASH',
+          'SENT',
+          'DRAFT',
+          'SPAM',
+          'CHAT',
+        ])
+        return labels.filter((l) => !SYSTEM.has(l.id))
+      }),
+
+    setRead: auditedProcedure
+      .input(z.object({ conversationId: z.string(), read: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const provider = await getMailSyncProvider({
+          accountId: head.mailAccountId,
+          requestId: ctx.requestId,
+          purpose: 'mail.set_read',
+        })
+        await provider.setReadState(head.externalThreadId, input.read)
+        await ctx.db.conversation.update({
+          where: { id: head.id },
+          data: { unreadCount: input.read ? 0 : Math.max(1, head.unreadCount) },
+        })
+        publishConversationUpdate({
+          id: head.id,
+          trengoTicketId: null,
+          lastMessageAt: head.lastMessageAt.toISOString(),
+          contactId: head.contactId,
+        })
+        await ctx.audit({
+          action: 'mail.thread_read_changed',
+          target: { type: 'Conversation', id: head.id },
+          after: { read: input.read },
+        })
+        return { id: head.id }
+      }),
+
+    setArchived: auditedProcedure
+      .input(z.object({ conversationId: z.string(), archived: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const provider = await getMailSyncProvider({
+          accountId: head.mailAccountId,
+          requestId: ctx.requestId,
+          purpose: 'mail.set_archived',
+        })
+        await provider.setArchived(head.externalThreadId, input.archived)
+        await ctx.db.conversation.update({
+          where: { id: head.id },
+          data: { status: input.archived ? 'archived' : 'open' },
+        })
+        publishConversationUpdate({
+          id: head.id,
+          trengoTicketId: null,
+          lastMessageAt: head.lastMessageAt.toISOString(),
+          contactId: head.contactId,
+        })
+        await ctx.audit({
+          action: 'mail.thread_archived',
+          target: { type: 'Conversation', id: head.id },
+          after: { archived: input.archived },
+        })
+        return { id: head.id }
+      }),
+
+    setStarred: auditedProcedure
+      .input(z.object({ conversationId: z.string(), starred: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const provider = await getMailSyncProvider({
+          accountId: head.mailAccountId,
+          requestId: ctx.requestId,
+          purpose: 'mail.set_starred',
+        })
+        await provider.setStarred(head.externalThreadId, input.starred)
+        await ctx.audit({
+          action: 'mail.thread_starred',
+          target: { type: 'Conversation', id: head.id },
+          after: { starred: input.starred },
+        })
+        return { id: head.id }
+      }),
+
+    setTrashed: auditedProcedure
+      .input(z.object({ conversationId: z.string(), trashed: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const provider = await getMailSyncProvider({
+          accountId: head.mailAccountId,
+          requestId: ctx.requestId,
+          purpose: 'mail.set_trashed',
+        })
+        // Reversible: Gmail keeps trashed threads recoverable for 30 days.
+        await provider.setTrashed(head.externalThreadId, input.trashed)
+        await ctx.db.conversation.update({
+          where: { id: head.id },
+          data: { status: input.trashed ? 'archived' : 'open' },
+        })
+        publishConversationUpdate({
+          id: head.id,
+          trengoTicketId: null,
+          lastMessageAt: head.lastMessageAt.toISOString(),
+          contactId: head.contactId,
+        })
+        await ctx.audit({
+          action: 'mail.thread_trashed',
+          target: { type: 'Conversation', id: head.id },
+          after: { trashed: input.trashed },
+        })
+        return { id: head.id }
+      }),
+
+    setLabels: auditedProcedure
+      .input(
+        z.object({
+          conversationId: z.string(),
+          add: z.array(z.string()).max(50).optional(),
+          remove: z.array(z.string()).max(50).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        if (!input.add?.length && !input.remove?.length) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Provide labels to add or remove.',
+          })
+        }
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const provider = await getMailSyncProvider({
+          accountId: head.mailAccountId,
+          requestId: ctx.requestId,
+          purpose: 'mail.set_labels',
+        })
+        await provider.modifyLabels(head.externalThreadId, {
+          ...(input.add ? { add: input.add } : {}),
+          ...(input.remove ? { remove: input.remove } : {}),
+        })
+        await ctx.audit({
+          action: 'mail.thread_labeled',
+          target: { type: 'Conversation', id: head.id },
+          after: { add: input.add ?? [], remove: input.remove ?? [] },
+        })
+        return { id: head.id }
       }),
   }),
 })

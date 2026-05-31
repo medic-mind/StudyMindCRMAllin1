@@ -376,6 +376,7 @@ export const inboxRouter = router({
         return {
           head: {
             id: head.id,
+            provider: head.provider,
             trengoTicketId: head.trengoTicketId,
             contactId: head.contactId,
             familyId: head.familyId,
