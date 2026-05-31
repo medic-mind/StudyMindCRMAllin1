@@ -27,6 +27,23 @@ function matchEmailWhere(row: ConvRow, where: Where): boolean {
   if (where['mailAccountId'] && row.mailAccountId !== where['mailAccountId']) return false
   const unread = where['unreadCount'] as { gt?: number } | undefined
   if (unread && typeof unread.gt === 'number' && !(row.unreadCount > unread.gt)) return false
+  // Minimal support for the search clause: AND[].OR[] over subject /
+  // contact.email — enough to assert filtering behaviour.
+  const and = where['AND'] as Array<Record<string, unknown>> | undefined
+  if (and) {
+    for (const clause of and) {
+      const or = clause['OR'] as Array<Record<string, unknown>> | undefined
+      if (!or) continue
+      const q = (
+        (or[0]?.['subject'] as { contains?: string } | undefined)?.contains ?? ''
+      ).toLowerCase()
+      if (!q) continue
+      const hay = `${row.subject ?? ''} ${row.contact?.email ?? ''} ${
+        row.contact?.firstName ?? ''
+      }`.toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+  }
   return true
 }
 
@@ -110,6 +127,19 @@ describe('mail.threads.list', () => {
       .createCaller(ctx)
       .threads.list({ mailAccountId: 'acc_2', filter: 'all', limit: 50 })
     expect(res.items.map((i) => i.id)).toEqual(['e2'])
+  })
+
+  it('filters by a search query (subject / sender)', async () => {
+    const ctx = makeCtx({
+      conversations: [
+        emailRow({ id: 'e1', subject: 'UCAT mock results' }),
+        emailRow({ id: 'e2', subject: 'Interview prep' }),
+      ],
+    })
+    const res = await mailRouter
+      .createCaller(ctx)
+      .threads.list({ filter: 'all', q: 'ucat', limit: 50 })
+    expect(res.items.map((i) => i.id)).toEqual(['e1'])
   })
 
   it('paginates with a cursor', async () => {

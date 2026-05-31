@@ -463,6 +463,26 @@ describe('admin.users router', () => {
     expect(auditCalls.some((a) => a.action === 'auth.password_reset_by_admin')).toBe(true)
   })
 
+  it('resetPassword can set an admin-chosen password and skip the forced change', async () => {
+    const { ctx, users } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const r = await caller.resetPassword({
+      userId: 'u_2',
+      password: 'Admin-Set-Pass-1',
+      requireChange: false,
+    })
+    expect(r.temporaryPassword).toBe('Admin-Set-Pass-1')
+    expect(users.find((u) => u.id === 'u_2')?.mustResetPassword).toBe(false)
+  })
+
+  it('resetPassword rejects a weak admin-chosen password', async () => {
+    const { ctx } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    await expect(
+      caller.resetPassword({ userId: 'u_2', password: 'weak' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
   it('grant/revoke user.manage works for a manager and is audited', async () => {
     const { ctx, userPermissions, auditCalls } = makeCtx('manager')
     const caller = adminUsersRouter.createCaller(ctx)

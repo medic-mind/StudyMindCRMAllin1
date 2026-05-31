@@ -1,12 +1,12 @@
-// Communication Centre seed (ADR 0020 Phase 2b). CLAUDE.md §11, §20, §26.
+// Communication Centre — the unified customer inbox (ADR 0020 Phase 2b +
+// ADR 0021/0024 email unification). CLAUDE.md §11, §14, §20, §26.
 //
-// Lists Trengo conversations from the first-class `Conversation` head, not
-// the polymorphic Interaction grouping. The status / assignee / unread are
-// real columns so the inbox can answer "all unassigned open WhatsApp" with
-// one indexed query. Forward-only: rows only exist for conversations that
-// have received an event since the Phase 2 migration. Historic Trengo
-// threads remain visible per-contact on the Contact page until the backfill
-// (Phase 2c) lands.
+// Lists every customer conversation — Trengo (WhatsApp / SMS / web-chat /
+// email) and Gmail email — from the first-class channel-agnostic
+// `Conversation` head, not the polymorphic Interaction grouping. status /
+// assignee / unread are real columns so the inbox answers "all unassigned
+// open" with one indexed query. `/inbox` redirects here, so this is the
+// single canonical customer inbox.
 
 import Link from 'next/link'
 import { TRPCError } from '@trpc/server'
@@ -102,28 +102,23 @@ export default async function ConversationsPage({
   return (
     <>
       <PageHeader
-        title="Conversations"
-        subtitle="Every Trengo conversation, with its current status, assignee, and unread count — kept in sync as messages land."
+        title="Inbox"
+        subtitle="Every customer conversation across all channels — WhatsApp, SMS, web-chat and email — with its status, assignee and unread count, kept in sync as messages land."
       />
       <PageBody>
         {/* Live SSE subscription — refreshes the list without polling
             whenever a webhook lands or the CRM itself updates the head.
             Renders nothing visible. */}
         <LiveUpdates />
-        {/* Sub-nav between Messages list and Conversations head list. Keeps
-            the existing /inbox stable and makes the new head discoverable. */}
+        {/* One customer inbox. The legacy raw-message list was collapsed into
+            this head-backed view; the only sibling is the field-edit review
+            queue. */}
         <nav
           aria-label="Inbox view"
           className="mb-3 flex flex-wrap items-center gap-1"
         >
           <Link
             href="/inbox"
-            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
-          >
-            Messages
-          </Link>
-          <Link
-            href="/inbox/conversations"
             aria-current="page"
             className="rounded-md bg-primary-600 px-2.5 py-1 text-xs font-medium text-white"
           >
@@ -178,9 +173,9 @@ export default async function ConversationsPage({
                       : 'No active conversations.'}
             </p>
             <p className="mt-1 text-sm text-neutral-500">
-              Each Trengo event — message, assignment, close, label — updates
-              this list automatically. New conversations will appear as soon
-              as the next event lands.
+              Every inbound message, assignment, close and label — across
+              WhatsApp, SMS, web-chat and email — updates this list
+              automatically. New conversations appear as soon as they land.
             </p>
           </div>
         ) : (

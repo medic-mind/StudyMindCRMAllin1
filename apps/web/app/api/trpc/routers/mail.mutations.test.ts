@@ -19,7 +19,7 @@ const { fakeProvider } = vi.hoisted(() => ({
   },
 }))
 
-const { sendReplyMock } = vi.hoisted(() => ({
+const { sendReplyMock, sendEmailMock, applyMailMock } = vi.hoisted(() => ({
   sendReplyMock: vi.fn(async () => ({
     outboundEmailIntentId: 'oei_1',
     gmailMessageId: 'm_sent',
@@ -27,13 +27,28 @@ const { sendReplyMock } = vi.hoisted(() => ({
     status: 'sent' as const,
     replayed: false,
   })),
+  sendEmailMock: vi.fn(async () => ({
+    outboundEmailIntentId: 'oei_2',
+    gmailMessageId: 'm_new',
+    gmailThreadId: 'thread_new',
+    status: 'sent' as const,
+    replayed: false,
+  })),
+  applyMailMock: vi.fn(async () => ({})),
 }))
 
 vi.mock('@/lib/mail/get-sync-provider', () => ({
   getMailSyncProvider: vi.fn(async () => fakeProvider),
 }))
 vi.mock('@studymind/core/realtime', () => ({ publishConversationUpdate: vi.fn() }))
-vi.mock('@studymind/integration-gmail/outbound', () => ({ sendReply: sendReplyMock }))
+vi.mock('@studymind/core/mail', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@studymind/core/mail')>()),
+  applyMailToConversation: applyMailMock,
+}))
+vi.mock('@studymind/integration-gmail/outbound', () => ({
+  sendReply: sendReplyMock,
+  sendEmail: sendEmailMock,
+}))
 
 import { mailRouter } from './mail'
 
@@ -86,6 +101,13 @@ function makeCtx(opts: { role?: UserRole; head?: Head | null }): {
     },
     mailAccount: {
       findUnique: async () => ({ ownerUserId: 'u_owner' }),
+      findFirst: async () => ({
+        id: 'acc_1',
+        provider: 'gmail',
+        ownerUserId: 'u_owner',
+        address: 'info@studymind.co.uk',
+        status: 'connected',
+      }),
     },
     interaction: {
       findFirst: async () => ({
@@ -168,6 +190,47 @@ describe('preconditions', () => {
     await expect(
       mailRouter.createCaller(ctx).thread.setStarred({ conversationId: 'cv_x', starred: true }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+})
+
+describe('mail.compose', () => {
+  it('sends a new email and creates the email head, audits', async () => {
+    const { ctx, audit } = makeCtx({})
+    const r = await mailRouter.createCaller(ctx).compose({
+      mailAccountId: 'acc_1',
+      to: ['parent@example.test'],
+      subject: 'Welcome to StudyMind',
+      body: 'Hello — here is your onboarding.',
+    })
+    expect(sendEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'u_owner',
+        fromAddress: 'info@studymind.co.uk',
+        toAddresses: ['parent@example.test'],
+        subject: 'Welcome to StudyMind',
+      }),
+    )
+    expect(applyMailMock).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ provider: 'email', externalThreadId: 'thread_new' }),
+    )
+    expect(r.threadId).toBe('thread_new')
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'mail.composed' }),
+    )
+  })
+
+  it('is forbidden for a Virtual Assistant', async () => {
+    const { ctx } = makeCtx({ role: 'virtual_assistant' })
+    await expect(
+      mailRouter.createCaller(ctx).compose({
+        mailAccountId: 'acc_1',
+        to: ['p@x.test'],
+        subject: 's',
+        body: 'b',
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    expect(sendEmailMock).not.toHaveBeenCalled()
   })
 })
 
