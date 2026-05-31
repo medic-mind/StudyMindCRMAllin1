@@ -68,7 +68,7 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 | Encryption (field level) | AWS KMS envelope encryption | Safeguarding notes, EHCP extracts |
 | Email transactional | Gmail API (Google OAuth) | Outbound system email (account welcome, password reset, forwarding) sent from the configured system mailbox via `packages/integrations/gmail/src/system-send.ts`. **No third-party email API — never use Resend.** |
 | Observability | Sentry (errors), Axiom (logs), OpenTelemetry traces | Required from day one |
-| AI | OpenAI gpt-4o, gpt-4o-mini, Whisper | Mini for cheap classification, 4o for drafting |
+| AI | Google Gemini (default) — 2.5 Flash for most, Pro override for drafts; OpenAI (gpt-4o / gpt-4o-mini / Whisper) as switchable fallback. ADR 0028 | One provider seam in `packages/ai`; flip via `AI_PROVIDER` / `GEMINI_API_KEY`, no call-site changes |
 | Hosting | Railway (services: web, worker, postgres; Redis via Railway plugin) | Single platform for the whole stack |
 | Cache and rate limit | Redis on Railway (Upstash compatible) | Inngest queue, rate limit windows, response cache |
 
