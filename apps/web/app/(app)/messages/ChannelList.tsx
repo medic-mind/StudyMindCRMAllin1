@@ -8,10 +8,11 @@
 import { useMemo, useState } from 'react'
 
 import {
+  AtSignIcon,
+  BellIcon,
   HashIcon,
   LockIcon,
   PlusIcon,
-  AtSignIcon,
 } from '@/components/ui/icon'
 import { Avatar } from '@/components/ui/avatar'
 
@@ -19,11 +20,20 @@ import { CreateChannelDialog } from './CreateChannelDialog'
 import { NewDmDialog } from './NewDmDialog'
 import type { ChannelView } from './types'
 
+interface NotificationControls {
+  supported: boolean
+  enabled: boolean
+  permission: NotificationPermission | 'unsupported'
+  enable: () => Promise<void>
+  disable: () => void
+}
+
 interface Props {
   channels: ChannelView[]
   activeId: string | null
   mentionTotal: number
   canManageChannels: boolean
+  notifications: NotificationControls
   onSelect: (id: string) => void
   onSelectMentions: () => void
   mentionsActive: boolean
@@ -81,6 +91,7 @@ export function ChannelList({
   activeId,
   mentionTotal,
   canManageChannels,
+  notifications,
   onSelect,
   onSelectMentions,
   mentionsActive,
@@ -186,6 +197,26 @@ export function ChannelList({
           )}
         </div>
       </div>
+
+      {/* Desktop-notification opt-in (Slack-style). Only shown when the browser
+          supports it and the user hasn't enabled it yet. */}
+      {notifications.supported && !notifications.enabled ? (
+        <div className="mt-auto px-1 pt-2">
+          <button
+            type="button"
+            onClick={() => void notifications.enable()}
+            className="flex w-full items-center gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 py-2 text-left text-xs text-neutral-600 hover:border-primary-200 hover:bg-primary-50/50 hover:text-primary-800"
+          >
+            <BellIcon size={15} className="shrink-0 text-neutral-400" />
+            <span>
+              <span className="block font-medium text-neutral-800">Enable notifications</span>
+              <span className="block text-[11px] text-neutral-500">
+                Desktop alerts when you&apos;re mentioned
+              </span>
+            </span>
+          </button>
+        </div>
+      ) : null}
 
       {createOpen ? (
         <CreateChannelDialog

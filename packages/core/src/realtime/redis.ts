@@ -15,6 +15,7 @@
 import type { Redis } from 'ioredis'
 
 export const REDIS_CONVERSATION_CHANNEL = 'studymind:conversation.updated' as const
+export const REDIS_CHAT_CHANNEL = 'studymind:chat.activity' as const
 
 export interface RealtimeRedisFactory {
   /** Create the publisher client. ioredis lazy-connects on first command. */

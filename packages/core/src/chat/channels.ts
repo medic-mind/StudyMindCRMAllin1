@@ -176,6 +176,33 @@ export async function restoreChannel(
 }
 
 /**
+ * Hard-delete a channel and everything under it (messages, members, mentions,
+ * reactions, refs cascade via the schema FKs). Destructive and irreversible —
+ * gated to the top tier at the tRPC layer and audited there. `#general` can
+ * never be deleted. Distinct from `archiveChannel`, which is the reversible
+ * "hide it" path.
+ */
+export async function deleteChannel(
+  db: Db,
+  input: { id: string },
+  _ctx: ActorCtx,
+): Promise<{ id: string }> {
+  const channel = await db.chatChannel.findUnique({
+    where: { id: input.id },
+    select: { id: true, isGeneral: true },
+  })
+  if (!channel) throw new BusinessError('CHANNEL_NOT_FOUND', 'Channel not found')
+  if (channel.isGeneral) {
+    throw new BusinessError('CHANNEL_IS_GENERAL', 'The #general channel cannot be deleted')
+  }
+  // ChatMessage / ChatChannelMember (and, through messages, mentions / refs /
+  // reactions) are declared `onDelete: Cascade`, so a single delete removes the
+  // whole subtree.
+  await db.chatChannel.delete({ where: { id: input.id } })
+  return { id: input.id }
+}
+
+/**
  * Ensure the actor is a member of the channel. Public channels auto-join on
  * first open (Slack-style); private channels and DMs require an existing
  * membership row. Returns the membership row id. Idempotent.

@@ -26,6 +26,7 @@ import {
   archiveChannel,
   channelReadCounts,
   createChannel,
+  deleteChannel,
   deleteMessage,
   editMessage,
   ensureMembership,
@@ -47,6 +48,8 @@ import {
   type ChatChannelView,
   type ChatNotifyLevel,
 } from '@studymind/core/chat'
+import { bodyToPlainText } from '@studymind/core/chat/parse'
+import { publishChatActivity, type ChatActivityKind } from '@studymind/core/realtime'
 import { BusinessError } from '@studymind/core/errors'
 
 import {
@@ -104,6 +107,40 @@ const actor = (ctx: { user: { id: string }; requestId: string }) => ({
   actorId: ctx.user.id,
   requestId: ctx.requestId,
 })
+
+/**
+ * Fire a realtime "something changed in this channel" hint so every connected
+ * client can refetch the affected slice without polling (ADR 0022). Pure hint:
+ * the payload never carries authoritative state, only enough for a client to
+ * scope its invalidation and decide whether a mention is aimed at the viewer.
+ * Best-effort — a bus failure must never fail the mutation that triggered it.
+ */
+function emitChatActivity(input: {
+  kind: ChatActivityKind
+  channelId: string
+  messageId: string | null
+  parentId: string | null
+  actorId: string
+  actorName: string | null
+  mentionUserIds?: string[]
+  preview?: string | null
+}): void {
+  try {
+    publishChatActivity({
+      kind: input.kind,
+      channelId: input.channelId,
+      messageId: input.messageId,
+      parentId: input.parentId,
+      actorId: input.actorId,
+      actorName: input.actorName,
+      mentionUserIds: input.mentionUserIds ?? [],
+      preview: input.preview ?? null,
+      occurredAt: new Date().toISOString(),
+    })
+  } catch {
+    // Never let a realtime hint break the write path (CLAUDE.md §17).
+  }
+}
 
 export const chatRouter = router({
   // --- Channel reads ---------------------------------------------------------
@@ -356,6 +393,34 @@ export const chatRouter = router({
       }
     }),
 
+  /**
+   * Hard-delete a channel and its entire history. Destructive + irreversible,
+   * so it sits one tier above ordinary channel management — CEO + Senior
+   * Manager only (mirrors board/team destructive ops). Audited; #general is
+   * protected at the domain layer.
+   */
+  deleteChannel: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (user.role !== 'ceo' && user.role !== 'senior_manager') {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only CEO and Senior Manager can permanently delete a channel',
+        })
+      }
+      try {
+        const result = await deleteChannel(ctx.db, input, actor({ user, requestId: ctx.requestId }))
+        await ctx.audit({
+          action: 'chat.channel_deleted',
+          target: { type: 'ChatChannel', id: result.id },
+        })
+        return result
+      } catch (err) {
+        mapChatError(err)
+      }
+    }),
+
   addMember: auditedProcedure
     .input(z.object({ channelId: z.string(), userId: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -524,12 +589,25 @@ export const chatRouter = router({
     try {
       // Auto-join public channels on first post; private channels require a row.
       await ensureMembership(ctx.db, { channelId: input.channelId, userId: user.id })
-      return await sendMessage(ctx.db, {
+      const message = await sendMessage(ctx.db, {
         channelId: input.channelId,
         authorId: user.id,
         body: input.body,
         parentId: input.parentId ?? null,
       })
+      emitChatActivity({
+        kind: 'message',
+        channelId: message.channelId,
+        messageId: message.id,
+        parentId: message.parentId,
+        actorId: user.id,
+        actorName: message.authorName,
+        mentionUserIds: message.mentionUserIds,
+        // One-line preview for the desktop notification; tokens render as
+        // readable labels (@Name / #Ref) rather than raw <@id> markers.
+        preview: bodyToPlainText(input.body).slice(0, 140),
+      })
+      return message
     } catch (err) {
       mapChatError(err)
     }
@@ -538,7 +616,28 @@ export const chatRouter = router({
   edit: protectedProcedure.input(EditMessageInput).mutation(async ({ ctx, input }) => {
     const user = requireUser(ctx)
     try {
-      return await editMessage(ctx.db, { id: input.id, authorId: user.id, body: input.body })
+      const result = await editMessage(ctx.db, {
+        id: input.id,
+        authorId: user.id,
+        body: input.body,
+      })
+      // Resolve the channel so other viewers refetch the edited row. Cheap —
+      // one indexed lookup; skipped silently if the row vanished.
+      const row = await ctx.db.chatMessage.findUnique({
+        where: { id: input.id },
+        select: { channelId: true, parentId: true },
+      })
+      if (row) {
+        emitChatActivity({
+          kind: 'edit',
+          channelId: row.channelId,
+          messageId: input.id,
+          parentId: row.parentId,
+          actorId: user.id,
+          actorName: user.email,
+        })
+      }
+      return result
     } catch (err) {
       mapChatError(err)
     }
@@ -549,11 +648,27 @@ export const chatRouter = router({
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       try {
-        return await deleteMessage(ctx.db, {
+        // Capture the channel before the soft-delete so the hint can target it.
+        const row = await ctx.db.chatMessage.findUnique({
+          where: { id: input.id },
+          select: { channelId: true, parentId: true },
+        })
+        const result = await deleteMessage(ctx.db, {
           id: input.id,
           actorId: user.id,
           allowAny: MODERATE_ROLES.has(user.role),
         })
+        if (row) {
+          emitChatActivity({
+            kind: 'delete',
+            channelId: row.channelId,
+            messageId: input.id,
+            parentId: row.parentId,
+            actorId: user.id,
+            actorName: user.email,
+          })
+        }
+        return result
       } catch (err) {
         mapChatError(err)
       }
@@ -562,15 +677,97 @@ export const chatRouter = router({
   react: protectedProcedure.input(ReactInput).mutation(async ({ ctx, input }) => {
     const user = requireUser(ctx)
     try {
-      return await toggleReaction(ctx.db, {
+      const result = await toggleReaction(ctx.db, {
         messageId: input.messageId,
         userId: user.id,
         emoji: input.emoji,
       })
+      const row = await ctx.db.chatMessage.findUnique({
+        where: { id: input.messageId },
+        select: { channelId: true, parentId: true },
+      })
+      if (row) {
+        emitChatActivity({
+          kind: 'reaction',
+          channelId: row.channelId,
+          messageId: input.messageId,
+          parentId: row.parentId,
+          actorId: user.id,
+          actorName: user.email,
+        })
+      }
+      return result
     } catch (err) {
       mapChatError(err)
     }
   }),
+
+  /**
+   * Forward a message into another channel (Slack-style "Forward"). Re-posts
+   * the original body verbatim — so its @mentions and customer refs re-resolve
+   * as chips in the destination — quoted under an attribution line, plus the
+   * forwarder's optional note. No new schema: it is a normal `send` into the
+   * target channel, with the author's membership ensured first.
+   */
+  forward: protectedProcedure
+    .input(
+      z.object({
+        messageId: z.string(),
+        toChannelId: z.string(),
+        note: z.string().trim().max(4000).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      try {
+        const source = await ctx.db.chatMessage.findFirst({
+          where: { id: input.messageId, deletedAt: null },
+          select: { id: true, body: true, authorId: true },
+        })
+        if (!source) throw new TRPCError({ code: 'NOT_FOUND', message: 'Message not found' })
+
+        const author = await ctx.db.user.findUnique({
+          where: { id: source.authorId },
+          select: { name: true, email: true },
+        })
+        const authorName = (author?.name ?? '').trim() || author?.email || 'a teammate'
+
+        // Attribution as a blockquote so the forwarded content reads as a quote
+        // of the original; the note (if any) sits above it as the forwarder's
+        // own words. Original tokens are preserved verbatim.
+        const quoted = source.body
+          .split('\n')
+          .map((line) => `> ${line}`)
+          .join('\n')
+        const body = [
+          input.note ? input.note : null,
+          `> _Forwarded from ${authorName}_`,
+          quoted,
+        ]
+          .filter((x): x is string => x != null)
+          .join('\n')
+
+        await ensureMembership(ctx.db, { channelId: input.toChannelId, userId: user.id })
+        const message = await sendMessage(ctx.db, {
+          channelId: input.toChannelId,
+          authorId: user.id,
+          body,
+        })
+        emitChatActivity({
+          kind: 'message',
+          channelId: message.channelId,
+          messageId: message.id,
+          parentId: null,
+          actorId: user.id,
+          actorName: message.authorName,
+          mentionUserIds: message.mentionUserIds,
+          preview: bodyToPlainText(body).slice(0, 140),
+        })
+        return { id: message.id, channelId: message.channelId }
+      } catch (err) {
+        mapChatError(err)
+      }
+    }),
 
   // --- Read state ------------------------------------------------------------
 

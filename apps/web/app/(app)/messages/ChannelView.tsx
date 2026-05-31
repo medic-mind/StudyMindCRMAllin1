@@ -12,6 +12,7 @@ import { trpc } from '@/lib/trpc/client'
 
 import { ChannelHeader } from './ChannelHeader'
 import { Composer } from './Composer'
+import { ForwardDialog } from './ForwardDialog'
 import { MessageRow } from './MessageRow'
 import { ThreadPanel } from './ThreadPanel'
 import type { MessageView, ReactionEmoji } from './types'
@@ -21,6 +22,10 @@ interface Props {
   viewerId: string
   canModerate: boolean
   canManageChannels: boolean
+  /** CEO + Senior Manager — permanent channel deletion. */
+  canDeleteChannels: boolean
+  /** Called after this channel is deleted so the workspace can reselect. */
+  onChannelDeleted?: (channelId: string) => void
 }
 
 function dayKey(d: Date): string {
@@ -44,22 +49,34 @@ function DayDivider({ date }: { date: Date }) {
   )
 }
 
-export function ChannelView({ channelId, viewerId, canModerate, canManageChannels }: Props) {
+export function ChannelView({
+  channelId,
+  viewerId,
+  canModerate,
+  canManageChannels,
+  canDeleteChannels,
+  onChannelDeleted,
+}: Props) {
   const utils = trpc.useUtils()
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const [threadRootId, setThreadRootId] = useState<string | null>(null)
+  const [forwardId, setForwardId] = useState<string | null>(null)
   const atBottomRef = useRef(true)
 
   const channelQuery = trpc.chat.getChannel.useQuery({ id: channelId })
+  // The forward picker needs the viewer's visible channels. Cached + shared
+  // with the sidebar's query, so this is effectively free.
+  const channelsQuery = trpc.chat.listChannels.useQuery({})
 
   // Reverse-chronological pages from the server; we flatten + reverse for
-  // display (oldest at top, newest at bottom) like every chat app.
+  // display (oldest at top, newest at bottom) like every chat app. The SSE
+  // stream (workspace-level) drives freshness; this slow poll is a safety net.
   const messagesQuery = trpc.chat.listMessages.useInfiniteQuery(
     { channelId, limit: 40 },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-      refetchInterval: 4000,
+      refetchInterval: 30_000,
       refetchIntervalInBackground: false,
     },
   )
@@ -138,7 +155,12 @@ export function ChannelView({ channelId, viewerId, canModerate, canManageChannel
     <div className="flex h-full min-w-0 flex-1">
       <div className="flex h-full min-w-0 flex-1 flex-col">
         {channel ? (
-          <ChannelHeader channel={channel} canManage={canManageChannels} />
+          <ChannelHeader
+            channel={channel}
+            canManage={canManageChannels}
+            canDelete={canDeleteChannels}
+            onDeleted={onChannelDeleted}
+          />
         ) : (
           <div className="h-14 shrink-0 border-b border-neutral-200 bg-white" />
         )}
@@ -191,6 +213,7 @@ export function ChannelView({ channelId, viewerId, canModerate, canManageChannel
                     onOpenThread={(rootId) => setThreadRootId(rootId)}
                     onEdit={(id, body) => edit.mutate({ id, body })}
                     onDelete={(id) => remove.mutate({ id })}
+                    onForward={(id) => setForwardId(id)}
                   />
                 </div>
               )
@@ -221,6 +244,16 @@ export function ChannelView({ channelId, viewerId, canModerate, canManageChannel
           viewerId={viewerId}
           canModerate={canModerate}
           onClose={() => setThreadRootId(null)}
+        />
+      ) : null}
+
+      {forwardId ? (
+        <ForwardDialog
+          messageId={forwardId}
+          channels={channelsQuery.data?.channels ?? []}
+          currentChannelId={channelId}
+          onClose={() => setForwardId(null)}
+          onForwarded={() => setForwardId(null)}
         />
       ) : null}
     </div>

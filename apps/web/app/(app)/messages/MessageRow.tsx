@@ -1,17 +1,21 @@
 // A single message row in the channel feed or a thread (ADR 0022). Shows the
-// author, body (with chips), reactions, and on hover: react / reply / edit /
-// delete. Author + Manager+ can delete; author can edit.
+// author, body (markdown + chips), reactions, and a Slack-style hover action
+// bar: quick-react, reply-in-thread, forward, edit, delete. A message that has
+// replies shows a prominent "N replies" thread affordance beneath it.
 
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Avatar } from '@/components/ui/avatar'
 import {
+  ForwardIcon,
   PencilIcon,
   ReplyIcon,
+  SmilePlusIcon,
   Trash2Icon,
 } from '@/components/ui/icon'
+import { CHAT_REACTION_EMOJI } from '@studymind/core/chat'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 
 import { Composer } from './Composer'
@@ -29,6 +33,7 @@ interface Props {
   onOpenThread?: (rootId: string) => void
   onEdit: (id: string, body: string) => void
   onDelete: (id: string) => void
+  onForward?: (messageId: string) => void
 }
 
 export function MessageRow({
@@ -41,10 +46,36 @@ export function MessageRow({
   onOpenThread,
   onEdit,
   onDelete,
+  onForward,
 }: Props) {
   const [editing, setEditing] = useState(false)
+  const [emojiOpen, setEmojiOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const barRef = useRef<HTMLDivElement | null>(null)
   const isAuthor = message.authorId === viewerId
   const deleted = message.deletedAt != null
+
+  useEffect(() => {
+    if (!emojiOpen && !moreOpen) return
+    function onDown(e: MouseEvent) {
+      if (!barRef.current?.contains(e.target as Node)) {
+        setEmojiOpen(false)
+        setMoreOpen(false)
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setEmojiOpen(false)
+        setMoreOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [emojiOpen, moreOpen])
 
   if (deleted) {
     return (
@@ -54,6 +85,10 @@ export function MessageRow({
       </div>
     )
   }
+
+  // The quick-react row in Slack shows a few frequent emoji inline. We surface
+  // the first four from the curated set, plus a "+" that opens the full picker.
+  const QUICK = CHAT_REACTION_EMOJI.slice(0, 4)
 
   return (
     <div className="group relative flex gap-3 px-4 py-1.5 hover:bg-neutral-50/70">
@@ -77,6 +112,7 @@ export function MessageRow({
             <Composer
               placeholder="Edit message…"
               autoFocus
+              initialValue={message.body}
               onSend={(body) => {
                 onEdit(message.id, body)
                 setEditing(false)
@@ -112,12 +148,12 @@ export function MessageRow({
           </div>
         ) : null}
 
-        {/* Thread preview */}
+        {/* Thread affordance — prominent, Slack-style */}
         {showThreadAffordance && message.replyCount > 0 && onOpenThread ? (
           <button
             type="button"
             onClick={() => onOpenThread(message.id)}
-            className="mt-1 inline-flex items-center gap-2 rounded-md px-1.5 py-1 text-xs font-medium text-primary-700 hover:bg-primary-50"
+            className="mt-1.5 inline-flex items-center gap-2 rounded-md border border-transparent px-1.5 py-1 text-xs font-medium text-primary-700 hover:border-neutral-200 hover:bg-white"
           >
             <span className="flex -space-x-1.5">
               {message.replyAuthorNames.slice(0, 3).map((n, i) => (
@@ -127,16 +163,67 @@ export function MessageRow({
             {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
             {message.lastReplyAt ? (
               <span className="font-normal text-neutral-400">
-                · last {formatRelativeTime(message.lastReplyAt)}
+                · last reply {formatRelativeTime(message.lastReplyAt)}
               </span>
             ) : null}
+            <span className="font-normal text-primary-600">· View thread</span>
           </button>
         ) : null}
       </div>
 
-      {/* Hover toolbar */}
+      {/* Hover action bar (Slack-style) */}
       {!editing ? (
-        <div className="absolute -top-3 right-3 hidden items-center gap-0.5 rounded-lg border border-neutral-200 bg-white p-0.5 shadow-sm group-hover:flex">
+        <div
+          ref={barRef}
+          className="absolute -top-3 right-3 z-10 hidden items-center gap-0.5 rounded-lg border border-neutral-200 bg-white p-0.5 shadow-sm group-hover:flex"
+        >
+          {/* Inline quick-react emoji */}
+          {QUICK.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              title={`React ${emoji}`}
+              aria-label={`React ${emoji}`}
+              onClick={() => onReact(message.id, emoji)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-base hover:bg-neutral-100"
+            >
+              {emoji}
+            </button>
+          ))}
+          <div className="relative">
+            <button
+              type="button"
+              title="More reactions"
+              aria-label="More reactions"
+              onClick={() => {
+                setEmojiOpen((v) => !v)
+                setMoreOpen(false)
+              }}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+            >
+              <SmilePlusIcon size={15} />
+            </button>
+            {emojiOpen ? (
+              <div className="absolute right-0 top-8 z-20 flex flex-wrap gap-0.5 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg">
+                {CHAT_REACTION_EMOJI.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => {
+                      onReact(message.id, emoji)
+                      setEmojiOpen(false)
+                    }}
+                    className="rounded-md px-1.5 py-1 text-base hover:bg-neutral-100"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <span className="mx-0.5 h-4 w-px bg-neutral-200" aria-hidden />
+
           {showThreadAffordance && onOpenThread ? (
             <button
               type="button"
@@ -146,6 +233,17 @@ export function MessageRow({
               className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
             >
               <ReplyIcon size={15} />
+            </button>
+          ) : null}
+          {onForward ? (
+            <button
+              type="button"
+              title="Forward"
+              aria-label="Forward message"
+              onClick={() => onForward(message.id)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+            >
+              <ForwardIcon size={15} />
             </button>
           ) : null}
           {isAuthor ? (

@@ -25,6 +25,90 @@ function base({ size = 16, strokeWidth = 2, ...rest }: IconProps) {
   }
 }
 
+// --- Rich-text composer toolbar + message actions (ADR 0022) ----------------
+
+export function BoldIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M6 4h8a4 4 0 0 1 0 8H6z" />
+      <path d="M6 12h9a4 4 0 0 1 0 8H6z" />
+    </svg>
+  )
+}
+
+export function ItalicIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <line x1="19" y1="4" x2="10" y2="4" />
+      <line x1="14" y1="20" x2="5" y2="20" />
+      <line x1="15" y1="4" x2="9" y2="20" />
+    </svg>
+  )
+}
+
+export function StrikethroughIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M16 4H9a3 3 0 0 0-2.83 4" />
+      <path d="M14 12a4 4 0 0 1 0 8H6" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+    </svg>
+  )
+}
+
+export function CodeIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </svg>
+  )
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <line x1="8" y1="6" x2="21" y2="6" />
+      <line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" />
+      <line x1="3" y1="12" x2="3.01" y2="12" />
+      <line x1="3" y1="18" x2="3.01" y2="18" />
+    </svg>
+  )
+}
+
+export function ListOrderedIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <line x1="10" y1="6" x2="21" y2="6" />
+      <line x1="10" y1="12" x2="21" y2="12" />
+      <line x1="10" y1="18" x2="21" y2="18" />
+      <path d="M4 6h1v4" />
+      <path d="M4 10h2" />
+      <path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1" />
+    </svg>
+  )
+}
+
+export function QuoteIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M3 21c3 0 7-1 7-8V5a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+      <path d="M14 21c3 0 7-1 7-8V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+    </svg>
+  )
+}
+
+export function ForwardIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <polyline points="15 17 20 12 15 7" />
+      <path d="M4 18v-2a4 4 0 0 1 4-4h12" />
+    </svg>
+  )
+}
+
 export function InboxIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

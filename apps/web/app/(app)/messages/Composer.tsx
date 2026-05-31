@@ -11,7 +11,18 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-import { AtSignIcon, LinkIcon, SendIcon } from '@/components/ui/icon'
+import {
+  AtSignIcon,
+  BoldIcon,
+  CodeIcon,
+  ItalicIcon,
+  LinkIcon,
+  ListIcon,
+  ListOrderedIcon,
+  QuoteIcon,
+  SendIcon,
+  StrikethroughIcon,
+} from '@/components/ui/icon'
 import { Avatar } from '@/components/ui/avatar'
 import { trpc } from '@/lib/trpc/client'
 
@@ -28,6 +39,9 @@ interface Props {
   disabled?: boolean
   sending?: boolean
   autoFocus?: boolean
+  /** Seed the editor (edit mode). The stored body's tokens stay literal text —
+   *  the user edits the raw markdown/mentions, which re-resolve on send. */
+  initialValue?: string
   onSend: (body: string) => void
 }
 
@@ -38,9 +52,16 @@ const REF_TONE: Record<string, string> = {
   task: 'text-amber-800',
 }
 
-export function Composer({ placeholder, disabled, sending, autoFocus, onSend }: Props) {
+export function Composer({
+  placeholder,
+  disabled,
+  sending,
+  autoFocus,
+  initialValue,
+  onSend,
+}: Props) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialValue ?? '')
   const [mentions, setMentions] = useState<DraftMention[]>([])
   const [refs, setRefs] = useState<DraftRef[]>([])
 
@@ -66,6 +87,50 @@ export function Composer({ placeholder, disabled, sending, autoFocus, onSend }: 
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 180)}px`
   }, [text])
+
+  /**
+   * Wrap the current selection in `before`/`after` markers (e.g. ** ** for
+   * bold). With no selection, inserts the markers and places the caret between
+   * them so the user can type. Keeps focus and selection sensible afterwards.
+   */
+  function wrapSelection(before: string, after: string = before): void {
+    const el = textareaRef.current
+    if (!el) return
+    const start = el.selectionStart ?? text.length
+    const end = el.selectionEnd ?? text.length
+    const selected = text.slice(start, end)
+    const next = `${text.slice(0, start)}${before}${selected}${after}${text.slice(end)}`
+    setText(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      const caretStart = start + before.length
+      const caretEnd = caretStart + selected.length
+      el.setSelectionRange(caretStart, caretEnd)
+    })
+  }
+
+  /** Prefix every line touched by the selection (lists, blockquote). */
+  function prefixLines(makePrefix: (index: number) => string): void {
+    const el = textareaRef.current
+    if (!el) return
+    const start = el.selectionStart ?? text.length
+    const end = el.selectionEnd ?? text.length
+    // Expand to full lines.
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1
+    const lineEndRaw = text.indexOf('\n', end)
+    const lineEnd = lineEndRaw === -1 ? text.length : lineEndRaw
+    const block = text.slice(lineStart, lineEnd)
+    const prefixed = block
+      .split('\n')
+      .map((line, i) => `${makePrefix(i)}${line}`)
+      .join('\n')
+    const next = `${text.slice(0, lineStart)}${prefixed}${text.slice(lineEnd)}`
+    setText(next)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(lineStart, lineStart + prefixed.length)
+    })
+  }
 
   function onChange(value: string) {
     setText(value)
@@ -126,11 +191,65 @@ export function Composer({ placeholder, disabled, sending, autoFocus, onSend }: 
         return
       }
     }
+    // Formatting shortcuts (Cmd/Ctrl + B / I / Shift+X for strike).
+    if (e.metaKey || e.ctrlKey) {
+      const key = e.key.toLowerCase()
+      if (key === 'b') {
+        e.preventDefault()
+        wrapSelection('**')
+        return
+      }
+      if (key === 'i') {
+        e.preventDefault()
+        wrapSelection('*')
+        return
+      }
+      if (key === 'x' && e.shiftKey) {
+        e.preventDefault()
+        wrapSelection('~~')
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit()
     }
   }
+
+  const TOOLBAR: ReadonlyArray<{
+    key: string
+    label: string
+    Icon: typeof BoldIcon
+    apply: () => void
+  }> = [
+    { key: 'bold', label: 'Bold  (⌘B)', Icon: BoldIcon, apply: () => wrapSelection('**') },
+    { key: 'italic', label: 'Italic  (⌘I)', Icon: ItalicIcon, apply: () => wrapSelection('*') },
+    {
+      key: 'strike',
+      label: 'Strikethrough  (⌘⇧X)',
+      Icon: StrikethroughIcon,
+      apply: () => wrapSelection('~~'),
+    },
+    { key: 'code', label: 'Code', Icon: CodeIcon, apply: () => wrapSelection('`') },
+    {
+      key: 'quote',
+      label: 'Quote',
+      Icon: QuoteIcon,
+      apply: () => prefixLines(() => '> '),
+    },
+    {
+      key: 'ul',
+      label: 'Bulleted list',
+      Icon: ListIcon,
+      apply: () => prefixLines(() => '- '),
+    },
+    {
+      key: 'ol',
+      label: 'Numbered list',
+      Icon: ListOrderedIcon,
+      apply: () => prefixLines((i) => `${i + 1}. `),
+    },
+  ]
 
   return (
     <div className="relative">
@@ -211,13 +330,30 @@ export function Composer({ placeholder, disabled, sending, autoFocus, onSend }: 
         </div>
       ) : null}
 
-      <div className="flex items-end gap-2 rounded-xl border border-neutral-300 bg-white p-2 shadow-sm focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
-        <div className="flex shrink-0 items-center gap-0.5 pb-1">
+      <div className="rounded-xl border border-neutral-300 bg-white shadow-sm focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+        {/* Formatting toolbar */}
+        <div className="flex items-center gap-0.5 border-b border-neutral-100 px-2 py-1">
+          {TOOLBAR.map(({ key, label, Icon, apply }) => (
+            <button
+              key={key}
+              type="button"
+              title={label}
+              aria-label={label}
+              disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={apply}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:opacity-40"
+            >
+              <Icon size={15} />
+            </button>
+          ))}
+          <span className="mx-1 h-4 w-px bg-neutral-200" aria-hidden />
           <button
             type="button"
             title="Mention a teammate"
             aria-label="Mention a teammate"
             disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               const next = text.length === 0 || text.endsWith(' ') ? `${text}@` : `${text} @`
               setText(next)
@@ -238,6 +374,7 @@ export function Composer({ placeholder, disabled, sending, autoFocus, onSend }: 
             title="Reference a customer"
             aria-label="Reference a customer"
             disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => setRefPickerOpen((v) => !v)}
             className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
           >
@@ -245,32 +382,37 @@ export function Composer({ placeholder, disabled, sending, autoFocus, onSend }: 
           </button>
         </div>
 
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={text}
-          disabled={disabled}
-          autoFocus={autoFocus}
-          placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={onKeyDown}
-          className="max-h-44 min-h-[2rem] flex-1 resize-none bg-transparent py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none"
-        />
+        {/* Input row */}
+        <div className="flex items-end gap-2 p-2">
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={text}
+            disabled={disabled}
+            autoFocus={autoFocus}
+            placeholder={placeholder}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={onKeyDown}
+            className="max-h-44 min-h-[2rem] flex-1 resize-none bg-transparent py-1 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none"
+          />
 
-        <button
-          type="button"
-          aria-label="Send message"
-          disabled={disabled || sending || composeBody(text, mentions, refs).length === 0}
-          onClick={submit}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <SendIcon size={16} />
-        </button>
+          <button
+            type="button"
+            aria-label="Send message"
+            disabled={disabled || sending || composeBody(text, mentions, refs).length === 0}
+            onClick={submit}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <SendIcon size={16} />
+          </button>
+        </div>
       </div>
       <p className="mt-1 px-1 text-[11px] text-neutral-400">
         <kbd className="font-sans">Enter</kbd> to send ·{' '}
-        <kbd className="font-sans">Shift+Enter</kbd> for a new line · type{' '}
-        <span className="font-medium text-neutral-500">@</span> to mention
+        <kbd className="font-sans">Shift+Enter</kbd> for a new line ·{' '}
+        <span className="font-medium text-neutral-500">**bold**</span>,{' '}
+        <span className="font-medium text-neutral-500">*italic*</span>,{' '}
+        <span className="font-medium text-neutral-500">`code`</span> supported
       </p>
     </div>
   )

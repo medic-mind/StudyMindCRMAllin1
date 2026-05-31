@@ -92,6 +92,7 @@ export const EVENT_NAMES = [
   'chat.channel_updated',
   'chat.channel_archived',
   'chat.channel_restored',
+  'chat.channel_deleted',
   'chat.member_added',
   'chat.member_removed',
 

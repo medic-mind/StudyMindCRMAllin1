@@ -24,6 +24,10 @@ import type { ChannelView } from './types'
 interface Props {
   channel: ChannelView
   canManage: boolean
+  /** CEO + Senior Manager only — permanent channel deletion. */
+  canDelete: boolean
+  /** Called after a successful delete so the workspace can clear selection. */
+  onDeleted?: (channelId: string) => void
 }
 
 const NOTIFY_LABEL: Record<string, string> = {
@@ -32,7 +36,7 @@ const NOTIFY_LABEL: Record<string, string> = {
   none: 'Nothing',
 }
 
-export function ChannelHeader({ channel, canManage }: Props) {
+export function ChannelHeader({ channel, canManage, canDelete, onDeleted }: Props) {
   const utils = trpc.useUtils()
   const [menuOpen, setMenuOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -56,6 +60,14 @@ export function ChannelHeader({ channel, canManage }: Props) {
       void utils.chat.listChannels.invalidate()
     },
     onError: (e) => toast.error(e.message ?? 'Could not archive'),
+  })
+  const remove = trpc.chat.deleteChannel.useMutation({
+    onSuccess: (res) => {
+      toast.success('Channel deleted')
+      void utils.chat.listChannels.invalidate()
+      if (res?.id) onDeleted?.(res.id)
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not delete channel'),
   })
 
   useEffect(() => {
@@ -171,10 +183,29 @@ export function ChannelHeader({ channel, canManage }: Props) {
                       }
                       setMenuOpen(false)
                     }}
-                    className="flex w-full items-center px-3 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
+                    className="flex w-full items-center px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
                   >
                     Archive channel
                   </button>
+                  {canDelete ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Permanently delete #${channel.name}? This removes the channel and its entire history for everyone. This cannot be undone.`,
+                          )
+                        ) {
+                          remove.mutate({ id: channel.id })
+                        }
+                        setMenuOpen(false)
+                      }}
+                      className="flex w-full items-center px-3 py-1.5 text-left text-sm text-red-700 hover:bg-red-50"
+                    >
+                      Delete channel
+                    </button>
+                  ) : null}
                 </>
               ) : null}
             </div>
