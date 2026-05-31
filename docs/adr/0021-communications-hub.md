@@ -166,7 +166,9 @@ a staff-only `note` Interaction scoped by `payload.conversationId` (never sent
 outbound); a mention writes an audit row targeting the colleague so it surfaces
 in their notifications (the audit-log-backed feed). All staff may add notes
 (§20 — VA "writes notes"). UI: `ConversationNotes` on the conversation thread
-view. **Still to come:** one-click task creation from a conversation.
+view. **One-click task (implemented):** `ConversationTaskButton` creates a CRM
+`Task` from a conversation (reuses `task.create`, links the matched contact,
+defaults the assignee to the agent). Phase 6 complete.
 
 ### Phase 7 — Outlook / Exchange / IMAP
 

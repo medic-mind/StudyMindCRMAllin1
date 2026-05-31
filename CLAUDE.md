@@ -424,8 +424,8 @@ rest advertise the roadmap and reject connection attempts.
 (4) `/mail` client — *v1 + compose/reply implemented* (bulk / search / preview
 still to come); (5) two-way action sync
 (read/archive/star/label/delete) — *implemented* (outbound CRM→Gmail; inbound
-flag-mirroring + drafts still to come); (6) shared-inbox operations — *notes +
-@mentions implemented* (assign already existed; task-from-conversation to come);
+flag-mirroring + drafts still to come); (6) shared-inbox operations — *implemented*
+(assign already existed; + notes/@mentions + one-click task-from-conversation);
 (7) Outlook/Exchange/IMAP providers — design in **ADR 0024** (deps not added
 until approved); (8) templates, automations, analytics, calendar, unified
 channels.
