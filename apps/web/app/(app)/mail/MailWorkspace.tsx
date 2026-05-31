@@ -7,7 +7,7 @@
 // audited tRPC mutations; the live mailbox is the source of truth.
 // CLAUDE.md §4 (tokens, density), §14, §26.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
@@ -64,11 +64,107 @@ export function MailWorkspace({
     limit: 50,
   })
 
-  function invalidateList() {
-    void utils.mail.threads.list.invalidate()
-  }
+  const [composing, setComposing] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
+  const kbArchive = trpc.mail.thread.setArchived.useMutation()
+  const kbRead = trpc.mail.thread.setRead.useMutation()
+  const kbStar = trpc.mail.thread.setStarred.useMutation()
+  const kbTrash = trpc.mail.thread.setTrashed.useMutation()
 
-  const items = threads.data?.items ?? []
+  const items = useMemo(() => threads.data?.items ?? [], [threads.data])
+
+  const invalidateList = useCallback(() => {
+    void utils.mail.threads.list.invalidate()
+  }, [utils])
+
+  const refreshOpen = useCallback(() => {
+    invalidateList()
+    if (selectedId) {
+      void utils.inbox.conversations.get.invalidate({ conversationId: selectedId })
+    }
+  }, [invalidateList, utils, selectedId])
+
+  const kbdAction = useCallback(
+    (p: Promise<unknown>, label: string) => {
+      p.then(() => {
+        toast.success(label)
+        refreshOpen()
+      }).catch((e) => toast.error(e instanceof Error ? e.message : 'Action failed'))
+    },
+    [refreshOpen],
+  )
+
+  // Keyboard shortcuts (Superhuman-style). Inert while typing in a field.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      const typing =
+        !!t &&
+        (t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable)
+      if (typing) {
+        if (e.key === 'Escape') t.blur()
+        return
+      }
+      const idx = selectedId ? items.findIndex((i) => i.id === selectedId) : -1
+      const openAt = (i: number) => {
+        const it = items[i]
+        if (it) setSelectedId(it.id)
+      }
+      switch (e.key) {
+        case 'j':
+        case 'ArrowDown':
+          e.preventDefault()
+          openAt(Math.min(items.length - 1, idx + 1))
+          break
+        case 'k':
+        case 'ArrowUp':
+          e.preventDefault()
+          openAt(idx <= 0 ? 0 : idx - 1)
+          break
+        case 'e':
+          if (selectedId)
+            kbdAction(kbArchive.mutateAsync({ conversationId: selectedId, archived: true }), 'Archived')
+          break
+        case 'u':
+          if (selectedId)
+            kbdAction(kbRead.mutateAsync({ conversationId: selectedId, read: false }), 'Marked unread')
+          break
+        case 's':
+          if (selectedId)
+            kbdAction(kbStar.mutateAsync({ conversationId: selectedId, starred: true }), 'Starred')
+          break
+        case '#':
+          if (selectedId)
+            kbdAction(kbTrash.mutateAsync({ conversationId: selectedId, trashed: true }), 'Moved to Trash')
+          break
+        case 'r':
+          e.preventDefault()
+          document.getElementById('mail-reply')?.focus()
+          break
+        case '/':
+          e.preventDefault()
+          document.getElementById('mail-search')?.focus()
+          break
+        case 'c':
+          setComposing(true)
+          break
+        case '?':
+          setShowHelp((s) => !s)
+          break
+        case 'Escape':
+          if (composing) setComposing(false)
+          else if (showHelp) setShowHelp(false)
+          else setSelectedId(null)
+          break
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [items, selectedId, composing, showHelp, kbdAction, kbArchive, kbRead, kbStar, kbTrash])
 
   return (
     <div className="flex h-[calc(100vh-9.5rem)] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
@@ -76,6 +172,7 @@ export function MailWorkspace({
         accounts={accounts}
         accountId={accountId}
         folder={folder}
+        onCompose={() => setComposing(true)}
         onAccount={(id) => {
           setAccountId(id)
           setSelectedId(null)
@@ -96,9 +193,10 @@ export function MailWorkspace({
               className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400"
             />
             <Input
+              id="mail-search"
               value={rawQuery}
               onChange={(e) => setRawQuery(e.target.value)}
-              placeholder="Search mail…"
+              placeholder="Search mail…   ( / )"
               aria-label="Search mail"
               className="h-9 pl-8"
             />
@@ -164,8 +262,65 @@ export function MailWorkspace({
           <div className="flex flex-1 flex-col items-center justify-center text-center text-neutral-400">
             <MailIcon size={40} className="text-neutral-200" />
             <p className="mt-3 text-sm">Select a conversation to read it.</p>
+            <p className="mt-1 text-xs text-neutral-300">
+              Press <Kbd>?</Kbd> for keyboard shortcuts
+            </p>
           </div>
         )}
+      </div>
+
+      {composing ? (
+        <ComposeModal accounts={accounts} onClose={() => setComposing(false)} />
+      ) : null}
+      {showHelp ? <ShortcutsHelp onClose={() => setShowHelp(false)} /> : null}
+    </div>
+  )
+}
+
+function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="rounded border border-neutral-300 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] text-neutral-600">
+      {children}
+    </kbd>
+  )
+}
+
+function ShortcutsHelp({ onClose }: { onClose: () => void }) {
+  const rows: Array<[string, string]> = [
+    ['j / k', 'Next / previous conversation'],
+    ['e', 'Archive'],
+    ['s', 'Star'],
+    ['u', 'Mark unread'],
+    ['#', 'Move to Trash'],
+    ['r', 'Reply'],
+    ['c', 'Compose'],
+    ['/', 'Search'],
+    ['Esc', 'Close'],
+    ['?', 'Toggle this help'],
+  ]
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Keyboard shortcuts"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-xl bg-white p-5 shadow-card-hover"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="mb-3 text-sm font-semibold text-neutral-900">Keyboard shortcuts</h2>
+        <dl className="space-y-1.5">
+          {rows.map(([key, desc]) => (
+            <div key={key} className="flex items-center justify-between gap-4 text-sm">
+              <dt className="text-neutral-600">{desc}</dt>
+              <dd>
+                <Kbd>{key}</Kbd>
+              </dd>
+            </div>
+          ))}
+        </dl>
       </div>
     </div>
   )
@@ -179,19 +334,20 @@ function Rail({
   accounts,
   accountId,
   folder,
+  onCompose,
   onAccount,
   onFolder,
 }: {
   accounts: AccountOption[]
   accountId: string | null
   folder: Folder
+  onCompose: () => void
   onAccount: (id: string | null) => void
   onFolder: (f: Folder) => void
 }) {
-  const [composing, setComposing] = useState(false)
   return (
     <aside className="flex w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-200 bg-neutral-50/60 p-3">
-      <Button type="button" size="sm" className="w-full" onClick={() => setComposing(true)}>
+      <Button type="button" size="sm" className="w-full" onClick={onCompose}>
         <PlusIcon size={15} /> Compose
       </Button>
 
@@ -229,10 +385,6 @@ function Rail({
           ) : null}
         </nav>
       </div>
-
-      {composing ? (
-        <ComposeModal accounts={accounts} onClose={() => setComposing(false)} />
-      ) : null}
     </aside>
   )
 }
@@ -664,10 +816,11 @@ function ReadingPane({
       {isEmail ? (
         <div className="border-t border-neutral-200 bg-white p-3">
           <Textarea
+            id="mail-reply"
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={3}
-            placeholder="Reply… (sends from this mailbox and syncs to Gmail)"
+            placeholder="Reply… (sends from this mailbox and syncs to Gmail)   ( r )"
             aria-label="Reply"
           />
           <div className="mt-2 flex justify-end">
