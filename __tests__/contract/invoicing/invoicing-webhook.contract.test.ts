@@ -138,7 +138,7 @@ describe('invoicing webhook route', () => {
     expect(inngestSend).not.toHaveBeenCalled()
   })
 
-  it('rejects a missing signature with 400', async () => {
+  it('rejects a missing signature with 400 without touching the config', async () => {
     const body = JSON.stringify(fixture)
     const req = new Request('http://localhost/api/webhooks/invoicing', {
       method: 'POST',
@@ -149,6 +149,48 @@ describe('invoicing webhook route', () => {
     const res = await POST(req)
 
     expect(res.status).toBe(400)
+    // Cheapest rejection first — never decrypts when there's no signature.
+    expect(loadInvoicingConfig).not.toHaveBeenCalled()
+    expect(upsertProviderEvent).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 (not 500) when the secret cannot be decrypted', async () => {
+    // Simulates a misconfigured field-encryption backend (e.g. AWS_KMS_KEY_ID
+    // placeholder with no real AWS account). The handler must NOT 500.
+    loadInvoicingConfig.mockRejectedValueOnce(new Error('KMS decrypt failed'))
+    const body = JSON.stringify(fixture)
+    const req = new Request('http://localhost/api/webhooks/invoicing', {
+      method: 'POST',
+      headers: { 'x-webhook-signature': signed(body), 'content-type': 'application/json' },
+      body,
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(503)
+    expect(upsertProviderEvent).not.toHaveBeenCalled()
+    expect(inngestSend).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when no webhook secret is configured', async () => {
+    loadInvoicingConfig.mockResolvedValueOnce({
+      baseUrl: 'https://b2b.studymind.co.uk',
+      apiKey: 'sk_live_x',
+      webhookSecret: null,
+      apiKeyLast4: 've_x',
+      eventsCursor: null,
+      streamCursor: null,
+    })
+    const body = JSON.stringify(fixture)
+    const req = new Request('http://localhost/api/webhooks/invoicing', {
+      method: 'POST',
+      headers: { 'x-webhook-signature': signed(body), 'content-type': 'application/json' },
+      body,
+    })
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(503)
     expect(upsertProviderEvent).not.toHaveBeenCalled()
   })
 })
