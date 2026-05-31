@@ -51,7 +51,7 @@ import {
 } from '@studymind/core/email'
 import { BusinessError } from '@studymind/core/errors'
 import { logger } from '@studymind/core/logger'
-import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
+import { resolveSystemAgentId, sendSystemEmail } from '@studymind/integration-gmail/system-send'
 
 import {
   auditedProcedure,
@@ -170,7 +170,7 @@ async function issueTemporaryCredentials(
   db: Db,
   actor: SessionUser,
   args: IssueArgs,
-): Promise<string> {
+): Promise<{ temporaryPassword: string; emailStatus: 'sent' | 'skipped' | 'failed' }> {
   const temporaryPassword = generateTemporaryPassword()
   const passwordHash = await hashPassword(temporaryPassword)
   const now = new Date()
@@ -226,7 +226,7 @@ async function issueTemporaryCredentials(
     logger.error({ detail: sendResult.detail }, 'admin.users.welcome.email_send_failed')
   }
 
-  return temporaryPassword
+  return { temporaryPassword, emailStatus: sendResult.status }
 }
 
 export const adminUsersRouter = router({
@@ -236,6 +236,10 @@ export const adminUsersRouter = router({
   myAccess: protectedProcedure.query(async ({ ctx }) => {
     const actor = requireUser(ctx)
     const grants = await loadActorGrants(ctx.db, actor.id)
+    // Whether a system Gmail mailbox is connected to actually send the welcome
+    // / reset emails. When false the UI nudges the admin to copy + share the
+    // temporary password and connect Gmail.
+    const systemEmailReady = (await resolveSystemAgentId()) !== null
     return {
       role: actor.role,
       canCreate: canCreateUsers(actor.role),
@@ -243,6 +247,7 @@ export const adminUsersRouter = router({
       canGrantManage: canGrantUserManage(actor.role),
       canDeactivate: canDeactivateUsers(actor.role),
       canManageRoles: ROLES.some((r) => canGrantRole(actor.role, r)),
+      systemEmailReady,
     }
   }),
 
@@ -424,14 +429,18 @@ export const adminUsersRouter = router({
         }
       }
 
-      const temporaryPassword = await issueTemporaryCredentials(ctx.db, actor, {
-        userId,
-        email,
-        name: input.name ?? existing?.name ?? null,
-        actorName: actor.email,
-        isReset: false,
-        invalidateSessions: false,
-      })
+      const { temporaryPassword, emailStatus } = await issueTemporaryCredentials(
+        ctx.db,
+        actor,
+        {
+          userId,
+          email,
+          name: input.name ?? existing?.name ?? null,
+          actorName: actor.email,
+          isReset: false,
+          invalidateSessions: false,
+        },
+      )
 
       await ctx.audit({
         action: 'auth.user_created',
@@ -439,7 +448,7 @@ export const adminUsersRouter = router({
         after: { email, roles: input.roles },
       })
 
-      return { userId, email, temporaryPassword }
+      return { userId, email, temporaryPassword, emailStatus }
     }),
 
   /* ------------------------------------------------------------------ */
@@ -530,20 +539,24 @@ export const adminUsersRouter = router({
         throw new TRPCError({ code: 'CONFLICT', message: 'Reactivate the user before resetting their password.' })
       }
 
-      const temporaryPassword = await issueTemporaryCredentials(ctx.db, actor, {
-        userId: target.id,
-        email: target.email,
-        name: target.name,
-        actorName: actor.email,
-        isReset: true,
-        invalidateSessions: true,
-      })
+      const { temporaryPassword, emailStatus } = await issueTemporaryCredentials(
+        ctx.db,
+        actor,
+        {
+          userId: target.id,
+          email: target.email,
+          name: target.name,
+          actorName: actor.email,
+          isReset: true,
+          invalidateSessions: true,
+        },
+      )
 
       await ctx.audit({
         action: 'auth.password_reset_by_admin',
         target: { type: 'User', id: target.id },
       })
-      return { ok: true, email: target.email, temporaryPassword }
+      return { ok: true, email: target.email, temporaryPassword, emailStatus }
     }),
 
   /* ------------------------------------------------------------------ */

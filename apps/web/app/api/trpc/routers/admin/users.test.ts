@@ -10,6 +10,7 @@ import { adminUsersRouter } from './users'
 
 vi.mock('@studymind/integration-gmail/system-send', () => ({
   sendSystemEmail: vi.fn(async () => ({ status: 'sent' as const, id: 'm1' })),
+  resolveSystemAgentId: vi.fn(async () => null),
 }))
 
 interface FakeUser {
