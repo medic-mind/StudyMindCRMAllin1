@@ -5,6 +5,7 @@
 // (ADR 0014). Virtual Assistants triage inbound by reading; they cannot send
 // replies (that gate lives in the outbound interaction routers).
 
+import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -528,5 +529,145 @@ export const inboxRouter = router({
             : null
         return { items, nextCursor }
       }),
+
+    // ADR 0021 Phase 6 — internal notes + @mentions on a conversation. Notes
+    // are staff↔staff (a `note` Interaction scoped by `payload.conversationId`)
+    // and never sent outbound. A mention writes an audit row targeting the
+    // colleague so it lands in their notifications. All staff may add notes
+    // (§20 — VA "writes notes").
+    notes: router({
+      list: protectedProcedure
+        .input(z.object({ conversationId: z.string() }))
+        .query(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          if (!ALLOWED_ROLES.has(user.role)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+          }
+          const rows = await ctx.db.interaction.findMany({
+            where: {
+              deletedAt: null,
+              type: 'note',
+              payload: { path: ['conversationId'], equals: input.conversationId },
+            },
+            orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+            take: 100,
+            select: {
+              id: true,
+              occurredAt: true,
+              summary: true,
+              payload: true,
+              createdById: true,
+            },
+          })
+          const authorIds = Array.from(
+            new Set(rows.map((r) => r.createdById).filter((x): x is string => !!x)),
+          )
+          const authors =
+            authorIds.length > 0
+              ? await ctx.db.user.findMany({
+                  where: { id: { in: authorIds } },
+                  select: { id: true, name: true, email: true },
+                })
+              : []
+          const nameById = new Map(authors.map((u) => [u.id, u.name ?? u.email] as const))
+          return rows.map((r) => {
+            const p = (r.payload as Record<string, unknown> | null) ?? {}
+            const mentions = Array.isArray(p['mentionedUserIds'])
+              ? (p['mentionedUserIds'] as string[])
+              : []
+            return {
+              id: r.id,
+              occurredAt: r.occurredAt,
+              body: typeof p['body'] === 'string' ? (p['body'] as string) : r.summary,
+              authorId: r.createdById,
+              authorName: r.createdById ? (nameById.get(r.createdById) ?? null) : null,
+              mentions,
+            }
+          })
+        }),
+
+      add: auditedProcedure
+        .input(
+          z.object({
+            conversationId: z.string(),
+            body: z.string().trim().min(1).max(10_000),
+            mentionUserIds: z.array(z.string()).max(20).optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          if (!ALLOWED_ROLES.has(user.role)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+          }
+          const convo = await ctx.db.conversation.findUnique({
+            where: { id: input.conversationId },
+            select: { id: true, contactId: true, trengoTicketId: true },
+          })
+          if (!convo) throw new TRPCError({ code: 'NOT_FOUND' })
+
+          const mentions = Array.from(new Set(input.mentionUserIds ?? []))
+
+          // ADR 0020 Phase 6f — when this is a Trengo conversation, also push
+          // the note to Trengo's internal-notes endpoint so colleagues working
+          // there see it. Best-effort: a Trengo failure must not lose the
+          // note, which is already the CRM source of truth. We stamp the sync
+          // outcome onto the note payload for transparency.
+          let trengoNoteId: number | null = null
+          let trengoSync: 'synced' | 'failed' | null = null
+          if (convo.trengoTicketId !== null) {
+            try {
+              const { pushInternalNoteToTrengo } = await import(
+                '@studymind/integration-trengo/outbound'
+              )
+              const r = await pushInternalNoteToTrengo({
+                agentId: user.id,
+                ticketId: convo.trengoTicketId,
+                body: input.body,
+                requestId: ctx.requestId,
+              })
+              trengoNoteId = r.trengoNoteId
+              trengoSync = 'synced'
+            } catch {
+              trengoSync = 'failed'
+            }
+          }
+
+          const noteId = createId()
+          await ctx.db.interaction.create({
+            data: {
+              id: noteId,
+              type: 'note',
+              contactId: convo.contactId,
+              occurredAt: new Date(),
+              summary: input.body.slice(0, 280),
+              payload: {
+                conversationId: convo.id,
+                body: input.body,
+                mentionedUserIds: mentions,
+                internal: true,
+                ...(trengoSync ? { trengoSync, trengoNoteId } : {}),
+              },
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+          await ctx.audit({
+            action: 'conversation.note_added',
+            target: { type: 'Conversation', id: convo.id },
+            after: { noteId, mentions },
+          })
+          // Notify each mentioned colleague (skip self). The audit row's
+          // targetId surfaces in their notifications feed.
+          for (const uid of mentions) {
+            if (uid === user.id) continue
+            await ctx.audit({
+              action: 'conversation.note_mentioned',
+              target: { type: 'User', id: uid },
+              after: { conversationId: convo.id, noteId },
+            })
+          }
+          return { id: noteId }
+        }),
+    }),
   }),
 })

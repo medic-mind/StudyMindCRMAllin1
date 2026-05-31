@@ -1,8 +1,9 @@
-// Trengo conversation toolbar (ADR 0020 Phase 6f). Labels (tags), internal
-// notes, and mark-read — the operational actions Trengo offers, surfaced on
-// the thread and synced back to Trengo. Mounted only for Trengo conversations
-// (email has its own MailThreadActions). Sales Executive+ for label/note; the
-// server enforces it.
+// Trengo conversation toolbar (ADR 0020 Phase 6f). Labels (tags) and
+// mark-read — the operational actions Trengo offers, surfaced on the thread
+// and synced back to Trengo. Mounted only for Trengo conversations (email has
+// its own MailThreadActions). Internal notes are handled by the shared
+// ConversationNotes panel below (which also pushes to Trengo). Sales
+// Executive+ for labels; the server enforces it.
 
 'use client'
 
@@ -30,8 +31,6 @@ export function TrengoThreadActions({
   const router = useRouter()
   const utils = trpc.useUtils()
   const [newLabel, setNewLabel] = useState('')
-  const [noteOpen, setNoteOpen] = useState(false)
-  const [note, setNote] = useState('')
 
   const canTag = contactId !== null && ticketId !== null
 
@@ -62,15 +61,6 @@ export function TrengoThreadActions({
     },
     onError: (e) => toast.error(e.message ?? 'Could not remove label'),
   })
-  const addNote = trpc.interaction.trengo.addNote.useMutation({
-    onSuccess: () => {
-      setNote('')
-      setNoteOpen(false)
-      toast.success('Internal note added')
-      refresh()
-    },
-    onError: (e) => toast.error(e.message ?? 'Could not add note'),
-  })
   const markRead = trpc.interaction.trengo.markRead.useMutation({
     onSuccess: () => {
       toast.success('Marked read')
@@ -79,8 +69,7 @@ export function TrengoThreadActions({
     onError: (e) => toast.error(e.message ?? 'Could not mark read'),
   })
 
-  const busy =
-    addLabel.isPending || removeLabel.isPending || addNote.isPending || markRead.isPending
+  const busy = addLabel.isPending || removeLabel.isPending || markRead.isPending
 
   const submitLabel = () => {
     const v = newLabel.trim()
@@ -155,17 +144,8 @@ export function TrengoThreadActions({
       </div>
 
       {/* Actions row */}
-      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
-        {canTag ? (
-          <button
-            type="button"
-            onClick={() => setNoteOpen((v) => !v)}
-            className="rounded border border-neutral-300 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
-          >
-            {noteOpen ? 'Cancel note' : 'Internal note'}
-          </button>
-        ) : null}
-        {unread ? (
+      {unread ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
           <button
             type="button"
             onClick={() => markRead.mutate({ conversationId })}
@@ -174,33 +154,7 @@ export function TrengoThreadActions({
           >
             Mark read
           </button>
-        ) : null}
-        <span className="text-xs text-neutral-400">labels + notes sync to Trengo</span>
-      </div>
-
-      {noteOpen && canTag ? (
-        <div className="mt-2">
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={3}
-            placeholder="Team-only note — not sent to the customer."
-            className="w-full rounded border border-neutral-300 bg-white p-2 text-sm focus:border-primary-500 focus:outline-none"
-          />
-          <div className="mt-1 flex justify-end">
-            <button
-              type="button"
-              onClick={() =>
-                contactId &&
-                ticketId !== null &&
-                addNote.mutate({ contactId, ticketId, body: note })
-              }
-              disabled={addNote.isPending || !note.trim()}
-              className="rounded bg-primary-600 px-3 py-1 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
-            >
-              {addNote.isPending ? 'Saving…' : 'Add note'}
-            </button>
-          </div>
+          <span className="text-xs text-neutral-400">labels sync to Trengo</span>
         </div>
       ) : null}
     </div>

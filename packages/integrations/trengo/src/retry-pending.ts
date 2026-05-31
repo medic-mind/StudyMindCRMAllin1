@@ -23,7 +23,6 @@ import { inngest } from '@studymind/jobs'
 
 import {
   addConversationLabel,
-  addConversationNote,
   assignConversation,
   closeConversation,
   removeConversationLabel,
@@ -77,7 +76,6 @@ export const trengoRetryPendingSend = inngest.createFunction(
               'ticket_assigned',
               'label_added',
               'label_removed',
-              'note',
             ],
           },
           updatedAt: { lt: cutoff },
@@ -178,20 +176,6 @@ export const trengoRetryPendingSend = inngest.createFunction(
             agentId: payload.agentId,
             ticketId: payload.ticketId,
             label: payload.label,
-            requestId: payload.outboundRequestId,
-          })
-          recovered += 1
-        } else if (row.type === 'note') {
-          // Only CRM-sourced internal notes carry pending_send + a body.
-          if (typeof payload.body !== 'string' || payload.internalNote !== true) {
-            skipped += 1
-            continue
-          }
-          await addConversationNote({
-            contactId: row.contactId,
-            agentId: payload.agentId,
-            ticketId: payload.ticketId,
-            body: payload.body,
             requestId: payload.outboundRequestId,
           })
           recovered += 1

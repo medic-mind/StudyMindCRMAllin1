@@ -17,9 +17,13 @@ import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { LiveUpdates } from '../LiveUpdates'
+import { getCurrentUser } from '@/lib/auth/server'
+
 import { AssignControl } from './AssignControl'
+import { ConversationNotes } from './ConversationNotes'
 import { TrengoThreadActions } from './TrengoThreadActions'
 import { ConversationReply } from './ConversationReply'
+import { ConversationTaskButton } from './ConversationTaskButton'
 import { EmailReply } from './EmailReply'
 import { MailThreadActions } from './MailThreadActions'
 
@@ -36,6 +40,7 @@ export default async function ConversationDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
+  const me = await getCurrentUser()
   const caller = await createServerCaller()
   let data: Awaited<ReturnType<typeof caller.inbox.conversations.get>> | null = null
   let forbidden = false
@@ -129,6 +134,17 @@ export default async function ConversationDetailPage({
           </div>
           {head.subject ? (
             <p className="mt-2 text-sm text-neutral-700">{head.subject}</p>
+          ) : null}
+          {me ? (
+            <div className="mt-2 border-t border-neutral-100 pt-2">
+              <ConversationTaskButton
+                contactId={head.contactId}
+                meId={me.id}
+                defaultTitle={`Follow up: ${
+                  head.subject ?? head.contactName ?? 'conversation'
+                }`.slice(0, 280)}
+              />
+            </div>
           ) : null}
         </header>
 
@@ -253,6 +269,8 @@ export default async function ConversationDetailPage({
             </div>
           )}
         </div>
+
+        <ConversationNotes conversationId={head.id} />
       </PageBody>
     </>
   )

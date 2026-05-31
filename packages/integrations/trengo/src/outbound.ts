@@ -625,109 +625,33 @@ async function changeConversationLabel(
 }
 
 // -----------------------------------------------------------------------------
-// Internal notes — team-only note on a conversation. ADR 0020 Phase 6f.
+// Internal notes — push a team-only note to Trengo. ADR 0020 Phase 6f.
 //
-// A note is NOT delivered to the customer (distinct from a reply). We persist
-// a `note` Interaction on the contact timeline and push it to Trengo's
-// internal-notes endpoint so colleagues working in Trengo see it too.
+// The note's CRM source of truth is written by the unified notes path
+// (inbox.conversations.notes.add — which also handles @mentions and works for
+// every conversation, not just Trengo). This helper is the thin Trengo-side
+// push: it builds the per-agent client and posts to the internal-notes
+// endpoint. The caller treats failure as best-effort (the note is already
+// saved CRM-side), so this stays a plain throw-on-failure call.
 // -----------------------------------------------------------------------------
 
-export interface ConversationNoteInput {
-  contactId: string
+export interface PushInternalNoteInput {
   agentId: string
   ticketId: number
   body: string
   requestId: string
 }
 
-export interface ConversationNoteResult {
-  interactionId: string
-  ticketId: number
-  trengoNoteId: number
-}
-
-export async function addConversationNote(
-  input: ConversationNoteInput,
-): Promise<ConversationNoteResult> {
-  const existing = await db.interaction.findFirst({
-    where: {
-      type: 'note',
-      contactId: input.contactId,
-      payload: { path: ['outboundRequestId'], equals: input.requestId },
-    },
-    select: { id: true },
+export async function pushInternalNoteToTrengo(
+  input: PushInternalNoteInput,
+): Promise<{ trengoNoteId: number }> {
+  const client = await createClientForAgent({
+    agentId: input.agentId,
+    requestId: input.requestId,
+    purpose: 'trengo.note',
   })
-  let interactionId: string
-  if (existing) {
-    interactionId = existing.id
-  } else {
-    const created = await db.interaction.create({
-      data: {
-        id: createId(),
-        type: 'note',
-        contactId: input.contactId,
-        occurredAt: new Date(),
-        summary: input.body.slice(0, 280),
-        createdById: input.agentId,
-        updatedById: input.agentId,
-        payload: {
-          interactionType: 'note',
-          source: 'crm_outbound',
-          status: 'pending_send',
-          internalNote: true,
-          ticketId: input.ticketId,
-          agentId: input.agentId,
-          body: input.body,
-          outboundRequestId: input.requestId,
-        },
-      },
-      select: { id: true },
-    })
-    interactionId = created.id
-  }
-
-  let client
-  try {
-    client = await createClientForAgent({
-      agentId: input.agentId,
-      requestId: input.requestId,
-      purpose: 'trengo.note',
-    })
-  } catch (err) {
-    await markFailed(interactionId, err)
-    throw err
-  }
-
-  try {
-    const note = await client.addInternalNote(input.ticketId, input.body)
-    await db.interaction.update({
-      where: { id: interactionId },
-      data: {
-        payload: {
-          interactionType: 'note',
-          source: 'crm_outbound',
-          status: 'sent',
-          internalNote: true,
-          ticketId: input.ticketId,
-          agentId: input.agentId,
-          body: input.body,
-          outboundRequestId: input.requestId,
-          trengoNoteId: note.id,
-        },
-      },
-    })
-    await writeAuditLogEntry(db, {
-      actorId: input.agentId,
-      action: 'trengo.note_added',
-      target: { type: 'Contact', id: input.contactId },
-      requestId: input.requestId,
-      after: { interactionId, ticketId: input.ticketId, trengoNoteId: note.id },
-    })
-    return { interactionId, ticketId: input.ticketId, trengoNoteId: note.id }
-  } catch (err) {
-    await markFailed(interactionId, err)
-    throw err
-  }
+  const note = await client.addInternalNote(input.ticketId, input.body)
+  return { trengoNoteId: note.id }
 }
 
 /** Fetch the agent's Trengo label catalogue (for the label picker). */

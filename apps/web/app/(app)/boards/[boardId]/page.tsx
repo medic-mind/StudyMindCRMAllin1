@@ -99,38 +99,38 @@ export default async function BoardPage({ params }: PageProps) {
         title={board.name}
         subtitle={board.description ?? 'Cards grouped by stage. Every move is audited.'}
         breadcrumbs={[{ label: 'Boards', href: '/boards' }]}
-        actions={
-          <div className="flex items-center gap-2">
-            {canManage ? (
-              <a
-                href={`/boards/${board.id}/settings`}
-                className="inline-flex h-8 items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-800 hover:bg-neutral-200"
-              >
-                Settings
-              </a>
-            ) : null}
-            {canWrite && stages.length > 0 ? (
-              <AddCardButton
-                boardId={board.id}
-                stages={stageOptions}
-                labels={labels}
-              />
-            ) : null}
-          </div>
-        }
       />
-      {/* Board switcher sits on its own row so it stays anchored on the
-          LEFT even when the kanban scrolls horizontally — previously it
-          competed with the header actions and got pushed off to the
-          right with everything else. */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500">
-          Board
-        </span>
-        <BoardSwitcher
-          boards={boards.map((b) => ({ id: b.id, name: b.name }))}
-          currentId={board.id}
-        />
+      {/* Sticky board toolbar — board picker on the left, Settings + Add card
+          on the right, anchored to the top of the viewport so the agent can
+          switch board or drop a new card from anywhere on the page
+          regardless of horizontal scroll on the kanban. */}
+      <div className="sticky top-0 z-30 -mx-6 mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200/80 bg-white/95 px-6 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500">
+            Board
+          </span>
+          <BoardSwitcher
+            boards={boards.map((b) => ({ id: b.id, name: b.name }))}
+            currentId={board.id}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          {canManage ? (
+            <a
+              href={`/boards/${board.id}/settings`}
+              className="inline-flex h-8 items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-800 hover:bg-neutral-200"
+            >
+              Settings
+            </a>
+          ) : null}
+          {canWrite && stages.length > 0 ? (
+            <AddCardButton
+              boardId={board.id}
+              stages={stageOptions}
+              labels={labels}
+            />
+          ) : null}
+        </div>
       </div>
       <PageBody>
         {stages.length === 0 ? (

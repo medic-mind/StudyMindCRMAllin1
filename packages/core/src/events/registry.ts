@@ -304,9 +304,17 @@ export const EVENT_NAMES = [
   'mail.thread_starred',
   'mail.thread_trashed',
   'mail.thread_labeled',
-  // ADR 0021 Phase 4 — reply to an email thread from the CRM (reuses the Gmail
-  // sendReply outbound, which additionally writes gmail.email_sent).
+  // ADR 0021 Phase 4 — reply to / compose an email from the CRM (reuse the
+  // Gmail sendReply / sendEmail outbound, which additionally write
+  // gmail.email_sent).
   'mail.thread_replied',
+  'mail.composed',
+  // ADR 0021 Phase 6 — internal notes + @mentions on a conversation (shared
+  // team inboxes). Notes are staff↔staff and never sent outbound; a mention
+  // writes an audit row targeting the colleague so it surfaces in their
+  // notifications.
+  'conversation.note_added',
+  'conversation.note_mentioned',
 
   // Audit-B2: payment links, allocations, gmail outbound, trengo connect
   'charge.payment_link_created',
@@ -329,13 +337,11 @@ export const EVENT_NAMES = [
   'trengo.ticket_reopen_requested',
   // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
   'trengo.ticket_assign_requested',
-  // ADR 0020 Phase 6f — label (tag) add/remove from the CRM, internal notes,
-  // snooze, and mark-read (drives the Trengo label / notes endpoints; snooze
-  // + read are CRM-side head state).
+  // ADR 0020 Phase 6f — label (tag) add/remove from the CRM (drives the
+  // Trengo /labels endpoints) and mark-read (CRM-side head state). Internal
+  // notes flow through `conversation.note_added` (the unified notes path).
   'trengo.label_add_requested',
   'trengo.label_remove_requested',
-  'trengo.note_added',
-  'trengo.conversation_snoozed',
   'trengo.conversation_read',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests

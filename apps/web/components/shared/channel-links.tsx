@@ -121,8 +121,16 @@ export function PhoneLink({ phone }: { phone: string | null | undefined }) {
               role="menu"
               aria-label="Call options"
               onClick={(e) => e.stopPropagation()}
-              style={{ position: 'fixed', top: coords.top, left: coords.left }}
-              className="z-[100] w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white text-left shadow-lg"
+              // Inline z-index in addition to the Tailwind class — defence
+              // against a missed JIT pass; the popover MUST sit above the
+              // per-card stacking contexts dnd-kit creates.
+              style={{
+                position: 'fixed',
+                top: coords.top,
+                left: coords.left,
+                zIndex: 9999,
+              }}
+              className="z-[9999] w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white text-left shadow-xl"
             >
               <a
                 role="menuitem"

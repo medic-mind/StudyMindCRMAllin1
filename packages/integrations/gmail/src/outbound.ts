@@ -95,8 +95,12 @@ export function buildRawReply(input: {
   attachments?: ReadonlyArray<OutboundAttachment>
   /** Deterministic boundary seed (tests). Defaults to a fresh id. */
   boundarySeed?: string
+  /** When true, use the subject verbatim (a brand-new email, not a reply). */
+  literalSubject?: boolean
 }): { raw: string; subject: string; headers: Record<string, string> } {
-  const subj = normaliseReplySubject(input.subject)
+  const subj = input.literalSubject
+    ? input.subject.trim()
+    : normaliseReplySubject(input.subject)
   const hasAttachments = (input.attachments?.length ?? 0) > 0
 
   const headers: Record<string, string> = {
@@ -315,11 +319,168 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
   }
 }
 
+export interface SendEmailInput {
+  agentId: string
+  /** Display From — Gmail sends as the authenticated user / send-as alias. */
+  fromAddress?: string | undefined
+  subject: string
+  body: string
+  toAddresses: string[]
+  cc?: string[] | undefined
+  bcc?: string[] | undefined
+  /** OpenTelemetry trace id; the compose idempotency key. */
+  requestId: string
+  attachments?: ReadonlyArray<OutboundAttachment>
+}
+
+export interface SendEmailResult {
+  outboundEmailIntentId: string
+  gmailMessageId: string
+  gmailThreadId: string
+  status: 'sent'
+  replayed: boolean
+}
+
+/**
+ * Send a brand-new email (a fresh thread, not a reply). Mirrors `sendReply`:
+ * persist intent → send → mark sent → link Contacts → audit. Idempotent on
+ * `(threadId='compose:<requestId>', requestId)` since there is no thread id
+ * until Gmail assigns one. The literal subject is used verbatim (no `Re:`).
+ */
+export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
+  const idemThreadId = `compose:${input.requestId}`
+  const existing = await db.outboundEmailIntent.findUnique({
+    where: {
+      threadId_requestId: { threadId: idemThreadId, requestId: input.requestId },
+    },
+    select: { id: true, status: true, gmailMessageId: true },
+  })
+  if (existing && existing.status === 'sent' && existing.gmailMessageId) {
+    return {
+      outboundEmailIntentId: existing.id,
+      gmailMessageId: existing.gmailMessageId,
+      gmailThreadId: '',
+      status: 'sent',
+      replayed: true,
+    }
+  }
+
+  const intentId = existing?.id ?? createId()
+  if (!existing) {
+    await db.outboundEmailIntent.create({
+      data: {
+        id: intentId,
+        agentId: input.agentId,
+        threadId: idemThreadId,
+        requestId: input.requestId,
+        subject: input.subject,
+        toAddresses: input.toAddresses,
+        ccAddresses: input.cc ?? [],
+        bccAddresses: input.bcc ?? [],
+        status: 'pending',
+        createdById: input.agentId,
+        updatedById: input.agentId,
+      },
+    })
+  }
+
+  const { raw } = buildRawReply({
+    subject: input.subject,
+    toAddresses: input.toAddresses,
+    cc: input.cc,
+    bcc: input.bcc,
+    body: input.body,
+    fromAddress: input.fromAddress,
+    attachments: input.attachments,
+    literalSubject: true,
+  })
+
+  const client = await createClientForAgent({
+    agentId: input.agentId,
+    purpose: 'gmail.outbound_compose',
+    requestId: input.requestId,
+  })
+  let sent
+  try {
+    sent = await client.sendMessage({ raw })
+  } catch (err) {
+    await db.outboundEmailIntent.update({
+      where: { id: intentId },
+      data: { status: 'failed', updatedById: input.agentId },
+    })
+    throw err
+  }
+
+  await db.outboundEmailIntent.update({
+    where: { id: intentId },
+    data: { status: 'sent', gmailMessageId: sent.id, updatedById: input.agentId },
+  })
+
+  const recipients = Array.from(
+    new Set(
+      [...input.toAddresses, ...(input.cc ?? []), ...(input.bcc ?? [])].map((s) =>
+        s.trim().toLowerCase(),
+      ),
+    ),
+  )
+  const contacts =
+    recipients.length === 0
+      ? []
+      : await db.contact.findMany({
+          where: { email: { in: recipients }, deletedAt: null },
+          select: { id: true, email: true },
+        })
+
+  if (contacts.length > 0) {
+    await db.$transaction(
+      contacts.map((c) =>
+        db.interaction.create({
+          data: {
+            id: createId(),
+            type: 'email_sent',
+            contactId: c.id,
+            occurredAt: new Date(),
+            summary: `Email: ${input.subject}`.slice(0, 280),
+            payload: {
+              event: 'email.sent',
+              gmailThreadId: sent.threadId,
+              gmailMessageId: sent.id,
+              toAddresses: input.toAddresses,
+              cc: input.cc ?? [],
+              outboundEmailIntentId: intentId,
+            },
+            createdById: input.agentId,
+            updatedById: input.agentId,
+          },
+        }),
+      ),
+    )
+  }
+
+  await writeAuditLogEntry(db, {
+    actorId: input.agentId,
+    action: 'gmail.email_sent',
+    target: { type: 'OutboundEmailIntent', id: intentId },
+    requestId: input.requestId,
+    after: {
+      gmailThreadId: sent.threadId,
+      gmailMessageId: sent.id,
+      toAddresses: input.toAddresses,
+      cc: input.cc ?? [],
+      contactIds: contacts.map((c) => c.id),
+    },
+  })
+
+  return {
+    outboundEmailIntentId: intentId,
+    gmailMessageId: sent.id,
+    gmailThreadId: sent.threadId || '',
+    status: 'sent',
+    replayed: false,
+  }
+}
+
 export interface OutboundContext {
   actorId: string
   requestId: string
-}
-
-export async function ping(_ctx: OutboundContext): Promise<void> {
-  throw new Error('not implemented')
 }

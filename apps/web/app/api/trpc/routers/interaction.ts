@@ -797,44 +797,10 @@ export const interactionRouter = router({
       }
     }),
 
-    // ADR 0020 Phase 6f — internal (team-only) note on a conversation, synced
-    // to Trengo's notes endpoint.
-    addNote: auditedProcedure
-      .input(
-        z.object({
-          contactId: z.string().min(1),
-          ticketId: z.number().int().positive(),
-          body: z.string().trim().min(1).max(4_000),
-        }),
-      )
-      .mutation(async ({ ctx, input }) => {
-        const user = requireUser(ctx)
-        gateTrengoStateChange(user.role)
-        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-note')
-        const { addConversationNote } = await import(
-          '@studymind/integration-trengo/outbound'
-        )
-        try {
-          const result = await addConversationNote({
-            contactId: input.contactId,
-            agentId: user.id,
-            ticketId: input.ticketId,
-            body: input.body,
-            requestId: ctx.requestId,
-          })
-          await ctx.audit({
-            action: 'trengo.note_added',
-            target: { type: 'Contact', id: input.contactId },
-            after: { interactionId: result.interactionId, ticketId: input.ticketId },
-          })
-          return result
-        } catch (err) {
-          throw mapTrengoOutboundError(err)
-        }
-      }),
-
     // ADR 0020 Phase 6f — clear a conversation's unread count (CRM-side head
-    // state; Trengo's own read state is not exposed for write).
+    // state; Trengo's own read state is not exposed for write). Internal
+    // notes go through the unified `inbox.conversations.notes.add` (which adds
+    // @mentions and pushes to Trengo for Trengo tickets).
     markRead: auditedProcedure
       .input(z.object({ conversationId: z.string().min(1) }))
       .mutation(async ({ ctx, input }) => {
