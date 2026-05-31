@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import {
   ArchiveIcon,
   CheckIcon,
+  FileTextIcon,
   MailIcon,
   PlusIcon,
   SearchIcon,
@@ -806,6 +807,28 @@ function ReadingPane({
                 <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
                   {m.body ?? '(no content)'}
                 </p>
+                {m.mailAttachments.length > 0 ? (
+                  <ul className="mt-2 flex flex-wrap gap-1.5">
+                    {m.mailAttachments.map((a) => (
+                      <li key={a.index}>
+                        <a
+                          href={`/api/internal/mail-attachments/${m.id}/${a.index}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 hover:border-primary-300 hover:text-primary-700"
+                        >
+                          <FileTextIcon size={13} />
+                          <span className="max-w-[14rem] truncate">{a.filename}</span>
+                          {a.sizeBytes ? (
+                            <span className="text-neutral-400">
+                              {Math.max(1, Math.round(a.sizeBytes / 1024))} KB
+                            </span>
+                          ) : null}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </article>
             )
           })
