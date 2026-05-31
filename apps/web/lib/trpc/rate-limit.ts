@@ -1,10 +1,13 @@
-// Sliding-window rate limiter. Backed by Redis in production; in-memory
-// fallback for local dev (and as a degraded-mode fallback when Redis is
-// unreachable, per CLAUDE.md §27 "missing Redis falls through").
+// Fixed-window rate limiter. Backed by Redis in production (shared across
+// Railway instances); in-memory fallback for local dev (and as a degraded-
+// mode fallback when Redis is unreachable, per CLAUDE.md §27 "missing Redis
+// falls through").
 //
-// Per-procedure limits live in `@studymind/core/auth/rate-limits`.
+// Per-procedure limits live in `@studymind/core/auth/rate-limits`. The Redis
+// counter lives in `@studymind/core/cache/redis-rate-limit`.
 
 import { getRateLimit, type RateLimit } from '@studymind/core/auth/rate-limits'
+import { redisRateLimitAllow } from '@studymind/core/cache/redis-rate-limit'
 
 interface Bucket {
   count: number
@@ -22,12 +25,19 @@ export interface RateLimitParams {
 
 export async function rateLimit(params: RateLimitParams): Promise<boolean> {
   const limit = params.limit ?? getRateLimit(params.procedure)
-  const windowMs = limit.windowSec * 1000
   const key = `${params.userId}:${params.procedure}`
-  // TODO: when REDIS_URL is configured, swap to a Redis sliding-window counter.
-  // The interface stays the same so callers do not change. If Redis is
-  // configured but unreachable at request time we fall through to the memory
-  // bucket below — degraded mode, never fail-closed on the hot path.
+
+  // Prefer the shared Redis counter so the limit holds across instances.
+  // `null` means Redis is not configured or unreachable — fall through to
+  // the per-instance memory bucket. We never fail-closed on the hot path.
+  const viaRedis = await redisRateLimitAllow({
+    key,
+    windowSec: limit.windowSec,
+    max: limit.max,
+  })
+  if (viaRedis !== null) return viaRedis
+
+  const windowMs = limit.windowSec * 1000
   const now = Date.now()
   const existing = memoryBuckets.get(key)
   if (!existing || existing.resetAt <= now) {
