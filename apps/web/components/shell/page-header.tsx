@@ -23,15 +23,14 @@ interface Props {
 export function PageHeader({ title, subtitle, breadcrumbs, actions }: Props) {
   return (
     <header
-      // Negative -mx-6 -mt-6 + mb-6 lets the header sit flush against the
-      // shell when the page lives inside the layout's default padded
-      // content container. Pages that want a fully custom layout can wrap
-      // PageHeader in a Fragment + their own padded body.
-      className="-mx-6 -mt-6 mb-6 flex flex-col justify-center border-b border-neutral-200/80 bg-gradient-to-b from-white via-white to-neutral-50/70 px-6"
-      style={{ minHeight: '88px' }}
+      // Flat white surface + hairline divider — replaces the previous
+      // gradient that competed with content cards below for visual weight.
+      // Tighter padding (no minHeight) keeps the chrome out of the way on
+      // dense surfaces; subtitle still gets room when present.
+      className="-mx-6 -mt-6 mb-6 border-b border-neutral-200/80 bg-white px-6 pb-4 pt-4"
     >
       {breadcrumbs && breadcrumbs.length > 0 ? (
-        <nav aria-label="Breadcrumb" className="pt-2">
+        <nav aria-label="Breadcrumb" className="mb-2">
           <ol className="flex flex-wrap items-center gap-1 text-xs text-neutral-500">
             {breadcrumbs.map((c, idx) => {
               const last = idx === breadcrumbs.length - 1
@@ -44,7 +43,7 @@ export function PageHeader({ title, subtitle, breadcrumbs, actions }: Props) {
                   ) : (
                     <Link
                       href={c.href}
-                      className="text-neutral-500 hover:text-neutral-800 hover:underline"
+                      className="text-neutral-500 transition-colors hover:text-neutral-800"
                     >
                       {c.label}
                     </Link>
@@ -62,9 +61,9 @@ export function PageHeader({ title, subtitle, breadcrumbs, actions }: Props) {
         </nav>
       ) : null}
 
-      <div className="flex items-center justify-between gap-4 py-3.5">
+      <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="truncate text-[1.7rem] font-semibold leading-tight tracking-tight text-neutral-900">
+          <h1 className="truncate text-2xl font-semibold leading-tight tracking-tight text-neutral-900">
             {title}
           </h1>
           {subtitle ? (

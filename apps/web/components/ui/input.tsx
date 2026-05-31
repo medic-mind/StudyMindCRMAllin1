@@ -8,10 +8,15 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(({ className, ...r
   <input
     ref={ref}
     className={cn(
-      'flex h-9 w-full rounded-md border border-neutral-300 bg-white px-3 py-1 text-sm',
-      'placeholder:text-neutral-400',
-      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-1',
-      'disabled:cursor-not-allowed disabled:opacity-50',
+      // Slightly softer border, brand-matched focus ring (was harsh black
+      // ring-neutral-900 before — inconsistent with Button which already
+      // uses primary-500). Hover deepens the border so the field reads as
+      // interactive before the agent clicks.
+      'flex h-9 w-full rounded-md border border-neutral-300 bg-white px-3 py-1 text-sm text-neutral-900',
+      'shadow-[inset_0_1px_0_rgba(0,0,0,0.02)] transition-colors',
+      'placeholder:text-neutral-400 hover:border-neutral-400',
+      'focus-visible:outline-none focus-visible:border-primary-500 focus-visible:ring-2 focus-visible:ring-primary-500/30',
+      'disabled:cursor-not-allowed disabled:bg-neutral-50 disabled:text-neutral-500',
       className,
     )}
     {...rest}
