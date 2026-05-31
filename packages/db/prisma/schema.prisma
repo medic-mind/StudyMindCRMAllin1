@@ -1854,6 +1854,18 @@ model BusinessAccount {
 
   notes String?
 
+  /// Set when this account was imported from the B2B Invoices Platform and the
+  /// auto-classifier could not confidently decide school vs B2B partner. Such
+  /// accounts surface in the "Unsorted" tray with one-click classify buttons
+  /// (CRM ↔ invoicing sync). Cleared once a human (or a confident rule) files
+  /// it. Additive + nullable — forward-only (CLAUDE.md §19).
+  needsClassification      Boolean @default(false)
+  /// Why the classifier chose `kind` (or punted to the tray). Free text for the
+  /// tray UI, e.g. "name contains 'School'", "domain .sch.uk", "no signal".
+  classificationReason     String?
+  /// 0..1 confidence from the classifier; null for hand-created accounts.
+  classificationConfidence Float?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?
@@ -1872,6 +1884,7 @@ model BusinessAccount {
   @@index([kind])
   @@index([status])
   @@index([archivedAt])
+  @@index([needsClassification])
 }
 
 /// Many-to-many: BusinessAccount ↔ Company (sister-brand tag). Mirrors

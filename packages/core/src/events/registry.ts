@@ -147,6 +147,10 @@ export const EVENT_NAMES = [
   'invoicing.payment_recorded',
   'invoicing.payment_synced',
   'invoicing.invoice_marked_paid',
+  // Backfill → real School / B2B Partner accounts, auto-classification, and the
+  // Unsorted tray (one-click classify). CLAUDE.md §2 (idempotent), §6.
+  'invoicing.accounts_imported',
+  'invoicing.account_classified',
 
   // Interactions
   'interaction.created',
@@ -396,6 +400,9 @@ export const INNGEST_EVENT_NAMES = [
   // async like every other provider), plus the nightly events-feed reconcile.
   'invoicing/event.received',
   'invoicing/reconcile.requested',
+  // Admin-triggered one-shot backfill: pull every B2B customer into real CRM
+  // accounts. Idempotent; safe to re-run.
+  'invoicing/accounts.import.requested',
   // ADR 0020 Phase 2c — one-shot conversation-head backfill. Self-recursive
   // (the function reschedules with a cursor) so a single Inngest event name
   // covers the initial trigger and every continuation.
