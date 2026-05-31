@@ -153,8 +153,10 @@ trash-with-confirm), **mark-read-on-open** (like Gmail), and an inline **reply**
 box. Every action runs the audited tRPC mutation against the live mailbox and
 invalidates the TanStack queries; the pane subscribes to the SSE stream
 (`useConversationStream` now also invalidates `mail.threads.list`) so it stays
-live. **Still to come:** keyboard shortcuts, attachment previews, label editing
-in the pane.
+live. **Keyboard shortcuts (implemented):** `j`/`k` navigate, `e` archive, `s`
+star, `u` mark-unread, `#` trash, `r` reply, `/` search, `c` compose, `Esc`
+close, `?` toggles a shortcuts overlay — inert while typing in a field.
+**Still to come:** attachment previews, label editing in the pane.
 
 ### Phase 5 — Two-way action sync (implemented)
 
