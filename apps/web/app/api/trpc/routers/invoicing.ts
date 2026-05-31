@@ -106,6 +106,21 @@ function mapApiError(err: unknown): never {
       message: `The invoicing platform returned ${err.status}.`,
     })
   }
+  // Field-encryption failure: the stored API key can't be decrypted (usually
+  // because the encryption key changed between deploys — AUTH_SECRET drift).
+  // Surface an actionable message instead of the raw "Failed to unwrap data
+  // key", and tell the user the fix (re-save the key; set CRM_LOCAL_ENCRYPTION_KEY).
+  const msg = err instanceof Error ? err.message : String(err)
+  if (/unwrap data key|envelope authentication|decrypt/i.test(msg)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        'Could not decrypt the stored invoicing API key — the field-encryption key has ' +
+        'changed (this happens when AUTH_SECRET differs between deploys). Fix: in Settings → ' +
+        'Invoicing re-paste and Save the API key + webhook secret. To stop it recurring, set a ' +
+        'stable CRM_LOCAL_ENCRYPTION_KEY in Railway (web + worker).',
+    })
+  }
   throw err
 }
 
