@@ -182,7 +182,7 @@ export default async function UsersSettingsPage({
         </p>
       )}
 
-      <div className="mt-4 overflow-hidden rounded-md border border-neutral-200 bg-white">
+      <div className="mt-4 rounded-md border border-neutral-200 bg-white">
         {rows.length === 0 ? (
           <div className="p-6 text-sm text-neutral-600">
             {status === 'all'
@@ -195,17 +195,19 @@ export default async function UsersSettingsPage({
           <Table>
             <Thead>
               <Tr>
-                <Th>User</Th>
-                <Th>Roles</Th>
-                <Th>Last seen</Th>
-                <Th>Status</Th>
-                <Th className="text-right">Actions</Th>
+                {/* User column is greedy (w-full) so the metadata columns hug
+                    their content instead of sprawling on wide screens. */}
+                <Th className="w-full">User</Th>
+                <Th className="whitespace-nowrap">Roles</Th>
+                <Th className="whitespace-nowrap">Last seen</Th>
+                <Th className="whitespace-nowrap">Status</Th>
+                <Th className="whitespace-nowrap text-right">Actions</Th>
               </Tr>
             </Thead>
             <Tbody>
               {rows.map((u) => (
                 <Tr key={u.id}>
-                  <Td>
+                  <Td className="w-full">
                     <div className="flex items-center gap-2.5">
                       <Avatar name={u.name || u.email} />
                       <div className="min-w-0">
