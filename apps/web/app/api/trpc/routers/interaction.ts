@@ -49,6 +49,45 @@ function newId(): string {
   return createId()
 }
 
+// Outbound attachment input (base64). Files travel through tRPC as base64;
+// we cap each at ~8 MB and decode to Buffers before the integration uploads
+// them to Trengo. Small-file path only — larger media should use a presigned
+// upload (future).
+const TrengoAttachmentInput = z.object({
+  filename: z.string().trim().min(1).max(255),
+  contentType: z.string().trim().min(1).max(120),
+  dataBase64: z.string().min(1).max(12_000_000),
+})
+
+interface DecodedAttachment {
+  filename: string
+  contentType: string
+  data: Buffer
+}
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+
+function decodeTrengoAttachments(
+  input: Array<z.infer<typeof TrengoAttachmentInput>> | undefined,
+): DecodedAttachment[] {
+  if (!input || input.length === 0) return []
+  const out: DecodedAttachment[] = []
+  for (const a of input) {
+    const data = Buffer.from(a.dataBase64, 'base64')
+    if (data.byteLength === 0) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `Empty file: ${a.filename}` })
+    }
+    if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `${a.filename} exceeds the 8 MB limit.`,
+      })
+    }
+    out.push({ filename: a.filename, contentType: a.contentType, data })
+  }
+  return out
+}
+
 export const interactionRouter = router({
   list: protectedProcedure
     .input(InteractionListInput)
@@ -471,7 +510,9 @@ export const interactionRouter = router({
       .input(
         z.object({
           interactionId: z.string(),
-          body: z.string().trim().min(1).max(4_000),
+          // Body may be empty when sending an attachment-only message.
+          body: z.string().trim().max(4_000).default(''),
+          attachments: z.array(TrengoAttachmentInput).max(10).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -480,6 +521,13 @@ export const interactionRouter = router({
           !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
         ) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send messages' })
+        }
+        const attachments = decodeTrengoAttachments(input.attachments)
+        if (!input.body.trim() && attachments.length === 0) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Write a message or attach a file.',
+          })
         }
 
         const seed = await ctx.db.interaction.findFirst({
@@ -515,6 +563,7 @@ export const interactionRouter = router({
             channel: conv.channel,
             body: input.body,
             requestId: ctx.requestId,
+            ...(attachments.length > 0 ? { attachments } : {}),
           })
 
           await ctx.audit({
@@ -552,6 +601,73 @@ export const interactionRouter = router({
             })
           }
           throw err
+        }
+      }),
+
+    // ADR 0020 Phase 6j — start a brand-new conversation with a contact who
+    // has no open ticket. Resolves the recipient from the contact (phone for
+    // whatsapp/sms, email for email), creates the Trengo conversation, and
+    // mirrors a head so it shows in the inbox at once. Sales Executive+.
+    startConversation: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']),
+          body: z.string().trim().min(1).max(4_000),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (
+          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+        ) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send messages' })
+        }
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-start')
+
+        const contact = await ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: { id: true, phoneE164: true, email: true },
+        })
+        if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+
+        const recipient =
+          input.channel === 'email' ? contact.email : contact.phoneE164
+        if (!recipient) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              input.channel === 'email'
+                ? 'This contact has no email address.'
+                : 'This contact has no phone number.',
+          })
+        }
+
+        const { startConversation } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        try {
+          const result = await startConversation({
+            contactId: contact.id,
+            agentId: user.id,
+            channel: input.channel,
+            recipient,
+            body: input.body,
+            requestId: ctx.requestId,
+          })
+          await ctx.audit({
+            action: 'trengo.reply_requested',
+            target: { type: 'Contact', id: contact.id },
+            after: {
+              interactionId: result.interactionId,
+              ticketId: result.ticketId,
+              channel: input.channel,
+              newConversation: true,
+            },
+          })
+          return result
+        } catch (err) {
+          throw mapTrengoOutboundError(err)
         }
       }),
 

@@ -81,4 +81,41 @@ describe('Trengo client — labels + notes', () => {
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ body: 'team only' }) }),
     )
   })
+
+  it('uploadMedia POSTs multipart to /media and returns the id', async () => {
+    const fetchMock = makeFetch({ data: { id: 77 } })
+    const client = await clientWith(fetchMock)
+    const media = await client.uploadMedia({
+      filename: 'doc.pdf',
+      contentType: 'application/pdf',
+      data: Buffer.from('hello'),
+    })
+    expect(media).toEqual({ id: 77 })
+    const call = fetchMock.mock.calls[0]!
+    expect(String(call[0])).toContain('/media')
+    const init = call[1] as RequestInit
+    expect(init.method).toBe('POST')
+    // multipart body — boundary set by FormData, so Content-Type is omitted.
+    expect(init.body).toBeInstanceOf(FormData)
+  })
+
+  it('createConversation POSTs channel + recipient + body to /messages', async () => {
+    const fetchMock = makeFetch({ message: { id: 9, ticket_id: 1234 } })
+    const client = await clientWith(fetchMock)
+    const res = await client.createConversation({
+      channel: 'whatsapp',
+      recipient: '+447700900001',
+      body: 'Hello there',
+    })
+    expect(res).toEqual({ ticketId: 1234, messageId: 9 })
+    const call = fetchMock.mock.calls[0]!
+    expect(String(call[0])).toContain('/messages')
+    const init = call[1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      channel: 'whatsapp',
+      recipient: '+447700900001',
+      body: 'Hello there',
+    })
+  })
 })

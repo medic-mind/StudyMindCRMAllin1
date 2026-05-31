@@ -55,6 +55,9 @@ export function ConversationReply({
     { staleTime: 5 * 60_000, retry: false },
   )
 
+  const [files, setFiles] = useState<File[]>([])
+  const [reading, setReading] = useState(false)
+
   const insertQuickReply = (replyBody: string) => {
     const text = applyPlaceholders(replyBody, contactName)
     setBody((cur) => (cur.trim() ? `${cur}\n${text}` : text))
@@ -63,6 +66,7 @@ export function ConversationReply({
   const send = trpc.interaction.trengo.reply.useMutation({
     onSuccess: () => {
       setBody('')
+      setFiles([])
       toast.success('Reply sent')
       void utils.inbox.conversations.get.invalidate({ conversationId })
     },
@@ -88,7 +92,64 @@ export function ConversationReply({
   })
 
   const canSend = !!latestInteractionId
-  const sendDisabled = send.isPending || !body.trim() || !canSend
+  const sendDisabled =
+    send.isPending ||
+    reading ||
+    !canSend ||
+    (!body.trim() && files.length === 0)
+
+  const MAX_BYTES = 8 * 1024 * 1024
+
+  const onPickFiles = (picked: FileList | null) => {
+    if (!picked) return
+    const next = [...files]
+    for (const f of Array.from(picked)) {
+      if (f.size > MAX_BYTES) {
+        toast.error(`${f.name} is over 8 MB`)
+        continue
+      }
+      if (next.length >= 10) break
+      next.push(f)
+    }
+    setFiles(next)
+  }
+
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        // strip the "data:<mime>;base64," prefix
+        resolve(result.slice(result.indexOf(',') + 1))
+      }
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(file)
+    })
+
+  const handleSend = async () => {
+    if (!latestInteractionId || sendDisabled) return
+    let attachments:
+      | Array<{ filename: string; contentType: string; dataBase64: string }>
+      | undefined
+    if (files.length > 0) {
+      setReading(true)
+      try {
+        attachments = await Promise.all(
+          files.map(async (f) => ({
+            filename: f.name,
+            contentType: f.type || 'application/octet-stream',
+            dataBase64: await fileToBase64(f),
+          })),
+        )
+      } catch {
+        toast.error('Could not read the attached file(s)')
+        setReading(false)
+        return
+      }
+      setReading(false)
+    }
+    send.mutate({ interactionId: latestInteractionId, body, attachments })
+  }
 
   return (
     <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
@@ -131,18 +192,49 @@ export function ConversationReply({
           className="w-full rounded border border-neutral-300 bg-white p-2 font-mono text-sm focus:border-primary-500 focus:outline-none"
         />
       </label>
+
+      {files.length > 0 ? (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {files.map((f, i) => (
+            <li
+              key={`${f.name}-${i}`}
+              className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-700"
+            >
+              {f.name} · {Math.round(f.size / 1024)} KB
+              <button
+                type="button"
+                aria-label={`Remove ${f.name}`}
+                onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                className="text-neutral-400 hover:text-danger-600"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={() => {
-            if (!latestInteractionId) return
-            send.mutate({ interactionId: latestInteractionId, body })
-          }}
+          onClick={() => void handleSend()}
           disabled={sendDisabled}
           className="rounded bg-primary-600 px-3 py-1 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
         >
-          {send.isPending ? 'Sending…' : 'Send'}
+          {send.isPending || reading ? 'Sending…' : 'Send'}
         </button>
+        <label className="cursor-pointer rounded border border-neutral-300 bg-white px-3 py-1 text-sm text-neutral-700 hover:bg-neutral-50">
+          Attach
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onPickFiles(e.target.files)
+              e.currentTarget.value = ''
+            }}
+          />
+        </label>
         {status === 'closed' ? (
           <button
             type="button"

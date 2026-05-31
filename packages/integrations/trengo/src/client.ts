@@ -20,6 +20,33 @@ export interface TrengoSendMessageInput {
   /** Custom-field metadata that lets us reconcile Trengo events to our
    *  Interaction id. CLAUDE.md §11. */
   customFields?: Record<string, string>
+  /** Trengo media ids to attach (uploaded first via `uploadMedia`). */
+  attachmentIds?: number[]
+}
+
+export interface TrengoMediaResource {
+  id: number
+}
+
+/** A file to upload to Trengo before attaching to a message. */
+export interface TrengoUploadInput {
+  filename: string
+  contentType: string
+  data: Buffer
+}
+
+/** Start a brand-new conversation (first outbound to a contact). */
+export interface TrengoCreateConversationInput {
+  channel: 'whatsapp' | 'sms' | 'email' | 'web_chat'
+  /** E.164 phone for whatsapp/sms; email address for email. */
+  recipient: string
+  body: string
+  customFields?: Record<string, string>
+}
+
+export interface TrengoCreateConversationResult {
+  ticketId: number
+  messageId: number | null
 }
 
 export interface TrengoMessageResource {
@@ -54,6 +81,13 @@ export interface TrengoClient {
   detachLabel(ticketId: number, labelId: number): Promise<void>
   /** Internal (team-only) note on a ticket — never sent to the customer. */
   addInternalNote(ticketId: number, body: string): Promise<{ id: number }>
+  /** Upload a file to Trengo, returning the media id to attach to a message. */
+  uploadMedia(input: TrengoUploadInput): Promise<TrengoMediaResource>
+  /** Start a brand-new conversation (create a ticket + send the first
+   *  outbound message). CLAUDE.md §11. */
+  createConversation(
+    input: TrengoCreateConversationInput,
+  ): Promise<TrengoCreateConversationResult>
   request<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
@@ -165,6 +199,9 @@ export async function createClientForAgent(
           body: input.body,
           channel: input.channel,
           custom_fields: input.customFields ?? {},
+          ...(input.attachmentIds && input.attachmentIds.length > 0
+            ? { attachment_ids: input.attachmentIds }
+            : {}),
         },
       )
       return res.message
@@ -219,6 +256,49 @@ export async function createClientForAgent(
         { body },
       )
       return { id: res.data?.id ?? res.id ?? 0 }
+    },
+    async uploadMedia(input) {
+      // Multipart upload — we drive fetch directly (not `request`, which is
+      // JSON) so the boundary header is set automatically. Trengo returns the
+      // created media under `data` (or at the top level on some versions).
+      const form = new FormData()
+      // Buffer is a Uint8Array, but TS's BlobPart union trips on the
+      // SharedArrayBuffer case — cast through BlobPart.
+      const blob = new Blob([input.data as unknown as BlobPart], {
+        type: input.contentType,
+      })
+      form.append('file', blob, input.filename)
+      const res = await fetchImpl(`${baseUrl}/media`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        body: form,
+      })
+      const text = await res.text()
+      const parsed = text ? (JSON.parse(text) as unknown) : null
+      if (!res.ok) throw new TrengoApiError(res.status, '/media', parsed)
+      const row = (parsed as { data?: TrengoMediaResource } & Partial<TrengoMediaResource>)
+      const media = row.data ?? (row as TrengoMediaResource)
+      return { id: media.id }
+    },
+    async createConversation(input) {
+      // Start a new conversation. Trengo creates the ticket implicitly when a
+      // first outbound message is sent to a recipient on a channel. The exact
+      // payload shape varies by Trengo plan/version — kept here so a fix is a
+      // one-line change. We embed our custom_fields for echo reconciliation.
+      const res = await request<{
+        ticket?: { id: number }
+        message?: { id: number; ticket_id?: number }
+        data?: { ticket_id?: number; id?: number }
+      }>('POST', '/messages', {
+        channel: input.channel,
+        recipient: input.recipient,
+        body: input.body,
+        custom_fields: input.customFields ?? {},
+      })
+      const ticketId =
+        res.ticket?.id ?? res.message?.ticket_id ?? res.data?.ticket_id ?? 0
+      const messageId = res.message?.id ?? res.data?.id ?? null
+      return { ticketId, messageId }
     },
   }
 }
