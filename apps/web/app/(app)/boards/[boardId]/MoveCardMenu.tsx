@@ -164,8 +164,17 @@ export function MoveCardMenu({
               role="menu"
               aria-label="Move card to"
               onClick={(e) => e.stopPropagation()}
-              style={{ position: 'fixed', top: coords.top, left: coords.left }}
-              className="z-[100] max-h-72 w-60 overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-lg"
+              // z-[9999] beats anything in the page; the sticky toolbar
+              // sits at z-30, the column DnD overlay can climb above 50,
+              // so we go well past both. Inline z-index too so a missed
+              // Tailwind JIT pass can't strip the class.
+              style={{
+                position: 'fixed',
+                top: coords.top,
+                left: coords.left,
+                zIndex: 9999,
+              }}
+              className="z-[9999] max-h-72 w-60 overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-xl"
             >
               {sameBoardTargets.length > 0 && (
                 <>
