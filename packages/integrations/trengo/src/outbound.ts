@@ -463,6 +463,287 @@ export async function assignConversation(
   }
 }
 
+// -----------------------------------------------------------------------------
+// Labels (tags) — add / remove on a conversation. ADR 0020 Phase 6f.
+//
+// Completes the bi-directional tag sync the brief asked for: inbound
+// label.added / label.removed already flow into Conversation.tags; these push
+// a CRM-side add/remove back to Trengo. Label catalogue is resolved by name
+// (Conversation.tags stores names); an unknown name is created (the brief's
+// "Creation"). The webhook echo of our own change is folded back by
+// linkCrmOutboundEcho so the timeline never doubles up.
+// -----------------------------------------------------------------------------
+
+export interface ConversationLabelInput {
+  contactId: string
+  agentId: string
+  ticketId: number
+  /** Label NAME (what Conversation.tags stores). */
+  label: string
+  requestId: string
+}
+
+export interface ConversationLabelResult {
+  interactionId: string
+  ticketId: number
+  label: string
+  labelId: number
+}
+
+export async function addConversationLabel(
+  input: ConversationLabelInput,
+): Promise<ConversationLabelResult> {
+  return changeConversationLabel(input, 'add')
+}
+
+export async function removeConversationLabel(
+  input: ConversationLabelInput,
+): Promise<ConversationLabelResult> {
+  return changeConversationLabel(input, 'remove')
+}
+
+async function changeConversationLabel(
+  input: ConversationLabelInput,
+  action: 'add' | 'remove',
+): Promise<ConversationLabelResult> {
+  const interactionType = action === 'add' ? 'label_added' : 'label_removed'
+  const eventName = action === 'add' ? 'label.added' : 'label.removed'
+  const summary = action === 'add' ? `Label added: ${input.label}` : `Label removed: ${input.label}`
+
+  // Idempotent on (contactId, type, requestId).
+  const existing = await db.interaction.findFirst({
+    where: {
+      type: interactionType,
+      contactId: input.contactId,
+      payload: { path: ['outboundRequestId'], equals: input.requestId },
+    },
+    select: { id: true },
+  })
+  let interactionId: string
+  if (existing) {
+    interactionId = existing.id
+  } else {
+    const created = await db.interaction.create({
+      data: {
+        id: createId(),
+        type: interactionType,
+        contactId: input.contactId,
+        occurredAt: new Date(),
+        summary,
+        createdById: input.agentId,
+        updatedById: input.agentId,
+        payload: {
+          interactionType: eventName,
+          source: 'crm_outbound',
+          status: 'pending_send',
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          label: input.label,
+          outboundRequestId: input.requestId,
+        },
+      },
+      select: { id: true },
+    })
+    interactionId = created.id
+  }
+
+  let client
+  try {
+    client = await createClientForAgent({
+      agentId: input.agentId,
+      requestId: input.requestId,
+      purpose: `trengo.label_${action}`,
+    })
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+
+  try {
+    // Resolve the label name → id. On add, create the label if Trengo does
+    // not have it yet (the brief's "Creation"). On remove, a missing label
+    // is a no-op success (nothing to detach).
+    const labels = await client.listLabels()
+    const match = labels.find(
+      (l) => l.name.trim().toLowerCase() === input.label.trim().toLowerCase(),
+    )
+    let labelId: number
+    if (match) {
+      labelId = match.id
+    } else if (action === 'add') {
+      const created = await client.createLabel(input.label.trim())
+      labelId = created.id
+    } else {
+      labelId = 0 // nothing to detach; treat as success
+    }
+
+    if (action === 'add') {
+      await client.attachLabel(input.ticketId, labelId)
+    } else if (labelId > 0) {
+      await client.detachLabel(input.ticketId, labelId)
+    }
+
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: {
+        payload: {
+          interactionType: eventName,
+          source: 'crm_outbound',
+          status: 'sent',
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          label: input.label,
+          labelId,
+          outboundRequestId: input.requestId,
+        },
+      },
+    })
+
+    await writeAuditLogEntry(db, {
+      actorId: input.agentId,
+      action: action === 'add' ? 'trengo.label_add_requested' : 'trengo.label_remove_requested',
+      target: { type: 'Contact', id: input.contactId },
+      requestId: input.requestId,
+      after: { interactionId, ticketId: input.ticketId, label: input.label, labelId },
+    })
+
+    // Mirror onto the conversation head (tags array). The webhook echo is
+    // skipped (jobs.ts linkCrmOutboundEcho) so this is the head's only update.
+    await applyEventToConversation(db, {
+      ticketId: input.ticketId,
+      eventName,
+      occurredAt: new Date(),
+      contactId: input.contactId,
+      label: input.label,
+    })
+
+    return { interactionId, ticketId: input.ticketId, label: input.label, labelId }
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Internal notes — team-only note on a conversation. ADR 0020 Phase 6f.
+//
+// A note is NOT delivered to the customer (distinct from a reply). We persist
+// a `note` Interaction on the contact timeline and push it to Trengo's
+// internal-notes endpoint so colleagues working in Trengo see it too.
+// -----------------------------------------------------------------------------
+
+export interface ConversationNoteInput {
+  contactId: string
+  agentId: string
+  ticketId: number
+  body: string
+  requestId: string
+}
+
+export interface ConversationNoteResult {
+  interactionId: string
+  ticketId: number
+  trengoNoteId: number
+}
+
+export async function addConversationNote(
+  input: ConversationNoteInput,
+): Promise<ConversationNoteResult> {
+  const existing = await db.interaction.findFirst({
+    where: {
+      type: 'note',
+      contactId: input.contactId,
+      payload: { path: ['outboundRequestId'], equals: input.requestId },
+    },
+    select: { id: true },
+  })
+  let interactionId: string
+  if (existing) {
+    interactionId = existing.id
+  } else {
+    const created = await db.interaction.create({
+      data: {
+        id: createId(),
+        type: 'note',
+        contactId: input.contactId,
+        occurredAt: new Date(),
+        summary: input.body.slice(0, 280),
+        createdById: input.agentId,
+        updatedById: input.agentId,
+        payload: {
+          interactionType: 'note',
+          source: 'crm_outbound',
+          status: 'pending_send',
+          internalNote: true,
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          body: input.body,
+          outboundRequestId: input.requestId,
+        },
+      },
+      select: { id: true },
+    })
+    interactionId = created.id
+  }
+
+  let client
+  try {
+    client = await createClientForAgent({
+      agentId: input.agentId,
+      requestId: input.requestId,
+      purpose: 'trengo.note',
+    })
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+
+  try {
+    const note = await client.addInternalNote(input.ticketId, input.body)
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: {
+        payload: {
+          interactionType: 'note',
+          source: 'crm_outbound',
+          status: 'sent',
+          internalNote: true,
+          ticketId: input.ticketId,
+          agentId: input.agentId,
+          body: input.body,
+          outboundRequestId: input.requestId,
+          trengoNoteId: note.id,
+        },
+      },
+    })
+    await writeAuditLogEntry(db, {
+      actorId: input.agentId,
+      action: 'trengo.note_added',
+      target: { type: 'Contact', id: input.contactId },
+      requestId: input.requestId,
+      after: { interactionId, ticketId: input.ticketId, trengoNoteId: note.id },
+    })
+    return { interactionId, ticketId: input.ticketId, trengoNoteId: note.id }
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+}
+
+/** Fetch the agent's Trengo label catalogue (for the label picker). */
+export async function listTrengoLabels(
+  agentId: string,
+  requestId: string,
+): Promise<Array<{ id: number; name: string; color: string | null }>> {
+  const client = await createClientForAgent({
+    agentId,
+    requestId,
+    purpose: 'trengo.labels.list',
+  })
+  const labels = await client.listLabels()
+  return labels.map((l) => ({ id: l.id, name: l.name, color: l.color ?? null }))
+}
+
 async function markFailed(interactionId: string, err: unknown): Promise<void> {
   const reason =
     err instanceof BusinessError

@@ -34,6 +34,12 @@ export interface TrengoTicketResource {
   status: string
 }
 
+export interface TrengoLabelResource {
+  id: number
+  name: string
+  color?: string | null
+}
+
 export interface TrengoClient {
   readonly baseUrl: string
   readonly agentId: string
@@ -41,6 +47,13 @@ export interface TrengoClient {
   assignTicket(ticketId: number, assigneeUserId: number): Promise<TrengoTicketResource>
   closeTicket(ticketId: number): Promise<TrengoTicketResource>
   reopenTicket(ticketId: number): Promise<TrengoTicketResource>
+  /** Label (tag) catalogue + per-ticket attach/detach. CLAUDE.md §11. */
+  listLabels(): Promise<TrengoLabelResource[]>
+  createLabel(name: string): Promise<TrengoLabelResource>
+  attachLabel(ticketId: number, labelId: number): Promise<void>
+  detachLabel(ticketId: number, labelId: number): Promise<void>
+  /** Internal (team-only) note on a ticket — never sent to the customer. */
+  addInternalNote(ticketId: number, body: string): Promise<{ id: number }>
   request<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
@@ -177,6 +190,35 @@ export async function createClientForAgent(
         `/tickets/${ticketId}/reopen`,
       )
       return res.ticket
+    },
+    async listLabels() {
+      // Trengo paginates labels; one page (default) is plenty for an ops
+      // team's tag catalogue. The response wraps rows under `data`.
+      const res = await request<{ data?: TrengoLabelResource[] }>('GET', '/labels')
+      return res.data ?? []
+    },
+    async createLabel(name) {
+      const res = await request<
+        { data?: TrengoLabelResource } & Partial<TrengoLabelResource>
+      >('POST', '/labels', { name })
+      const row = res.data ?? (res as TrengoLabelResource)
+      return { id: row.id, name: row.name, color: row.color ?? null }
+    },
+    async attachLabel(ticketId, labelId) {
+      await request('POST', `/tickets/${ticketId}/labels`, { label_id: labelId })
+    },
+    async detachLabel(ticketId, labelId) {
+      await request('DELETE', `/tickets/${ticketId}/labels/${labelId}`)
+    },
+    async addInternalNote(ticketId, body) {
+      // Internal notes are team-only — they are NOT delivered to the
+      // customer. Trengo exposes them under the ticket /notes collection.
+      const res = await request<{ data?: { id: number }; id?: number }>(
+        'POST',
+        `/tickets/${ticketId}/notes`,
+        { body },
+      )
+      return { id: res.data?.id ?? res.id ?? 0 }
     },
   }
 }

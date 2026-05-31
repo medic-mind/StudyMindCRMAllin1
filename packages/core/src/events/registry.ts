@@ -329,6 +329,14 @@ export const EVENT_NAMES = [
   'trengo.ticket_reopen_requested',
   // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
   'trengo.ticket_assign_requested',
+  // ADR 0020 Phase 6f — label (tag) add/remove from the CRM, internal notes,
+  // snooze, and mark-read (drives the Trengo label / notes endpoints; snooze
+  // + read are CRM-side head state).
+  'trengo.label_add_requested',
+  'trengo.label_remove_requested',
+  'trengo.note_added',
+  'trengo.conversation_snoozed',
+  'trengo.conversation_read',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',

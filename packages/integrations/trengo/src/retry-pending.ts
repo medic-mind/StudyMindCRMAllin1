@@ -22,8 +22,11 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import {
+  addConversationLabel,
+  addConversationNote,
   assignConversation,
   closeConversation,
+  removeConversationLabel,
   reopenConversation,
   sendMessage,
 } from './outbound'
@@ -45,6 +48,8 @@ interface RetryablePayload {
   channel?: string
   body?: string
   assigneeUserId?: string
+  label?: string
+  internalNote?: boolean
   attempts?: number
   lastError?: { code?: string; message?: string }
 }
@@ -65,7 +70,15 @@ export const trengoRetryPendingSend = inngest.createFunction(
         where: {
           deletedAt: null,
           type: {
-            in: ['message', 'ticket_closed', 'ticket_reopened', 'ticket_assigned'],
+            in: [
+              'message',
+              'ticket_closed',
+              'ticket_reopened',
+              'ticket_assigned',
+              'label_added',
+              'label_removed',
+              'note',
+            ],
           },
           updatedAt: { lt: cutoff },
           payload: { path: ['status'], equals: 'pending_send' },
@@ -151,6 +164,34 @@ export const trengoRetryPendingSend = inngest.createFunction(
             agentId: payload.agentId,
             ticketId: payload.ticketId,
             assigneeUserId: payload.assigneeUserId,
+            requestId: payload.outboundRequestId,
+          })
+          recovered += 1
+        } else if (row.type === 'label_added' || row.type === 'label_removed') {
+          if (typeof payload.label !== 'string') {
+            skipped += 1
+            continue
+          }
+          const fn = row.type === 'label_added' ? addConversationLabel : removeConversationLabel
+          await fn({
+            contactId: row.contactId,
+            agentId: payload.agentId,
+            ticketId: payload.ticketId,
+            label: payload.label,
+            requestId: payload.outboundRequestId,
+          })
+          recovered += 1
+        } else if (row.type === 'note') {
+          // Only CRM-sourced internal notes carry pending_send + a body.
+          if (typeof payload.body !== 'string' || payload.internalNote !== true) {
+            skipped += 1
+            continue
+          }
+          await addConversationNote({
+            contactId: row.contactId,
+            agentId: payload.agentId,
+            ticketId: payload.ticketId,
+            body: payload.body,
             requestId: payload.outboundRequestId,
           })
           recovered += 1
