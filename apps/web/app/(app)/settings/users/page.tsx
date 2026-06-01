@@ -10,8 +10,7 @@ import Link from 'next/link'
 import { PageHeader } from '@/components/shell/page-header'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { SearchField } from '@/components/ui/search-field'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -159,19 +158,9 @@ export default async function UsersSettingsPage({
           })}
         </nav>
 
-        <form className="ml-auto flex gap-2" method="GET">
-          {status !== 'all' && <input type="hidden" name="status" value={status} />}
-          <Input
-            type="search"
-            name="q"
-            defaultValue={sp.q ?? ''}
-            placeholder="Search by email or name"
-            className="max-w-xs"
-          />
-          <Button type="submit" variant="secondary">
-            Search
-          </Button>
-        </form>
+        <div className="ml-auto">
+          <SearchField placeholder="Search by email or name" />
+        </div>
         <CreateUserDialog access={access} />
       </div>
 

@@ -9,6 +9,8 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { FacetedFilter } from '@/components/ui/faceted-filter'
+import { ToggleFilter } from '@/components/ui/filter-bar'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { dueAtLabel } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -79,27 +81,14 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
     { key: 'team', label: 'Team' },
     { key: 'all', label: 'All' },
   ]
-  const statusFilters: Array<{ key: StatusKey | undefined; label: string }> = [
-    { key: undefined, label: 'All statuses' },
-    { key: 'open', label: 'Open' },
-    { key: 'in_progress', label: 'In progress' },
-    { key: 'done', label: 'Done' },
-  ]
 
-  function buildQuery(next: {
-    scope?: Scope
-    status?: StatusKey | undefined
-    setStatus?: boolean
-    overdue?: boolean
-    teamId?: string | undefined
-    setTeamId?: boolean
-  }) {
-    const nextStatus = next.setStatus ? next.status : status
-    const nextTeamId = next.setTeamId ? next.teamId : teamId
-    const q: Record<string, string> = { scope: next.scope ?? scope }
-    if (nextStatus) q.status = nextStatus
-    if (next.overdue ?? overdue) q.overdue = '1'
-    if (nextTeamId) q.teamId = nextTeamId
+  // The scope segmented control carries the other filters across a scope change
+  // (status / team / overdue all live in the URL; the faceted filters own them).
+  function scopeQuery(nextScope: Scope) {
+    const q: Record<string, string> = { scope: nextScope }
+    if (status) q.status = status
+    if (overdue) q.overdue = '1'
+    if (teamId) q.teamId = teamId
     return q
   }
 
@@ -133,7 +122,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                 key={t.key}
                 role="tab"
                 aria-selected={scope === t.key}
-                href={{ pathname: '/tasks', query: buildQuery({ scope: t.key }) }}
+                href={{ pathname: '/tasks', query: scopeQuery(t.key) }}
                 className={
                   scope === t.key
                     ? 'inline-flex items-center rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors'
@@ -145,80 +134,32 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
             ))}
           </div>
 
-          {/* Status filters */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            {statusFilters.map((f) => {
-              const active = status === f.key
-              return (
-                <Link
-                  key={f.label}
-                  href={{
-                    pathname: '/tasks',
-                    query: buildQuery({ status: f.key, setStatus: true }),
-                  }}
-                  className={
-                    active
-                      ? 'inline-flex items-center rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
-                      : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900'
-                  }
-                >
-                  {f.label}
-                </Link>
-              )
-            })}
-          </div>
+          {/* Status filter */}
+          <FacetedFilter
+            paramKey="status"
+            label="Status"
+            options={[
+              { value: 'open', label: 'Open' },
+              { value: 'in_progress', label: 'In progress' },
+              { value: 'done', label: 'Done' },
+            ]}
+          />
 
-          {/* Team filter pills */}
+          {/* Team filter */}
           {teams.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Link
-                href={{ pathname: '/tasks', query: buildQuery({ teamId: undefined, setTeamId: true }) }}
-                className={
-                  !teamId
-                    ? 'inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
-                    : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
-                }
-              >
-                All teams
-              </Link>
-              {teams.map((tm) => {
-                const active = teamId === tm.id
-                return (
-                  <Link
-                    key={tm.id}
-                    href={{
-                      pathname: '/tasks',
-                      query: buildQuery({ teamId: tm.id, setTeamId: true }),
-                    }}
-                    className={
-                      active
-                        ? 'inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
-                        : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50'
-                    }
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: tm.color ?? '#94a3b8' }}
-                    />
-                    {tm.name}
-                  </Link>
-                )
-              })}
-            </div>
+            <FacetedFilter
+              paramKey="teamId"
+              label="Team"
+              options={teams.map((tm) => ({
+                value: tm.id,
+                label: tm.name,
+                color: tm.color ?? undefined,
+              }))}
+            />
           ) : null}
 
           {/* Overdue toggle */}
-          <Link
-            href={{ pathname: '/tasks', query: buildQuery({ overdue: !overdue }) }}
-            className={
-              overdue
-                ? 'inline-flex items-center rounded-full bg-red-600 px-3 py-1 text-xs font-medium text-white'
-                : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900'
-            }
-          >
-            Overdue only
-          </Link>
+          <ToggleFilter paramKey="overdue" label="Overdue only" tone="danger" />
         </div>
 
         <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">

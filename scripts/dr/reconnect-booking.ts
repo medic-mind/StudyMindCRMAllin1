@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     throw new Error(`booking health failed: ${res.status} ${await res.text()}`)
   }
   console.log('booking site reachable. Inngest cron will resume pulls on next tick.')
-  console.log('To force an immediate pull, trigger booking/sync-active-families from the Inngest dashboard.')
+  console.log('To force an immediate pull, trigger booking/sync-students from the Inngest dashboard.')
 }
 
 main().catch((err) => {

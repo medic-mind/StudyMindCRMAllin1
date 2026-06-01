@@ -41,12 +41,12 @@ message with a **credentials PDF** attached. The plaintext temp password is
 also returned to the creating admin so accounts are usable before the outbound
 mailbox is connected. It is never logged.
 
-A reset can alternatively **set a specific password** chosen by the admin
-(`resetPassword` accepts `{ password?, requireChange }`) — validated against the
-same strength policy — for the case where the user has lost access to their
-email and needs working credentials relayed directly. `requireChange` (default
-true) controls the forced first-login change. The generate-and-email path
-remains the default.
+Both create and reset can alternatively **set a specific password** chosen by
+the admin (`create` / `resetPassword` accept `{ password?, requireChange }`) —
+validated against the same strength policy — for the case where the user can't
+receive email and needs working credentials relayed directly. `requireChange`
+(default true) controls the forced first-login change. The generate-and-email
+path remains the default.
 
 **Permission model.** Two new actions in `packages/core/src/auth/policies.ts`:
 

@@ -60,14 +60,24 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     description: 'Renew Gmail Pub/Sub watches that expire within 24h',
   },
   {
-    id: 'booking/sync-active-families',
+    id: 'booking/sync-students',
     cron: '*/5 * * * *',
-    description: 'Pull booking changes for active Families',
+    description: 'Pull changed students from booking.studymind.co.uk (ADR 0029)',
   },
   {
-    id: 'booking/sync-inactive-families',
-    cron: '0 * * * *',
-    description: 'Pull booking changes for inactive Families',
+    id: 'booking/sync-lessons',
+    cron: '*/5 * * * *',
+    description: 'Pull changed lessons from booking.studymind.co.uk',
+  },
+  {
+    id: 'booking/sync-balance-ledger',
+    cron: '*/15 * * * *',
+    description: 'Pull the booking hours-balance ledger',
+  },
+  {
+    id: 'booking/sync-credit-ledger',
+    cron: '*/15 * * * *',
+    description: 'Pull the booking credit ledger',
   },
   {
     id: 'ai/regenerate-status-summaries',

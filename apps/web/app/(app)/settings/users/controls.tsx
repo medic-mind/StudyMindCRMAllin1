@@ -263,6 +263,9 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [roles, setRoles] = useState<Role[]>([])
+  const [mode, setMode] = useState<'generate' | 'manual'>('generate')
+  const [password, setPassword] = useState('')
+  const [requireChange, setRequireChange] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<{
     email: string
@@ -293,6 +296,9 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
     setEmail('')
     setName('')
     setRoles([])
+    setMode('generate')
+    setPassword('')
+    setRequireChange(true)
     setError(null)
     setCreated(null)
   }
@@ -330,7 +336,17 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
               setError('Email and at least one role are required.')
               return
             }
-            create.mutate({ email, name: name || undefined, roles })
+            if (mode === 'manual' && password.trim().length === 0) {
+              setError('Enter a password, or switch to “Generate a temporary password”.')
+              return
+            }
+            create.mutate({
+              email,
+              name: name || undefined,
+              roles,
+              password: mode === 'manual' ? password : undefined,
+              requireChange,
+            })
           }}
           className="space-y-3"
         >
@@ -342,10 +358,6 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
               {error}
             </div>
           )}
-          <p className="text-xs text-neutral-600">
-            The new user gets a temporary password (emailed with a PDF when Gmail is connected) and
-            must set their own password on first sign-in.
-          </p>
           <div className="space-y-1.5">
             <Label htmlFor="create-email">Email</Label>
             <Input
@@ -379,6 +391,65 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
               ))}
             </div>
           </div>
+
+          <fieldset className="space-y-2">
+            <legend className="mb-1 text-sm font-medium text-neutral-800">Password</legend>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="radio"
+                name="create-mode"
+                className="mt-0.5"
+                checked={mode === 'generate'}
+                onChange={() => setMode('generate')}
+              />
+              <span>
+                <span className="font-medium">Generate a temporary password</span>
+                <span className="block text-xs text-neutral-500">
+                  Random, emailed with a PDF when Gmail is connected.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="radio"
+                name="create-mode"
+                className="mt-0.5"
+                checked={mode === 'manual'}
+                onChange={() => setMode('manual')}
+              />
+              <span>
+                <span className="font-medium">Set a password myself</span>
+                <span className="block text-xs text-neutral-500">
+                  Useful if they can&rsquo;t receive email — share it with them directly.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
+          {mode === 'manual' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="create-password">Password</Label>
+              <PasswordField
+                id="create-password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <p className="text-xs text-neutral-500">
+                At least 12 characters, with 3 of: lowercase, uppercase, number, symbol.
+              </p>
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={requireChange}
+              onChange={(e) => setRequireChange(e.target.checked)}
+            />
+            Require a password change on first sign-in
+          </label>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" onClick={close}>
               Cancel

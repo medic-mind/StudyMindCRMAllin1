@@ -542,6 +542,14 @@ model Contact {
   /// that correlate to this contact (B2C individuals). See InvoicingCustomer.
   invoicingCustomers InvoicingCustomer[]
 
+  /// Booking-site mirror (ADR 0029). A student on booking.studymind.co.uk maps
+  /// to this Contact; the satellite rows below hang off it so the hot Contact
+  /// row stays lean. Written read-only by the booking sync.
+  bookingProfile            ContactBookingProfile?
+  bookingLessons            BookingLesson[]
+  bookingHoursTransactions  BookingHoursTransaction[]
+  bookingCreditTransactions BookingCreditTransaction[]
+
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
@@ -1308,6 +1316,199 @@ model BookingSession {
 
   @@index([bookingId, scheduledAt])
   @@index([state])
+}
+
+// -----------------------------------------------------------------------------
+// Booking site mirror (booking.studymind.co.uk) — student-centric (ADR 0029).
+//
+// The booking site is the source of truth for students, lessons, the
+// hours-balance ledger and credits (CLAUDE.md §15). The CRM mirrors it
+// read-only via an incremental pull (docs/api/booking-pull-api.md). A booking
+// "student" maps to a Contact (kind = student) keyed on
+// `Contact.bookingContactId`; the satellite rows below hang off that Contact so
+// the hot Contact row stays lean. Nothing here writes back to the booking site.
+//
+// These tables coexist with the legacy family-centric Booking/BookingSession
+// above, which the reconciliation engine still reads (CLAUDE.md §19
+// forward-only). Wiring lessons into reconciliation is a documented follow-up.
+// -----------------------------------------------------------------------------
+
+/// Fixed set of credit products on the booking site's "Adjust Credits" panel.
+enum BookingCreditKind {
+  online_mmi
+  in_person_mmi
+  live_day
+  in_person_live_day
+}
+
+/// 1:1 satellite of Contact holding the booking-site student snapshot — the
+/// guardian/bill-payer, the hours balance summary (incl. premium hours + next
+/// expiry) and current credit balances. Written only by the booking sync.
+model ContactBookingProfile {
+  contactId       String @id
+  /// Integer student id staff recognise in the booking admin (e.g. 5).
+  legacyStudentId Int?
+
+  // Guardian / bill-payer ("Do you have a guardian or bill payer?").
+  hasGuardian       Boolean?
+  guardianName      String?
+  guardianPhoneE164 String?
+  guardianEmail     String?
+
+  // Booking-site flags we surface but do not yet act on.
+  receiveMarketingEmails Boolean?
+  addedByAgent           Boolean?
+  registeredAt           DateTime?
+
+  // Hours balance summary (decimal hours, 2dp — booking shows e.g. 5.00).
+  hoursAdded            Decimal?  @db.Decimal(8, 2)
+  hoursUsed             Decimal?  @db.Decimal(8, 2)
+  hoursDeducted         Decimal?  @db.Decimal(8, 2)
+  hoursRemaining        Decimal?  @db.Decimal(8, 2)
+  premiumHoursAdded     Decimal?  @db.Decimal(8, 2)
+  premiumHoursUsed      Decimal?  @db.Decimal(8, 2)
+  premiumHoursDeducted  Decimal?  @db.Decimal(8, 2)
+  premiumHoursRemaining Decimal?  @db.Decimal(8, 2)
+  /// Earliest unexpired hours bucket — drives an "expiring soon" nudge.
+  nextHoursExpiryAt     DateTime?
+
+  // Current credit balances per product.
+  creditsOnlineMmi       Int @default(0)
+  creditsInPersonMmi     Int @default(0)
+  creditsLiveDay         Int @default(0)
+  creditsInPersonLiveDay Int @default(0)
+
+  /// Most recent successful student sync.
+  lastSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([legacyStudentId])
+}
+
+/// One lesson from booking.studymind.co.uk `/admin/lessons/`, keyed on the
+/// booking lesson id. The body also lands as a `booking` Interaction for the
+/// timeline; this table is the queryable state layer (status / payment / tutor
+/// / subject) — same split as Conversation vs Interaction (ADR 0020).
+model BookingLesson {
+  id         String @id
+  externalId String @unique
+  contactId  String
+
+  tutorExternalId String?
+  tutorName       String?
+  subject         String?
+
+  startsAt        DateTime
+  endsAt          DateTime?
+  durationMinutes Int       @default(0)
+
+  /// Raw lowercase status from the booking site (`active`, `cancelled`, …).
+  /// Stored as text — not a Postgres enum — until the booking team confirms
+  /// the full value set (docs/api/booking-pull-api.md §2.3); validated
+  /// fail-closed at the integration boundary.
+  status  String
+  /// Raw lowercase payment (`charged`, `no_fee`, …).
+  payment String?
+
+  isTrial             Boolean @default(false)
+  trialFeedback       String?
+  trialFeedbackStatus String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, startsAt])
+  @@index([status])
+}
+
+/// One row of the booking site's Balance History (the hours ledger). Hours are
+/// signed: positive = added, negative = used/deducted. Carries expiry + the
+/// Stripe reference the booking team logs against manual adjustments.
+model BookingHoursTransaction {
+  id         String @id
+  externalId String @unique
+  contactId  String
+
+  /// Signed hours (2dp). +5.00 added, -1.00 used.
+  hours     Decimal @db.Decimal(8, 2)
+  isPremium Boolean @default(false)
+
+  /// Optional money tied to the movement, integer pence (CLAUDE.md §19).
+  amountMinor     Int?
+  stripeReference String?
+  message         String?
+  /// Raw lowercase ledger type (`purchase`, `usage`, `voided`, …) — text until
+  /// the booking team confirms the set; validated fail-closed at the boundary.
+  type            String
+
+  adminExternalId String?
+  adminName       String?
+
+  occurredAt DateTime
+  /// Hours expire on the booking site — surfaced so finance can see lapses.
+  expiresAt  DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, occurredAt])
+  @@index([expiresAt])
+}
+
+/// One row of the booking site's Credit History (MMI / Live Day credits).
+model BookingCreditTransaction {
+  id         String @id
+  externalId String @unique
+  contactId  String
+
+  creditKind BookingCreditKind
+  /// Signed credit movement.
+  credits    Int
+
+  amountMinor     Int?
+  stripeReference String?
+  message         String?
+  type            String
+
+  adminExternalId String?
+  adminName       String?
+
+  occurredAt DateTime
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, occurredAt])
+  @@index([creditKind])
+}
+
+/// Per-resource incremental-sync cursor for the booking pull. Global keyset
+/// pagination on (updated_at, id) — we remember the high-water mark so each
+/// poll asks "what changed since X?" (docs/api/booking-pull-api.md §2.5).
+model BookingSyncCursor {
+  /// One of 'students' | 'lessons' | 'balance_transactions' | 'credit_transactions'.
+  resource     String    @id
+  /// Highest `updated_at` we have fully processed.
+  updatedSince DateTime?
+  /// Opaque page cursor mid-walk (null between runs / once drained).
+  cursor       String?
+  lastRunAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // -----------------------------------------------------------------------------

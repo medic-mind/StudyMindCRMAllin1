@@ -1,0 +1,38 @@
+{
+  "data": [
+    {
+      "uuid": "00000000-0000-4000-8000-000000000005",
+      "id": 5,
+      "full_name": "Test Student A1",
+      "email": "a1@test.studymind.invalid",
+      "phone": "+447000000005",
+      "date_of_birth": "2010-09-01",
+      "country": "UK",
+      "receive_marketing_emails": true,
+      "added_by_agent": false,
+      "has_guardian": true,
+      "guardian_name": "Test Guardian A",
+      "guardian_phone": "+447000009005",
+      "guardian_email": "guardian.a@test.studymind.invalid",
+      "labels": ["ucat", "priority"],
+      "balance": {
+        "hours_added": 46,
+        "hours_used": 17,
+        "hours_deducted": 29,
+        "hours_remaining": 0,
+        "premium_hours_added": 0,
+        "premium_hours_used": 0,
+        "premium_hours_deducted": 0,
+        "premium_hours_remaining": 0,
+        "next_expiry_at": null
+      },
+      "credits": { "online_mmi": 2, "in_person_mmi": 0, "live_day": 1, "in_person_live_day": 0 },
+      "registered_at": "2020-11-13T00:27:38Z",
+      "created_at": "2020-11-13T00:27:38Z",
+      "updated_at": "2026-05-30T09:00:00Z",
+      "deleted_at": null
+    }
+  ],
+  "next_cursor": null,
+  "has_more": false
+}

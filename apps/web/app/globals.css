@@ -81,6 +81,20 @@ body {
   outline-offset: 2px;
 }
 
+/* Popover / menu entrance — a small scale+fade so floating panels read as
+   anchored to their trigger rather than appearing from nowhere. Gated by the
+   reduced-motion block below. */
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Honour reduced motion (CLAUDE.md §28). */
 @media (prefers-reduced-motion: reduce) {
   *,

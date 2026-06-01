@@ -16,6 +16,12 @@ import { createClientForAgent, TrengoApiError } from './client'
 import { applyEventToConversation } from './conversation-head'
 import type { TrengoChannel } from './types'
 
+export interface OutboundAttachment {
+  filename: string
+  contentType: string
+  data: Buffer
+}
+
 export interface SendMessageInput {
   contactId: string
   agentId: string
@@ -23,6 +29,9 @@ export interface SendMessageInput {
   channel: TrengoChannel
   body: string
   requestId: string
+  /** Files to upload + attach. Each is uploaded via Trengo `/media` first,
+   *  then the resulting ids are attached to the message. */
+  attachments?: OutboundAttachment[]
 }
 
 export interface SendMessageResult {
@@ -89,6 +98,30 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
 
   // 3. Send. On failure, leave the Interaction in pending_send and rethrow.
   try {
+    // Upload any attachments first, collecting Trengo media ids + the
+    // metadata we surface in the timeline.
+    const attachmentIds: number[] = []
+    const attachmentMeta: Array<{
+      filename: string
+      contentType: string
+      sizeBytes: number
+      trengoMediaId: number
+    }> = []
+    for (const att of input.attachments ?? []) {
+      const media = await client.uploadMedia({
+        filename: att.filename,
+        contentType: att.contentType,
+        data: att.data,
+      })
+      attachmentIds.push(media.id)
+      attachmentMeta.push({
+        filename: att.filename,
+        contentType: att.contentType,
+        sizeBytes: att.data.byteLength,
+        trengoMediaId: media.id,
+      })
+    }
+
     const message = await client.sendMessage({
       ticketId: input.ticketId,
       body: input.body,
@@ -99,6 +132,7 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
         interactionId,
         agentId: input.agentId,
       },
+      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     })
 
     await db.interaction.update({
@@ -114,6 +148,7 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
           body: input.body,
           outboundRequestId: input.requestId,
           trengoMessageId: message.id,
+          ...(attachmentMeta.length > 0 ? { attachments: attachmentMeta } : {}),
         },
       },
     })
@@ -143,6 +178,149 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
     })
 
     return { interactionId, trengoMessageId: message.id }
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Start a new conversation — ADR 0020 Phase 6j.
+//
+// First outbound to a contact who has no open ticket. Creates the Trengo
+// conversation (ticket) + first message, then mirrors a Conversation head so
+// it appears in the inbox at once. Two-phase like sendMessage: the
+// Interaction is persisted `pending_send` first; on Trengo failure it stays
+// pending and the retry cron picks it up. The custom_fields carry our
+// Interaction id so the echoed webhook reconciles (no duplicate).
+// -----------------------------------------------------------------------------
+
+export interface StartConversationInput {
+  contactId: string
+  agentId: string
+  channel: TrengoChannel
+  /** E.164 phone (whatsapp/sms) or email address (email). */
+  recipient: string
+  body: string
+  requestId: string
+}
+
+export interface StartConversationResult {
+  interactionId: string
+  ticketId: number
+  trengoMessageId: number | null
+}
+
+export async function startConversation(
+  input: StartConversationInput,
+): Promise<StartConversationResult> {
+  const existing = await db.interaction.findFirst({
+    where: {
+      type: 'message',
+      contactId: input.contactId,
+      payload: { path: ['outboundRequestId'], equals: input.requestId },
+    },
+    select: { id: true, payload: true },
+  })
+
+  let interactionId: string
+  if (existing) {
+    interactionId = existing.id
+  } else {
+    const created = await db.interaction.create({
+      data: {
+        id: createId(),
+        type: 'message',
+        contactId: input.contactId,
+        occurredAt: new Date(),
+        summary: `New ${input.channel} conversation (sending)`,
+        createdById: input.agentId,
+        updatedById: input.agentId,
+        payload: {
+          interactionType: 'message.outbound',
+          status: 'pending_send',
+          channel: input.channel,
+          agentId: input.agentId,
+          body: input.body,
+          recipient: input.recipient,
+          newConversation: true,
+          outboundRequestId: input.requestId,
+        },
+      },
+      select: { id: true },
+    })
+    interactionId = created.id
+  }
+
+  let client
+  try {
+    client = await createClientForAgent({
+      agentId: input.agentId,
+      requestId: input.requestId,
+      purpose: 'trengo.start_conversation',
+    })
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+
+  try {
+    const result = await client.createConversation({
+      channel: input.channel,
+      recipient: input.recipient,
+      body: input.body,
+      customFields: { interactionId, agentId: input.agentId },
+    })
+    if (!result.ticketId) {
+      throw new TrengoApiError(502, '/messages', { reason: 'no ticket id returned' })
+    }
+
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: {
+        summary: `New ${input.channel} conversation sent`,
+        payload: {
+          interactionType: 'message.outbound',
+          status: 'sent',
+          channel: input.channel,
+          ticketId: result.ticketId,
+          agentId: input.agentId,
+          body: input.body,
+          recipient: input.recipient,
+          newConversation: true,
+          outboundRequestId: input.requestId,
+          trengoMessageId: result.messageId,
+        },
+      },
+    })
+
+    await writeAuditLogEntry(db, {
+      actorId: input.agentId,
+      action: 'trengo.message_sent',
+      target: { type: 'Contact', id: input.contactId },
+      requestId: input.requestId,
+      after: {
+        interactionId,
+        ticketId: result.ticketId,
+        channel: input.channel,
+        newConversation: true,
+      },
+    })
+
+    // Mirror a head so the new conversation shows in the inbox immediately.
+    await applyEventToConversation(db, {
+      ticketId: result.ticketId,
+      eventName: 'message.outbound',
+      occurredAt: new Date(),
+      channel: input.channel,
+      contactId: input.contactId,
+    })
+
+    return {
+      interactionId,
+      ticketId: result.ticketId,
+      trengoMessageId: result.messageId,
+    }
   } catch (err) {
     await markFailed(interactionId, err)
     throw err
