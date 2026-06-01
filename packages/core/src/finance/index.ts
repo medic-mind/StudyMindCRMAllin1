@@ -5,6 +5,11 @@ export const FINANCE_DOMAIN = 'finance' as const
 
 export * from './sync-stripe'
 export * from './sync-gocardless'
+export {
+  classifyProductFromText,
+  type ProductCatalogueEntry,
+  type ProductClassification,
+} from './classify-product'
 export * from './booking-rules'
 export * from './reconcile'
 export {

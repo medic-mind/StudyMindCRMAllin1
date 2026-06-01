@@ -6,10 +6,14 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
+  classifyProductFromText,
   recomputeAtRiskForFamily,
   resolveFamilyByStripeCustomer,
+  revertStripePayment,
   syncStripeInvoice,
+  syncStripePayment,
   syncStripeSubscription,
+  type ProductCatalogueEntry,
 } from '@studymind/core/finance'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
@@ -22,7 +26,37 @@ import { mapSubscriptionState } from './types'
 const HANDLED_TYPES = new Set<string>([
   'invoice.payment_failed',
   'customer.subscription.updated',
+  // Successful card payment + its reversal. The charge id is the canonical,
+  // de-duplicated money-movement id (Payment.externalId). We record payments
+  // off charges only — not invoice/payment_intent — so a single payment is
+  // never double-counted across overlapping event types.
+  'charge.succeeded',
+  'charge.refunded',
 ])
+
+/** Active product catalogue, fed to the deterministic product classifier. */
+async function loadProductCatalogue(): Promise<ProductCatalogueEntry[]> {
+  const items = await db.productCatalogueItem.findMany({
+    where: { active: true },
+    select: { handle: true, name: true, category: true, aliases: true },
+  })
+  return items
+}
+
+/** Build the text we classify a charge against (description + metadata). */
+function chargeProductText(charge: {
+  description?: string | null
+  statement_descriptor?: string | null
+  metadata?: Record<string, string> | null
+}): string {
+  return [
+    charge.description ?? '',
+    charge.statement_descriptor ?? '',
+    ...Object.values(charge.metadata ?? {}),
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
 
 interface StripeEventReceivedData {
   eventId: string
@@ -64,6 +98,70 @@ export const stripeEventReceived = inngest.createFunction(
     // 2. Persist into our normalised mirror tables. The mapper is keyed on
     //    Stripe object ids so retries are safe.
     const persisted = await step.run('persist', async () => {
+      // Successful charge → record the Payment against the resolved Family and
+      // classify the purchased product against the catalogue (no duplication).
+      if (refetched.type === 'charge.succeeded') {
+        const charge = refetched.data.object as {
+          id: string
+          customer: string | { id: string } | null
+          amount: number
+          currency: string
+          created: number
+          invoice: string | { id: string } | null
+          description?: string | null
+          statement_descriptor?: string | null
+          metadata?: Record<string, string> | null
+        }
+        const customerId =
+          typeof charge.customer === 'string' ? charge.customer : (charge.customer?.id ?? '')
+        const invoiceId =
+          typeof charge.invoice === 'string' ? charge.invoice : (charge.invoice?.id ?? null)
+        const result = await syncStripePayment(db, {
+          stripeChargeId: charge.id,
+          stripeCustomerId: customerId,
+          amountMinor: charge.amount,
+          currency: charge.currency.toUpperCase(),
+          receivedAt: new Date(charge.created * 1000),
+          stripeInvoiceId: invoiceId,
+        })
+        const classification = result.unresolved
+          ? null
+          : classifyProductFromText(chargeProductText(charge), await loadProductCatalogue())
+        return {
+          kind: 'payment' as const,
+          stripeId: charge.id,
+          stripeCustomerId: customerId,
+          amountMinor: charge.amount,
+          currency: charge.currency.toUpperCase(),
+          classification,
+          ...result,
+        }
+      }
+
+      // Refunded charge → mark the mirrored Payment reverted (idempotent).
+      if (refetched.type === 'charge.refunded') {
+        const charge = refetched.data.object as {
+          id: string
+          customer: string | { id: string } | null
+        }
+        const customerId =
+          typeof charge.customer === 'string' ? charge.customer : (charge.customer?.id ?? '')
+        const result = await revertStripePayment(db, {
+          stripeChargeId: charge.id,
+          revertedAt: new Date(),
+        })
+        return {
+          kind: 'payment_refund' as const,
+          stripeId: charge.id,
+          stripeCustomerId: customerId,
+          classification: null,
+          // `missing` (refund before we saw the charge) is surfaced like an
+          // unresolved customer rather than silently dropped.
+          unresolved: result.missing,
+          familyId: result.familyId,
+        }
+      }
+
       if (refetched.type === 'customer.subscription.updated') {
         const sub = refetched.data.object as {
           id: string
@@ -146,21 +244,47 @@ export const stripeEventReceived = inngest.createFunction(
       })
       if (existing) return
 
+      const classification =
+        'classification' in persisted ? persisted.classification : null
+
+      let summary: string
+      switch (persisted.kind) {
+        case 'subscription':
+          summary = `Stripe subscription updated (${type})`
+          break
+        case 'payment': {
+          const products = classification?.productHandles ?? []
+          summary = products.length
+            ? `Stripe payment received — ${products.join(', ')}`
+            : 'Stripe payment received'
+          break
+        }
+        case 'payment_refund':
+          summary = 'Stripe payment refunded'
+          break
+        default:
+          summary = `Stripe invoice payment failed`
+      }
+
       await db.interaction.create({
         data: {
           id: createId(),
           type: 'payment',
           familyId,
           occurredAt: new Date(),
-          summary:
-            persisted.kind === 'subscription'
-              ? `Stripe subscription updated (${type})`
-              : `Stripe invoice payment failed`,
+          summary,
           payload: {
             stripeEventId: eventId,
             stripeEventType: type,
             stripeObjectId: persisted.stripeId,
             kind: persisted.kind,
+            ...(classification
+              ? {
+                  productHandles: classification.productHandles,
+                  productCategories: classification.categories,
+                  productUnmatched: classification.unmatched,
+                }
+              : {}),
           },
         },
       })

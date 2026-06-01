@@ -157,3 +157,124 @@ export async function syncStripeInvoice(
   })
   return { id: row.id, familyId, unresolved: false }
 }
+
+export interface SyncStripePaymentInput {
+  /** The Stripe charge id — our Payment.externalId (unique, idempotent). */
+  stripeChargeId: string
+  stripeCustomerId: string
+  amountMinor: number
+  currency: string
+  receivedAt: Date
+  /** When the charge was confirmed/captured. Defaults to receivedAt. */
+  confirmedAt?: Date | null
+  /** The Stripe invoice id, when the charge settled an invoice we mirror. */
+  stripeInvoiceId?: string | null
+}
+
+export interface SyncStripePaymentResult {
+  id: string
+  familyId: string | null
+  unresolved: boolean
+  created: boolean
+}
+
+/**
+ * Upsert a Payment mirrored from a successful Stripe charge, keyed on the
+ * charge id (`Payment.externalId`). Idempotent: a duplicate webhook updates the
+ * existing row rather than creating a second payment. Returns `unresolved` when
+ * no StripeCustomer→Family mapping exists — the caller surfaces it for a human
+ * to link (CLAUDE.md §3: never auto-create, never silently drop).
+ */
+export async function syncStripePayment(
+  db: DbClient,
+  input: SyncStripePaymentInput,
+): Promise<SyncStripePaymentResult> {
+  const familyId = await resolveFamilyByStripeCustomer(db, input.stripeCustomerId)
+  if (!familyId) {
+    return { id: '', familyId: null, unresolved: true, created: false }
+  }
+
+  // Link to the mirrored Invoice when the charge settled one we know about.
+  let invoiceId: string | null = null
+  if (input.stripeInvoiceId) {
+    const inv = await db.invoice.findUnique({
+      where: { externalId: input.stripeInvoiceId },
+      select: { id: true },
+    })
+    invoiceId = inv?.id ?? null
+  }
+
+  const existing = await db.payment.findUnique({
+    where: { externalId: input.stripeChargeId },
+    select: { id: true },
+  })
+
+  if (existing) {
+    await db.payment.update({
+      where: { id: existing.id },
+      data: {
+        amountMinor: input.amountMinor,
+        currency: input.currency,
+        confirmedAt: input.confirmedAt ?? input.receivedAt,
+        ...(invoiceId ? { invoiceId } : {}),
+      },
+    })
+    return { id: existing.id, familyId, unresolved: false, created: false }
+  }
+
+  const row = await db.payment.create({
+    data: {
+      id: createId(),
+      familyId,
+      invoiceId,
+      externalId: input.stripeChargeId,
+      provider: 'stripe',
+      amountMinor: input.amountMinor,
+      currency: input.currency,
+      receivedAt: input.receivedAt,
+      confirmedAt: input.confirmedAt ?? input.receivedAt,
+    },
+    select: { id: true },
+  })
+  return { id: row.id, familyId, unresolved: false, created: true }
+}
+
+export interface RevertStripePaymentInput {
+  stripeChargeId: string
+  revertedAt: Date
+}
+
+export interface RevertStripePaymentResult {
+  id: string | null
+  familyId: string | null
+  /** True when no Payment row exists for the charge (refund before we saw it). */
+  missing: boolean
+  /** True when the payment was already reverted (idempotent no-op). */
+  alreadyReverted: boolean
+}
+
+/**
+ * Mark a mirrored Stripe Payment reverted (full refund / chargeback). Keyed on
+ * the charge id. Idempotent. Reconciliation re-opens allocations off the
+ * `reverted` flag (CLAUDE.md §9 reversal flow, shared with GoCardless).
+ */
+export async function revertStripePayment(
+  db: DbClient,
+  input: RevertStripePaymentInput,
+): Promise<RevertStripePaymentResult> {
+  const payment = await db.payment.findUnique({
+    where: { externalId: input.stripeChargeId },
+    select: { id: true, familyId: true, reverted: true },
+  })
+  if (!payment) {
+    return { id: null, familyId: null, missing: true, alreadyReverted: false }
+  }
+  if (payment.reverted) {
+    return { id: payment.id, familyId: payment.familyId, missing: false, alreadyReverted: true }
+  }
+  await db.payment.update({
+    where: { id: payment.id },
+    data: { reverted: true, revertedAt: input.revertedAt },
+  })
+  return { id: payment.id, familyId: payment.familyId, missing: false, alreadyReverted: false }
+}
