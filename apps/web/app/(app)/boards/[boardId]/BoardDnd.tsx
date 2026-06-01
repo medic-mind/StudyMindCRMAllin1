@@ -88,6 +88,7 @@ interface Props {
   quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
+  canDeleteCard: boolean
   currentUserName: string
 }
 
@@ -109,6 +110,7 @@ export function BoardDnd({
   quickActions,
   canWrite,
   canComment,
+  canDeleteCard,
   currentUserName,
 }: Props) {
   const router = useRouter()
@@ -227,6 +229,7 @@ export function BoardDnd({
               quickActions={quickActions}
               canWrite={canWrite}
               canComment={canComment}
+              canDeleteCard={canDeleteCard}
               currentUserName={currentUserName}
               onLocalMove={moveCardLocal}
             />

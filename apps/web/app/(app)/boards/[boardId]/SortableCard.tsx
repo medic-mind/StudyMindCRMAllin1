@@ -61,6 +61,7 @@ interface Props {
   quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
+  canDeleteCard: boolean
   currentUserName: string
   onLocalMove?: (cardId: string, toStageId: string) => void
 }

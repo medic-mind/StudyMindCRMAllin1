@@ -388,6 +388,34 @@ export async function archiveCard(db: Db, id: string, ctx: ActorCtx): Promise<vo
   })
 }
 
+/**
+ * Permanently delete a card and its dependents (labels, subtasks). Distinct
+ * from archive — this is irreversible. The backing Contact and any
+ * Interactions written against it (card_moved, card_comment, etc) are
+ * preserved; only the Card row itself and its scoped children go.
+ *
+ * CLAUDE.md §3 — no silent data mutation: every caller must confirm with the
+ * user; §5 — every write audited.
+ */
+export async function deleteCard(db: Db, id: string, ctx: ActorCtx): Promise<void> {
+  const card = await db.card.findUnique({
+    where: { id },
+    select: { ...cardSelect, archivedAt: true },
+  })
+  if (!card) throw new BusinessError('CARD_NOT_FOUND', 'Card not found')
+  // Cascade is configured on the FKs (CardLabel.cardId, CardSubtask.cardId)
+  // so a single delete clears the children atomically.
+  await db.card.delete({ where: { id } })
+  await writeAuditLogEntry(db, {
+    actorId: ctx.actorId,
+    requestId: ctx.requestId,
+    action: 'card.deleted',
+    target: { type: 'Card', id },
+    before: card,
+    after: null,
+  })
+}
+
 export async function setCardLabels(
   db: Db,
   input: { cardId: string; labelIds: ReadonlyArray<string> },

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { BusinessError } from '../errors'
 import { archiveBoard, createBoard, ensureSingleDefault } from './boards'
-import { createCard, moveCard } from './cards'
+import { createCard, deleteCard, moveCard } from './cards'
 import { createLabel, deleteLabel } from './labels'
 import { findOrCreateSubject } from './subjects'
 
@@ -167,6 +167,8 @@ function makeDb() {
       }),
       findFirst: async ({ where }: { where: Row }) =>
         cards.find((c) => c.id === where.id && c.archivedAt == null) ?? null,
+      findUnique: async ({ where }: { where: { id: string } }) =>
+        cards.find((c) => c.id === where.id) ?? null,
       findMany: async ({ where }: { where: Row }) =>
         cards.filter(
           (c) =>
@@ -185,6 +187,16 @@ function makeDb() {
         if (!c) throw new Error('card not found')
         Object.assign(c, data)
         return c
+      },
+      delete: async ({ where }: { where: { id: string } }) => {
+        const idx = cards.findIndex((c) => c.id === where.id)
+        if (idx === -1) throw new Error('card not found')
+        // Simulate FK cascade on CardLabel.
+        for (let i = cardLabels.length - 1; i >= 0; i--) {
+          if (cardLabels[i]!.cardId === where.id) cardLabels.splice(i, 1)
+        }
+        const [row] = cards.splice(idx, 1)
+        return row
       },
     },
     cardLabel: {
@@ -413,5 +425,62 @@ describe('labels', () => {
     await expect(createLabel(t.db, { name: 'b2c', color: 'red-600' }, ctx)).rejects.toMatchObject({
       code: 'LABEL_NAME_TAKEN',
     })
+  })
+})
+
+describe('deleteCard', () => {
+  function seed(t: ReturnType<typeof makeDb>) {
+    t.boards.push({ id: 'b1', name: 'Sales', position: 1, isDefault: true, archivedAt: null })
+    t.stages.push({ id: 's1', name: 'Lead', boardId: 'b1', archivedAt: null })
+    t.contacts.push({ id: 'c1', deletedAt: null })
+    t.cards.push({
+      id: 'card1',
+      boardId: 'b1',
+      stageId: 's1',
+      contactId: 'c1',
+      position: 1,
+      archivedAt: null,
+    })
+  }
+
+  it('removes the card row and writes an audit entry', async () => {
+    const t = makeDb()
+    seed(t)
+    await deleteCard(t.db, 'card1', ctx)
+    expect(t.cards).toHaveLength(0)
+    expect(t.audits.some((a) => a.action === 'card.deleted')).toBe(true)
+  })
+
+  it('cascades CardLabel rows for the deleted card', async () => {
+    const t = makeDb()
+    seed(t)
+    await createLabel(t.db, { name: 'Hot', color: 'red-600' }, ctx)
+    const label = t.labels[0]!
+    t.cardLabels.push({ cardId: 'card1', labelId: label.id })
+    await deleteCard(t.db, 'card1', ctx)
+    expect(t.cardLabels.find((cl) => cl.cardId === 'card1')).toBeUndefined()
+  })
+
+  it('preserves the backing contact', async () => {
+    const t = makeDb()
+    seed(t)
+    await deleteCard(t.db, 'card1', ctx)
+    expect(t.contacts.find((c) => c.id === 'c1')).toBeDefined()
+  })
+
+  it('throws CARD_NOT_FOUND for a missing id', async () => {
+    const t = makeDb()
+    seed(t)
+    await expect(deleteCard(t.db, 'missing', ctx)).rejects.toMatchObject({
+      code: 'CARD_NOT_FOUND',
+    })
+  })
+
+  it('works on an already-archived card (hard-delete supersedes archive)', async () => {
+    const t = makeDb()
+    seed(t)
+    t.cards[0]!.archivedAt = new Date()
+    await deleteCard(t.db, 'card1', ctx)
+    expect(t.cards).toHaveLength(0)
   })
 })

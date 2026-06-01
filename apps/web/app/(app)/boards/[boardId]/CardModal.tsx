@@ -56,6 +56,7 @@ interface Props {
   quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
+  canDeleteCard: boolean
   currentUserName: string
 }
 
@@ -68,6 +69,7 @@ export function CardModal({
   quickActions,
   canWrite,
   canComment,
+  canDeleteCard,
   currentUserName,
 }: Props) {
   const router = useRouter()
@@ -80,6 +82,29 @@ export function CardModal({
   const commentsQuery = trpc.card.comments.list.useQuery({ cardId }, { enabled: open })
 
   const addComment = trpc.card.comments.add.useMutation()
+  const deleteCardMutation = trpc.card.delete.useMutation({
+    onSuccess: async () => {
+      toast.success('Card permanently deleted')
+      await utils.card.list.invalidate()
+      onClose()
+      router.refresh()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not delete card'),
+  })
+  function onDelete() {
+    const name = cardQuery.data?.contactName ?? 'this card'
+    if (
+      !confirm(
+        `Permanently delete the card for "${name}"?\n\n` +
+          `This cannot be undone. The card, its labels, and its sub-tasks ` +
+          `will be removed. The backing contact and the card's history on ` +
+          `the contact timeline are preserved.`,
+      )
+    ) {
+      return
+    }
+    deleteCardMutation.mutate({ id: cardId })
+  }
   const setDescription = trpc.card.setDescription.useMutation({
     onSuccess: () => {
       toast.success('Description saved')
@@ -151,15 +176,28 @@ export function CardModal({
               <span className="text-sm text-neutral-500">Loading…</span>
             )}
           </div>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-neutral-100"
-            aria-label="Close"
-          >
-            Close
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {canDeleteCard ? (
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={deleteCardMutation.isPending || !card}
+                className="rounded px-2 py-1 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50"
+                title="Permanently delete this card"
+              >
+                {deleteCardMutation.isPending ? 'Deleting…' : 'Delete'}
+              </button>
+            ) : null}
+            <button
+              ref={closeRef}
+              type="button"
+              onClick={onClose}
+              className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-neutral-100"
+              aria-label="Close"
+            >
+              Close
+            </button>
+          </div>
         </header>
 
         {cardQuery.isError ? (
