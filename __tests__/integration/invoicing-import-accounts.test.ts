@@ -30,12 +30,21 @@ function matchesWhere(row: Row, where: Record<string, unknown> | undefined): boo
     const val = row[key] ?? null
     if (cond && typeof cond === 'object') {
       const c = cond as Record<string, unknown>
+      const ci = c['mode'] === 'insensitive'
       if ('equals' in c) {
         const want = c['equals']
-        const ci = c['mode'] === 'insensitive'
         if (ci && typeof want === 'string' && typeof val === 'string') {
           if (val.toLowerCase() !== want.toLowerCase()) return false
         } else if (val !== want) return false
+      } else if ('startsWith' in c) {
+        const pfx = String(c['startsWith'] ?? '')
+        if (typeof val !== 'string') return false
+        const hay = ci ? val.toLowerCase() : val
+        const needle = ci ? pfx.toLowerCase() : pfx
+        if (!hay.startsWith(needle)) return false
+      } else if ('notIn' in c) {
+        const list = (c['notIn'] as unknown[]) ?? []
+        if (list.includes(val)) return false
       } else if (val !== cond) {
         return false
       }
@@ -65,10 +74,52 @@ function makeTable() {
       }
       return null
     },
+    async findMany({
+      where,
+      orderBy,
+      take,
+    }: {
+      where?: Record<string, unknown>
+      orderBy?: { createdAt?: 'asc' | 'desc' }
+      take?: number
+      select?: unknown
+    } = {}) {
+      let rows = [...byId.values()].filter((r) => matchesWhere(r, where))
+      if (orderBy?.createdAt) {
+        rows = rows.sort((a, b) => {
+          const av = Number(a['createdAt'] ?? 0)
+          const bv = Number(b['createdAt'] ?? 0)
+          return orderBy.createdAt === 'asc' ? av - bv : bv - av
+        })
+      }
+      return typeof take === 'number' ? rows.slice(0, take) : rows
+    },
     async create({ data }: { data: Row }) {
       const row = { ...data }
       byId.set(row.id, row)
       return row
+    },
+    async upsert({
+      where,
+      create,
+      update,
+    }: {
+      where: Record<string, unknown>
+      create: Row
+      update: Record<string, unknown>
+    }) {
+      for (const row of byId.values()) {
+        if (where['invoicingId'] !== undefined && row['invoicingId'] === where['invoicingId']) {
+          for (const [k, v] of Object.entries(update)) if (v !== undefined) row[k] = v
+          return row
+        }
+      }
+      const row = { ...create }
+      byId.set(row.id, row)
+      return row
+    },
+    async deleteMany() {
+      return { count: 0 }
     },
     async update({ where, data }: { where: { id: string }; data: Record<string, unknown> }) {
       const row = byId.get(where.id)
@@ -90,17 +141,29 @@ function makeDb() {
   return {
     businessAccount: makeTable(),
     invoicingCustomer: makeTable(),
+    invoicingInvoice: makeTable(),
+    invoicingLineItem: makeTable(),
+    invoicingPayment: makeTable(),
     auditLogEntry: makeTable(),
   }
 }
 
-// A fake invoicing client that returns a fixed page of customers.
-function fakeClient(customers: Array<Record<string, unknown>>) {
+// A fake invoicing client returning fixed pages of customers (+ optional
+// invoices, for the invoice-backfill pass).
+function fakeClient(
+  customers: Array<Record<string, unknown>>,
+  invoices: Array<Record<string, unknown>> = [],
+) {
   return {
     async listCustomers({ page = 1, page_size = 200 }: { page?: number; page_size?: number }) {
       const start = (page - 1) * page_size
       const data = customers.slice(start, start + page_size)
       return { data, page, page_size, total: customers.length }
+    },
+    async listInvoices({ page = 1, page_size = 200 }: { page?: number; page_size?: number }) {
+      const start = (page - 1) * page_size
+      const data = invoices.slice(start, start + page_size)
+      return { data, page, page_size, total: invoices.length }
     },
   } as never
 }
@@ -185,5 +248,67 @@ describe('importBusinessAccountsFromInvoicing', () => {
     // The mirror row now links to the adopted account.
     const mirror = [...db.invoicingCustomer.byId.values()][0]
     expect(mirror!['businessAccountId']).toBe('acc_existing')
+  })
+
+  it('adopts despite whitespace/case differences in the name (no null-email dup)', async () => {
+    const db = makeDb()
+    // Pre-seed an account with a trailing space + different case, no email.
+    db.businessAccount.byId.set('acc_existing', {
+      id: 'acc_existing',
+      kind: 'school',
+      name: 'Oakwood  Primary  School ',
+      contactEmail: null,
+      archivedAt: null,
+      createdAt: 1,
+    })
+
+    const res = await importBusinessAccountsFromInvoicing(db as never, {
+      ctx,
+      // Same school, clean name, no email — must adopt, not create a 2nd row.
+      client: fakeClient([{ id: 'p1', company_name: 'oakwood primary school', category: 'b2b' }]),
+    })
+
+    expect(res.created).toBe(0)
+    expect(res.adopted).toBe(1)
+    expect(db.businessAccount.byId.size).toBe(1)
+  })
+
+  it('imports invoices in a second pass (idempotent, dedup on invoicingId)', async () => {
+    const db = makeDb()
+    const customers = [{ id: 'ptn_1', company_name: 'Oakwood Primary School', category: 'b2b' }]
+    const invoices = [
+      {
+        id: 'inv_1',
+        invoice_number: 'INV-1000',
+        partner_id: 'ptn_1',
+        status: 'issued',
+        grand_total: '720.00',
+        payments: [{ id: 'pay_1', amount: '200.00' }],
+      },
+      {
+        id: 'inv_2',
+        invoice_number: 'INV-1001',
+        partner_id: 'ptn_1',
+        status: 'paid',
+        grand_total: '120.00',
+      },
+    ]
+
+    const first = await importBusinessAccountsFromInvoicing(db as never, {
+      ctx,
+      client: fakeClient(customers, invoices),
+    })
+    expect(first.invoicesImported).toBe(2)
+    expect(db.invoicingInvoice.byId.size).toBe(2)
+    // Linked to the mirrored customer.
+    const inv1 = [...db.invoicingInvoice.byId.values()].find((r) => r['invoicingId'] === 'inv_1')!
+    expect(inv1['customerId']).toBeTruthy()
+
+    // Re-run → no duplicate invoice rows.
+    await importBusinessAccountsFromInvoicing(db as never, {
+      ctx,
+      client: fakeClient(customers, invoices),
+    })
+    expect(db.invoicingInvoice.byId.size).toBe(2)
   })
 })

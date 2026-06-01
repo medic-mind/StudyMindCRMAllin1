@@ -65,9 +65,10 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
         setImportResult(msg)
         toast.message(msg)
       } else {
+        const invoicePart = (r.invoicesImported ?? 0) > 0 ? ` · ${r.invoicesImported} invoices` : ''
         const msg = `Imported ${total} account${total === 1 ? '' : 's'} — ${r.created ?? 0} new, ${r.adopted ?? 0} linked, ${r.updated ?? 0} updated${
           (r.needsClassification ?? 0) > 0 ? `, ${r.needsClassification} to classify` : ''
-        }.`
+        }${invoicePart}.`
         setImportResult(msg)
         toast.success(msg)
       }

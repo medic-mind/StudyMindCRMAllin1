@@ -21,7 +21,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 
 import { classifyAccount, type AccountKind } from './classify-account'
 import { createClientFromConfig, type InvoicingClient } from './client'
-import { upsertCustomerFromRecord } from './sync'
+import { upsertCustomerFromRecord, upsertInvoiceFromRecord } from './sync'
 import { RawCustomer } from './types'
 
 export type DbClient = PrismaClient | Prisma.TransactionClient
@@ -38,6 +38,8 @@ export interface ImportAccountsResult {
   updated: number
   needsClassification: number
   pages: number
+  /** Invoices pulled from /invoices and mirrored (idempotent on invoicingId). */
+  invoicesImported: number
 }
 
 function slugify(name: string): string {
@@ -129,19 +131,33 @@ async function reconcileOne(
     return 'updated'
   }
 
-  // 3. No link yet — try to adopt an existing account by name + email before
-  //    creating one (anti-duplicate). Match is case-insensitive on name, and
-  //    when we have an email it must also match.
-  const adoptable = await db.businessAccount.findFirst({
+  // 3. No link yet — try to adopt an existing account before creating one
+  //    (anti-duplicate). The platform's B2B customers usually have a null
+  //    email, so name is the primary key. Postgres `mode: insensitive` only
+  //    folds case, not whitespace — and existing rows may have been stored with
+  //    stray spaces — so we fetch the case-insensitive `startsWith` candidate
+  //    set and then compare a whitespace-normalised key in JS. Prefer the
+  //    OLDEST match so repeated imports converge onto one canonical account
+  //    (and pre-existing duplicates get absorbed over time). When an email is
+  //    present it must also match.
+  const normalizeKey = (s: string): string => s.trim().replace(/\s+/g, ' ').toLowerCase()
+  const wantKey = normalizeKey(cust.companyName)
+  const candidates = await db.businessAccount.findMany({
     where: {
       archivedAt: null,
-      name: { equals: cust.companyName, mode: 'insensitive' },
+      // First word anchors the index-friendly prefix; JS does the exact
+      // whitespace-insensitive comparison below.
+      name: { startsWith: cust.companyName.trim().split(/\s+/)[0] ?? '', mode: 'insensitive' },
       ...(cust.contactEmail
         ? { contactEmail: { equals: cust.contactEmail, mode: 'insensitive' } }
         : {}),
     },
-    select: { id: true },
+    select: { id: true, name: true },
+    orderBy: { createdAt: 'asc' },
+    take: 50,
   })
+  const adoptable = candidates.find((c) => normalizeKey(c.name) === wantKey) ?? null
+  const normalizedName = cust.companyName.trim().replace(/\s+/g, ' ')
 
   let accountId: string
   let outcome: 'created' | 'adopted'
@@ -156,12 +172,12 @@ async function reconcileOne(
       contactEmail: cust.contactEmail,
     })
     accountId = createId()
-    const slug = await uniqueSlug(db, decision.kind, slugify(cust.companyName))
+    const slug = await uniqueSlug(db, decision.kind, slugify(normalizedName))
     await db.businessAccount.create({
       data: {
         id: accountId,
         kind: decision.kind,
-        name: cust.companyName,
+        name: normalizedName,
         slug,
         status: 'active',
         contactEmail: cust.contactEmail,
@@ -247,8 +263,11 @@ export async function importBusinessAccountsFromInvoicing(
     updated: 0,
     needsClassification: 0,
     pages: 0,
+    invoicesImported: 0,
   }
 
+  // Pass 1 — customers → accounts (must run before invoices so an invoice's
+  // partner is already mirrored and the FK resolves).
   let page = 1
   while (page <= maxPages) {
     const batch = await client.listCustomers({ category: 'b2b', page, page_size: pageSize })
@@ -267,6 +286,31 @@ export async function importBusinessAccountsFromInvoicing(
     if (total !== null && page * pageSize >= total) break
     if (batch.data.length < pageSize) break
     page += 1
+  }
+
+  // Pass 2 — invoices. The earlier backfill only pulled customers, so historic
+  // invoices never landed. Walk /invoices and mirror each through the same
+  // idempotent upsert the webhook/reconcile use (dedup on invoicingId, payments
+  // deduped on their own id), so this is safe to re-run.
+  let invPage = 1
+  while (invPage <= maxPages) {
+    const batch = await client.listInvoices({ page: invPage, page_size: pageSize })
+    if (batch.data.length === 0) break
+
+    for (const raw of batch.data) {
+      try {
+        await upsertInvoiceFromRecord(db, raw, 'system')
+        result.invoicesImported += 1
+      } catch {
+        // A single malformed invoice shouldn't abort the whole backfill; skip
+        // it and keep going (the nightly reconcile will retry from the feed).
+      }
+    }
+
+    const total = typeof batch.total === 'number' ? batch.total : null
+    if (total !== null && invPage * pageSize >= total) break
+    if (batch.data.length < pageSize) break
+    invPage += 1
   }
 
   // Tally how many landed in the tray (cheap count, post-import).
