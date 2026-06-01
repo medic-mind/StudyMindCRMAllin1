@@ -1,260 +1,206 @@
 // Recurring Inngest jobs that pull booking data from booking.studymind.co.uk.
-// CLAUDE.md §15 (booking site is the source of truth for hours), §17.1
-// (active families every 5 min, inactive hourly), §17 (idempotency,
-// granular step.run, concurrency).
+//
+// Student-centric incremental pull (ADR 0029). Each resource has its own
+// global keyset cursor (BookingSyncCursor) so a poll makes a handful of requests
+// and asks only "what changed since X?" (docs/api/booking-pull-api.md). The
+// jobs no-op when the integration is unconfigured (no BOOKING_API_TOKEN) so the
+// CRM is safe to ship before the booking team exposes the API.
+//
+// CLAUDE.md §15 (booking site is the source of truth), §17 (idempotency,
+// concurrency, one summary audit per sync run — never per imported row).
 
-import { createId } from '@paralleldrive/cuid2'
-
+import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { createClient } from './client'
-import type { BookingResource, BookingSessionResource } from './types'
+import { createClient, isConfigured } from './client'
+import {
+  drainIncremental,
+  upsertCreditTransaction,
+  upsertHoursTransaction,
+  upsertLesson,
+  upsertStudent,
+  type SyncState,
+} from './student-sync'
+import type { Page } from './types'
 
-const ACTIVE_STATES = ['trial', 'active', 'at_risk'] as const
-const INACTIVE_STATES = ['lead', 'churned'] as const
+// Bound each cron tick. With 200 rows/page this is up to 5000 rows per run; the
+// first (full backfill) pass resumes from the persisted cursor on the next tick.
+const MAX_PAGES_PER_RUN = 25
 
-// How far back to look the first time we sync a family. Five years is the
-// effective ceiling for the booking site dataset and keeps the first run
-// deterministic without requiring config.
-const FIRST_SYNC_LOOKBACK_MS = 5 * 365 * 24 * 60 * 60 * 1000
-
-interface FamilyRow {
-  id: string
-  lastBookingSyncAt: Date | null
+interface PullSummary {
+  processed: number
+  pages: number
+  drained: boolean
 }
 
-async function syncOneFamily(family: FamilyRow): Promise<{
-  bookings: number
-  sessions: number
-  newlyDelivered: number
-}> {
-  const client = createClient()
-  const since = family.lastBookingSyncAt ?? new Date(Date.now() - FIRST_SYNC_LOOKBACK_MS)
-  const startedAt = new Date()
-
-  const bookings = await client.listBookingsForFamily(family.id, since)
-  let sessionsTouched = 0
-  let newlyDelivered = 0
-
-  for (const booking of bookings) {
-    await upsertBooking(family.id, booking)
-    const sessions = await client.listSessionsForBooking(booking.externalId, since)
-    for (const session of sessions) {
-      const result = await upsertSession(family.id, booking.externalId, session)
-      sessionsTouched += 1
-      if (result.transitionedToDelivered) newlyDelivered += 1
-    }
+async function runResourcePull<T extends { updatedAt: Date }>(
+  resource: string,
+  fetchPage: (q: { updatedSince: Date | null; cursor: string | null }) => Promise<Page<T>>,
+  processItem: (item: T) => Promise<void>,
+): Promise<PullSummary> {
+  const row = await db.bookingSyncCursor.findUnique({ where: { resource } })
+  const state: SyncState = {
+    updatedSince: row?.updatedSince ?? null,
+    cursor: row?.cursor ?? null,
   }
 
-  await db.family.update({
-    where: { id: family.id },
-    data: { lastBookingSyncAt: startedAt },
+  const res = await drainIncremental({ state, maxPages: MAX_PAGES_PER_RUN, fetchPage, processItem })
+
+  const cursorData = {
+    updatedSince: res.newState.updatedSince,
+    cursor: res.newState.cursor,
+    lastRunAt: new Date(),
+  }
+  await db.bookingSyncCursor.upsert({
+    where: { resource },
+    create: { resource, ...cursorData },
+    update: cursorData,
   })
 
-  return { bookings: bookings.length, sessions: sessionsTouched, newlyDelivered }
+  return { processed: res.processed, pages: res.pages, drained: res.drained }
 }
 
-async function upsertBooking(familyId: string, booking: BookingResource): Promise<void> {
-  const existing = await db.booking.findUnique({
-    where: { externalId: booking.externalId },
-    select: { id: true },
-  })
-  if (existing) {
-    await db.booking.update({
-      where: { id: existing.id },
-      data: {
-        state: booking.state,
-        contractedHours: Math.round(booking.contractedHours),
-      },
-    })
-    return
-  }
-  await db.booking.create({
-    data: {
-      id: createId(),
-      familyId,
-      externalId: booking.externalId,
-      state: booking.state,
-      contractedHours: Math.round(booking.contractedHours),
-    },
+async function auditSyncRun(jobId: string, summary: PullSummary): Promise<void> {
+  // One summary audit row per run — never per imported row (CLAUDE.md §17.1).
+  await writeAuditLogEntry(db, {
+    actorId: null,
+    action: `booking.sync:${jobId}`,
+    target: { type: 'system', id: jobId },
+    after: summary,
+    purpose: `system:${jobId}`,
   })
 }
 
-interface UpsertSessionResult {
-  id: string
-  transitionedToDelivered: boolean
-}
-
-async function upsertSession(
-  familyId: string,
-  externalBookingId: string,
-  session: BookingSessionResource,
-): Promise<UpsertSessionResult> {
-  const booking = await db.booking.findUnique({
-    where: { externalId: externalBookingId },
-    select: { id: true },
-  })
-  if (!booking) {
-    // Booking row missing — caller upserts the booking before its sessions,
-    // so this is a real anomaly. Surface and skip rather than auto-create.
-    throw new Error(`Booking ${externalBookingId} missing while upserting session ${session.externalId}`)
-  }
-
-  const existing = await db.bookingSession.findUnique({
-    where: { externalId: session.externalId },
-    select: { id: true, state: true },
-  })
-
-  const wasDelivered = existing?.state === 'delivered'
-  const isDelivered = session.state === 'delivered'
-
-  const data = {
-    bookingId: booking.id,
-    scheduledAt: session.scheduledAt,
-    state: session.state,
-    hours: Math.round(session.deliveredHours || session.scheduledHours || session.contractedHours),
-    contractedHours: Math.round(session.contractedHours),
-    scheduledHours: Math.round(session.scheduledHours),
-    deliveredHours: Math.round(session.deliveredHours),
-  }
-
-  if (existing) {
-    await db.bookingSession.update({ where: { id: existing.id }, data })
-    if (!wasDelivered && isDelivered) {
-      await writeDeliveredInteraction(familyId, session)
-    }
-    return { id: existing.id, transitionedToDelivered: !wasDelivered && isDelivered }
-  }
-
-  const row = await db.bookingSession.create({
-    data: { id: createId(), externalId: session.externalId, ...data },
-    select: { id: true },
-  })
-  if (isDelivered) {
-    await writeDeliveredInteraction(familyId, session)
-  }
-  return { id: row.id, transitionedToDelivered: isDelivered }
-}
-
-async function writeDeliveredInteraction(
-  familyId: string,
-  session: BookingSessionResource,
-): Promise<void> {
-  // Idempotent on (familyId, externalSessionId).
-  const existing = await db.interaction.findFirst({
-    where: {
-      familyId,
-      type: 'booking',
-      payload: { path: ['externalSessionId'], equals: session.externalId },
-    },
-    select: { id: true },
-  })
-  if (existing) return
-
-  await db.interaction.create({
-    data: {
-      id: createId(),
-      type: 'booking',
-      familyId,
-      occurredAt: session.scheduledAt,
-      summary: `Session delivered (${session.deliveredHours}h)`,
-      payload: {
-        kind: 'booking.session_delivered',
-        externalSessionId: session.externalId,
-        deliveredHours: session.deliveredHours,
-        scheduledAt: session.scheduledAt.toISOString(),
-      },
-    },
-  })
-}
-
-export const bookingSyncActiveFamilies = inngest.createFunction(
+export const bookingSyncStudents = inngest.createFunction(
   {
-    id: 'booking/sync-active-families',
-    name: 'Booking: pull changes for active families',
-    concurrency: { limit: 5 },
+    id: 'booking/sync-students',
+    name: 'Booking: pull changed students',
+    concurrency: { limit: 2 },
     retries: 3,
   },
   { cron: '*/5 * * * *' },
   async ({ step, logger }) => {
-    const families = await step.run('list-active-families', async () => {
-      return db.family.findMany({
-        where: { state: { in: [...ACTIVE_STATES] }, deletedAt: null },
-        select: { id: true, lastBookingSyncAt: true },
-        take: 500,
-      })
-    })
-
-    let bookings = 0
-    let sessions = 0
-    let newlyDelivered = 0
-    for (const family of families) {
-      const result = await step.run(`sync-${family.id}`, async () =>
-        syncOneFamily({
-          id: family.id,
-          lastBookingSyncAt: family.lastBookingSyncAt ? new Date(family.lastBookingSyncAt) : null,
-        }),
-      )
-      bookings += result.bookings
-      sessions += result.sessions
-      newlyDelivered += result.newlyDelivered
+    if (!isConfigured()) {
+      logger.info('booking sync skipped — BOOKING_API_TOKEN not set')
+      return { skipped: true }
     }
-
-    logger.info(
-      { families: families.length, bookings, sessions, newlyDelivered },
-      'booking sync (active) complete',
-    )
-    return { families: families.length, bookings, sessions, newlyDelivered }
+    const summary = await step.run('pull-students', async () => {
+      const client = createClient()
+      return runResourcePull(
+        'students',
+        (q) => client.listStudents(q),
+        async (s) => {
+          await upsertStudent(db, s)
+        },
+      )
+    })
+    await step.run('audit', () => auditSyncRun('booking/sync-students', summary))
+    logger.info(summary, 'booking sync (students) complete')
+    return summary
   },
 )
 
-export const bookingSyncInactiveFamilies = inngest.createFunction(
+export const bookingSyncLessons = inngest.createFunction(
   {
-    id: 'booking/sync-inactive-families',
-    name: 'Booking: pull changes for inactive families',
-    concurrency: { limit: 5 },
+    id: 'booking/sync-lessons',
+    name: 'Booking: pull changed lessons',
+    concurrency: { limit: 2 },
     retries: 3,
   },
-  { cron: '0 * * * *' },
+  { cron: '*/5 * * * *' },
   async ({ step, logger }) => {
-    const families = await step.run('list-inactive-families', async () => {
-      return db.family.findMany({
-        where: { state: { in: [...INACTIVE_STATES] }, deletedAt: null },
-        select: { id: true, lastBookingSyncAt: true },
-        take: 500,
-      })
-    })
-
-    let bookings = 0
-    let sessions = 0
-    let newlyDelivered = 0
-    for (const family of families) {
-      const result = await step.run(`sync-${family.id}`, async () =>
-        syncOneFamily({
-          id: family.id,
-          lastBookingSyncAt: family.lastBookingSyncAt ? new Date(family.lastBookingSyncAt) : null,
-        }),
-      )
-      bookings += result.bookings
-      sessions += result.sessions
-      newlyDelivered += result.newlyDelivered
+    if (!isConfigured()) {
+      logger.info('booking sync skipped — BOOKING_API_TOKEN not set')
+      return { skipped: true }
     }
-
-    logger.info(
-      { families: families.length, bookings, sessions, newlyDelivered },
-      'booking sync (inactive) complete',
-    )
-    return { families: families.length, bookings, sessions, newlyDelivered }
+    const summary = await step.run('pull-lessons', async () => {
+      const client = createClient()
+      return runResourcePull(
+        'lessons',
+        (q) => client.listLessons(q),
+        async (l) => {
+          await upsertLesson(db, l)
+        },
+      )
+    })
+    await step.run('audit', () => auditSyncRun('booking/sync-lessons', summary))
+    logger.info(summary, 'booking sync (lessons) complete')
+    return summary
   },
 )
 
-export const FUNCTIONS = [bookingSyncActiveFamilies, bookingSyncInactiveFamilies] as const
+export const bookingSyncBalanceLedger = inngest.createFunction(
+  {
+    id: 'booking/sync-balance-ledger',
+    name: 'Booking: pull hours-balance ledger',
+    concurrency: { limit: 2 },
+    retries: 3,
+  },
+  { cron: '*/15 * * * *' },
+  async ({ step, logger }) => {
+    if (!isConfigured()) {
+      logger.info('booking sync skipped — BOOKING_API_TOKEN not set')
+      return { skipped: true }
+    }
+    const summary = await step.run('pull-balance', async () => {
+      const client = createClient()
+      return runResourcePull(
+        'balance_transactions',
+        (q) => client.listBalanceTransactions(q),
+        async (t) => {
+          await upsertHoursTransaction(db, t)
+        },
+      )
+    })
+    await step.run('audit', () => auditSyncRun('booking/sync-balance-ledger', summary))
+    logger.info(summary, 'booking sync (balance ledger) complete')
+    return summary
+  },
+)
+
+export const bookingSyncCreditLedger = inngest.createFunction(
+  {
+    id: 'booking/sync-credit-ledger',
+    name: 'Booking: pull credit ledger',
+    concurrency: { limit: 2 },
+    retries: 3,
+  },
+  { cron: '*/15 * * * *' },
+  async ({ step, logger }) => {
+    if (!isConfigured()) {
+      logger.info('booking sync skipped — BOOKING_API_TOKEN not set')
+      return { skipped: true }
+    }
+    const summary = await step.run('pull-credits', async () => {
+      const client = createClient()
+      return runResourcePull(
+        'credit_transactions',
+        (q) => client.listCreditTransactions(q),
+        async (t) => {
+          await upsertCreditTransaction(db, t)
+        },
+      )
+    })
+    await step.run('audit', () => auditSyncRun('booking/sync-credit-ledger', summary))
+    logger.info(summary, 'booking sync (credit ledger) complete')
+    return summary
+  },
+)
+
+export const FUNCTIONS = [
+  bookingSyncStudents,
+  bookingSyncLessons,
+  bookingSyncBalanceLedger,
+  bookingSyncCreditLedger,
+] as const
 
 export const JOBS: readonly { id: string; description: string }[] = [
-  { id: 'booking/sync-active-families', description: 'Pull booking changes for active Families' },
   {
-    id: 'booking/sync-inactive-families',
-    description: 'Pull booking changes for inactive Families',
+    id: 'booking/sync-students',
+    description: 'Pull changed students from booking.studymind.co.uk',
   },
+  { id: 'booking/sync-lessons', description: 'Pull changed lessons from booking.studymind.co.uk' },
+  { id: 'booking/sync-balance-ledger', description: 'Pull the hours-balance ledger' },
+  { id: 'booking/sync-credit-ledger', description: 'Pull the credit ledger' },
 ]

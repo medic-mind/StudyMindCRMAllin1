@@ -21,6 +21,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import { loadAccountStats } from '@studymind/core/stats'
+import { BookingApiError, createClient, isConfigured } from '@studymind/integration-booking/client'
 
 import {
   auditedProcedure,
@@ -372,11 +373,11 @@ const studentsRouter = router({
   }),
 
   /**
-   * Stub for the booking.studymind.co.uk sync — wired in a follow-up PR.
-   * Returns `{ status: 'not_implemented' }` so the UI can show a friendly
-   * banner today and the call site is ready to swap in the real pull
-   * once the booking integration exposes a per-student endpoint
-   * (CLAUDE.md §15).
+   * Pull this student's delivered hours from booking.studymind.co.uk (ADR 0029).
+   * Looks the student up by `bookingStudentId` (the booking UUID) and writes the
+   * delivered-hours figure + sync timestamp. Returns a `skipped` status — with a
+   * human message — when the integration is unconfigured or no match is found, so
+   * the UI can surface it without guessing. Read-only against the booking site.
    */
   syncFromBooking: auditedProcedure
     .input(z.object({ id: z.string() }))
@@ -389,15 +390,47 @@ const studentsRouter = router({
       })
       if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
       ctx.audit.called = true
-      await ctx.db.businessAccountStudent.update({
-        where: { id: input.id },
-        data: { bookingLastSyncAt: new Date(), updatedById: user.id },
-      })
-      return {
-        status: 'not_implemented' as const,
-        message:
-          'Booking site sync not yet wired up — last-sync timestamp updated as a placeholder.',
-        bookingStudentId: row.bookingStudentId,
+
+      if (!isConfigured()) {
+        return {
+          status: 'skipped' as const,
+          message: 'Booking site sync is not configured yet (BOOKING_API_TOKEN unset).',
+          bookingStudentId: row.bookingStudentId,
+          hoursDelivered: null,
+        }
+      }
+      if (!row.bookingStudentId) {
+        return {
+          status: 'skipped' as const,
+          message: 'No booking student id set on this row — add one to enable sync.',
+          bookingStudentId: null,
+          hoursDelivered: null,
+        }
+      }
+
+      try {
+        const student = await createClient().getStudent(row.bookingStudentId)
+        const hoursDelivered = Math.round(student.balance.hoursUsed)
+        await ctx.db.businessAccountStudent.update({
+          where: { id: input.id },
+          data: { hoursDelivered, bookingLastSyncAt: new Date(), updatedById: user.id },
+        })
+        return {
+          status: 'synced' as const,
+          message: `Synced ${hoursDelivered}h delivered from the booking site.`,
+          bookingStudentId: row.bookingStudentId,
+          hoursDelivered,
+        }
+      } catch (err) {
+        if (err instanceof BookingApiError && err.status === 404) {
+          return {
+            status: 'skipped' as const,
+            message: 'No matching student found on the booking site for that id.',
+            bookingStudentId: row.bookingStudentId,
+            hoursDelivered: null,
+          }
+        }
+        throw err
       }
     }),
 })

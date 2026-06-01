@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "id": "ct_1",
+      "student_uuid": "00000000-0000-4000-8000-000000000005",
+      "credit_kind": "online_mmi",
+      "credits": 2,
+      "amount_pence": 5000,
+      "stripe_reference": "abc123",
+      "message": "MMI pack",
+      "type": "purchase",
+      "admin_id": 1,
+      "admin_name": "Test Admin",
+      "occurred_at": "2026-01-10T10:00:00Z",
+      "created_at": "2026-01-10T10:00:00Z",
+      "updated_at": "2026-01-10T10:00:00Z",
+      "deleted_at": null
+    }
+  ],
+  "next_cursor": null,
+  "has_more": false
+}

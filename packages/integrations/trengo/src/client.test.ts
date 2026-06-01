@@ -14,7 +14,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function makeFetch(body: unknown) {
-  return vi.fn(async () => jsonResponse(body))
+  // Give the mock the fetch signature so `mock.calls[n]` is typed as
+  // [input, init?] (TS 5.9 infers a zero-arg mock's calls as empty tuples).
+  return vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => jsonResponse(body))
 }
 
 async function clientWith(fetchMock: ReturnType<typeof makeFetch>) {
