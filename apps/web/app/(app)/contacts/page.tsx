@@ -9,10 +9,11 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 
 import { Button } from '@/components/ui/button'
-import { SearchIcon } from '@/components/ui/icon'
-import { Input } from '@/components/ui/input'
-import { createServerCaller } from '@/lib/trpc/server'
+import { FacetedFilter } from '@/components/ui/faceted-filter'
+import { ClearFiltersButton, FilterBar } from '@/components/ui/filter-bar'
+import { SearchField } from '@/components/ui/search-field'
 import { getCurrentUser } from '@/lib/auth/server'
+import { createServerCaller } from '@/lib/trpc/server'
 
 import { ContactsExportButton } from './ContactsExportButton'
 import { ContactsTable } from './ContactsTable'
@@ -82,16 +83,6 @@ export default async function ContactsPage({
     sortDir,
   })
 
-  function chipHref(next: CompanyOption | undefined): {
-    pathname: string
-    query: Record<string, string>
-  } {
-    const q: Record<string, string> = {}
-    if (sp.q) q.q = sp.q
-    if (next) q.company = next.slug
-    return { pathname: '/contacts', query: q }
-  }
-
   return (
     <>
       <PageHeader
@@ -107,119 +98,34 @@ export default async function ContactsPage({
         }
       />
       <PageBody>
-        <form className="flex gap-2" method="GET">
-          <div className="relative max-w-sm flex-1">
-            <SearchIcon
-              size={16}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"
-            />
-            <Input
-              type="search"
-              name="q"
-              defaultValue={sp.q ?? ''}
-              placeholder="Search by name, email, or phone"
-              className="pl-9"
-            />
-          </div>
-          <Button type="submit" variant="secondary">
-            Search
-          </Button>
-        </form>
-
-        {/* Company filter chips */}
-        <div className="mt-4 flex flex-wrap items-center gap-1.5">
-          <Link
-            href={chipHref(undefined)}
-            className={
-              !activeCompany
-                ? 'inline-flex items-center rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
-                : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900'
-            }
-          >
-            All companies
-          </Link>
-          {companies.map((c) => {
-            const active = activeCompany?.id === c.id
-            return (
-              <Link
-                key={c.id}
-                href={chipHref(c)}
-                className={
-                  active
-                    ? 'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-white'
-                    : 'inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50'
-                }
-                style={active ? { backgroundColor: c.color ?? '#475569' } : undefined}
-              >
-                <span
-                  aria-hidden
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: c.color ?? '#94a3b8' }}
-                />
-                {c.name}
-              </Link>
-            )
-          })}
-        </div>
-
-        {/* Kind filter — contacts are students or parents/guardians (no
-            Family grouping in this surface). */}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {(['parent', 'student', 'tutor', 'other'] as const).map((k) => {
-            const active = kind === k
-            const params = new URLSearchParams()
-            if (sp.q) params.set('q', sp.q)
-            if (activeCompany) params.set('company', activeCompany.slug)
-            if (sp.bookingStatus) params.set('bookingStatus', sp.bookingStatus)
-            if (sp.sortBy) params.set('sortBy', sp.sortBy)
-            if (sp.sortDir) params.set('sortDir', sp.sortDir)
-            if (!active) params.set('kind', k)
-            return (
-              <Link
-                key={k}
-                href={`/contacts?${params.toString()}`}
-                className={
-                  active
-                    ? 'inline-flex items-center rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white'
-                    : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
-                }
-              >
-                {k}
-              </Link>
-            )
-          })}
-        </div>
-
-        {/* Booking status filter (CLAUDE.md §15) — the primary lens for the
-            sales team: fresh leads vs registered vs booked-hours. */}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-neutral-400">
-            Status
-          </span>
-          {BOOKING_FILTERS.map((f) => {
-            const active = bookingStatus === f.value
-            const params = new URLSearchParams()
-            if (sp.q) params.set('q', sp.q)
-            if (activeCompany) params.set('company', activeCompany.slug)
-            if (sp.kind) params.set('kind', sp.kind)
-            if (sp.sortBy) params.set('sortBy', sp.sortBy)
-            if (sp.sortDir) params.set('sortDir', sp.sortDir)
-            if (!active) params.set('bookingStatus', f.value)
-            return (
-              <Link
-                key={f.value}
-                href={`/contacts?${params.toString()}`}
-                className={
-                  active
-                    ? 'inline-flex items-center rounded-full bg-primary-600 px-3 py-1 text-xs font-medium text-white'
-                    : 'inline-flex items-center rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
-                }
-              >
-                {f.label}
-              </Link>
-            )
-          })}
-        </div>
+        <FilterBar>
+          <SearchField placeholder="Search by name, email, or phone" />
+          <FacetedFilter
+            paramKey="company"
+            label="Company"
+            options={companies.map((c) => ({
+              value: c.slug,
+              label: c.name,
+              color: c.color ?? undefined,
+            }))}
+          />
+          <FacetedFilter
+            paramKey="kind"
+            label="Type"
+            options={[
+              { value: 'parent', label: 'Parent' },
+              { value: 'student', label: 'Student' },
+              { value: 'tutor', label: 'Tutor' },
+              { value: 'other', label: 'Other' },
+            ]}
+          />
+          <FacetedFilter
+            paramKey="bookingStatus"
+            label="Status"
+            options={BOOKING_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
+          />
+          <ClearFiltersButton paramKeys={['q', 'company', 'kind', 'bookingStatus']} />
+        </FilterBar>
 
         <ContactsTable
           rows={data.items.map((c) => ({
