@@ -34,6 +34,7 @@ export const EVENT_NAMES = [
   'card.moved',
   'card.updated',
   'card.archived',
+  'card.deleted',
   'card.commented',
   'card.description_changed',
   // Per-board configurable quick-action buttons (Called once, Called
