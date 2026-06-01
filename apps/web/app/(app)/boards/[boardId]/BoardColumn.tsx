@@ -61,6 +61,7 @@ interface Props {
   quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
+  canDeleteCard: boolean
   currentUserName: string
   /** Optimistic local-state update so quick actions + move dropdown
    * shift the card immediately, before the server mutation lands. */
@@ -75,6 +76,7 @@ export function BoardColumn({
   quickActions,
   canWrite,
   canComment,
+  canDeleteCard,
   currentUserName,
   onLocalMove,
 }: Props) {
@@ -123,6 +125,7 @@ export function BoardColumn({
                 quickActions={quickActions}
                 canWrite={canWrite}
                 canComment={canComment}
+                canDeleteCard={canDeleteCard}
                 currentUserName={currentUserName}
                 onLocalMove={onLocalMove}
               />

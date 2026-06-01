@@ -23,6 +23,7 @@ import {
   applyQuickAction,
   archiveBoard,
   archiveCard,
+  deleteCard,
   BoardCreateInput,
   BoardQuickActionsInput,
   BoardReorderInput,
@@ -89,6 +90,14 @@ const CARD_WRITE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'manager',
   'sales_executive',
 ])
+// Hard-delete is irreversible and removes audit-adjacent state (labels +
+// subtasks cascade). Restricted to Manager+ — same tier that owns refunds
+// and other irreversible writes (CLAUDE.md §20.1, ADR 0014).
+const CARD_DELETE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  'ceo',
+  'senior_manager',
+  'manager',
+])
 const LABEL_DELETE_ROLES = BOARD_MANAGE_ROLES
 
 function assertBoardManage(role: UserRole): void {
@@ -105,6 +114,15 @@ function assertCardWrite(role: UserRole): void {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'Your role cannot create or move cards',
+    })
+  }
+}
+
+function assertCardDelete(role: UserRole): void {
+  if (!CARD_DELETE_ROLES.has(role)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Only Manager and above can permanently delete cards',
     })
   }
 }
@@ -1093,6 +1111,23 @@ const cardRouter = router({
       mapBusinessError(err)
     }
   }),
+
+  // Hard-delete a card. Irreversible — CLAUDE.md §3 (no silent data
+  // mutation; UI must confirm). Cascades labels + subtasks; preserves the
+  // backing Contact and its timeline. Manager+ only.
+  delete: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCardDelete(user.role)
+      try {
+        await deleteCard(ctx.db, input.id, { actorId: user.id, requestId: ctx.requestId })
+        ctx.audit.called = true
+        return { ok: true }
+      } catch (err) {
+        mapBusinessError(err)
+      }
+    }),
 
   setLabels: auditedProcedure.input(CardSetLabelsInput).mutation(async ({ ctx, input }) => {
     const user = requireUser(ctx)

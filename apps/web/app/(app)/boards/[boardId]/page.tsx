@@ -19,6 +19,8 @@ export const dynamic = 'force-dynamic'
 
 const CAN_WRITE = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
 const CAN_MANAGE = new Set(['ceo', 'senior_manager'])
+// Hard-deleting a card is Manager+ (CARD_DELETE_ROLES in the tRPC router).
+const CAN_DELETE_CARD = new Set(['ceo', 'senior_manager', 'manager'])
 
 interface PageProps {
   params: Promise<{ boardId: string }>
@@ -30,6 +32,7 @@ export default async function BoardPage({ params }: PageProps) {
   const role = me?.role ?? 'virtual_assistant'
   const canWrite = CAN_WRITE.has(role)
   const canManage = CAN_MANAGE.has(role)
+  const canDeleteCard = CAN_DELETE_CARD.has(role)
   // Any authenticated user may comment (incl. virtual_assistant); the server
   // gates card.comments.add the same way.
   const canComment = Boolean(me)
@@ -153,6 +156,7 @@ export default async function BoardPage({ params }: PageProps) {
             quickActions={quickActions}
             canWrite={canWrite}
             canComment={canComment}
+            canDeleteCard={canDeleteCard}
             currentUserName={currentUserName}
           />
         )}

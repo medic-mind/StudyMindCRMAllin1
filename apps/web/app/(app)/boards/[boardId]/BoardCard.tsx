@@ -92,6 +92,7 @@ interface Props {
   quickActions: ReadonlyArray<QuickAction>
   canWrite: boolean
   canComment: boolean
+  canDeleteCard: boolean
   currentUserName: string
   /** Optimistic move so quick actions + dropdown shift the card
    * instantly. Optional — when missing the card still moves via the
@@ -112,6 +113,7 @@ export function BoardCard({
   quickActions,
   canWrite,
   canComment,
+  canDeleteCard,
   currentUserName,
   onLocalMove,
   dragRef,
@@ -288,6 +290,7 @@ export function BoardCard({
         quickActions={quickActions}
         canWrite={canWrite}
         canComment={canComment}
+        canDeleteCard={canDeleteCard}
         currentUserName={currentUserName}
       />
     </li>
