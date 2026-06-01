@@ -157,6 +157,10 @@ export interface ChatMessageView {
   /** Names of the latest few thread repliers, for the "N replies" affordance. */
   replyAuthorNames: string[]
   attachments: ChatAttachmentView[]
+  /** Pinned to its channel (shared state). */
+  pinned: boolean
+  /** Saved by the current viewer (private bookmark). */
+  saved: boolean
 }
 
 export interface ChatChannelView {

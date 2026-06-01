@@ -153,8 +153,15 @@ trash-with-confirm), **mark-read-on-open** (like Gmail), and an inline **reply**
 box. Every action runs the audited tRPC mutation against the live mailbox and
 invalidates the TanStack queries; the pane subscribes to the SSE stream
 (`useConversationStream` now also invalidates `mail.threads.list`) so it stays
-live. **Still to come:** keyboard shortcuts, attachment previews, label editing
-in the pane.
+live. **Keyboard shortcuts (implemented):** `j`/`k` navigate, `e` archive, `s`
+star, `u` mark-unread, `#` trash, `r` reply, `/` search, `c` compose, `Esc`
+close, `?` toggles a shortcuts overlay — inert while typing in a field.
+**Attachments (implemented):** email attachments (streamed to S3 on sync)
+render as download chips in the reading pane, served by an authenticated
+streaming route (`/api/internal/mail-attachments/[interactionId]/[index]`,
+same access gate as the Trengo attachment route — `contact.get` enforces
+restricted-access; VA refused on unmatched mail). **Still to come:** in-pane
+label editing, inbound flag-mirroring (Gmail→CRM).
 
 ### Phase 5 — Two-way action sync (implemented)
 

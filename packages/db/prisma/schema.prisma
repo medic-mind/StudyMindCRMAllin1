@@ -1093,6 +1093,11 @@ model Conversation {
   /// WhatsApp 24-hour reply window deadline derived from the most recent
   /// inbound on a whatsapp conversation. Null otherwise.
   replyDeadlineAt  DateTime?
+  /// ADR 0020 Phase 6g — when a `snoozed` conversation should resurface into
+  /// the active inbox. The `trengo/unsnooze-due` cron flips status back to
+  /// `open` once this passes; a new inbound also resurfaces it immediately.
+  /// Null when not snoozed.
+  snoozedUntil     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1992,6 +1997,31 @@ model TeamMember {
 // templates. Manager+ manages the catalogue; Sales Executive+ triggers sends.
 // CLAUDE.md §20.1.
 // -----------------------------------------------------------------------------
+
+/// Canned reply / quick-reply template (ADR 0020 Phase 6h). A saved message
+/// snippet an agent inserts into a conversation reply. Shared (team-wide)
+/// when `ownerUserId` is null; the column is retained for a future personal
+/// scope. `{{first_name}}` / `{{name}}` placeholders are substituted at
+/// insert time with the contact's details.
+model QuickReply {
+  id          String  @id
+  title       String
+  body        String
+  /// Optional channel filter — null = available on every channel.
+  channel     String?
+  /// null = shared (team-wide). Retained for future personal quick replies.
+  ownerUserId String?
+  sortOrder   Int     @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  @@index([archivedAt, sortOrder])
+  @@index([ownerUserId])
+}
 
 model ForwardingRule {
   id              String   @id
@@ -3060,6 +3090,8 @@ model ChatMessage {
   refs        ChatMessageRef[]
   reactions   ChatReaction[]
   attachments ChatAttachment[]
+  pins        ChatPin[]
+  saves       ChatSavedItem[]
 
   /// Channel timeline (top-level rows have parentId IS NULL) ordered by recency.
   @@index([channelId, parentId, createdAt])
@@ -3096,6 +3128,38 @@ model ChatAttachment {
   message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([messageId])
+}
+
+/// A pinned message in a channel (ADR 0022 — pins & saves). Shared, channel-
+/// scoped (like Slack's Pins tab): any member can pin/unpin; everyone in the
+/// channel sees the same set. One pin per message (a message is pinned or not).
+/// Cascades with the message and the channel.
+model ChatPin {
+  id          String   @id
+  messageId   String   @unique
+  channelId   String
+  /// Who pinned it, for the "pinned by …" line.
+  pinnedById  String
+  createdAt   DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, createdAt])
+}
+
+/// A personal saved/bookmarked message (ADR 0022 — pins & saves). Per-user and
+/// private (like Slack's "Later" / saved items): only the owner sees their
+/// saves. One save per (user, message). Cascades with the message.
+model ChatSavedItem {
+  id        String   @id
+  userId    String
+  messageId String
+  createdAt DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([userId, createdAt])
 }
 
 model ChatMention {

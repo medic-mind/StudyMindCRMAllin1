@@ -620,6 +620,38 @@ export const businessAccountRouter = router({
       },
     })
     if (!a) throw new TRPCError({ code: 'NOT_FOUND' })
+
+    // At-a-glance stats for the detail header band: engagement aggregates
+    // (students, hours, paid, comms, last-contacted) plus a live rollup of the
+    // invoices mirrored from the B2B Invoices Platform for this account.
+    const [statsMap, invoiceRollup] = await Promise.all([
+      loadAccountStats(ctx.db, [a.id]),
+      ctx.db.invoicingInvoice.groupBy({
+        by: ['status'],
+        where: {
+          deletedAt: null,
+          customer: { businessAccountId: a.id },
+        },
+        _count: { _all: true },
+        _sum: { grandTotalMinor: true, paidMinor: true },
+      }),
+    ])
+    const stats = statsMap.get(a.id) ?? null
+    let invoiceCount = 0
+    let invoicedMinor = 0
+    let invoicePaidMinor = 0
+    let outstandingMinor = 0
+    for (const row of invoiceRollup) {
+      const n = row._count._all
+      const grand = row._sum.grandTotalMinor ?? 0
+      const paid = row._sum.paidMinor ?? 0
+      invoiceCount += n
+      invoicedMinor += grand
+      invoicePaidMinor += paid
+      // Outstanding excludes cancelled invoices.
+      if (row.status !== 'cancelled') outstandingMinor += Math.max(0, grand - paid)
+    }
+
     return {
       id: a.id,
       kind: a.kind,
@@ -638,6 +670,7 @@ export const businessAccountRouter = router({
       country: a.country,
       notes: a.notes,
       archived: a.archivedAt != null,
+      needsClassification: a.needsClassification,
       createdAt: a.createdAt,
       updatedAt: a.updatedAt,
       contacts: a.contacts.map((link) => ({
@@ -656,6 +689,20 @@ export const businessAccountRouter = router({
         slug: link.company.slug,
         color: link.company.color,
       })),
+      stats: {
+        studentCount: stats?.studentCount ?? 0,
+        hoursContracted: stats?.hoursContracted ?? 0,
+        hoursDelivered: stats?.hoursDelivered ?? 0,
+        amountPaidMinor: stats?.amountPaidMinor ?? 0,
+        callCount: stats?.callCount ?? 0,
+        textCount: stats?.textCount ?? 0,
+        emailCount: stats?.emailCount ?? 0,
+        lastContactedAt: stats?.lastContactedAt ?? null,
+        invoiceCount,
+        invoicedMinor,
+        invoicePaidMinor,
+        outstandingMinor,
+      },
     }
   }),
 

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { trpc } from '@/lib/trpc/client'
@@ -264,7 +265,7 @@ export function CompaniesAdmin() {
         </div>
       </form>
 
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+      <Card className="overflow-hidden">
         {rows.length === 0 ? (
           <p className="p-6 text-sm text-neutral-500">
             No companies yet. Add one above to start tagging contacts.
@@ -309,7 +310,7 @@ export function CompaniesAdmin() {
             ))}
           </ul>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

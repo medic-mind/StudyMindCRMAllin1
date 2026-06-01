@@ -1,7 +1,8 @@
 // A single message row in the channel feed or a thread (ADR 0022). Shows the
 // author, body (markdown + chips), reactions, and a Slack-style hover action
-// bar: quick-react, reply-in-thread, forward, edit, delete. A message that has
-// replies shows a prominent "N replies" thread affordance beneath it.
+// bar: quick-react, reply-in-thread, forward, pin, save, edit, delete. A
+// message with replies shows a prominent "N replies" thread affordance, and a
+// pinned message shows a "Pinned" label.
 
 'use client'
 
@@ -11,8 +12,10 @@ import { Avatar } from '@/components/ui/avatar'
 import {
   ForwardIcon,
   PencilIcon,
+  PinIcon,
   ReplyIcon,
   SmilePlusIcon,
+  StarIcon,
   Trash2Icon,
 } from '@/components/ui/icon'
 import { CHAT_REACTION_EMOJI } from '@studymind/core/chat'
@@ -35,6 +38,8 @@ interface Props {
   onEdit: (id: string, body: string) => void
   onDelete: (id: string) => void
   onForward?: (messageId: string) => void
+  onPin?: (messageId: string, pinned: boolean) => void
+  onSave?: (messageId: string, saved: boolean) => void
 }
 
 export function MessageRow({
@@ -48,6 +53,8 @@ export function MessageRow({
   onEdit,
   onDelete,
   onForward,
+  onPin,
+  onSave,
 }: Props) {
   const [editing, setEditing] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
@@ -98,6 +105,11 @@ export function MessageRow({
       </div>
 
       <div className="min-w-0 flex-1">
+        {message.pinned ? (
+          <span className="mb-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-amber-700">
+            <PinIcon size={11} /> Pinned
+          </span>
+        ) : null}
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-neutral-900">{message.authorName}</span>
           <span className="text-[11px] text-neutral-400">
@@ -250,6 +262,38 @@ export function MessageRow({
               className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
             >
               <ForwardIcon size={15} />
+            </button>
+          ) : null}
+          {onSave ? (
+            <button
+              type="button"
+              title={message.saved ? 'Remove from saved' : 'Save for later'}
+              aria-label={message.saved ? 'Remove from saved' : 'Save for later'}
+              aria-pressed={message.saved}
+              onClick={() => onSave(message.id, !message.saved)}
+              className={
+                message.saved
+                  ? 'inline-flex h-7 w-7 items-center justify-center rounded-md text-amber-500 hover:bg-amber-50'
+                  : 'inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800'
+              }
+            >
+              <StarIcon size={15} fill={message.saved ? 'currentColor' : 'none'} />
+            </button>
+          ) : null}
+          {onPin ? (
+            <button
+              type="button"
+              title={message.pinned ? 'Unpin from channel' : 'Pin to channel'}
+              aria-label={message.pinned ? 'Unpin from channel' : 'Pin to channel'}
+              aria-pressed={message.pinned}
+              onClick={() => onPin(message.id, !message.pinned)}
+              className={
+                message.pinned
+                  ? 'inline-flex h-7 w-7 items-center justify-center rounded-md text-primary-600 hover:bg-primary-50'
+                  : 'inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800'
+              }
+            >
+              <PinIcon size={15} />
             </button>
           ) : null}
           {isAuthor ? (

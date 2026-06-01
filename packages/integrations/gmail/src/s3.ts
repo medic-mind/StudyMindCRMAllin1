@@ -2,7 +2,7 @@
 // Stream attachments to S3 on first sync; reference by S3 key in
 // Interaction.payload.attachments[]. Lifecycle: 90 d standard then Glacier.
 
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 
 let cached: S3Client | null = null
 let injected: S3Client | null = null
@@ -64,4 +64,27 @@ export async function putAttachment(
     }),
   )
   return { s3Key }
+}
+
+export interface GetAttachmentResult {
+  body: NodeJS.ReadableStream
+  contentType: string
+  contentLength: number | null
+}
+
+/** Stream a stored Gmail attachment back from S3 by key. Used by the
+ *  authenticated mail-attachment download route (ADR 0021 Phase 4). */
+export async function getAttachment(s3Key: string): Promise<GetAttachmentResult> {
+  const client = getS3Client()
+  const res = await client.send(
+    new GetObjectCommand({ Bucket: getBucket(), Key: s3Key }),
+  )
+  if (!res.Body) {
+    throw new Error(`attachment ${s3Key} has no body`)
+  }
+  return {
+    body: res.Body as NodeJS.ReadableStream,
+    contentType: res.ContentType ?? 'application/octet-stream',
+    contentLength: typeof res.ContentLength === 'number' ? res.ContentLength : null,
+  }
 }

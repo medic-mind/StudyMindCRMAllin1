@@ -6,6 +6,7 @@
 
 import type { TrengoConversation } from '@/lib/view-models/contact-channels'
 
+import { StartTrengoConversation } from './StartTrengoConversation'
 import { TrengoConversationActions } from './TrengoConversationActions'
 
 interface Props {
@@ -23,15 +24,22 @@ const CHANNEL_LABEL: Record<string, string> = {
 export function TrengoSection({ contactId, conversations }: Props): JSX.Element {
   if (conversations.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-neutral-300 p-4 text-sm text-neutral-600">
-        No Trengo conversations yet — WhatsApp, SMS, email, and web-chat threads
-        will appear here once they are linked to this contact.
+      <div className="space-y-3">
+        <div className="rounded-md border border-dashed border-neutral-300 p-4 text-sm text-neutral-600">
+          No Trengo conversations yet — WhatsApp, SMS, email, and web-chat
+          threads will appear here once they are linked to this contact.
+        </div>
+        <StartTrengoConversation contactId={contactId} />
       </div>
     )
   }
   const now = Date.now()
   return (
-    <ol className="space-y-2">
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <StartTrengoConversation contactId={contactId} />
+      </div>
+      <ol className="space-y-2">
       {conversations.map((c) => {
         const windowOpen = c.replyDeadlineAt
           ? new Date(c.replyDeadlineAt).getTime() > now
@@ -80,6 +88,7 @@ export function TrengoSection({ contactId, conversations }: Props): JSX.Element 
           </li>
         )
       })}
-    </ol>
+      </ol>
+    </div>
   )
 }

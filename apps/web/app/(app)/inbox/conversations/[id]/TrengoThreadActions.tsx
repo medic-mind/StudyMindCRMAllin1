@@ -19,7 +19,16 @@ interface Props {
   ticketId: number | null
   tags: string[]
   unread: boolean
+  status: 'open' | 'closed' | 'snoozed' | 'archived'
 }
+
+const SNOOZE_OPTIONS: ReadonlyArray<{ label: string; minutes: number }> = [
+  { label: '1 hour', minutes: 60 },
+  { label: '4 hours', minutes: 240 },
+  { label: 'Tomorrow', minutes: 60 * 24 },
+  { label: '3 days', minutes: 60 * 24 * 3 },
+  { label: 'Next week', minutes: 60 * 24 * 7 },
+]
 
 export function TrengoThreadActions({
   conversationId,
@@ -27,6 +36,7 @@ export function TrengoThreadActions({
   ticketId,
   tags,
   unread,
+  status,
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
@@ -68,8 +78,27 @@ export function TrengoThreadActions({
     },
     onError: (e) => toast.error(e.message ?? 'Could not mark read'),
   })
+  const snooze = trpc.interaction.trengo.snooze.useMutation({
+    onSuccess: () => {
+      toast.success('Snoozed')
+      refresh()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not snooze'),
+  })
+  const unsnooze = trpc.interaction.trengo.unsnooze.useMutation({
+    onSuccess: () => {
+      toast.success('Back in the inbox')
+      refresh()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not unsnooze'),
+  })
 
-  const busy = addLabel.isPending || removeLabel.isPending || markRead.isPending
+  const busy =
+    addLabel.isPending ||
+    removeLabel.isPending ||
+    markRead.isPending ||
+    snooze.isPending ||
+    unsnooze.isPending
 
   const submitLabel = () => {
     const v = newLabel.trim()
@@ -144,19 +173,54 @@ export function TrengoThreadActions({
       </div>
 
       {/* Actions row */}
-      {unread ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">
+        {unread ? (
           <button
             type="button"
             onClick={() => markRead.mutate({ conversationId })}
-            disabled={markRead.isPending}
+            disabled={busy}
             className="rounded border border-neutral-300 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
           >
             Mark read
           </button>
-          <span className="text-xs text-neutral-400">labels sync to Trengo</span>
-        </div>
-      ) : null}
+        ) : null}
+
+        {status === 'snoozed' ? (
+          <button
+            type="button"
+            onClick={() => unsnooze.mutate({ conversationId })}
+            disabled={busy}
+            className="rounded border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+          >
+            Unsnooze
+          </button>
+        ) : (
+          <span className="inline-flex items-center gap-1">
+            <span className="text-xs text-neutral-500">Snooze</span>
+            <select
+              defaultValue=""
+              disabled={busy}
+              onChange={(e) => {
+                const m = Number(e.target.value)
+                if (m > 0) snooze.mutate({ conversationId, minutes: m })
+                e.currentTarget.value = ''
+              }}
+              className="rounded border border-neutral-300 bg-white px-1.5 py-1 text-xs"
+              aria-label="Snooze for"
+            >
+              <option value="" disabled>
+                for…
+              </option>
+              {SNOOZE_OPTIONS.map((o) => (
+                <option key={o.minutes} value={o.minutes}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </span>
+        )}
+        <span className="ml-auto text-xs text-neutral-400">labels sync to Trengo</span>
+      </div>
     </div>
   )
 }

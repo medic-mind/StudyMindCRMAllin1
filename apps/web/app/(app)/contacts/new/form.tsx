@@ -5,9 +5,10 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { CountrySelect } from '@/components/ui/country-select'
+import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { XIcon } from '@/components/ui/icon'
@@ -86,8 +87,11 @@ function Section({
   description?: string
   children: React.ReactNode
 }) {
+  // Section reuses the Card primitive — header is a plain <header> rather
+  // than CardHeader because we want the description below the title rather
+  // than slot-style "title + right-actions" the CardHeader is shaped for.
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+    <Card className="p-5">
       <header className="mb-4">
         <h2 className="text-sm font-semibold text-neutral-900">{title}</h2>
         {description ? (
@@ -95,7 +99,7 @@ function Section({
         ) : null}
       </header>
       {children}
-    </section>
+    </Card>
   )
 }
 
@@ -193,41 +197,35 @@ export function NewContactForm() {
     <form className="space-y-5" onSubmit={onSubmit}>
       <Section title="Identity" description="Who is this contact?">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="kind">Role</Label>
+          <Field label="Role" htmlFor="kind">
             <Select id="kind" value={form.kind} onChange={set('kind')}>
               <option value="parent">Parent</option>
               <option value="student">Student</option>
               <option value="tutor">Tutor</option>
               <option value="other">Other</option>
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="firstName">First name</Label>
+          </Field>
+          <Field label="First name" htmlFor="firstName">
             <Input id="firstName" value={form.firstName} onChange={set('firstName')} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="lastName">Last name</Label>
+          </Field>
+          <Field label="Last name" htmlFor="lastName">
             <Input id="lastName" value={form.lastName} onChange={set('lastName')} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="pronouns">Pronouns</Label>
+          </Field>
+          <Field label="Pronouns" htmlFor="pronouns" hint="e.g. they/them">
             <Input
               id="pronouns"
               value={form.pronouns}
               onChange={set('pronouns')}
-              placeholder="e.g. they/them"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="dateOfBirth">Date of birth</Label>
+          </Field>
+          <Field label="Date of birth" htmlFor="dateOfBirth">
             <Input
               id="dateOfBirth"
               type="date"
               value={form.dateOfBirth}
               onChange={set('dateOfBirth')}
             />
-          </div>
+          </Field>
         </div>
       </Section>
 
@@ -346,21 +344,17 @@ export function NewContactForm() {
 
       <Section title="Contact details">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
+          <Field label="Email" htmlFor="email">
             <Input id="email" type="email" value={form.email} onChange={set('email')} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="phoneE164">Phone (E.164)</Label>
+          </Field>
+          <Field label="Phone (E.164)" htmlFor="phoneE164" hint="+447700900123">
             <Input
               id="phoneE164"
               value={form.phoneE164}
               onChange={set('phoneE164')}
-              placeholder="+447700900123"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="preferredContactMethod">Preferred channel</Label>
+          </Field>
+          <Field label="Preferred channel" htmlFor="preferredContactMethod">
             <Select
               id="preferredContactMethod"
               value={form.preferredContactMethod}
@@ -372,51 +366,43 @@ export function NewContactForm() {
               <option value="whatsapp">WhatsApp</option>
               <option value="any">Any</option>
             </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="timezone">Time zone</Label>
+          </Field>
+          <Field label="Time zone" htmlFor="timezone" hint="Europe/London">
             <Input
               id="timezone"
               value={form.timezone}
               onChange={set('timezone')}
-              placeholder="Europe/London"
             />
-          </div>
+          </Field>
           {showJobTitle && (
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="jobTitle">Job title</Label>
+            <Field label="Job title" htmlFor="jobTitle" className="sm:col-span-2">
               <Input id="jobTitle" value={form.jobTitle} onChange={set('jobTitle')} />
-            </div>
+            </Field>
           )}
         </div>
       </Section>
 
       <Section title="Address" description="Optional postal address.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="addressLine1">Address line 1</Label>
+          <Field label="Address line 1" htmlFor="addressLine1" className="sm:col-span-2">
             <Input id="addressLine1" value={form.addressLine1} onChange={set('addressLine1')} />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="addressLine2">Address line 2</Label>
+          </Field>
+          <Field label="Address line 2" htmlFor="addressLine2" className="sm:col-span-2">
             <Input id="addressLine2" value={form.addressLine2} onChange={set('addressLine2')} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="city">City / town</Label>
+          </Field>
+          <Field label="City / town" htmlFor="city">
             <Input id="city" value={form.city} onChange={set('city')} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="postcode">Postcode</Label>
+          </Field>
+          <Field label="Postcode" htmlFor="postcode">
             <Input id="postcode" value={form.postcode} onChange={set('postcode')} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="country">Country</Label>
+          </Field>
+          <Field label="Country" htmlFor="country">
             <CountrySelect
               id="country"
               value={form.country}
               onChange={(v) => setForm((f) => ({ ...f, country: v }))}
             />
-          </div>
+          </Field>
         </div>
       </Section>
 
@@ -426,30 +412,29 @@ export function NewContactForm() {
           description="School + year group + SEND + exam target — fill what's known."
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="schoolName">School</Label>
+            <Field label="School" htmlFor="schoolName">
               <Input id="schoolName" value={form.schoolName} onChange={set('schoolName')} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="yearGroup">Year group</Label>
+            </Field>
+            <Field label="Year group" htmlFor="yearGroup" hint="e.g. Year 9">
               <Input
                 id="yearGroup"
                 value={form.yearGroup}
                 onChange={set('yearGroup')}
-                placeholder="e.g. Year 9"
               />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="examTarget">Exam target</Label>
+            </Field>
+            <Field
+              label="Exam target"
+              htmlFor="examTarget"
+              hint="GCSE Year 11 Maths, A-Level Biology, 11+ English…"
+              className="sm:col-span-2"
+            >
               <Input
                 id="examTarget"
                 value={form.examTarget}
                 onChange={set('examTarget')}
-                placeholder="GCSE Year 11 Maths, A-Level Biology, 11+ English…"
               />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="sendStatus">SEND status</Label>
+            </Field>
+            <Field label="SEND status" htmlFor="sendStatus" className="sm:col-span-2">
               <Select id="sendStatus" value={form.sendStatus} onChange={set('sendStatus')}>
                 <option value="">Not set</option>
                 <option value="none">No SEND</option>
@@ -458,7 +443,7 @@ export function NewContactForm() {
                 <option value="ehcp_in_progress">EHCP in progress</option>
                 <option value="other">Other</option>
               </Select>
-            </div>
+            </Field>
           </div>
         </Section>
       )}
@@ -468,31 +453,36 @@ export function NewContactForm() {
         description="Where did this lead come from? Mailchimp email is stored only for reference."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="referralSource">Referral source</Label>
+          <Field
+            label="Referral source"
+            htmlFor="referralSource"
+            hint="Google, word-of-mouth, booking site…"
+          >
             <Input
               id="referralSource"
               value={form.referralSource}
               onChange={set('referralSource')}
-              placeholder="Google, word-of-mouth, booking site…"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mailchimpEmail">Mailchimp audience email</Label>
+          </Field>
+          <Field
+            label="Mailchimp audience email"
+            htmlFor="mailchimpEmail"
+            hint="Defaults to Email if blank"
+          >
             <Input
               id="mailchimpEmail"
               type="email"
               value={form.mailchimpEmail}
               onChange={set('mailchimpEmail')}
-              placeholder="Defaults to Email if blank"
             />
-          </div>
+          </Field>
         </div>
       </Section>
 
       <Section title="Internal notes">
         <Textarea
           id="notes"
+          aria-label="Internal notes"
           rows={4}
           value={form.notes}
           onChange={set('notes')}

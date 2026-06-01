@@ -136,6 +136,22 @@ incoming mentions (opt-in, from the channel rail).
   anywhere in the workspace; picking a result jumps to the channel and opens the
   thread when the hit is a reply (deep-linked via `?c=&t=`).
 
+### Pins, saves & jump-to-message (Phase 4 — shipped)
+
+- **Pinned messages** (`ChatPin` + `chat.pin` / `chat.listPins`): shared,
+  channel-scoped (Slack's Pins tab). Any channel member may pin/unpin; everyone
+  sees the same set. Unique per message; cascades with the message/channel. A
+  pinned message shows a "Pinned" label in the feed.
+- **Saved items** (`ChatSavedItem` + `chat.save` / `chat.listSaves`): private
+  per-user bookmarks (Slack's "Later"), spanning all channels, visible only to
+  the owner. Unique per `(user, message)`.
+- Both `pinned` (shared) and `saved` (viewer-specific) are hydrated onto every
+  `ChatMessageView` in a batched lookup, surfaced as toggles in the hover action
+  bar, and opened as side panels (`PinsSavedPanel`) from the channel header.
+- **Jump-to-message**: message rows register a ref by id; the Pins/Saved panels
+  (and search) scroll the target into view with a brief highlight, paging older
+  messages in until it's loaded. Replies open their thread instead.
+
 ## Alternatives considered
 
 - **Keep using Slack.** Rejected: the whole point is to keep the conversation

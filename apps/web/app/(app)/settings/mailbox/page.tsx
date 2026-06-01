@@ -5,6 +5,7 @@
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { MailIcon } from '@/components/ui/icon'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -69,7 +70,7 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
             </div>
           ) : null}
 
-          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+          <Card className="overflow-hidden">
             <div className="flex items-center justify-between border-b border-neutral-100 bg-neutral-50/60 px-4 py-3">
               <h2 className="text-sm font-semibold text-neutral-900">
                 Connected accounts ({mailboxes.length})
@@ -129,7 +130,7 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
                 ))}
               </ul>
             )}
-          </div>
+          </Card>
 
           {mailboxes.length > 1 ? (
             <p className="text-xs text-neutral-500">

@@ -30,7 +30,13 @@ emitter.setMaxListeners(0)
 export const REALTIME_EVENT_CHAT_ACTIVITY = 'chat.activity' as const
 
 /** The kind of change that happened, so a client can scope its refetch. */
-export type ChatActivityKind = 'message' | 'edit' | 'delete' | 'reaction' | 'read'
+export type ChatActivityKind =
+  | 'message'
+  | 'edit'
+  | 'delete'
+  | 'reaction'
+  | 'read'
+  | 'pin'
 
 export interface ChatActivityEvent {
   /** What happened — drives which queries the client invalidates. */

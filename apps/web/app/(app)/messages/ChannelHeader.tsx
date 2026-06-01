@@ -13,6 +13,8 @@ import {
   HashIcon,
   LockIcon,
   MoreHorizontalIcon,
+  PinIcon,
+  StarIcon,
   UserPlusIcon,
 } from '@/components/ui/icon'
 import { trpc } from '@/lib/trpc/client'
@@ -28,6 +30,10 @@ interface Props {
   canDelete: boolean
   /** Called after a successful delete so the workspace can clear selection. */
   onDeleted?: (channelId: string) => void
+  /** Toggle the channel's Pins side panel. */
+  onOpenPins: () => void
+  /** Toggle the viewer's Saved side panel. */
+  onOpenSaved: () => void
 }
 
 const NOTIFY_LABEL: Record<string, string> = {
@@ -36,7 +42,14 @@ const NOTIFY_LABEL: Record<string, string> = {
   none: 'Nothing',
 }
 
-export function ChannelHeader({ channel, canManage, canDelete, onDeleted }: Props) {
+export function ChannelHeader({
+  channel,
+  canManage,
+  canDelete,
+  onDeleted,
+  onOpenPins,
+  onOpenSaved,
+}: Props) {
   const utils = trpc.useUtils()
   const [menuOpen, setMenuOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -110,6 +123,24 @@ export function ChannelHeader({ channel, canManage, canDelete, onDeleted }: Prop
       </div>
 
       <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-label="Pinned messages"
+          title="Pinned messages"
+          onClick={onOpenPins}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+        >
+          <PinIcon size={16} />
+        </button>
+        <button
+          type="button"
+          aria-label="Saved items"
+          title="Saved items"
+          onClick={onOpenSaved}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+        >
+          <StarIcon size={16} />
+        </button>
         {channel.kind !== 'dm' && canManage ? (
           <button
             type="button"
