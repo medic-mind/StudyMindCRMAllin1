@@ -8,11 +8,13 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { FacetedFilter } from '@/components/ui/faceted-filter'
+import { SearchField } from '@/components/ui/search-field'
 import {
   BuildingIcon,
   ChevronRightIcon,
@@ -20,8 +22,6 @@ import {
   MessageSquareIcon,
   PhoneIcon,
 } from '@/components/ui/icon'
-import { Input } from '@/components/ui/input'
-import { Select } from '@/components/ui/select'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { formatRelativeTime } from '@/lib/format/relative-time'
@@ -97,10 +97,7 @@ function sortValue(a: AccountRow, key: SortKey): number | string {
 
 export function AccountsList({ kind, accounts }: { kind: Kind; accounts: AccountRow[] }) {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [creating, setCreating] = useState(false)
-  const [q, setQ] = useState(searchParams.get('q') ?? '')
-  const status = (searchParams.get('status') ?? '') as Status | ''
   const now = new Date()
 
   // Client-side column sort — the page already holds every row in memory, so
@@ -130,46 +127,21 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
     return sortDir === 'asc' ? cmp : -cmp
   })
 
-  function pushParam(key: string, value: string | null) {
-    const params = new URLSearchParams(searchParams.toString())
-    if (value && value.length > 0) {
-      params.set(key, value)
-    } else {
-      params.delete(key)
-    }
-    router.push(`/accounts?${params.toString()}`)
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              pushParam('q', q.trim() || null)
-            }}
-          >
-            <Input
-              type="search"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search by name, city, email…"
-              className="w-72"
-              aria-label="Search accounts"
-            />
-          </form>
-          <Select
-            value={status}
-            onChange={(e) => pushParam('status', e.target.value || null)}
-            aria-label="Status filter"
-          >
-            <option value="">All statuses</option>
-            <option value="prospect">Prospect</option>
-            <option value="active">Active</option>
-            <option value="paused">Paused</option>
-            <option value="churned">Churned</option>
-          </Select>
+          <SearchField placeholder="Search by name, city, email…" />
+          <FacetedFilter
+            paramKey="status"
+            label="Status"
+            options={[
+              { value: 'prospect', label: 'Prospect' },
+              { value: 'active', label: 'Active' },
+              { value: 'paused', label: 'Paused' },
+              { value: 'churned', label: 'Churned' },
+            ]}
+          />
         </div>
         {!creating && (
           <Button type="button" size="sm" onClick={() => setCreating(true)}>
