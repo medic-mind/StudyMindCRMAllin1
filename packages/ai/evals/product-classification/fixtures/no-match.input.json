@@ -1,0 +1,8 @@
+{
+  "description": "Miscellaneous administrative fee",
+  "amountMinor": 2500,
+  "currency": "GBP",
+  "catalogue": [
+    { "handle": "ucat-course", "name": "UCAT Crash Course", "category": "UCAT" }
+  ]
+}

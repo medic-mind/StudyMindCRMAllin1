@@ -1,0 +1,9 @@
+{
+  "description": "UCAT Crash Course - August intake",
+  "amountMinor": 39900,
+  "currency": "GBP",
+  "catalogue": [
+    { "handle": "ucat-course", "name": "UCAT Crash Course", "category": "UCAT" },
+    { "handle": "mmi-interview", "name": "MMI Interview Prep", "category": "Interview" }
+  ]
+}

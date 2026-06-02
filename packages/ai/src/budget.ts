@@ -21,6 +21,7 @@ export type AiTaskCategory =
   | 'churn_score'
   | 'transcription'
   | 'lead_classification'
+  | 'product_classification'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -43,6 +44,9 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   churn_score: { daily: 3, monthly: 60 },
   transcription: { daily: 10, monthly: 200 },
   lead_classification: { daily: 5, monthly: 100 },
+  // Advisory pass over a payment description when rules find no catalogue
+  // match. Low volume, mini-tier (ADR 0030).
+  product_classification: { daily: 3, monthly: 60 },
 }
 
 interface UsageBucket {

@@ -119,3 +119,11 @@ export {
   type LeadClassificationAi,
   type LeadClassificationPromptInput,
 } from './prompts/lead-classification'
+export {
+  buildProductClassificationPrompt,
+  productClassificationSchema,
+  VERSION as PRODUCT_CLASSIFICATION_PROMPT_VERSION,
+  type ProductClassificationAi,
+  type ProductClassificationPromptInput,
+  type ProductCatalogueOption,
+} from './prompts/product-classification'

@@ -59,5 +59,14 @@ product records.
   dismisses it with a reason. Domain: `packages/core/src/finance/unresolved-payments.ts`;
   tRPC `finance.unresolvedPayments.{list,resolve,dismiss}` + `family.search`.
   Still human-confirmed — never an auto-created Family (CLAUDE.md §3).
-- Optional AI pass to refine low-confidence / unmatched product classification.
+- ~~Optional AI pass to refine low-confidence / unmatched product
+  classification.~~ **Done** — when the deterministic catalogue matcher finds
+  nothing, an advisory mini-task (`product_classification`,
+  `packages/ai/src/prompts/product-classification.ts`) suggests the single
+  best-fit **existing** catalogue handle (or null). It runs in the Stripe job
+  behind an API-key gate, degrades to null on any error, and the suggestion is
+  validated against the catalogue (`resolveAiProductSuggestion`, fail-closed —
+  never invents a product). The result is surfaced on the payment Interaction
+  (`productSource: 'ai'`, `aiProduct*`), labelled "(AI)" in the summary. Rules
+  always win when they match.
 - Line-item-level classification for multi-product checkout sessions.

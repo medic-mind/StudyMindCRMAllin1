@@ -7,8 +7,12 @@ export * from './sync-stripe'
 export * from './sync-gocardless'
 export {
   classifyProductFromText,
+  resolveAiProductSuggestion,
+  AI_PRODUCT_CONFIDENCE_THRESHOLD,
   type ProductCatalogueEntry,
   type ProductClassification,
+  type AiProductSuggestionInput,
+  type AcceptedAiProductSuggestion,
 } from './classify-product'
 export {
   recordUnresolvedStripePayment,

@@ -6,9 +6,15 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
+  buildProductClassificationPrompt,
+  productClassificationSchema,
+  runStructured,
+} from '@studymind/ai'
+import {
   classifyProductFromText,
   recomputeAtRiskForFamily,
   recordUnresolvedStripePayment,
+  resolveAiProductSuggestion,
   resolveFamilyByStripeCustomer,
   revertStripePayment,
   syncStripeInvoice,
@@ -267,6 +273,49 @@ export const stripeEventReceived = inngest.createFunction(
       return { skipped: true, reason: 'unresolved_customer' }
     }
 
+    // 2b. Advisory AI product classification — runs ONLY when the deterministic
+    //     catalogue matcher found nothing, for a resolved card payment. The
+    //     model picks one EXISTING catalogue handle (or null), so it can never
+    //     create a duplicate product. Degrades to null on any error or missing
+    //     key — never fails payment processing (ADR 0030, CLAUDE.md §32).
+    const aiProduct = await step.run('ai-classify-product', async () => {
+      if (persisted.kind !== 'payment') return null
+      const cls = 'classification' in persisted ? persisted.classification : null
+      if (!cls || !cls.unmatched) return null
+      if (!process.env['OPENAI_API_KEY'] && !process.env['GEMINI_API_KEY']) return null
+      const description = persisted.description ?? ''
+      if (description.trim().length === 0) return null
+      const catalogue = (await loadProductCatalogue()).map((c) => ({
+        handle: c.handle,
+        name: c.name,
+        category: c.category,
+      }))
+      if (catalogue.length === 0) return null
+      try {
+        const prompt = buildProductClassificationPrompt({
+          description,
+          amountMinor: persisted.amountMinor,
+          currency: persisted.currency,
+          catalogue,
+        })
+        const out = await runStructured({
+          task: 'product_classification',
+          promptVersion: prompt.promptVersion,
+          schema: productClassificationSchema,
+          schemaName: 'product_classification',
+          system: prompt.system,
+          user: prompt.user,
+          ctx: { eventId },
+        })
+        return resolveAiProductSuggestion(
+          out,
+          catalogue.map((c) => c.handle),
+        )
+      } catch {
+        return null
+      }
+    })
+
     // 3. Append a timeline Interaction on the resolved Family. Idempotent
     //    by checking for an existing interaction tagged with this eventId.
     await step.run('interaction', async () => {
@@ -286,18 +335,28 @@ export const stripeEventReceived = inngest.createFunction(
       const classification =
         'classification' in persisted ? persisted.classification : null
 
+      // Deterministic rules win; the advisory AI suggestion only fills in when
+      // the rules matched nothing.
+      const deterministicHandles = classification?.productHandles ?? []
+      const productHandles =
+        deterministicHandles.length > 0
+          ? deterministicHandles
+          : aiProduct
+            ? [aiProduct.handle]
+            : []
+      const productSource: 'rules' | 'ai' | 'none' =
+        deterministicHandles.length > 0 ? 'rules' : aiProduct ? 'ai' : 'none'
+
       let summary: string
       switch (persisted.kind) {
         case 'subscription':
           summary = `Stripe subscription updated (${type})`
           break
-        case 'payment': {
-          const products = classification?.productHandles ?? []
-          summary = products.length
-            ? `Stripe payment received — ${products.join(', ')}`
+        case 'payment':
+          summary = productHandles.length
+            ? `Stripe payment received — ${productHandles.join(', ')}${productSource === 'ai' ? ' (AI)' : ''}`
             : 'Stripe payment received'
           break
-        }
         case 'payment_refund':
           summary = 'Stripe payment refunded'
           break
@@ -319,9 +378,17 @@ export const stripeEventReceived = inngest.createFunction(
             kind: persisted.kind,
             ...(classification
               ? {
-                  productHandles: classification.productHandles,
+                  productHandles,
                   productCategories: classification.categories,
                   productUnmatched: classification.unmatched,
+                  productSource,
+                  ...(aiProduct
+                    ? {
+                        aiProductHandle: aiProduct.handle,
+                        aiProductConfidence: aiProduct.confidence,
+                        aiProductReason: aiProduct.reason,
+                      }
+                    : {}),
                 }
               : {}),
           },
