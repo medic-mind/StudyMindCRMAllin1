@@ -1715,6 +1715,44 @@ model ReconciliationDiscrepancy {
   @@index([resolvedAt])
 }
 
+enum UnresolvedPaymentStatus {
+  pending
+  resolved
+  dismissed
+}
+
+/// A successful Stripe charge for a customer with no StripeCustomer→Family
+/// mapping. We never auto-create a Family from a payment (CLAUDE.md §3); instead
+/// the charge lands here for finance to link to a Family (human-confirmed) or
+/// dismiss. Resolving creates the StripeCustomer mapping and records the
+/// Payment, so future charges for that customer resolve automatically.
+model UnresolvedStripePayment {
+  id                String                  @id
+  stripeChargeId    String                  @unique
+  stripeCustomerId  String
+  amountMinor       Int
+  currency          String                  @default("GBP")
+  receivedAt        DateTime
+  customerEmail     String?
+  customerName      String?
+  description       String?
+  productHandles    String[]                @default([])
+  status            UnresolvedPaymentStatus @default(pending)
+  resolvedFamilyId  String?
+  resolvedPaymentId String?
+  dismissReason     String?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  createdById  String?
+  updatedById  String?
+  resolvedAt   DateTime?
+  resolvedById String?
+
+  @@index([status])
+  @@index([stripeCustomerId])
+}
+
 // -----------------------------------------------------------------------------
 // Leads, tasks, tenders, LA
 // -----------------------------------------------------------------------------

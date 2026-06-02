@@ -51,6 +51,13 @@ product records.
 
 ## Follow-ups
 
-- Surface unresolved Stripe payments in a finance tray (today they are logged).
+- ~~Surface unresolved Stripe payments in a finance tray.~~ **Done** — a
+  successful charge with no `StripeCustomer → Family` mapping is recorded in
+  `UnresolvedStripePayment` and listed at `/finance/unresolved-payments`
+  (Manager+). A human links it to a Family (which records the `Payment` and
+  creates the `StripeCustomer` mapping so future charges auto-resolve) or
+  dismisses it with a reason. Domain: `packages/core/src/finance/unresolved-payments.ts`;
+  tRPC `finance.unresolvedPayments.{list,resolve,dismiss}` + `family.search`.
+  Still human-confirmed — never an auto-created Family (CLAUDE.md §3).
 - Optional AI pass to refine low-confidence / unmatched product classification.
 - Line-item-level classification for multi-product checkout sessions.

@@ -8,9 +8,12 @@ import { z } from 'zod'
 
 import {
   defaulterDetail,
+  dismissUnresolvedStripePayment,
   listDefaulters,
+  listUnresolvedStripePayments,
   paymentsForFamily,
   paymentSummaryForFamily,
+  resolveUnresolvedStripePayment,
 } from '@studymind/core/finance'
 
 import {
@@ -660,5 +663,71 @@ export const financeRouter = router({
       })
       return { id: after.id }
     }),
+  }),
+
+  // Successful Stripe charges with no StripeCustomer→Family mapping (ADR 0030).
+  // A human links each to a Family (records the Payment + creates the mapping)
+  // or dismisses it. We never auto-create a Family from a payment (CLAUDE.md §3).
+  unresolvedPayments: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      assertFinanceRole(requireUser(ctx))
+      const items = await listUnresolvedStripePayments(ctx.db)
+      return { items }
+    }),
+
+    resolve: auditedProcedure
+      .input(z.object({ id: z.string().min(1), familyId: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        const result = await resolveUnresolvedStripePayment(ctx.db, {
+          id: input.id,
+          familyId: input.familyId,
+          actorId: user.id,
+        })
+        if (!result.ok) {
+          throw new TRPCError({
+            code:
+              result.reason === 'not_found' || result.reason === 'family_not_found'
+                ? 'NOT_FOUND'
+                : 'CONFLICT',
+            message: result.reason,
+          })
+        }
+        await ctx.audit({
+          action: 'finance.unresolved_payment_resolved',
+          target: { type: 'Family', id: result.familyId },
+          after: {
+            unresolvedPaymentId: input.id,
+            paymentId: result.paymentId,
+            familyId: result.familyId,
+          },
+        })
+        return { paymentId: result.paymentId }
+      }),
+
+    dismiss: auditedProcedure
+      .input(z.object({ id: z.string().min(1), reason: z.string().min(3).max(500) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        const result = await dismissUnresolvedStripePayment(ctx.db, {
+          id: input.id,
+          reason: input.reason,
+          actorId: user.id,
+        })
+        if (!result.ok) {
+          throw new TRPCError({
+            code: result.reason === 'not_found' ? 'NOT_FOUND' : 'CONFLICT',
+            message: result.reason,
+          })
+        }
+        await ctx.audit({
+          action: 'finance.unresolved_payment_dismissed',
+          target: { type: 'UnresolvedStripePayment', id: input.id },
+          after: { reason: input.reason },
+        })
+        return { id: result.id }
+      }),
   }),
 })

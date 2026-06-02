@@ -10,6 +10,18 @@ export {
   type ProductCatalogueEntry,
   type ProductClassification,
 } from './classify-product'
+export {
+  recordUnresolvedStripePayment,
+  listUnresolvedStripePayments,
+  resolveUnresolvedStripePayment,
+  dismissUnresolvedStripePayment,
+  type RecordUnresolvedStripePaymentInput,
+  type UnresolvedStripePaymentRow,
+  type ResolveUnresolvedStripePaymentInput,
+  type ResolveUnresolvedStripePaymentResult,
+  type DismissUnresolvedStripePaymentInput,
+  type DismissUnresolvedStripePaymentResult,
+} from './unresolved-payments'
 export * from './booking-rules'
 export * from './reconcile'
 export {

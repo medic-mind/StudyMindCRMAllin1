@@ -299,6 +299,53 @@ export const familyRouter = router({
       return { discrepancies: discrepancies.length, created }
     }),
 
+  /**
+   * Lightweight typeahead search by family name or billing-contact
+   * name/email. Used by the unresolved-payment resolver to pick a Family to
+   * link a Stripe charge to. Returns a bounded, shaped list.
+   */
+  search: protectedProcedure
+    .input(z.object({ q: z.string().min(1).max(100), limit: z.number().min(1).max(25).default(10) }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.family.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { name: { contains: input.q, mode: 'insensitive' } },
+            {
+              billingContact: {
+                is: {
+                  OR: [
+                    { firstName: { contains: input.q, mode: 'insensitive' } },
+                    { lastName: { contains: input.q, mode: 'insensitive' } },
+                    { email: { contains: input.q, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+        take: input.limit,
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          state: true,
+          billingContact: { select: { firstName: true, lastName: true, email: true } },
+        },
+      })
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        state: r.state,
+        billingContactName: r.billingContact
+          ? [r.billingContact.firstName, r.billingContact.lastName]
+              .filter(Boolean)
+              .join(' ') || (r.billingContact.email ?? null)
+          : null,
+      }))
+    }),
+
   get: protectedProcedure
     // Read endpoint. Reads of minor data carry an audit obligation per §20; this
     // is enforced at the field level in a follow-up PR (encrypted notes path).
