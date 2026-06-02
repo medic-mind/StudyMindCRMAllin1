@@ -22,8 +22,10 @@ import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Popover } from '@/components/ui/popover'
 import { Toolbar } from '@/components/ui/toolbar'
 import {
+  ChevronDownIcon,
   ChevronRightIcon,
   MailIcon,
   MessageSquareIcon,
@@ -35,10 +37,18 @@ import { formatMoneyMinor } from '@/lib/format/money'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
 
-type SortBy = 'createdAt' | 'name'
+type SortBy = 'createdAt' | 'name' | 'hoursBooked' | 'hoursDelivered' | 'lastLessonAt'
 type SortDir = 'asc' | 'desc'
 
 type BookingStatus = 'lead' | 'registered_no_hours' | 'registered_with_hours'
+
+type RiskLevel = 'none' | 'low' | 'medium' | 'high'
+
+interface LabelChip {
+  id: string
+  name: string
+  color: string | null
+}
 
 interface ContactRow {
   id: string
@@ -47,8 +57,12 @@ interface ContactRow {
   phoneE164: string | null
   kind: string
   companies: ReadonlyArray<{ id: string; name: string; color: string | null }>
+  labels: ReadonlyArray<LabelChip>
   bookingStatus: BookingStatus
   hoursBooked: number | null
+  hoursDelivered: number | null
+  hoursRemaining: number | null
+  riskLevel: RiskLevel
   lastLessonAt: Date | string | null
   amountSpentMinor: number | null
   callCount: number
@@ -56,6 +70,12 @@ interface ContactRow {
   textCount: number
   lastInteractionAt: Date | string | null
   createdAt: Date | string
+}
+
+const RISK_BADGE: Record<Exclude<RiskLevel, 'none'>, { label: string; cls: string }> = {
+  high: { label: 'High risk', cls: 'bg-red-50 text-red-700 ring-1 ring-red-200' },
+  medium: { label: 'At risk', cls: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200' },
+  low: { label: 'Watch', cls: 'bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200' },
 }
 
 interface Props {
@@ -108,6 +128,7 @@ function formatKind(kind: string): string {
 
 const CAN_DELETE = new Set(['ceo', 'senior_manager', 'manager'])
 const CAN_PUSH = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+const CAN_LABEL = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
 
 export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
   const router = useRouter()
@@ -118,6 +139,29 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
   const canDelete = CAN_DELETE.has(role)
   const canPush = CAN_PUSH.has(role)
   const canMerge = CAN_DELETE.has(role) // same tier as delete: Manager+
+  const canLabel = CAN_LABEL.has(role)
+
+  // Shared label catalogue for the bulk "Label" action (Sales Executive+).
+  const labelsQuery = trpc.accountLabel.pickList.useQuery(undefined, { enabled: canLabel })
+  const labels = labelsQuery.data ?? []
+  const bulkSetLabel = trpc.accountLabel.bulkSetContactLabel.useMutation()
+
+  async function onBulkLabel(labelId: string, remove: boolean) {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+    setBusy(true)
+    try {
+      const { count } = await bulkSetLabel.mutateAsync({ contactIds: ids, labelId, remove })
+      toast.success(`${remove ? 'Removed label from' : 'Labelled'} ${count} customer${count === 1 ? '' : 's'}`)
+      setSelected(new Set())
+      await utils.contact.list.invalidate()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update labels')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const bulkMerge = trpc.contact.bulkMerge.useMutation()
 
@@ -288,6 +332,66 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
             </button>
           }
         >
+          {canLabel && labels.length > 0 && (
+            <Popover
+              align="start"
+              triggerClassName="inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1"
+              trigger={
+                <>
+                  <span>Label</span>
+                  <ChevronDownIcon size={14} className="text-neutral-400" aria-hidden />
+                </>
+              }
+            >
+              {(close) => (
+                <div className="max-h-72 min-w-[12rem] overflow-y-auto">
+                  <p className="px-2 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Add label
+                  </p>
+                  {labels.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => {
+                        close()
+                        void onBulkLabel(l.id, false)
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                    >
+                      <span
+                        aria-hidden
+                        className="h-2.5 w-2.5 flex-none rounded-full"
+                        style={{ backgroundColor: l.color ?? '#94a3b8' }}
+                      />
+                      {l.name}
+                    </button>
+                  ))}
+                  <div className="my-1 border-t border-neutral-100" />
+                  <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Remove label
+                  </p>
+                  {labels.map((l) => (
+                    <button
+                      key={`rm-${l.id}`}
+                      type="button"
+                      onClick={() => {
+                        close()
+                        void onBulkLabel(l.id, true)
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100"
+                    >
+                      <span
+                        aria-hidden
+                        className="h-2.5 w-2.5 flex-none rounded-full opacity-40"
+                        style={{ backgroundColor: l.color ?? '#94a3b8' }}
+                      />
+                      {l.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Popover>
+          )}
           {canPush && (
             <Button
               type="button"
@@ -379,10 +483,33 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                   Activity
                 </th>
                 <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Hours
+                  <Link
+                    href={sortHref('hoursBooked')}
+                    className="inline-flex items-center hover:text-neutral-900"
+                    title="Hours booked"
+                  >
+                    Booked{sortGlyph('hoursBooked')}
+                  </Link>
                 </th>
                 <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                  Last lesson
+                  <Link
+                    href={sortHref('hoursDelivered')}
+                    className="inline-flex items-center hover:text-neutral-900"
+                    title="Hours completed"
+                  >
+                    Done{sortGlyph('hoursDelivered')}
+                  </Link>
+                </th>
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Left
+                </th>
+                <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  <Link
+                    href={sortHref('lastLessonAt')}
+                    className="inline-flex items-center hover:text-neutral-900"
+                  >
+                    Last lesson{sortGlyph('lastLessonAt')}
+                  </Link>
                 </th>
                 <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Spent
@@ -443,8 +570,16 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                           <span className="block truncate font-medium text-neutral-900 group-hover:text-primary-700">
                             {c.displayName}
                           </span>
-                          <span className="mt-0.5 flex items-center gap-1.5">
+                          <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
                             <Badge tone={tone}>{formatKind(c.kind)}</Badge>
+                            {c.riskLevel !== 'none' && (
+                              <span
+                                className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${RISK_BADGE[c.riskLevel].cls}`}
+                                title="Hours at risk of expiring unused"
+                              >
+                                {RISK_BADGE[c.riskLevel].label}
+                              </span>
+                            )}
                             {c.companies.slice(0, 3).map((cc) => (
                               <span
                                 key={cc.id}
@@ -453,6 +588,23 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                                 className="h-2 w-2 rounded-full"
                                 style={{ backgroundColor: cc.color ?? '#94a3b8' }}
                               />
+                            ))}
+                            {c.labels.map((l) => (
+                              <span
+                                key={l.id}
+                                className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                                style={{
+                                  backgroundColor: `${l.color ?? '#94a3b8'}1a`,
+                                  color: l.color ?? '#475569',
+                                }}
+                              >
+                                <span
+                                  aria-hidden
+                                  className="h-1.5 w-1.5 rounded-full"
+                                  style={{ backgroundColor: l.color ?? '#94a3b8' }}
+                                />
+                                {l.name}
+                              </span>
                             ))}
                           </span>
                         </span>
@@ -496,6 +648,20 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                     </td>
                     <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-600">
                       {c.hoursBooked != null ? `${c.hoursBooked}h` : '—'}
+                    </td>
+                    <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-600">
+                      {c.hoursDelivered != null ? `${c.hoursDelivered}h` : '—'}
+                    </td>
+                    <td
+                      className={`px-3 py-2 align-top text-right font-mono text-xs tabular-nums ${
+                        c.riskLevel === 'high'
+                          ? 'font-semibold text-red-700'
+                          : c.riskLevel === 'medium'
+                            ? 'text-amber-700'
+                            : 'text-neutral-600'
+                      }`}
+                    >
+                      {c.hoursRemaining != null ? `${c.hoursRemaining}h` : '—'}
                     </td>
                     <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
                       {c.lastLessonAt

@@ -528,6 +528,9 @@ model Contact {
   /// Many-to-many: a contact can be tagged with multiple sister-brand
   /// companies (Medic Mind, Oxbridge Mind, Study Mind, anything admins add).
   companies          ContactCompany[]
+  /// Many-to-many: shared custom labels (the AccountLabel catalogue, applied
+  /// to customers as well as B2B accounts).
+  labels             ContactLabel[]
   /// Many-to-many: academic subjects this contact is interested in
   /// (Maths, Biology, etc). Reuses the existing Subject table that boards
   /// already populate.
@@ -2207,11 +2210,12 @@ model BusinessAccount {
 }
 
 /// Shared, staff-curated label catalogue. Free-form, colour-coded tags applied
-/// to B2B accounts today (schools + B2B partners); intentionally generic so it
-/// can extend to other entities (e.g. Contacts) via a sibling junction later
-/// without reshaping the catalogue. Distinct from `Label` (board cards, ADR
-/// 0018) and `Company` (brand tags) — those carry their own semantics.
-/// Manager+ curates the catalogue; Sales Executive+ applies labels.
+/// to BOTH B2B accounts (schools + partners) and B2C customers (Contacts) via
+/// the two sibling junctions below — one catalogue, surfaced in the UI simply
+/// as "Labels". Named `AccountLabel` for back-compat with the first migration
+/// (forward-only, CLAUDE.md §19); the name is not customer-facing. Distinct
+/// from `Label` (board cards, ADR 0018) and `Company` (brand tags) — those
+/// carry their own semantics. Manager+ curates; Sales Executive+ applies.
 model AccountLabel {
   id          String    @id
   name        String
@@ -2228,6 +2232,7 @@ model AccountLabel {
   updatedById String?
 
   accounts BusinessAccountLabel[]
+  contacts ContactLabel[]
 
   @@unique([name])
   @@index([archivedAt])
@@ -2245,6 +2250,23 @@ model BusinessAccountLabel {
   label   AccountLabel    @relation(fields: [labelId], references: [id], onDelete: Cascade)
 
   @@id([accountId, labelId])
+  @@index([labelId])
+}
+
+/// Many-to-many join: Contact ↔ AccountLabel (the shared label catalogue).
+/// One row per applied label — the B2C customer counterpart of
+/// BusinessAccountLabel.
+model ContactLabel {
+  contactId String
+  labelId   String
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  contact Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  label   AccountLabel @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, labelId])
   @@index([labelId])
 }
 

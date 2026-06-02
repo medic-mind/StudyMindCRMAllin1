@@ -10,7 +10,7 @@ import type {
   ContactSummary,
   SubjectRef,
 } from '@studymind/core/contact'
-import { displayNameOf } from '@studymind/core/contact'
+import { deriveHoursRisk, displayNameOf } from '@studymind/core/contact'
 import type { ContactCommsCounts } from '@studymind/core/stats'
 
 export type { ContactSummary } from '@studymind/core/contact'
@@ -88,10 +88,19 @@ interface ContactSubjectJoin {
   subject: { id: string; name: string }
 }
 
+interface ContactLabelJoin {
+  label: { id: string; name: string; color: string | null }
+}
+
 interface ContactSummaryRow extends ContactRow {
   familyMembers: Array<{ family: { id: string; name: string | null } | null }>
   interactions: Array<{ occurredAt: Date }>
   companies: ContactCompanyJoin[]
+  labels?: ContactLabelJoin[]
+  bookingProfile?: {
+    hoursRemaining: { toNumber(): number } | number | null
+    nextHoursExpiryAt: Date | null
+  } | null
   createdAt: Date
   bookingStatus: ContactBookingStatus
   hoursBooked: number | null
@@ -102,12 +111,30 @@ interface ContactSummaryRow extends ContactRow {
 
 const NO_COUNTS: ContactCommsCounts = { callCount: 0, emailCount: 0, textCount: 0 }
 
+/** Prisma Decimal | number | null → number | null. */
+function decToNumber(v: { toNumber(): number } | number | null | undefined): number | null {
+  if (v == null) return null
+  return typeof v === 'number' ? v : v.toNumber()
+}
+
 export function toContactSummary(
   row: ContactSummaryRow,
   counts: ContactCommsCounts = NO_COUNTS,
+  now: Date = new Date(),
 ): ContactSummary {
   const family = row.familyMembers[0]?.family ?? null
   const last = row.interactions[0]?.occurredAt ?? null
+  const hoursRemaining = decToNumber(row.bookingProfile?.hoursRemaining)
+  const risk = deriveHoursRisk(
+    {
+      hoursBooked: row.hoursBooked,
+      hoursDelivered: row.hoursDelivered,
+      hoursRemaining,
+      lastLessonAt: row.lastLessonAt,
+      nextHoursExpiryAt: row.bookingProfile?.nextHoursExpiryAt ?? null,
+    },
+    now,
+  )
   return {
     id: row.id,
     kind: row.kind,
@@ -122,11 +149,15 @@ export function toContactSummary(
     bookingStatus: row.bookingStatus,
     hoursBooked: row.hoursBooked,
     hoursDelivered: row.hoursDelivered,
+    hoursRemaining: hoursRemaining != null ? Math.round(hoursRemaining) : null,
     lastLessonAt: row.lastLessonAt,
     amountSpentMinor: row.amountSpentMinor,
     callCount: counts.callCount,
     emailCount: counts.emailCount,
     textCount: counts.textCount,
+    labels: (row.labels ?? []).map((l) => l.label),
+    riskLevel: risk.level,
+    riskScore: risk.score,
   }
 }
 

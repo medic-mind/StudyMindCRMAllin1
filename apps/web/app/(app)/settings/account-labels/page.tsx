@@ -13,7 +13,7 @@ const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
 
 const BREADCRUMBS = [
   { label: 'Settings', href: '/settings' },
-  { label: 'Account labels', href: '/settings/account-labels' },
+  { label: 'Labels', href: '/settings/account-labels' },
 ]
 
 export default async function AccountLabelsSettingsPage() {
@@ -21,7 +21,7 @@ export default async function AccountLabelsSettingsPage() {
   if (!me || !MANAGE_ROLES.has(me.role)) {
     return (
       <>
-        <PageHeader title="Account labels" breadcrumbs={BREADCRUMBS} />
+        <PageHeader title="Labels" breadcrumbs={BREADCRUMBS} />
         <PageBody>
           <p className="text-sm text-neutral-600">Restricted to Manager and above.</p>
         </PageBody>
@@ -32,8 +32,8 @@ export default async function AccountLabelsSettingsPage() {
   return (
     <>
       <PageHeader
-        title="Account labels"
-        subtitle="Custom, colour-coded labels for schools and B2B partners. Apply them in bulk from the Accounts list."
+        title="Labels"
+        subtitle="Custom, colour-coded labels shared across customers and B2B accounts. Apply them in bulk from the Customers or Accounts lists."
         breadcrumbs={BREADCRUMBS}
       />
       <PageBody>

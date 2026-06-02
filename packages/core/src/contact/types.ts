@@ -60,6 +60,14 @@ export const SubjectRef = z.object({
 })
 export type SubjectRef = z.infer<typeof SubjectRef>
 
+/** Applied shared-catalogue label exposed through view-models. */
+export const LabelRef = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: z.string().nullable(),
+})
+export type LabelRef = z.infer<typeof LabelRef>
+
 export const ContactSummary = z.object({
   id: z.string(),
   kind: ContactKind,
@@ -78,11 +86,19 @@ export const ContactSummary = z.object({
   bookingStatus: ContactBookingStatus,
   hoursBooked: z.number().nullable(),
   hoursDelivered: z.number().nullable(),
+  /** Booking-balance remaining hours (synced profile), null until first sync. */
+  hoursRemaining: z.number().nullable(),
   lastLessonAt: z.date().nullable(),
   amountSpentMinor: z.number().nullable(),
   callCount: z.number(),
   emailCount: z.number(),
   textCount: z.number(),
+  /** Applied shared-catalogue labels (custom tags). */
+  labels: LabelRef.array(),
+  /** Derived hours-risk level + score (CLAUDE.md §6.4 pattern). `none` when
+   *  the customer holds no meaningful unused balance. */
+  riskLevel: z.enum(['none', 'low', 'medium', 'high']),
+  riskScore: z.number(),
 })
 export type ContactSummary = z.infer<typeof ContactSummary>
 

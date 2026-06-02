@@ -77,8 +77,24 @@ const ListInput = z.object({
     .optional(),
   /** Only contacts that belong to a Family (or only those who don't). */
   hasFamily: z.boolean().optional(),
-  /** Sort field. `createdAt` (default) and `name` are supported today. */
-  sortBy: z.enum(['createdAt', 'name']).default('createdAt'),
+  /** Filter to customers carrying ALL of these shared-catalogue label ids. */
+  labelIds: z.array(z.string()).max(20).optional(),
+  /** Hours range filters on the booking-derived columns (ADR 0029). Inclusive. */
+  minHoursBooked: z.number().int().min(0).optional(),
+  maxHoursBooked: z.number().int().min(0).optional(),
+  minHoursDelivered: z.number().int().min(0).optional(),
+  maxHoursDelivered: z.number().int().min(0).optional(),
+  /** Only customers whose most recent lesson was at least this many days ago. */
+  lastLessonBeforeDays: z.number().int().min(0).optional(),
+  /**
+   * Sort field. `createdAt` (default) and `name`, plus the booking-derived
+   * hours columns. All sort on real Contact columns so cursor pagination stays
+   * correct. (Derived hours-remaining + risk ordering live on the dedicated
+   * at-risk dashboard, which is not cursor-paginated.)
+   */
+  sortBy: z
+    .enum(['createdAt', 'name', 'hoursBooked', 'hoursDelivered', 'lastLessonAt'])
+    .default('createdAt'),
   sortDir: z.enum(['asc', 'desc']).default('desc'),
 })
 
@@ -90,14 +106,34 @@ export const contactRouter = router({
   list: protectedProcedure
     .input(ListInput)
     .query(async ({ ctx, input }) => {
-      const orderBy =
-        input.sortBy === 'name'
-          ? [
-              { lastName: input.sortDir },
-              { firstName: input.sortDir },
-              { id: 'desc' as const },
-            ]
-          : [{ createdAt: input.sortDir }, { id: 'desc' as const }]
+      // Sorts on a real Contact column + an id tiebreak. Nulls land last on
+      // the booking-derived columns (a contact without a synced balance should
+      // not top a "most hours" sort). Cursor pagination is only engaged for
+      // the default createdAt sort (below); the hours sorts return the first
+      // page sized to the limit, which is what the table needs.
+      const dir = input.sortDir
+      let orderBy: Array<Record<string, unknown>>
+      switch (input.sortBy) {
+        case 'name':
+          orderBy = [{ lastName: dir }, { firstName: dir }, { id: 'desc' }]
+          break
+        case 'hoursBooked':
+          orderBy = [{ hoursBooked: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
+          break
+        case 'hoursDelivered':
+          orderBy = [{ hoursDelivered: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
+          break
+        case 'lastLessonAt':
+          orderBy = [{ lastLessonAt: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
+          break
+        default:
+          orderBy = [{ createdAt: dir }, { id: 'desc' }]
+      }
+
+      const lastLessonCutoff =
+        input.lastLessonBeforeDays != null
+          ? new Date(Date.now() - input.lastLessonBeforeDays * 24 * 60 * 60 * 1000)
+          : null
 
       const rows = await ctx.db.contact.findMany({
         where: {
@@ -115,6 +151,27 @@ export const contactRouter = router({
           ...(input.subjectId
             ? { subjects: { some: { subjectId: input.subjectId } } }
             : {}),
+          // AND semantics: a customer must carry every requested label.
+          ...(input.labelIds && input.labelIds.length > 0
+            ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
+            : {}),
+          ...(input.minHoursBooked != null || input.maxHoursBooked != null
+            ? {
+                hoursBooked: {
+                  ...(input.minHoursBooked != null ? { gte: input.minHoursBooked } : {}),
+                  ...(input.maxHoursBooked != null ? { lte: input.maxHoursBooked } : {}),
+                },
+              }
+            : {}),
+          ...(input.minHoursDelivered != null || input.maxHoursDelivered != null
+            ? {
+                hoursDelivered: {
+                  ...(input.minHoursDelivered != null ? { gte: input.minHoursDelivered } : {}),
+                  ...(input.maxHoursDelivered != null ? { lte: input.maxHoursDelivered } : {}),
+                },
+              }
+            : {}),
+          ...(lastLessonCutoff ? { lastLessonAt: { lte: lastLessonCutoff } } : {}),
           ...(input.q
             ? {
                 OR: [
@@ -169,6 +226,10 @@ export const contactRouter = router({
               company: { select: { id: true, name: true, slug: true, color: true } },
             },
           },
+          labels: {
+            include: { label: { select: { id: true, name: true, color: true } } },
+          },
+          bookingProfile: { select: { hoursRemaining: true, nextHoursExpiryAt: true } },
         },
       })
 

@@ -101,9 +101,9 @@ const GROUPS: Group[] = [
       },
       {
         href: '/settings/account-labels',
-        title: 'Account labels',
+        title: 'Labels',
         description:
-          'Custom, colour-coded labels for schools and B2B partners. Apply them in bulk from the Accounts list.',
+          'Custom, colour-coded labels for customers and B2B accounts. Apply them in bulk from the Customers or Accounts lists.',
         roles: 'Manager+',
         icon: <BuildingIcon size={16} />,
       },

@@ -74,7 +74,7 @@ export const accountLabelRouter = router({
           description: true,
           sortOrder: true,
           archivedAt: true,
-          _count: { select: { accounts: true } },
+          _count: { select: { accounts: true, contacts: true } },
         },
       })
       return rows.map((r) => ({
@@ -84,7 +84,10 @@ export const accountLabelRouter = router({
         description: r.description,
         sortOrder: r.sortOrder,
         archived: r.archivedAt != null,
-        usageCount: r._count.accounts,
+        // Combined usage across both surfaces this catalogue serves.
+        usageCount: r._count.accounts + r._count.contacts,
+        accountCount: r._count.accounts,
+        contactCount: r._count.contacts,
       }))
     }),
 
@@ -228,5 +231,97 @@ export const accountLabelRouter = router({
         after: { labelId: input.labelId },
       })
       return { ok: true }
+    }),
+
+  /** Apply one label to one customer (Contact). Idempotent. Sales Executive+. */
+  attachContact: auditedProcedure
+    .input(z.object({ contactId: z.string(), labelId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanApply(user.role)
+      const [contact, label] = await Promise.all([
+        ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: { id: true },
+        }),
+        ctx.db.accountLabel.findUnique({
+          where: { id: input.labelId },
+          select: { id: true, name: true },
+        }),
+      ])
+      if (!contact || !label) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.contactLabel.upsert({
+        where: { contactId_labelId: { contactId: contact.id, labelId: label.id } },
+        create: { contactId: contact.id, labelId: label.id, createdById: user.id },
+        update: {},
+      })
+      await ctx.audit({
+        action: 'contact.label_added',
+        target: { type: 'Contact', id: contact.id },
+        after: { labelId: label.id, label: label.name },
+      })
+      return { ok: true }
+    }),
+
+  /** Remove one label from one customer (Contact). Sales Executive+. */
+  detachContact: auditedProcedure
+    .input(z.object({ contactId: z.string(), labelId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanApply(user.role)
+      await ctx.db.contactLabel.deleteMany({
+        where: { contactId: input.contactId, labelId: input.labelId },
+      })
+      await ctx.audit({
+        action: 'contact.label_removed',
+        target: { type: 'Contact', id: input.contactId },
+        after: { labelId: input.labelId },
+      })
+      return { ok: true }
+    }),
+
+  /** Apply (or remove) one label across many customers in one click.
+   *  Idempotent on the composite PK. Sales Executive+. Lives on this (small)
+   *  router rather than the large contact router to keep tRPC client-type
+   *  inference within its depth budget. */
+  bulkSetContactLabel: auditedProcedure
+    .input(
+      z.object({
+        contactIds: z.array(z.string()).min(1).max(500),
+        labelId: z.string(),
+        remove: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanApply(user.role)
+      const label = await ctx.db.accountLabel.findUnique({
+        where: { id: input.labelId },
+        select: { id: true, name: true },
+      })
+      if (!label) throw new TRPCError({ code: 'NOT_FOUND', message: 'Label not found' })
+      const contacts = await ctx.db.contact.findMany({
+        where: { id: { in: input.contactIds }, deletedAt: null },
+        select: { id: true },
+      })
+      for (const contact of contacts) {
+        if (input.remove) {
+          await ctx.db.contactLabel.deleteMany({
+            where: { contactId: contact.id, labelId: label.id },
+          })
+        } else {
+          await ctx.db.contactLabel.upsert({
+            where: { contactId_labelId: { contactId: contact.id, labelId: label.id } },
+            create: { contactId: contact.id, labelId: label.id, createdById: user.id },
+            update: {},
+          })
+        }
+        await ctx.audit({
+          action: input.remove ? 'contact.label_removed' : 'contact.label_added',
+          target: { type: 'Contact', id: contact.id },
+          after: { labelId: label.id, label: label.name },
+        })
+      }
+      return { count: contacts.length }
     }),
 })

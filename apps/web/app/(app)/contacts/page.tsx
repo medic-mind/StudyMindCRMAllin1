@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/shell/page-header'
 
 import { Button } from '@/components/ui/button'
 import { FacetedFilter } from '@/components/ui/faceted-filter'
-import { ClearFiltersButton, FilterBar } from '@/components/ui/filter-bar'
+import { ClearFiltersButton, FilterBar, ToggleFilter } from '@/components/ui/filter-bar'
 import { SearchField } from '@/components/ui/search-field'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -25,6 +25,8 @@ interface PageSearchParams {
   company?: string
   kind?: string
   bookingStatus?: string
+  labels?: string
+  hasHours?: string
   sortBy?: string
   sortDir?: string
 }
@@ -70,8 +72,18 @@ export default async function ContactsPage({
     sp.bookingStatus === 'registered_with_hours'
       ? sp.bookingStatus
       : undefined
-  const sortBy: 'name' | 'createdAt' = sp.sortBy === 'name' ? 'name' : 'createdAt'
+  const SORT_FIELDS = ['name', 'createdAt', 'hoursBooked', 'hoursDelivered', 'lastLessonAt'] as const
+  const sortBy = (SORT_FIELDS as ReadonlyArray<string>).includes(sp.sortBy ?? '')
+    ? (sp.sortBy as (typeof SORT_FIELDS)[number])
+    : 'createdAt'
   const sortDir: 'asc' | 'desc' = sp.sortDir === 'asc' ? 'asc' : 'desc'
+  const labels = await caller.accountLabel.pickList()
+  const labelIds = sp.labels
+    ? sp.labels.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined
+  // "Has hours" quick filter — customers with a meaningful booked balance, the
+  // population the risk system cares about.
+  const hasHours = sp.hasHours === '1'
   const data = await caller.contact.list({
     cursor,
     limit: 25,
@@ -79,6 +91,8 @@ export default async function ContactsPage({
     companyId: activeCompany?.id,
     kind,
     bookingStatus,
+    ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
+    ...(hasHours ? { minHoursBooked: 1 } : {}),
     sortBy,
     sortDir,
   })
@@ -124,7 +138,28 @@ export default async function ContactsPage({
             label="Status"
             options={BOOKING_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
           />
-          <ClearFiltersButton paramKeys={['q', 'company', 'kind', 'bookingStatus']} />
+          {labels.length > 0 && (
+            <FacetedFilter
+              paramKey="labels"
+              label="Label"
+              multiple
+              options={labels.map((l) => ({
+                value: l.id,
+                label: l.name,
+                color: l.color ?? undefined,
+              }))}
+            />
+          )}
+          <ToggleFilter paramKey="hasHours" label="Has hours" />
+          <Link
+            href="/contacts/at-risk"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-sm font-medium text-red-700 transition-colors hover:bg-red-100"
+          >
+            At-risk customers
+          </Link>
+          <ClearFiltersButton
+            paramKeys={['q', 'company', 'kind', 'bookingStatus', 'labels', 'hasHours']}
+          />
         </FilterBar>
 
         <ContactsTable
@@ -135,8 +170,12 @@ export default async function ContactsPage({
             phoneE164: c.phoneE164,
             kind: c.kind,
             companies: c.companies,
+            labels: c.labels,
             bookingStatus: c.bookingStatus,
             hoursBooked: c.hoursBooked,
+            hoursDelivered: c.hoursDelivered,
+            hoursRemaining: c.hoursRemaining,
+            riskLevel: c.riskLevel,
             lastLessonAt: c.lastLessonAt,
             amountSpentMinor: c.amountSpentMinor,
             callCount: c.callCount,
@@ -158,6 +197,8 @@ export default async function ContactsPage({
             ...(activeCompany ? { company: activeCompany.slug } : {}),
             ...(sp.kind ? { kind: sp.kind } : {}),
             ...(sp.bookingStatus ? { bookingStatus: sp.bookingStatus } : {}),
+            ...(sp.labels ? { labels: sp.labels } : {}),
+            ...(sp.hasHours ? { hasHours: sp.hasHours } : {}),
             ...(sp.sortBy ? { sortBy: sp.sortBy } : {}),
             ...(sp.sortDir ? { sortDir: sp.sortDir } : {}),
           }}

@@ -31,6 +31,8 @@ interface FakeState {
   labels: Row[]
   accounts: Row[]
   links: Row[] // BusinessAccountLabel rows: { accountId, labelId }
+  contacts: Row[]
+  contactLinks: Row[] // ContactLabel rows: { contactId, labelId }
 }
 
 function makeCtx(role: SessionUser['role'], seed: Partial<FakeState> = {}) {
@@ -38,6 +40,8 @@ function makeCtx(role: SessionUser['role'], seed: Partial<FakeState> = {}) {
     labels: seed.labels ?? [],
     accounts: seed.accounts ?? [],
     links: seed.links ?? [],
+    contacts: seed.contacts ?? [],
+    contactLinks: seed.contactLinks ?? [],
   }
   const { audit, actions } = makeAudit()
 
@@ -90,6 +94,42 @@ function makeCtx(role: SessionUser['role'], seed: Partial<FakeState> = {}) {
           (l) => !(l.accountId === where.accountId && l.labelId === where.labelId),
         )
         return { count: before - s.links.length }
+      },
+    },
+    contact: {
+      findFirst: async ({ where }: { where: { id: string } }) =>
+        s.contacts.find((c) => c.id === where.id) ?? null,
+      findMany: async ({ where }: { where?: { id?: { in?: string[] } } } = {}) => {
+        const ids = where?.id?.in
+        return ids ? s.contacts.filter((c) => ids.includes(c.id as string)) : s.contacts
+      },
+    },
+    contactLabel: {
+      upsert: async ({
+        where,
+        create,
+      }: {
+        where: { contactId_labelId: { contactId: string; labelId: string } }
+        create: Row
+      }) => {
+        const key = where.contactId_labelId
+        const existing = s.contactLinks.find(
+          (l) => l.contactId === key.contactId && l.labelId === key.labelId,
+        )
+        if (existing) return existing
+        s.contactLinks.push({ ...create })
+        return create
+      },
+      deleteMany: async ({
+        where,
+      }: {
+        where: { contactId: string; labelId: string }
+      }) => {
+        const before = s.contactLinks.length
+        s.contactLinks = s.contactLinks.filter(
+          (l) => !(l.contactId === where.contactId && l.labelId === where.labelId),
+        )
+        return { count: before - s.contactLinks.length }
       },
     },
   }
@@ -198,5 +238,53 @@ describe('businessAccount.bulkSetLabel', () => {
     const caller = businessAccountRouter.createCaller(ctx)
     await caller.bulkSetLabel({ ids: ['a1', 'a2'], labelId: 'l1', remove: true })
     expect(state.links).toHaveLength(0)
+  })
+})
+
+describe('accountLabel customer (Contact) labelling', () => {
+  function seed() {
+    return {
+      labels: [{ id: 'l1', name: 'Priority', archivedAt: null }],
+      contacts: [{ id: 'c1' }, { id: 'c2' }],
+      contactLinks: [] as Row[],
+    }
+  }
+
+  it('attachContact rejects virtual_assistant', async () => {
+    const { ctx } = makeCtx('virtual_assistant', seed())
+    const caller = accountLabelRouter.createCaller(ctx)
+    await expect(
+      caller.attachContact({ contactId: 'c1', labelId: 'l1' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('attachContact is idempotent', async () => {
+    const { ctx, state } = makeCtx('sales_executive', seed())
+    const caller = accountLabelRouter.createCaller(ctx)
+    await caller.attachContact({ contactId: 'c1', labelId: 'l1' })
+    await caller.attachContact({ contactId: 'c1', labelId: 'l1' })
+    expect(state.contactLinks).toHaveLength(1)
+  })
+
+  it('bulkSetContactLabel applies across customers and audits per contact', async () => {
+    const { ctx, state, actions } = makeCtx('sales_executive', seed())
+    const caller = accountLabelRouter.createCaller(ctx)
+    const res = await caller.bulkSetContactLabel({ contactIds: ['c1', 'c2'], labelId: 'l1' })
+    expect(res.count).toBe(2)
+    expect(state.contactLinks).toHaveLength(2)
+    expect(actions.filter((a) => a === 'contact.label_added')).toHaveLength(2)
+  })
+
+  it('bulkSetContactLabel remove=true strips the label', async () => {
+    const { ctx, state } = makeCtx('manager', {
+      ...seed(),
+      contactLinks: [
+        { contactId: 'c1', labelId: 'l1' },
+        { contactId: 'c2', labelId: 'l1' },
+      ],
+    })
+    const caller = accountLabelRouter.createCaller(ctx)
+    await caller.bulkSetContactLabel({ contactIds: ['c1', 'c2'], labelId: 'l1', remove: true })
+    expect(state.contactLinks).toHaveLength(0)
   })
 })

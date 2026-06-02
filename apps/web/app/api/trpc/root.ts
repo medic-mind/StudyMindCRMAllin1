@@ -15,6 +15,7 @@ import {
 import { brandingRouter } from './routers/branding'
 import { businessAccountRouter } from './routers/businessAccount'
 import { callSummaryTemplateRouter } from './routers/callSummaryTemplate'
+import { customerRiskRouter } from './routers/customerRisk'
 import { chatRouter } from './routers/chat'
 import { companyRouter } from './routers/company'
 import { contactRouter } from './routers/contact'
@@ -70,6 +71,7 @@ export const appRouter = router({
   branding: brandingRouter,
   businessAccount: businessAccountRouter,
   callSummaryTemplate: callSummaryTemplateRouter,
+  customerRisk: customerRiskRouter,
   chat: chatRouter,
   company: companyRouter,
   card: cardRouter,
