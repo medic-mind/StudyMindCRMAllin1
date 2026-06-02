@@ -505,6 +505,8 @@ export const businessAccountRouter = router({
         kind: KindEnum.optional(),
         status: StatusEnum.optional(),
         q: z.string().trim().max(80).optional(),
+        /** Filter to accounts carrying ALL of these label ids. */
+        labelIds: z.array(z.string()).max(20).optional(),
         includeArchived: z.boolean().default(false),
       }),
     )
@@ -514,6 +516,10 @@ export const businessAccountRouter = router({
           ...(input.kind ? { kind: input.kind } : {}),
           ...(input.status ? { status: input.status } : {}),
           ...(input.includeArchived ? {} : { archivedAt: null }),
+          // AND semantics: an account must carry every requested label.
+          ...(input.labelIds && input.labelIds.length > 0
+            ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
+            : {}),
           ...(input.q
             ? {
                 OR: [
@@ -530,6 +536,11 @@ export const businessAccountRouter = router({
           companies: {
             include: {
               company: { select: { id: true, name: true, slug: true, color: true } },
+            },
+          },
+          labels: {
+            include: {
+              label: { select: { id: true, name: true, color: true } },
             },
           },
         },
@@ -561,6 +572,11 @@ export const businessAccountRouter = router({
             name: link.company.name,
             slug: link.company.slug,
             color: link.company.color,
+          })),
+          labels: a.labels.map((link) => ({
+            id: link.label.id,
+            name: link.label.name,
+            color: link.label.color,
           })),
           // Engagement (CLAUDE.md §27).
           studentCount: s?.studentCount ?? 0,
@@ -825,6 +841,154 @@ export const businessAccountRouter = router({
     })
     return { id: after.id }
   }),
+
+  /**
+   * Permanently delete an account. Hard delete — every child row
+   * (contacts/students/companies/labels/uploaded invoices, and the invoicing
+   * customer mirror) cascades at the DB layer. Irreversible, so it is audited
+   * with the full before-snapshot for forensic replay (CLAUDE.md §3, §20.1).
+   * Manager+ only.
+   */
+  delete: auditedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    const before = await ctx.db.businessAccount.findUnique({ where: { id: input.id } })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    await ctx.db.businessAccount.delete({ where: { id: input.id } })
+    await ctx.audit({
+      action: 'business_account.deleted',
+      target: { type: 'BusinessAccount', id: input.id },
+      before,
+    })
+    return { id: input.id }
+  }),
+
+  // ---------------------------------------------------------------------------
+  // Bulk actions. Drive the multi-select toolbar on /accounts. Each writes one
+  // audit row per affected account so the trail stays per-entity (CLAUDE.md
+  // §20.1). All Manager+.
+  // ---------------------------------------------------------------------------
+
+  /** Archive (soft) or restore many accounts at once. */
+  bulkArchive: auditedProcedure
+    .input(
+      z.object({
+        ids: z.array(z.string()).min(1).max(200),
+        restore: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const rows = await ctx.db.businessAccount.findMany({
+        where: { id: { in: input.ids } },
+        select: { id: true, archivedAt: true },
+      })
+      for (const row of rows) {
+        await ctx.db.businessAccount.update({
+          where: { id: row.id },
+          data: { archivedAt: input.restore ? null : new Date(), updatedById: user.id },
+        })
+        await ctx.audit({
+          action: input.restore ? 'business_account.restored' : 'business_account.archived',
+          target: { type: 'BusinessAccount', id: row.id },
+        })
+      }
+      return { count: rows.length }
+    }),
+
+  /** Permanently delete many accounts. Hard delete + cascade, per `delete`. */
+  bulkDelete: auditedProcedure
+    .input(z.object({ ids: z.array(z.string()).min(1).max(200) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const rows = await ctx.db.businessAccount.findMany({
+        where: { id: { in: input.ids } },
+      })
+      for (const row of rows) {
+        await ctx.db.businessAccount.delete({ where: { id: row.id } })
+        await ctx.audit({
+          action: 'business_account.deleted',
+          target: { type: 'BusinessAccount', id: row.id },
+          before: row,
+        })
+      }
+      return { count: rows.length }
+    }),
+
+  /** Set the lifecycle status on many accounts at once. */
+  bulkSetStatus: auditedProcedure
+    .input(z.object({ ids: z.array(z.string()).min(1).max(200), status: StatusEnum }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const rows = await ctx.db.businessAccount.findMany({
+        where: { id: { in: input.ids } },
+        select: { id: true, status: true },
+      })
+      for (const row of rows) {
+        await ctx.db.businessAccount.update({
+          where: { id: row.id },
+          data: { status: input.status, updatedById: user.id },
+        })
+        await ctx.audit({
+          action: 'business_account.updated',
+          target: { type: 'BusinessAccount', id: row.id },
+          before: { status: row.status },
+          after: { status: input.status },
+        })
+      }
+      return { count: rows.length }
+    }),
+
+  /**
+   * Apply (or remove) a single label across many accounts in one click.
+   * Idempotent: re-applying an existing label is a no-op via the composite PK.
+   */
+  bulkSetLabel: auditedProcedure
+    .input(
+      z.object({
+        ids: z.array(z.string()).min(1).max(200),
+        labelId: z.string(),
+        /** `true` removes the label instead of applying it. */
+        remove: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const label = await ctx.db.accountLabel.findUnique({
+        where: { id: input.labelId },
+        select: { id: true, name: true, archivedAt: true },
+      })
+      if (!label) throw new TRPCError({ code: 'NOT_FOUND', message: 'Label not found' })
+      const accounts = await ctx.db.businessAccount.findMany({
+        where: { id: { in: input.ids } },
+        select: { id: true },
+      })
+      for (const account of accounts) {
+        if (input.remove) {
+          await ctx.db.businessAccountLabel.deleteMany({
+            where: { accountId: account.id, labelId: label.id },
+          })
+        } else {
+          await ctx.db.businessAccountLabel.upsert({
+            where: { accountId_labelId: { accountId: account.id, labelId: label.id } },
+            create: { accountId: account.id, labelId: label.id, createdById: user.id },
+            update: {},
+          })
+        }
+        await ctx.audit({
+          action: input.remove
+            ? 'business_account.label_removed'
+            : 'business_account.label_added',
+          target: { type: 'BusinessAccount', id: account.id },
+          after: { labelId: label.id, label: label.name },
+        })
+      }
+      return { count: accounts.length }
+    }),
 
   // ---------------------------------------------------------------------------
   // Unsorted tray (B2B Invoices Platform backfill). Accounts imported from the

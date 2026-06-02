@@ -6,6 +6,7 @@ import Link from 'next/link'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 import { AccountsExportButton } from './AccountsExportButton'
 import { AccountsList } from './AccountsList'
@@ -14,7 +15,13 @@ import { UnsortedTray } from './UnsortedTray'
 export const dynamic = 'force-dynamic'
 
 interface Props {
-  searchParams: Promise<{ kind?: string; status?: string; q?: string }>
+  searchParams: Promise<{
+    kind?: string
+    status?: string
+    q?: string
+    labelIds?: string
+    archived?: string
+  }>
 }
 
 // UI labels. "B2B Partner" replaces the old "Partnership" wording everywhere;
@@ -27,12 +34,18 @@ const KIND_LABELS: Record<string, string> = {
 export default async function AccountsPage({ searchParams }: Props) {
   const params = await searchParams
   const kind: 'school' | 'partnership' = params.kind === 'partnership' ? 'partnership' : 'school'
+  const me = await getCurrentUser()
+  const role = me?.role ?? 'virtual_assistant'
+  const labelIds = params.labelIds
+    ? params.labelIds.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined
   const caller = await createServerCaller()
   const [accounts, unsortedCount] = await Promise.all([
     caller.businessAccount.list({
       kind,
-      includeArchived: false,
+      includeArchived: params.archived === '1',
       q: params.q?.trim() ? params.q.trim() : undefined,
+      ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
       ...(params.status === 'prospect' ||
       params.status === 'active' ||
       params.status === 'paused' ||
@@ -92,7 +105,7 @@ export default async function AccountsPage({ searchParams }: Props) {
             })}
           </div>
         </div>
-        <AccountsList kind={kind} accounts={accounts} />
+        <AccountsList kind={kind} accounts={accounts} role={role} />
       </PageBody>
     </>
   )

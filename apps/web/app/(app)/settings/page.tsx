@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { PageHeader } from '@/components/shell/page-header'
 import {
   BarChartIcon,
+  BuildingIcon,
   CoinsIcon,
   GitBranchIcon,
   MailIcon,
@@ -97,6 +98,14 @@ const GROUPS: Group[] = [
           'Canned responses agents insert into a conversation reply. Personalise with {{first_name}} / {{name}}.',
         roles: 'Manager+',
         icon: <MailIcon size={16} />,
+      },
+      {
+        href: '/settings/account-labels',
+        title: 'Account labels',
+        description:
+          'Custom, colour-coded labels for schools and B2B partners. Apply them in bulk from the Accounts list.',
+        roles: 'Manager+',
+        icon: <BuildingIcon size={16} />,
       },
       {
         href: '/settings/board-quick-actions',

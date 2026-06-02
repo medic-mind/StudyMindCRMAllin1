@@ -3,6 +3,7 @@
 import { router } from '@/lib/trpc/builders'
 
 import { accountRouter } from './routers/account'
+import { accountLabelRouter } from './routers/accountLabel'
 import { adminRouter } from './routers/admin'
 import {
   boardQuickActionRouter,
@@ -62,6 +63,7 @@ import { uploadedInvoiceRouter } from './routers/uploadedInvoice'
 
 export const appRouter = router({
   account: accountRouter,
+  accountLabel: accountLabelRouter,
   admin: adminRouter,
   board: boardRouter,
   boardQuickAction: boardQuickActionRouter,

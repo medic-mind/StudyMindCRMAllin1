@@ -2194,6 +2194,7 @@ model BusinessAccount {
   students           BusinessAccountStudent[]
   uploadedInvoices   UploadedInvoice[]
   companies          BusinessAccountCompany[]
+  labels             BusinessAccountLabel[]
   /// Mirror of customers on the B2B Invoices Platform (b2b.studymind.co.uk)
   /// that correlate to this account (schools, partnerships, AP/council).
   invoicingCustomers InvoicingCustomer[]
@@ -2203,6 +2204,48 @@ model BusinessAccount {
   @@index([status])
   @@index([archivedAt])
   @@index([needsClassification])
+}
+
+/// Shared, staff-curated label catalogue. Free-form, colour-coded tags applied
+/// to B2B accounts today (schools + B2B partners); intentionally generic so it
+/// can extend to other entities (e.g. Contacts) via a sibling junction later
+/// without reshaping the catalogue. Distinct from `Label` (board cards, ADR
+/// 0018) and `Company` (brand tags) — those carry their own semantics.
+/// Manager+ curates the catalogue; Sales Executive+ applies labels.
+model AccountLabel {
+  id          String    @id
+  name        String
+  /// #RRGGBB. Drives the chip + dot in the UI (same convention as Company).
+  color       String?
+  description String?
+  /// Orders the catalogue in pickers + the management table.
+  sortOrder   Int       @default(0)
+  archivedAt  DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  accounts BusinessAccountLabel[]
+
+  @@unique([name])
+  @@index([archivedAt])
+}
+
+/// Many-to-many join: BusinessAccount ↔ AccountLabel. One row per applied label.
+model BusinessAccountLabel {
+  accountId String
+  labelId   String
+
+  createdAt   DateTime @default(now())
+  createdById String?
+
+  account BusinessAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  label   AccountLabel    @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, labelId])
+  @@index([labelId])
 }
 
 /// Many-to-many: BusinessAccount ↔ Company (sister-brand tag). Mirrors

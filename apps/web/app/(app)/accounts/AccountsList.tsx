@@ -6,7 +6,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -14,22 +14,33 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { FacetedFilter } from '@/components/ui/faceted-filter'
+import { Popover } from '@/components/ui/popover'
 import { SearchField } from '@/components/ui/search-field'
+import { Toolbar } from '@/components/ui/toolbar'
 import {
   BuildingIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   MailIcon,
   MessageSquareIcon,
   PhoneIcon,
 } from '@/components/ui/icon'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
+import { cn } from '@/lib/cn'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { formatRelativeTime } from '@/lib/format/relative-time'
+import { trpc } from '@/lib/trpc/client'
 
 import { AccountCreateForm } from './AccountCreateForm'
 
 type Kind = 'school' | 'partnership'
 type Status = 'prospect' | 'active' | 'paused' | 'churned'
+
+interface AccountLabelChip {
+  id: string
+  name: string
+  color: string | null
+}
 
 interface AccountRow {
   id: string
@@ -51,6 +62,7 @@ interface AccountRow {
     slug: string
     color: string | null
   }>
+  labels: ReadonlyArray<AccountLabelChip>
   studentCount: number
   hoursContracted: number
   hoursDelivered: number
@@ -62,6 +74,15 @@ interface AccountRow {
   archived: boolean
   createdAt: Date | string
 }
+
+const STATUS_OPTIONS: ReadonlyArray<{ value: Status; label: string }> = [
+  { value: 'prospect', label: 'Prospect' },
+  { value: 'active', label: 'Active' },
+  { value: 'paused', label: 'Paused' },
+  { value: 'churned', label: 'Churned' },
+]
+
+const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
 
 const STATUS_TONE: Record<Status, string> = {
   prospect: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
@@ -95,10 +116,36 @@ function sortValue(a: AccountRow, key: SortKey): number | string {
   }
 }
 
-export function AccountsList({ kind, accounts }: { kind: Kind; accounts: AccountRow[] }) {
+export function AccountsList({
+  kind,
+  accounts,
+  role,
+}: {
+  kind: Kind
+  accounts: AccountRow[]
+  /** Drives which bulk actions render; the server re-checks (CLAUDE.md §20). */
+  role: string
+}) {
   const router = useRouter()
+  const utils = trpc.useUtils()
   const [creating, setCreating] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
   const now = new Date()
+
+  const canManage = MANAGE_ROLES.has(role)
+
+  // Active label catalogue for the "Label" bulk action + the management link.
+  // Manager+ can mutate; everyone reads, so it's safe to always fetch.
+  const labelsQuery = trpc.accountLabel.pickList.useQuery(undefined, {
+    enabled: canManage,
+  })
+  const labels = labelsQuery.data ?? []
+
+  const bulkArchive = trpc.businessAccount.bulkArchive.useMutation()
+  const bulkDelete = trpc.businessAccount.bulkDelete.useMutation()
+  const bulkSetStatus = trpc.businessAccount.bulkSetStatus.useMutation()
+  const bulkSetLabel = trpc.businessAccount.bulkSetLabel.useMutation()
 
   // Client-side column sort — the page already holds every row in memory, so
   // sorting is instant and needs no round-trip. Name defaults ascending;
@@ -115,17 +162,90 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
     }
   }
 
-  const sortedAccounts = [...accounts].sort((a, b) => {
-    const av = sortValue(a, sortKey)
-    const bv = sortValue(b, sortKey)
-    let cmp: number
-    if (typeof av === 'string' && typeof bv === 'string') {
-      cmp = av.localeCompare(bv)
-    } else {
-      cmp = (av as number) - (bv as number)
+  const sortedAccounts = useMemo(
+    () =>
+      [...accounts].sort((a, b) => {
+        const av = sortValue(a, sortKey)
+        const bv = sortValue(b, sortKey)
+        let cmp: number
+        if (typeof av === 'string' && typeof bv === 'string') {
+          cmp = av.localeCompare(bv)
+        } else {
+          cmp = (av as number) - (bv as number)
+        }
+        return sortDir === 'asc' ? cmp : -cmp
+      }),
+    [accounts, sortKey, sortDir],
+  )
+
+  const allOnPage = useMemo(() => sortedAccounts.map((a) => a.id), [sortedAccounts])
+  const allSelected = allOnPage.length > 0 && allOnPage.every((id) => selected.has(id))
+  const someArchived = useMemo(
+    () => sortedAccounts.some((a) => selected.has(a.id) && a.archived),
+    [sortedAccounts, selected],
+  )
+
+  function toggleAll(next: boolean) {
+    setSelected(next ? new Set(allOnPage) : new Set())
+  }
+
+  function toggleOne(id: string, next: boolean) {
+    setSelected((prev) => {
+      const updated = new Set(prev)
+      if (next) updated.add(id)
+      else updated.delete(id)
+      return updated
+    })
+  }
+
+  async function afterBulk() {
+    setSelected(new Set())
+    await utils.businessAccount.list.invalidate()
+    router.refresh()
+  }
+
+  async function run(label: string, fn: () => Promise<{ count: number }>) {
+    setBusy(true)
+    try {
+      const { count } = await fn()
+      toast.success(`${label} ${count} account${count === 1 ? '' : 's'}`)
+      await afterBulk()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : `Could not ${label.toLowerCase()}`)
+    } finally {
+      setBusy(false)
     }
-    return sortDir === 'asc' ? cmp : -cmp
-  })
+  }
+
+  const ids = () => Array.from(selected)
+
+  async function onArchive(restore: boolean) {
+    await run(restore ? 'Restored' : 'Archived', () =>
+      bulkArchive.mutateAsync({ ids: ids(), restore }),
+    )
+  }
+
+  async function onDelete() {
+    const n = selected.size
+    if (
+      !confirm(
+        `Permanently delete ${n} account${n === 1 ? '' : 's'}? This also removes their ` +
+          `linked contacts, students, labels and uploaded invoices. This cannot be undone.`,
+      )
+    )
+      return
+    await run('Deleted', () => bulkDelete.mutateAsync({ ids: ids() }))
+  }
+
+  async function onSetStatus(status: Status) {
+    await run('Updated', () => bulkSetStatus.mutateAsync({ ids: ids(), status }))
+  }
+
+  async function onSetLabel(labelId: string, remove: boolean) {
+    await run(remove ? 'Unlabelled' : 'Labelled', () =>
+      bulkSetLabel.mutateAsync({ ids: ids(), labelId, remove }),
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -142,6 +262,18 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
               { value: 'churned', label: 'Churned' },
             ]}
           />
+          {labels.length > 0 && (
+            <FacetedFilter
+              paramKey="labelIds"
+              label="Label"
+              multiple
+              options={labels.map((l) => ({
+                value: l.id,
+                label: l.name,
+                color: l.color ?? undefined,
+              }))}
+            />
+          )}
         </div>
         {!creating && (
           <Button type="button" size="sm" onClick={() => setCreating(true)}>
@@ -149,6 +281,118 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
           </Button>
         )}
       </div>
+
+      {/* Bulk-actions bar — appears when at least one row is selected. Manager+
+          only; the server re-checks every mutation (CLAUDE.md §20, §27). */}
+      {canManage && selected.size > 0 && (
+        <Toolbar
+          label={`${selected.size} selected`}
+          clear={
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-xs font-medium text-primary-700 hover:underline"
+            >
+              Clear selection
+            </button>
+          }
+        >
+          <BulkMenu label="Set status" disabled={busy}>
+            {(close) =>
+              STATUS_OPTIONS.map((s) => (
+                <BulkMenuItem
+                  key={s.value}
+                  onClick={() => {
+                    close()
+                    void onSetStatus(s.value)
+                  }}
+                >
+                  {s.label}
+                </BulkMenuItem>
+              ))
+            }
+          </BulkMenu>
+
+          {labels.length > 0 && (
+            <BulkMenu label="Label" disabled={busy}>
+              {(close) => (
+                <>
+                  <p className="px-2 pb-1 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Add label
+                  </p>
+                  {labels.map((l) => (
+                    <BulkMenuItem
+                      key={l.id}
+                      onClick={() => {
+                        close()
+                        void onSetLabel(l.id, false)
+                      }}
+                    >
+                      <span
+                        aria-hidden
+                        className="h-2.5 w-2.5 flex-none rounded-full"
+                        style={{ backgroundColor: l.color ?? '#94a3b8' }}
+                      />
+                      {l.name}
+                    </BulkMenuItem>
+                  ))}
+                  <div className="my-1 border-t border-neutral-100" />
+                  <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Remove label
+                  </p>
+                  {labels.map((l) => (
+                    <BulkMenuItem
+                      key={`rm-${l.id}`}
+                      onClick={() => {
+                        close()
+                        void onSetLabel(l.id, true)
+                      }}
+                    >
+                      <span
+                        aria-hidden
+                        className="h-2.5 w-2.5 flex-none rounded-full opacity-40"
+                        style={{ backgroundColor: l.color ?? '#94a3b8' }}
+                      />
+                      {l.name}
+                    </BulkMenuItem>
+                  ))}
+                </>
+              )}
+            </BulkMenu>
+          )}
+
+          {someArchived ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => onArchive(true)}
+            >
+              Restore
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => onArchive(false)}
+            >
+              Archive
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={onDelete}
+          >
+            Delete
+          </Button>
+        </Toolbar>
+      )}
 
       {creating && (
         <AccountCreateForm
@@ -181,6 +425,17 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                 headings stay visible while the agent scrolls a long list. */}
             <thead className="sticky top-0 z-10 bg-neutral-50/95 text-left backdrop-blur supports-[backdrop-filter]:bg-neutral-50/80">
               <tr className="border-b border-neutral-200">
+                {canManage && (
+                  <th className="w-10 px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all on this page"
+                      className="h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                      checked={allSelected}
+                      onChange={(e) => toggleAll(e.target.checked)}
+                    />
+                  </th>
+                )}
                 <SortableTh
                   label={kind === 'school' ? 'School' : 'B2B Partner'}
                   sortKey="name"
@@ -238,8 +493,28 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {sortedAccounts.map((a) => (
-                <tr key={a.id} className="group transition-colors hover:bg-neutral-50/80">
+              {sortedAccounts.map((a) => {
+                const isSelected = selected.has(a.id)
+                return (
+                <tr
+                  key={a.id}
+                  className={
+                    isSelected
+                      ? 'group bg-primary-50/40 transition-colors hover:bg-primary-50/60'
+                      : 'group transition-colors hover:bg-neutral-50/80'
+                  }
+                >
+                  {canManage && (
+                    <td className="px-3 py-2 align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${a.name}`}
+                        className="h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                        checked={isSelected}
+                        onChange={(e) => toggleOne(a.id, e.target.checked)}
+                      />
+                    </td>
+                  )}
                   <td className="px-3 py-2 align-top">
                     <Link href={`/accounts/${a.id}`} className="block min-w-0">
                       <span className="flex items-center gap-1.5">
@@ -271,6 +546,27 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                           />
                         ))}
                       </span>
+                      {a.labels.length > 0 && (
+                        <span className="mt-1 flex flex-wrap items-center gap-1">
+                          {a.labels.map((l) => (
+                            <span
+                              key={l.id}
+                              className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                              style={{
+                                backgroundColor: `${l.color ?? '#94a3b8'}1a`,
+                                color: l.color ?? '#475569',
+                              }}
+                            >
+                              <span
+                                aria-hidden
+                                className="h-1.5 w-1.5 rounded-full"
+                                style={{ backgroundColor: l.color ?? '#94a3b8' }}
+                              />
+                              {l.name}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                     </Link>
                   </td>
                   <td className="px-3 py-2 align-top text-xs">
@@ -329,7 +625,8 @@ export function AccountsList({ kind, accounts }: { kind: Kind; accounts: Account
                     </Link>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </Card>
@@ -382,6 +679,57 @@ function SortableTh({
 
 export function describeStatusToneClass(status: Status): string {
   return STATUS_TONE[status]
+}
+
+/** A dropdown button for the bulk toolbar — a labelled secondary-button trigger
+ *  that opens a menu of choices. Mirrors the FacetedFilter chevron affordance. */
+function BulkMenu({
+  label,
+  disabled,
+  children,
+}: {
+  label: string
+  disabled?: boolean
+  children: (close: () => void) => ReactNode
+}) {
+  return (
+    <Popover
+      align="start"
+      triggerClassName={cn(
+        'inline-flex h-8 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1',
+        disabled && 'pointer-events-none opacity-50',
+      )}
+      trigger={
+        <>
+          <span>{label}</span>
+          <ChevronDownIcon size={14} className="text-neutral-400" aria-hidden />
+        </>
+      }
+    >
+      {(close) => (
+        <div className="max-h-72 min-w-[12rem] overflow-y-auto">{children(close)}</div>
+      )}
+    </Popover>
+  )
+}
+
+function BulkMenuItem({
+  onClick,
+  children,
+}: {
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100 focus-visible:bg-neutral-100 focus-visible:outline-none"
+    >
+      {children}
+    </button>
+  )
 }
 
 // Re-export of `toast` so the unused-imports rule doesn't fight modules
