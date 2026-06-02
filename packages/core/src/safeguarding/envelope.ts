@@ -120,14 +120,26 @@ let warnedDerived = false
 function getLocalMasterKey(): Buffer {
   const explicit = process.env['CRM_LOCAL_ENCRYPTION_KEY']?.trim()
   if (explicit) {
-    const key = decodeKeyMaterial(explicit)
-    if (key.length !== DEK_BYTES) {
-      throw new Error(
-        'CRM_LOCAL_ENCRYPTION_KEY must decode to exactly 32 bytes (AES-256). ' +
-          'Generate one with: openssl rand -base64 32',
-      )
-    }
-    return key
+    // Back-compat: a value that already decodes to exactly 32 bytes (64 hex
+    // chars, or base64 of 32 bytes — i.e. `openssl rand -base64 32`) is used
+    // directly, so installs that set a proper key keep their existing
+    // ciphertext readable.
+    const decoded = tryDecode32(explicit)
+    if (decoded) return decoded
+    // Otherwise derive a stable 32-byte AES key from WHATEVER string was
+    // provided via HKDF. This means any non-empty value works (no more "must
+    // be exactly 32 bytes" throw, which broke both save and decrypt). The
+    // derivation is deterministic, so the same env value always yields the
+    // same key — keep it fixed and the secrets stay readable across deploys.
+    return Buffer.from(
+      hkdfSync(
+        'sha256',
+        Buffer.from(explicit, 'utf8'),
+        Buffer.from('studymind-crm/field-encryption', 'utf8'), // salt
+        Buffer.from('crm-local-key/v1', 'utf8'), // info
+        DEK_BYTES,
+      ),
+    )
   }
 
   const authSecret = (process.env['AUTH_SECRET'] ?? process.env['NEXTAUTH_SECRET'])?.trim()
@@ -160,11 +172,20 @@ function getLocalMasterKey(): Buffer {
   )
 }
 
-function decodeKeyMaterial(raw: string): Buffer {
-  // 64 hex chars -> 32 bytes.
+/**
+ * Return a 32-byte key only when `raw` decodes to exactly that (64 hex chars,
+ * or base64/base64url of 32 bytes). Otherwise null, so the caller falls back to
+ * HKDF derivation. This keeps installs that set a real 32-byte key on their
+ * existing ciphertext while tolerating any other string.
+ */
+function tryDecode32(raw: string): Buffer | null {
   if (/^[0-9a-fA-F]{64}$/.test(raw)) {
     return Buffer.from(raw, 'hex')
   }
-  // Otherwise base64 / base64url.
-  return Buffer.from(raw, 'base64')
+  // base64 / base64url of exactly 32 bytes.
+  if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(raw)) {
+    const buf = Buffer.from(raw, 'base64')
+    if (buf.length === DEK_BYTES) return buf
+  }
+  return null
 }
