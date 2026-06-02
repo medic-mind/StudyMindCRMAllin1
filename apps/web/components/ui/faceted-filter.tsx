@@ -13,7 +13,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 
 import { cn } from '@/lib/cn'
 
-import { CheckIcon, PlusIcon } from './icon'
+import { CheckIcon, ChevronDownIcon } from './icon'
 import { Popover } from './popover'
 
 export interface FacetOption {
@@ -99,9 +99,6 @@ export function FacetedFilter({
       )}
       trigger={
         <>
-          {!active && (
-            <PlusIcon size={14} className="text-neutral-400" aria-hidden />
-          )}
           <span>{label}</span>
           {active && (
             <>
@@ -127,6 +124,13 @@ export function FacetedFilter({
               )}
             </>
           )}
+          {/* Trailing chevron — the standard "this opens a menu" affordance.
+              Replaces the old leading "+", which read as "add" not "filter". */}
+          <ChevronDownIcon
+            size={14}
+            className={cn('flex-none', active ? 'text-primary-500' : 'text-neutral-400')}
+            aria-hidden
+          />
         </>
       }
     >
