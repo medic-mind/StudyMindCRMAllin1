@@ -218,6 +218,12 @@ export const EVENT_NAMES = [
   'charge.refunded',
   'charge.payment_link_created',
   'finance.discrepancy_resolved',
+  // Unresolved Stripe payments tray (ADR 0030): a charge with no
+  // StripeCustomer→Family mapping is linked to a Family or dismissed by a
+  // human; the job records the unresolved charge in the first place.
+  'finance.unresolved_payment_resolved',
+  'finance.unresolved_payment_dismissed',
+  'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
 

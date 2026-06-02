@@ -8,6 +8,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import {
   classifyProductFromText,
   recomputeAtRiskForFamily,
+  recordUnresolvedStripePayment,
   resolveFamilyByStripeCustomer,
   revertStripePayment,
   syncStripeInvoice,
@@ -111,6 +112,7 @@ export const stripeEventReceived = inngest.createFunction(
           description?: string | null
           statement_descriptor?: string | null
           metadata?: Record<string, string> | null
+          billing_details?: { email?: string | null; name?: string | null } | null
         }
         const customerId =
           typeof charge.customer === 'string' ? charge.customer : (charge.customer?.id ?? '')
@@ -124,15 +126,22 @@ export const stripeEventReceived = inngest.createFunction(
           receivedAt: new Date(charge.created * 1000),
           stripeInvoiceId: invoiceId,
         })
-        const classification = result.unresolved
-          ? null
-          : classifyProductFromText(chargeProductText(charge), await loadProductCatalogue())
+        // Classify regardless so an unresolved payment still carries the product
+        // hint in the finance tray.
+        const classification = classifyProductFromText(
+          chargeProductText(charge),
+          await loadProductCatalogue(),
+        )
         return {
           kind: 'payment' as const,
           stripeId: charge.id,
           stripeCustomerId: customerId,
           amountMinor: charge.amount,
           currency: charge.currency.toUpperCase(),
+          receivedAt: new Date(charge.created * 1000),
+          customerEmail: charge.billing_details?.email ?? null,
+          customerName: charge.billing_details?.name ?? null,
+          description: charge.description ?? null,
           classification,
           ...result,
         }
@@ -220,6 +229,36 @@ export const stripeEventReceived = inngest.createFunction(
         'no Family linked to Stripe customer — skipping persist',
       )
       await step.run('mark-unresolved', async () => {
+        // A successful charge with no Family mapping lands in the finance tray
+        // for a human to link or dismiss (ADR 0030 follow-up). Refunds for an
+        // unseen charge have nothing to surface.
+        if (persisted.kind === 'payment') {
+          const recorded = await recordUnresolvedStripePayment(db, {
+            stripeChargeId: persisted.stripeId,
+            stripeCustomerId: persisted.stripeCustomerId,
+            amountMinor: persisted.amountMinor,
+            currency: persisted.currency,
+            // step.run output is JSON-serialised, so Date round-trips as a string.
+            receivedAt: new Date(persisted.receivedAt),
+            customerEmail: persisted.customerEmail,
+            customerName: persisted.customerName,
+            description: persisted.description,
+            productHandles: persisted.classification?.productHandles ?? [],
+          })
+          if (recorded.created) {
+            await writeAuditLogEntry(db, {
+              actorId: null,
+              action: 'stripe.payment_unresolved',
+              target: { type: 'UnresolvedStripePayment', id: recorded.id },
+              requestId: eventId,
+              after: {
+                stripeChargeId: persisted.stripeId,
+                stripeCustomerId: persisted.stripeCustomerId,
+                amountMinor: persisted.amountMinor,
+              },
+            })
+          }
+        }
         await db.providerEvent.update({
           where: { id: data.providerEventRowId },
           data: { processedAt: new Date() },

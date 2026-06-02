@@ -66,6 +66,7 @@ function buildNav(role: Role): NavItem[] {
       visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/finance', label: 'Discrepancies' },
+        { href: '/finance/unresolved-payments', label: 'Unresolved payments' },
         { href: '/finance/direct-debit', label: 'Direct Debit issues' },
         { href: '/finance/refunds', label: 'Refunds' },
         { href: '/finance/payment-links', label: 'Payment links' },
