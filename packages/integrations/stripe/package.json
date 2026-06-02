@@ -21,6 +21,7 @@
   "dependencies": {
     "@paralleldrive/cuid2": "^3.3.0",
     "@prisma/client": "^5.22.0",
+    "@studymind/ai": "workspace:*",
     "@studymind/audit": "workspace:*",
     "@studymind/core": "workspace:*",
     "@studymind/db": "workspace:*",

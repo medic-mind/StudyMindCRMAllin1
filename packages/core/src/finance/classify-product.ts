@@ -80,3 +80,39 @@ export function classifyProductFromText(
     unmatched,
   }
 }
+
+/** Default confidence at or above which an AI product suggestion is accepted. */
+export const AI_PRODUCT_CONFIDENCE_THRESHOLD = 0.7
+
+export interface AiProductSuggestionInput {
+  productHandle: string | null
+  confidence: number
+  reason: string
+}
+
+export interface AcceptedAiProductSuggestion {
+  handle: string
+  confidence: number
+  reason: string
+}
+
+/**
+ * Validate an AI product suggestion against the catalogue. Fails closed: the
+ * suggested handle must be one we actually offer, and confidence must clear the
+ * threshold — otherwise we ignore it (the payment stays unclassified rather
+ * than mis-tagged). Pure; the job runs the AI call and feeds the result in.
+ */
+export function resolveAiProductSuggestion(
+  suggestion: AiProductSuggestionInput,
+  catalogueHandles: string[],
+  threshold: number = AI_PRODUCT_CONFIDENCE_THRESHOLD,
+): AcceptedAiProductSuggestion | null {
+  if (!suggestion.productHandle) return null
+  if (suggestion.confidence < threshold) return null
+  if (!catalogueHandles.includes(suggestion.productHandle)) return null
+  return {
+    handle: suggestion.productHandle,
+    confidence: suggestion.confidence,
+    reason: suggestion.reason,
+  }
+}
