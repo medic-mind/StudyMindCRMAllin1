@@ -553,11 +553,38 @@ model Contact {
   bookingHoursTransactions  BookingHoursTransaction[]
   bookingCreditTransactions BookingCreditTransaction[]
 
+  /// Manual hours-risk triage state (the at-risk customers system). One per
+  /// contact; null when never reviewed.
+  riskReview ContactRiskReview?
+
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
   @@index([bookingStatus])
   @@index([bookingContactId])
+}
+
+/// Manual triage state for the hours-risk system (CLAUDE.md §6.4 — the *risk*
+/// itself is derived/never stored; this row records the human's decision about
+/// it). A customer surfaces on the at-risk dashboard from `deriveHoursRisk`;
+/// staff can then **flag** (acknowledge / being-handled) or **dismiss** (not a
+/// real risk), which persists across re-derivation and filters the dashboard.
+/// One row per contact, upserted. Sales Executive+ writes; audited.
+model ContactRiskReview {
+  contactId String   @id
+  /// `flagged` = actively watched / being chased; `dismissed` = reviewed and
+  /// judged not a concern (hidden from the default at-risk view).
+  status    String
+  note      String?
+  /// Snapshot of the derived level at review time, for context in the list.
+  levelAtReview String?
+  reviewedById  String?
+  reviewedAt    DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([status])
 }
 
 /// Booking lifecycle for a Contact relative to booking.studymind.co.uk.

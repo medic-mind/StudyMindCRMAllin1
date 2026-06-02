@@ -46,7 +46,14 @@ function buildNav(role: Role): NavItem[] {
     // "Messages" for customer messages).
     { href: '/messages', label: 'Team chat' },
     { href: '/leads', label: 'Leads' },
-    { href: '/contacts', label: 'B2C Customers' },
+    {
+      href: '/contacts',
+      label: 'B2C Customers',
+      children: [
+        { href: '/contacts', label: 'All customers' },
+        { href: '/contacts/at-risk', label: 'At-risk hours' },
+      ],
+    },
     {
       href: '/accounts',
       label: 'B2B / Schools',
