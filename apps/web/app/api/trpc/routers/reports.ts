@@ -1,8 +1,19 @@
 // Reports router. Read-only summaries for the Reports surface.
 // CLAUDE.md §27. Role-gated: ceo | senior_manager | manager (ADR 0014).
 
+import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
+
+import {
+  describePeakWindow,
+  instantMatchesWindow,
+  isPeakInstant,
+  PeakWindowInput,
+  PeakWindowUpdateInput,
+  type PeakInstant,
+  type PeakWindowDef,
+} from '@studymind/core/reports'
 
 import {
   protectedProcedure,
@@ -27,6 +38,42 @@ const PeriodInput = z.object({
   from: z.coerce.date(),
   to: z.coerce.date(),
 })
+
+// Peak times are a UK-team concern, so we classify calls on the Europe/London
+// clock rather than the server's UTC — otherwise an evening peak window drifts
+// by an hour during British Summer Time.
+const LONDON_PARTS_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Europe/London',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  weekday: 'short',
+  hour: '2-digit',
+  hour12: false,
+})
+const DOW_INDEX: Record<string, number> = {
+  Mon: 0,
+  Tue: 1,
+  Wed: 2,
+  Thu: 3,
+  Fri: 4,
+  Sat: 5,
+  Sun: 6,
+}
+/** Calendar parts of a UTC instant on the Europe/London clock. */
+function londonParts(d: Date): PeakInstant {
+  const parts = LONDON_PARTS_FMT.formatToParts(d)
+  const pick = (t: string): string => parts.find((p) => p.type === t)?.value ?? ''
+  let hour = Number.parseInt(pick('hour'), 10)
+  if (!Number.isFinite(hour) || hour === 24) hour = 0
+  return {
+    year: Number.parseInt(pick('year'), 10),
+    month: Number.parseInt(pick('month'), 10),
+    day: Number.parseInt(pick('day'), 10),
+    dow: DOW_INDEX[pick('weekday')] ?? 0,
+    hour,
+  }
+}
 
 /**
  * Buckets the period [from, to] into ISO weeks (Mon-Sun). Returns the start
@@ -488,18 +535,66 @@ export const reportsRouter = router({
           if (c.direction === 'outbound') dailyOut.set(key, (dailyOut.get(key) ?? 0) + 1)
         }
 
-        // Peak time matrix [dow Mon=0..Sun=6][hour 0..23].
+        // Customisable peak windows (CLAUDE.md §10). Active rows only.
+        const peakWindowRows = await ctx.db.callPeakWindow.findMany({
+          where: { archivedAt: null },
+          orderBy: { createdAt: 'asc' },
+        })
+        const peakWindows: PeakWindowDef[] = peakWindowRows.map((w) => ({
+          id: w.id,
+          name: w.name,
+          startMonth: w.startMonth,
+          startDay: w.startDay,
+          endMonth: w.endMonth,
+          endDay: w.endDay,
+          daysOfWeek: w.daysOfWeek,
+          startHour: w.startHour,
+          endHour: w.endHour,
+          year: w.year,
+          color: w.color,
+        }))
+
+        // Peak time matrix [dow Mon=0..Sun=6][hour 0..23] + hourly throughput,
+        // both on the Europe/London clock so they line up with the configured
+        // peak windows and the team's lived experience. We also classify each
+        // call as peak / off-peak in the same pass.
         const peak: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0))
-        // Hourly throughput (sum across the period, hour 0..23).
         const hourly = new Array(24).fill(0) as number[]
+        const peakCellCount: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0))
+        let peakCalls = 0
+        let peakAnswered = 0
+        let peakTalkSec = 0
+        const perWindowCalls = new Map<string, number>(peakWindows.map((w) => [w.id, 0]))
+        const perWindowAnswered = new Map<string, number>(peakWindows.map((w) => [w.id, 0]))
         for (const c of calls) {
-          const d = new Date(c.occurredAt)
-          const jsDow = d.getUTCDay()
-          const dow = (jsDow + 6) % 7
-          const hour = d.getUTCHours()
-          ;(peak[dow] as number[])[hour] = ((peak[dow] as number[])[hour] ?? 0) + 1
-          hourly[hour] = (hourly[hour] ?? 0) + 1
+          const lp = londonParts(c.occurredAt)
+          ;(peak[lp.dow] as number[])[lp.hour] = ((peak[lp.dow] as number[])[lp.hour] ?? 0) + 1
+          hourly[lp.hour] = (hourly[lp.hour] ?? 0) + 1
+          if (peakWindows.length > 0 && isPeakInstant(peakWindows, lp)) {
+            const answered = !c.isVoicemail && c.durationSec > 0
+            peakCalls += 1
+            if (answered) peakAnswered += 1
+            peakTalkSec += c.durationSec
+            ;(peakCellCount[lp.dow] as number[])[lp.hour] =
+              ((peakCellCount[lp.dow] as number[])[lp.hour] ?? 0) + 1
+            for (const w of peakWindows) {
+              if (instantMatchesWindow(w, lp)) {
+                perWindowCalls.set(w.id, (perWindowCalls.get(w.id) ?? 0) + 1)
+                if (answered) perWindowAnswered.set(w.id, (perWindowAnswered.get(w.id) ?? 0) + 1)
+              }
+            }
+          }
         }
+        // Busiest peak day/hour slot (for the headline + PDF).
+        let busiest: { dow: number; hour: number; count: number } | null = null
+        for (let d = 0; d < 7; d += 1) {
+          for (let h = 0; h < 24; h += 1) {
+            const ct = (peakCellCount[d] as number[])[h] ?? 0
+            if (ct > 0 && (!busiest || ct > busiest.count)) busiest = { dow: d, hour: h, count: ct }
+          }
+        }
+        const offPeakCalls = kpis.total - peakCalls
+        const offPeakAnswered = kpis.answered - peakAnswered
 
         // Duration distribution buckets for answered calls only.
         const DURATION_BUCKETS = [
@@ -737,10 +832,126 @@ export const reportsRouter = router({
             count: durationBucketCounts[i] ?? 0,
           })),
           peak,
+          peakWindows: peakWindows.map((w) => ({ ...w, labels: describePeakWindow(w) })),
+          peakStats: {
+            configured: peakWindows.length > 0,
+            windowCount: peakWindows.length,
+            peakCalls,
+            offPeakCalls,
+            peakShare: kpis.total ? peakCalls / kpis.total : 0,
+            peakAnswered,
+            peakAnsweredRate: peakCalls ? peakAnswered / peakCalls : 0,
+            offPeakAnswered,
+            offPeakAnsweredRate: offPeakCalls ? offPeakAnswered / offPeakCalls : 0,
+            peakTalkSec,
+            busiest,
+            byWindow: peakWindows.map((w) => ({
+              id: w.id,
+              name: w.name,
+              color: w.color,
+              calls: perWindowCalls.get(w.id) ?? 0,
+              answered: perWindowAnswered.get(w.id) ?? 0,
+            })),
+          },
           topContacts,
           missedTray,
           voicemailTray,
         }
       }),
+
+    // CRUD for the customisable peak-times windows (CLAUDE.md §10). Manager+
+    // (same gate as the rest of Reports). Config rows — no Contact/finance/
+    // safeguarding data — so no audit row is required (§20.1).
+    peakWindows: router({
+      list: protectedProcedure.query(async ({ ctx }) => {
+        assertReports(requireUser(ctx))
+        const rows = await ctx.db.callPeakWindow.findMany({
+          where: { archivedAt: null },
+          orderBy: { createdAt: 'asc' },
+        })
+        return rows.map((w) => ({
+          id: w.id,
+          name: w.name,
+          startMonth: w.startMonth,
+          startDay: w.startDay,
+          endMonth: w.endMonth,
+          endDay: w.endDay,
+          daysOfWeek: w.daysOfWeek,
+          startHour: w.startHour,
+          endHour: w.endHour,
+          year: w.year,
+          color: w.color,
+        }))
+      }),
+
+      create: protectedProcedure.input(PeakWindowInput).mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertReports(user)
+        if (input.endHour <= input.startHour) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'End hour must be after the start hour' })
+        }
+        const row = await ctx.db.callPeakWindow.create({
+          data: {
+            id: createId(),
+            name: input.name,
+            startMonth: input.startMonth,
+            startDay: input.startDay,
+            endMonth: input.endMonth,
+            endDay: input.endDay,
+            daysOfWeek: input.daysOfWeek,
+            startHour: input.startHour,
+            endHour: input.endHour,
+            year: input.year,
+            color: input.color,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+          select: { id: true },
+        })
+        return { id: row.id }
+      }),
+
+      update: protectedProcedure.input(PeakWindowUpdateInput).mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertReports(user)
+        if (input.endHour <= input.startHour) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'End hour must be after the start hour' })
+        }
+        const existing = await ctx.db.callPeakWindow.findFirst({
+          where: { id: input.id, archivedAt: null },
+          select: { id: true },
+        })
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+        await ctx.db.callPeakWindow.update({
+          where: { id: input.id },
+          data: {
+            name: input.name,
+            startMonth: input.startMonth,
+            startDay: input.startDay,
+            endMonth: input.endMonth,
+            endDay: input.endDay,
+            daysOfWeek: input.daysOfWeek,
+            startHour: input.startHour,
+            endHour: input.endHour,
+            year: input.year,
+            color: input.color,
+            updatedById: user.id,
+          },
+        })
+        return { id: input.id }
+      }),
+
+      archive: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertReports(user)
+          await ctx.db.callPeakWindow.updateMany({
+            where: { id: input.id, archivedAt: null },
+            data: { archivedAt: new Date(), updatedById: user.id },
+          })
+          return { id: input.id }
+        }),
+    }),
   }),
 })

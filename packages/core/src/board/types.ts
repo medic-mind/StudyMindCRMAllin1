@@ -59,6 +59,8 @@ export const CardCreateInput = z.object({
   contact: CardContactInput,
   subjectId: z.string().optional(),
   labelIds: z.array(z.string()).max(20).optional(),
+  /** Optional free-text note shown as the card's description preview. */
+  description: z.string().trim().max(2000).optional(),
 })
 export type CardCreateInput = z.infer<typeof CardCreateInput>
 

@@ -104,6 +104,7 @@ export async function createCard(
     contact: CardContactArg
     subjectId?: string
     labelIds?: ReadonlyArray<string>
+    description?: string
   },
   ctx: ActorCtx,
 ): Promise<CardSummary> {
@@ -179,6 +180,7 @@ export async function createCard(
       stageId: input.stageId,
       contactId,
       subjectId: input.subjectId ?? null,
+      description: input.description?.trim() ? input.description.trim() : null,
       position,
       createdById: ctx.actorId,
       ...(input.labelIds && input.labelIds.length > 0

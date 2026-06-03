@@ -130,7 +130,7 @@ export function BoardCard({
       ref={dragRef}
       style={{ ...dragStyle, borderLeftColor: borderColor }}
       {...dragHandleProps}
-      className={`group relative rounded-md border border-neutral-200 border-l-[3px] bg-white p-3 text-sm shadow-card transition-shadow hover:shadow-card-hover ${dragHandleProps ? 'touch-none' : ''}`}
+      className={`group relative rounded-lg border border-neutral-200 border-l-[3px] bg-white p-3 text-sm shadow-card transition-shadow hover:shadow-card-hover ${dragHandleProps ? 'touch-none' : ''}`}
     >
       {/* Whole-card click target. Sits behind the per-card controls so
        * those still receive their own clicks. */}
@@ -142,7 +142,7 @@ export function BoardCard({
       />
       <div className="relative z-10 pointer-events-none">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 truncate font-medium text-neutral-900 group-hover:text-primary-700">
+          <div className="min-w-0 truncate text-[13px] font-semibold text-neutral-900 group-hover:text-primary-700">
             {card.contactName}
           </div>
           {card.priority != null && PRIORITY_CHIP_TONE[card.priority] && (
@@ -171,7 +171,7 @@ export function BoardCard({
             inside the otherwise click-through card body; the links
             stopPropagation so they don't also open the modal. */}
         {(card.contactEmail || card.contactPhone) && (
-          <div className="pointer-events-auto mt-1 flex flex-col gap-0.5 text-[11px] text-neutral-600">
+          <div className="pointer-events-auto mt-2 flex flex-col gap-1 text-xs text-neutral-600">
             {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
             {card.contactEmail && <EmailLink email={card.contactEmail} />}
           </div>
@@ -179,7 +179,7 @@ export function BoardCard({
         {/* Note preview — first 2 lines of the card description so the
             agent gets context at a glance. */}
         {card.description && card.description.trim().length > 0 && (
-          <p className="mt-1 line-clamp-2 text-[11px] italic text-neutral-500">
+          <p className="mt-2 line-clamp-2 text-xs leading-snug text-neutral-600">
             {card.description.trim()}
           </p>
         )}

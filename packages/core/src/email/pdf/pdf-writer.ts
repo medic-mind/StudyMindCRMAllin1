@@ -19,6 +19,7 @@ const TOP_Y = PAGE_HEIGHT - 72
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_X * 2
 const DEFAULT_SIZE = 11
 const LINE_FACTOR = 1.45
+const BOTTOM_Y = 64 // bottom margin (points) — paginate when a line would cross it
 
 export interface PdfTextBlock {
   text: string
@@ -60,6 +61,62 @@ export function renderTextDocumentPdf(blocks: PdfTextBlock[]): Buffer {
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
   ]
+  return assemblePdf(objects)
+}
+
+/**
+ * Render text blocks across as many A4 pages as needed, breaking to a new page
+ * when a line would cross the bottom margin. Used for variable-length reports
+ * (e.g. the Aircall export) where a single page would truncate. Short documents
+ * still produce exactly one page, so this is a superset of
+ * `renderTextDocumentPdf`.
+ */
+export function renderPaginatedTextDocumentPdf(blocks: PdfTextBlock[]): Buffer {
+  const pages: string[][] = []
+  let ops: string[] = []
+  let y = TOP_Y
+
+  for (const block of blocks) {
+    const size = block.size ?? DEFAULT_SIZE
+    const font = block.bold ? '/F2' : '/F1'
+    y -= block.spacingBefore ?? 0
+    const lines = block.text === '' ? [''] : wrapText(block.text, size, block.bold ?? false)
+    for (const line of lines) {
+      y -= size * LINE_FACTOR
+      if (y < BOTTOM_Y) {
+        // Carry the current page and start a fresh one for this line.
+        pages.push(ops)
+        ops = []
+        y = TOP_Y - size * LINE_FACTOR
+      }
+      if (line !== '') {
+        ops.push(
+          `BT ${font} ${size} Tf ${MARGIN_X} ${formatNumber(y)} Td (${escapePdfText(line)}) Tj ET`,
+        )
+      }
+    }
+  }
+  pages.push(ops)
+
+  // Object graph: 1 Catalog, 2 Pages, 3 Helvetica, 4 Helvetica-Bold, then a
+  // (Page, Contents) pair per page. Page k is object (5 + 2k), its contents
+  // (6 + 2k).
+  const pageObjectNumbers = pages.map((_, i) => 5 + i * 2)
+  const objects: string[] = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    `<< /Type /Pages /Kids [${pageObjectNumbers.map((n) => `${n} 0 R`).join(' ')}] /Count ${pages.length} >>`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
+  ]
+  pages.forEach((pageOps, i) => {
+    const contentsNumber = 6 + i * 2
+    const content = pageOps.join('\n')
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] ` +
+        `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentsNumber} 0 R >>`,
+    )
+    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`)
+  })
   return assemblePdf(objects)
 }
 
