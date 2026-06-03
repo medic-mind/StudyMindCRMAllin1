@@ -8,6 +8,7 @@ import { notFound } from 'next/navigation'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { SettingsIcon } from '@/components/ui/icon'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -103,37 +104,38 @@ export default async function BoardPage({ params }: PageProps) {
         subtitle={board.description ?? 'Cards grouped by stage. Every move is audited.'}
         breadcrumbs={[{ label: 'Boards', href: '/boards' }]}
       />
-      {/* Sticky board toolbar — board picker on the left, Settings + Add card
-          on the right, anchored to the top of the viewport so the agent can
-          switch board or drop a new card from anywhere on the page
-          regardless of horizontal scroll on the kanban. */}
-      <div className="sticky top-0 z-30 -mx-6 mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200/80 bg-white/95 px-6 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/80">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500">
-            Board
-          </span>
-          <BoardSwitcher
-            boards={boards.map((b) => ({ id: b.id, name: b.name }))}
-            currentId={board.id}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          {canManage ? (
-            <a
-              href={`/boards/${board.id}/settings`}
-              className="inline-flex h-8 items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-800 hover:bg-neutral-200"
-            >
-              Settings
-            </a>
-          ) : null}
-          {canWrite && stages.length > 0 ? (
-            <AddCardButton
-              boardId={board.id}
-              stages={stageOptions}
-              labels={labels}
-            />
-          ) : null}
-        </div>
+      {/* Sticky board toolbar — switcher, Add card, and Settings are grouped
+          together on the left (next to where the agent's attention already is)
+          rather than split to opposite edges, and stay anchored to the top of
+          the viewport so they're reachable regardless of horizontal scroll on
+          the kanban. */}
+      <div className="sticky top-0 z-30 -mx-6 mb-4 flex flex-wrap items-center gap-3 border-b border-neutral-200/80 bg-white/95 px-6 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+        {boards.length > 1 ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-500">
+                Board
+              </span>
+              <BoardSwitcher
+                boards={boards.map((b) => ({ id: b.id, name: b.name }))}
+                currentId={board.id}
+              />
+            </div>
+            <div className="h-5 w-px bg-neutral-200" aria-hidden />
+          </>
+        ) : null}
+        {canWrite && stages.length > 0 ? (
+          <AddCardButton boardId={board.id} stages={stageOptions} labels={labels} />
+        ) : null}
+        {canManage ? (
+          <a
+            href={`/boards/${board.id}/settings`}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-200"
+          >
+            <SettingsIcon size={15} className="text-neutral-500" />
+            Settings
+          </a>
+        ) : null}
       </div>
       <PageBody>
         {stages.length === 0 ? (
@@ -149,11 +151,13 @@ export default async function BoardPage({ params }: PageProps) {
           </div>
         ) : (
           <BoardDnd
+            boardId={board.id}
             stages={dndStages}
             cards={dndCards}
             stageOptions={stageOptions}
             crossBoardStages={otherBoardStages}
             quickActions={quickActions}
+            labels={labels}
             canWrite={canWrite}
             canComment={canComment}
             canDeleteCard={canDeleteCard}

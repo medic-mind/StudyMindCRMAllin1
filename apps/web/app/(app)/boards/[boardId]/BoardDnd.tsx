@@ -25,7 +25,7 @@ import {
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { useRouter } from 'next/navigation'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
@@ -81,11 +81,13 @@ interface QuickAction {
 }
 
 interface Props {
+  boardId: string
   stages: ReadonlyArray<Stage>
   cards: ReadonlyArray<CardData>
   stageOptions: ReadonlyArray<StageOption>
   crossBoardStages?: ReadonlyArray<CrossBoardGroup>
   quickActions: ReadonlyArray<QuickAction>
+  labels: ReadonlyArray<LabelChip>
   canWrite: boolean
   canComment: boolean
   canDeleteCard: boolean
@@ -103,11 +105,13 @@ function stageIdOfDroppable(
 }
 
 export function BoardDnd({
+  boardId,
   stages,
   cards: initialCards,
   stageOptions,
   crossBoardStages = [],
   quickActions,
+  labels,
   canWrite,
   canComment,
   canDeleteCard,
@@ -120,6 +124,43 @@ export function BoardDnd({
   // mutation can revert. A kanban only ever has one move in flight at a time.
   const preMoveSnapshot = useRef<CardData[] | null>(null)
 
+  // Reconcile server → local whenever the card set meaningfully changes. The
+  // useState initialiser only runs once, so without this a `router.refresh()`
+  // (after creating a card elsewhere, or any external change) would re-render
+  // the RSC with fresh props that local state silently ignores — which is why
+  // a newly-added card never showed up. We key off a content signature, not the
+  // array reference (which is new every render), so optimistic moves aren't
+  // clobbered: server props only change after a refresh, by which point they
+  // already reflect the optimistic action.
+  const serverSignature = useMemo(
+    () =>
+      initialCards
+        .map((c) =>
+          [
+            c.id,
+            c.stageId,
+            c.contactName,
+            c.contactEmail ?? '',
+            c.contactPhone ?? '',
+            c.description ?? '',
+            c.priority ?? '',
+            c.subject?.id ?? '',
+            c.labels.length,
+            c.assigneeId ?? '',
+            c.dueAt ? new Date(c.dueAt).getTime() : '',
+            c.scheduledCallAt ? new Date(c.scheduledCallAt).getTime() : '',
+            c.lastActivityAt ? new Date(c.lastActivityAt).getTime() : '',
+          ].join(':'),
+        )
+        .join('|'),
+    [initialCards],
+  )
+  const latestServerCards = useRef(initialCards)
+  latestServerCards.current = initialCards
+  useEffect(() => {
+    setCards([...latestServerCards.current])
+  }, [serverSignature])
+
   /** Optimistic local move — used by quick actions + the move dropdown
    * so the card jumps columns the instant the user clicks. The actual
    * server mutation lives inside the component that called us; we just
@@ -129,6 +170,13 @@ export function BoardDnd({
     setCards((prev) =>
       prev.map((c) => (c.id === cardId ? { ...c, stageId: toStageId } : c)),
     )
+  }
+
+  /** Optimistic insert — a per-column (or toolbar) add drops the new card in
+   * straight away. The subsequent router.refresh reconciles it with the
+   * authoritative row (same id) via the signature effect above. */
+  function addCardLocal(card: CardData) {
+    setCards((prev) => [...prev.filter((c) => c.id !== card.id), card])
   }
 
   const sensors = useSensors(
@@ -222,16 +270,19 @@ export function BoardDnd({
         {stages.map((stage) => (
           <div key={stage.id} className="min-w-[300px] max-w-[320px] flex-1">
             <BoardColumn
+              boardId={boardId}
               stage={stage}
               cards={byStage.get(stage.id) ?? []}
               stages={stageOptions}
               crossBoardStages={crossBoardStages}
               quickActions={quickActions}
+              labels={labels}
               canWrite={canWrite}
               canComment={canComment}
               canDeleteCard={canDeleteCard}
               currentUserName={currentUserName}
               onLocalMove={moveCardLocal}
+              onCardCreated={addCardLocal}
             />
           </div>
         ))}
