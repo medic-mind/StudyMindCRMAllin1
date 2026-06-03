@@ -587,6 +587,41 @@ model ContactRiskReview {
   @@index([status])
 }
 
+/// Customisable "peak times" windows for the Aircall analytics (CLAUDE.md §10).
+/// Each row marks a recurring season (month/day → month/day, wrapping the
+/// year-end when start > end), a set of weekdays, and an hour band as "peak".
+/// `year` null = applies every year ("any year"); set it to pin a window to one
+/// calendar year. Read by `reports.aircall.summary`; managed by Manager+ on the
+/// Aircall report. Classified on the Europe/London clock (UK time).
+model CallPeakWindow {
+  id   String @id
+  name String
+  /// Season bounds as month (1-12) + day (1-31). When start > end the window
+  /// wraps the year-end (e.g. Nov 1 → Feb 28).
+  startMonth Int
+  startDay   Int
+  endMonth   Int
+  endDay     Int
+  /// Peak weekdays: 0 = Monday … 6 = Sunday.
+  daysOfWeek Int[] @default([])
+  /// Peak hour band on a 24h clock: [startHour, endHour). e.g. 16–20 = 4pm–8pm.
+  startHour Int
+  endHour   Int
+  /// null = recurs every year; set = applies only to this calendar year.
+  year Int?
+  /// Display colour token (e.g. `amber-500`) for the heatmap overlay + chips.
+  color String @default("amber-500")
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  @@index([archivedAt])
+  @@index([year])
+}
+
 /// Booking lifecycle for a Contact relative to booking.studymind.co.uk.
 /// Default for every new contact is `lead` — the booking site sync flips
 /// it once a registration / lesson is observed. CLAUDE.md §15.
