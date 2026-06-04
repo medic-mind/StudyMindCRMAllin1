@@ -61,11 +61,15 @@ Guiding principles (the "think like a manager who won't recode later" rule):
 - Migrate the compose + quick-add overlays onto `<Modal>` for one consistent
   surface.
 
-### Increment 3 — Contacts (deep)
-- Contact **detail page** → tabbed/slide-over sections; sticky identity header
-  with one-click call/email/log; "Current status" summary band.
-- Inline edit of core fields via a slide-over rather than a separate page.
-- Per-row hover **quick actions** (call · email · add task) on the list.
+### Increment 3 — Contacts (deep) — *in progress*
+- **Shipped:** contact detail **identity header** is now fully in-house — email
+  opens the CRM composer (`EmailLink`), phone uses the Aircall / Google Voice
+  dial picker (`PhoneLink`), and a dedicated **Email** action button
+  (`ComposeEmailButton`, a reusable primitive) sits beside the logged
+  `CallButton`. No more `mailto:` / `tel:` bounce-outs.
+- **Next:** inline edit of core fields via a `<SlideOver>` instead of the
+  separate `/edit` page; per-row hover **quick actions** (call · email · add
+  task) on the list; a "Current status" summary band.
 
 ### Increment 4 — Boards / pipeline
 - Card modal → standardise on the `<Modal>`/`<SlideOver>` primitive; group the

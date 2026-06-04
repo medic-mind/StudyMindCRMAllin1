@@ -14,7 +14,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/ui/button'
+import { Button, type ButtonProps } from '@/components/ui/button'
 import { MailIcon, SendIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -68,6 +68,41 @@ export function ComposeEmailProvider({
         />
       ) : null}
     </ComposeEmailContext.Provider>
+  )
+}
+
+/**
+ * A button that opens the in-house composer prefilled. Drop-in anywhere under
+ * the provider (contact header, card modal, account page). Falls back to a
+ * mailto when no provider is mounted.
+ */
+export function ComposeEmailButton({
+  to,
+  subject,
+  body,
+  children,
+  ...buttonProps
+}: {
+  to?: string
+  subject?: string
+  body?: string
+} & Omit<ButtonProps, 'onClick'>) {
+  const compose = useComposeEmail()
+  return (
+    <Button
+      type="button"
+      onClick={() => {
+        if (compose) compose.openCompose({ to, subject, body })
+        else if (typeof window !== 'undefined') window.location.href = `mailto:${to ?? ''}`
+      }}
+      {...buttonProps}
+    >
+      {children ?? (
+        <>
+          <MailIcon size={14} /> Email
+        </>
+      )}
+    </Button>
   )
 }
 

@@ -13,6 +13,8 @@ import { createServerCaller } from '@/lib/trpc/server'
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
+import { ComposeEmailButton } from '@/components/mail/compose-email'
+import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -203,23 +205,12 @@ export default async function ContactDetailPage({
               )}
               <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-neutral-600">
                 {contact.email && (
-                  <a
-                    href={`mailto:${contact.email}`}
+                  <EmailLink
+                    email={contact.email}
                     className="inline-flex items-center gap-1.5 transition-colors hover:text-primary-700"
-                  >
-                    <MailIcon size={14} className="text-neutral-400" />
-                    {contact.email}
-                  </a>
+                  />
                 )}
-                {contact.phoneE164 && (
-                  <a
-                    href={`tel:${contact.phoneE164}`}
-                    className="inline-flex items-center gap-1.5 transition-colors hover:text-primary-700"
-                  >
-                    <PhoneIcon size={14} className="text-neutral-400" />
-                    <span className="font-mono">{contact.phoneE164}</span>
-                  </a>
-                )}
+                {contact.phoneE164 && <PhoneLink phone={contact.phoneE164} />}
                 {contact.family && (
                   <Link
                     href={`/contacts/families/${contact.family.id}`}
@@ -256,6 +247,9 @@ export default async function ContactDetailPage({
               phoneE164={contact.phoneE164}
               displayName={contact.displayName}
             />
+            {contact.email && (
+              <ComposeEmailButton to={contact.email} size="sm" variant="secondary" />
+            )}
             <Link href={`/contacts/${contact.id}/edit`}>
               <Button size="sm" variant="secondary">
                 Edit details
