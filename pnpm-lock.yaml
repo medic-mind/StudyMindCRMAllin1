@@ -455,6 +455,9 @@ importers:
       '@studymind/db':
         specifier: workspace:*
         version: link:../../db
+      '@studymind/integration-slack':
+        specifier: workspace:*
+        version: link:../slack
       '@studymind/jobs':
         specifier: workspace:*
         version: link:../../jobs

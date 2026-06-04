@@ -143,6 +143,11 @@ export const EVENT_NAMES = [
   'slack_channel_option.archived',
   'slack_channel_option.restored',
 
+  // Google Voice email ingestion (ADR 0031). A voicemail / missed call / text
+  // notification email from voice-noreply@google.com, logged as a call/message
+  // Interaction (often flagged needsManualReview) via the Gmail sync.
+  'google_voice.message_ingested',
+
   // Uploaded invoices — manually uploaded invoice files attached to a
   // BusinessAccount / Contact / Family. Different from the finance-mirrored
   // Invoice rows.

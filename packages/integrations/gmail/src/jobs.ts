@@ -12,6 +12,7 @@
 import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
+import { flag } from '@studymind/core/flags'
 import { applyMailToConversation } from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
@@ -24,6 +25,8 @@ import {
   parseAddresses,
   type GmailMessage,
 } from './client'
+import { isGoogleVoiceSender } from './google-voice'
+import { handleGoogleVoiceMessage } from './google-voice-handler'
 import { putAttachment } from './s3'
 
 interface HistoryChangedData {
@@ -151,6 +154,23 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   const toAddrs = parseAddresses(toHeader)
   const ccAddrs = parseAddresses(ccHeader)
   const bccAddrs = parseAddresses(bccHeader)
+
+  // Google Voice notification emails (voicemail / missed call / text) are how
+  // we ingest that channel — it has no call API (ADR 0031). Behind a flag so
+  // it stays off until a Google Voice number points at a synced mailbox.
+  if (
+    isGoogleVoiceSender(fromAddrs) &&
+    (await flag('google_voice.email_ingest_enabled'))
+  ) {
+    const handled = await handleGoogleVoiceMessage({
+      message,
+      agentId: input.agentId,
+      requestId: input.requestId,
+      subject,
+      client,
+    })
+    if (handled) return
+  }
 
   // Determine direction. If any of the agent's addresses is in From, it's
   // outbound. Multi-mailbox: an agent can have several connected Gmail
