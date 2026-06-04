@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
@@ -136,6 +137,7 @@ function TemplateRow({
   const restore = trpc.callSummaryTemplate.restore.useMutation()
   const attachPdf = trpc.callSummaryTemplate.attachPdf.useMutation()
   const removePdf = trpc.callSummaryTemplate.removePdf.useMutation()
+  const confirm = useConfirm()
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
 
@@ -183,7 +185,7 @@ function TemplateRow({
   }
 
   async function detachPdf() {
-    if (!confirm(`Remove "${template.pdfFileName}" from this template?`)) return
+    if (!(await confirm({ title: `Remove "${template.pdfFileName}"?`, body: 'The PDF is removed from this template.', confirmLabel: 'Remove', tone: 'danger' }))) return
     setBusy(true)
     try {
       await removePdf.mutateAsync({ id: template.id })

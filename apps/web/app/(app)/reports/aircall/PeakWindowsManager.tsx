@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm'
 import { Field } from '@/components/ui/field'
 import { PencilIcon, PlusIcon, Trash2Icon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
@@ -80,6 +81,7 @@ function blankDraft(): Draft {
 
 export function PeakWindowsManager({ windows, canManage }: Props) {
   const router = useRouter()
+  const confirm = useConfirm()
   const [draft, setDraft] = useState<Draft | null>(null)
   const utils = trpc.useUtils()
 
@@ -206,8 +208,9 @@ export function PeakWindowsManager({ windows, canManage }: Props) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (confirm(`Remove peak window “${w.name}”?`)) archive.mutate({ id: w.id })
+                    onClick={async () => {
+                      if (await confirm({ title: `Remove peak window “${w.name}”?`, confirmLabel: 'Remove', tone: 'danger' }))
+                        archive.mutate({ id: w.id })
                     }}
                     aria-label={`Remove ${w.name}`}
                     className="rounded p-1.5 text-neutral-400 transition-colors hover:bg-rose-50 hover:text-rose-600"

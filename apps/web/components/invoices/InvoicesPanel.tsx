@@ -19,6 +19,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm'
 import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -271,6 +272,7 @@ function InvoiceRow({
 }) {
   const archive = trpc.uploadedInvoice.archive.useMutation()
   const del = trpc.uploadedInvoice.delete.useMutation()
+  const confirm = useConfirm()
   const [busy, setBusy] = useState(false)
 
   async function onArchive() {
@@ -287,7 +289,7 @@ function InvoiceRow({
   }
 
   async function onDelete() {
-    if (!confirm(`Delete "${invoice.fileName}"? This cannot be undone.`)) return
+    if (!(await confirm({ title: `Delete "${invoice.fileName}"?`, body: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return
     setBusy(true)
     try {
       await del.mutateAsync({ id: invoice.id })

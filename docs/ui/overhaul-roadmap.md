@@ -56,10 +56,13 @@ Guiding principles (the "think like a manager who won't recode later" rule):
 
 ## Staged plan (next increments)
 
-### Increment 2b — finish the confirm sweep + adopt the primitives
-- Convert the remaining `window.confirm` call sites to `useConfirm()`.
-- Migrate the compose + quick-add overlays onto `<Modal>` for one consistent
-  surface.
+### Increment 2b — confirm sweep — *shipped*
+- **Every** native `window.confirm` is now the branded `useConfirm()` dialog —
+  Contacts, Accounts (bulk delete), Account students, contact documents, invoice
+  delete + mark-paid, call-summary template PDF, Gmail disconnect, peak-windows,
+  team-chat message delete + channel archive/delete. No native confirms remain.
+- *Still to do:* migrate the compose + quick-add overlays onto `<Modal>` for one
+  consistent surface (cosmetic; they already work).
 
 ### Increment 3 — Contacts (deep) — *in progress*
 - **Shipped:** contact detail **identity header** is now fully in-house — email

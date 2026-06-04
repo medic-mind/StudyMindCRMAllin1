@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -174,10 +175,11 @@ function StudentRow({
 }) {
   const archive = trpc.businessAccount.students.archive.useMutation()
   const sync = trpc.businessAccount.students.syncFromBooking.useMutation()
+  const confirm = useConfirm()
   const [busy, setBusy] = useState(false)
 
   async function onArchive() {
-    if (!confirm(`Archive ${fullName(student)}?`)) return
+    if (!(await confirm({ title: `Archive ${fullName(student)}?`, confirmLabel: 'Archive', tone: 'danger' }))) return
     setBusy(true)
     try {
       await archive.mutateAsync({ id: student.id })

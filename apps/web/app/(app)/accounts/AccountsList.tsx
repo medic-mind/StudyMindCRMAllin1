@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { useConfirm } from '@/components/ui/confirm'
 import { FacetedFilter } from '@/components/ui/faceted-filter'
 import { Popover } from '@/components/ui/popover'
 import { SearchField } from '@/components/ui/search-field'
@@ -128,6 +129,7 @@ export function AccountsList({
 }) {
   const router = useRouter()
   const utils = trpc.useUtils()
+  const confirm = useConfirm()
   const [creating, setCreating] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
@@ -227,13 +229,13 @@ export function AccountsList({
 
   async function onDelete() {
     const n = selected.size
-    if (
-      !confirm(
-        `Permanently delete ${n} account${n === 1 ? '' : 's'}? This also removes their ` +
-          `linked contacts, students, labels and uploaded invoices. This cannot be undone.`,
-      )
-    )
-      return
+    const ok = await confirm({
+      title: `Permanently delete ${n} account${n === 1 ? '' : 's'}?`,
+      body: 'This also removes their linked contacts, students, labels and uploaded invoices. This cannot be undone.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    })
+    if (!ok) return
     await run('Deleted', () => bulkDelete.mutateAsync({ ids: ids() }))
   }
 

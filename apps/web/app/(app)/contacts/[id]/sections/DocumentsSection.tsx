@@ -7,6 +7,7 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
+import { useConfirm } from '@/components/ui/confirm'
 import { Input } from '@/components/ui/input'
 import { FileTextIcon, XIcon } from '@/components/ui/icon'
 import { trpc } from '@/lib/trpc/client'
@@ -55,6 +56,7 @@ export function DocumentsSection({ contactId }: Props) {
   const docs = trpc.contact.documents.list.useQuery({ contactId })
   const add = trpc.contact.documents.add.useMutation()
   const remove = trpc.contact.documents.remove.useMutation()
+  const confirm = useConfirm()
   const inputRef = useRef<HTMLInputElement>(null)
   const [description, setDescription] = useState('')
   const [busy, setBusy] = useState(false)
@@ -92,7 +94,7 @@ export function DocumentsSection({ contactId }: Props) {
   }
 
   async function handleRemove(id: string, fileName: string) {
-    if (!confirm(`Remove ${fileName}? This cannot be undone.`)) return
+    if (!(await confirm({ title: `Remove ${fileName}?`, body: 'This cannot be undone.', confirmLabel: 'Remove', tone: 'danger' }))) return
     try {
       await remove.mutateAsync({ id })
       toast.success('Removed')

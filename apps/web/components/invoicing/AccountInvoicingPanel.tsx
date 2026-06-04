@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm'
 import { Input } from '@/components/ui/input'
 import { trpc } from '@/lib/trpc/client'
 
@@ -52,6 +53,7 @@ export function AccountInvoicingPanel({
   canMarkPaid: boolean
 }) {
   const router = useRouter()
+  const confirm = useConfirm()
   const listInput =
     target.kind === 'businessAccount'
       ? { businessAccountId: target.businessAccountId }
@@ -151,7 +153,7 @@ export function AccountInvoicingPanel({
   }
 
   async function handleMarkPaid(invoicingId: string) {
-    if (!window.confirm('Mark this invoice as fully paid?')) return
+    if (!(await confirm({ title: 'Mark this invoice as fully paid?', confirmLabel: 'Mark paid' }))) return
     try {
       await markPaid.mutateAsync({ invoicingId })
       toast.success('Invoice marked paid')

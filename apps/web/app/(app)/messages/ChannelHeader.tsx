@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
+import { useConfirm } from '@/components/ui/confirm'
 import {
   BellOffIcon,
   HashIcon,
@@ -51,6 +52,7 @@ export function ChannelHeader({
   onOpenSaved,
 }: Props) {
   const utils = trpc.useUtils()
+  const confirm = useConfirm()
   const [menuOpen, setMenuOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
@@ -208,8 +210,15 @@ export function ChannelHeader({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => {
-                      if (confirm(`Archive #${channel.name}? Members lose access until restored.`)) {
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: `Archive #${channel.name}?`,
+                          body: 'Members lose access until restored.',
+                          confirmLabel: 'Archive',
+                          tone: 'danger',
+                        })
+                      ) {
                         archive.mutate({ id: channel.id })
                       }
                       setMenuOpen(false)
@@ -222,11 +231,14 @@ export function ChannelHeader({
                     <button
                       type="button"
                       role="menuitem"
-                      onClick={() => {
+                      onClick={async () => {
                         if (
-                          confirm(
-                            `Permanently delete #${channel.name}? This removes the channel and its entire history for everyone. This cannot be undone.`,
-                          )
+                          await confirm({
+                            title: `Permanently delete #${channel.name}?`,
+                            body: 'This removes the channel and its entire history for everyone. This cannot be undone.',
+                            confirmLabel: 'Delete',
+                            tone: 'danger',
+                          })
                         ) {
                           remove.mutate({ id: channel.id })
                         }

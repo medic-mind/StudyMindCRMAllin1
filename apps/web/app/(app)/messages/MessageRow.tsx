@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { Avatar } from '@/components/ui/avatar'
+import { useConfirm } from '@/components/ui/confirm'
 import {
   ForwardIcon,
   PencilIcon,
@@ -56,6 +57,7 @@ export function MessageRow({
   onPin,
   onSave,
 }: Props) {
+  const confirm = useConfirm()
   const [editing, setEditing] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -312,8 +314,9 @@ export function MessageRow({
               type="button"
               title="Delete"
               aria-label="Delete message"
-              onClick={() => {
-                if (confirm('Delete this message?')) onDelete(message.id)
+              onClick={async () => {
+                if (await confirm({ title: 'Delete this message?', confirmLabel: 'Delete', tone: 'danger' }))
+                  onDelete(message.id)
               }}
               className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-red-50 hover:text-red-700"
             >

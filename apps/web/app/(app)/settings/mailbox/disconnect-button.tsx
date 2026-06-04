@@ -4,10 +4,12 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
+import { useConfirm } from '@/components/ui/confirm'
 import { trpc } from '@/lib/trpc/client'
 
 export function DisconnectGmailButton(): React.ReactNode {
   const router = useRouter()
+  const confirm = useConfirm()
   const [error, setError] = useState<string | null>(null)
   const disconnect = trpc.oauth.gmail.disconnect.useMutation({
     onSuccess: () => {
@@ -24,12 +26,14 @@ export function DisconnectGmailButton(): React.ReactNode {
     <div>
       <button
         type="button"
-        onClick={() => {
-          if (
-            confirm(
-              'Disconnect Gmail? This revokes our access at Google and stops background sync. You can reconnect at any time.',
-            )
-          ) {
+        onClick={async () => {
+          const ok = await confirm({
+            title: 'Disconnect Gmail?',
+            body: 'This revokes our access at Google and stops background sync. You can reconnect at any time.',
+            confirmLabel: 'Disconnect',
+            tone: 'danger',
+          })
+          if (ok) {
             setError(null)
             disconnect.mutate()
           }
