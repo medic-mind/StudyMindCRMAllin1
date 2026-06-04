@@ -35,6 +35,17 @@ export function LineChart({
 
   const xStep = xLabels.length <= 1 ? 0 : innerW / (xLabels.length - 1)
 
+  // Thin the x-axis labels so they never overlap: show at most ~12, evenly
+  // spaced, always including the last. (A month of daily labels otherwise
+  // collides into an unreadable smear.) The sr-only table keeps every point.
+  const maxXLabels = 12
+  const labelStep = Math.max(1, Math.ceil(xLabels.length / maxXLabels))
+  const lastX = xLabels.length - 1
+  const showLabel = (i: number) => i % labelStep === 0 || i === lastX
+  // With many points a dot per day is noise — keep dots only on points that
+  // actually carry a value, so activity still reads at a glance.
+  const denseData = xLabels.length > 16
+
   return (
     <figure className="w-full">
       <svg
@@ -92,10 +103,13 @@ export function LineChart({
                 points={points}
               />
               {s.values.map((v, i) => {
+                // Drop the zero points on dense (e.g. monthly) charts so the
+                // line stays clean; sparse charts keep every marker.
+                if (denseData && v.y === 0) return null
                 const x = PADDING.left + i * xStep
                 const y = PADDING.top + innerH - (v.y / yMax) * innerH
                 return (
-                  <circle key={i} cx={x} cy={y} r={3} fill={s.color}>
+                  <circle key={i} cx={x} cy={y} r={2.5} fill={s.color}>
                     <title>
                       {s.label} · {xLabels[i]} · {fmt(v.y)}
                     </title>
@@ -106,18 +120,20 @@ export function LineChart({
           )
         })}
 
-        {/* X axis labels */}
-        {xLabels.map((label, i) => (
-          <text
-            key={i}
-            x={PADDING.left + i * xStep}
-            y={PADDING.top + innerH + 16}
-            textAnchor="middle"
-            className="fill-neutral-500 font-mono text-[10px] tabular-nums"
-          >
-            {label}
-          </text>
-        ))}
+        {/* X axis labels — thinned to avoid overlap */}
+        {xLabels.map((label, i) =>
+          showLabel(i) ? (
+            <text
+              key={i}
+              x={PADDING.left + i * xStep}
+              y={PADDING.top + innerH + 16}
+              textAnchor={i === lastX ? 'end' : i === 0 ? 'start' : 'middle'}
+              className="fill-neutral-500 font-mono text-[10px] tabular-nums"
+            >
+              {label}
+            </text>
+          ) : null,
+        )}
 
         {/* X axis line */}
         <line
@@ -198,7 +214,9 @@ function niceTicks(max: number, count: number): number[] {
   const step = niceStep(max / count)
   const ticks: number[] = []
   for (let v = 0; v <= max + step; v += step) ticks.push(Math.round(v))
-  return ticks
+  // A fractional step (e.g. 0.5 over a 0–2 range) rounds adjacent values to the
+  // same integer; dedupe so we don't draw "1, 1, 2, 2" overlapping y-labels.
+  return [...new Set(ticks)]
 }
 
 function niceStep(raw: number): number {
