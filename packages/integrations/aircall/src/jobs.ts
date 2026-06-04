@@ -13,6 +13,10 @@ import {
   transcribeAudio,
 } from '@studymind/ai'
 import { writeAuditLogEntry } from '@studymind/audit'
+import {
+  resolveOrCreateContactForCall,
+  splitDisplayName,
+} from '@studymind/core/contact/from-call'
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
@@ -131,9 +135,10 @@ export const aircallEventReceived = inngest.createFunction(
       return client.getCall(aircallCallId)
     })
 
-    // Match to Contact / Family by E.164.
+    // Match to Contact / Family by E.164 — creating a lightweight Contact when
+    // the number is unknown so the call is never orphaned (CLAUDE.md §10).
     const ctx = await step.run('match-contact', async () => {
-      return matchCallToContact(call)
+      return matchCallToContact(call, eventId)
     })
 
     // Persist Interaction. Idempotent on (aircallCallId, type).
@@ -327,47 +332,58 @@ export const aircallRecoverDisabledWebhook = inngest.createFunction(
 // Helpers — kept module-local so the steps can stay short and readable.
 // -----------------------------------------------------------------------------
 
-async function matchCallToContact(call: AircallCallResource): Promise<CallContext> {
+async function matchCallToContact(
+  call: AircallCallResource,
+  eventId: string,
+): Promise<CallContext> {
   const phone = extractCounterpartyPhone(call)
   if (!phone) return { familyId: null, contactId: null, triageRequired: false }
 
-  // Match by E.164. CLAUDE.md §10.
-  const contacts = await db.contact.findMany({
-    where: { phoneE164: phone, deletedAt: null },
-    select: {
-      id: true,
-      familyMembers: { select: { familyId: true } },
-      billingForFamily: { select: { id: true } },
+  // Match by E.164, creating a Contact when the number is unknown so the call
+  // is logged against a real record (CLAUDE.md §10). Shared lines return
+  // triageRequired and are never auto-merged (§41.1). The caller's name + email
+  // (when Aircall has them) are saved to the contact. Idempotent across the
+  // several call.* events for one call: the first creates, the rest match.
+  const name = extractCounterpartyName(call)
+  const result = await resolveOrCreateContactForCall(
+    db,
+    {
+      phoneE164: phone,
+      firstName: name?.firstName ?? null,
+      lastName: name?.lastName ?? null,
+      email: extractCounterpartyEmail(call),
     },
-  })
-
-  if (contacts.length === 0) {
-    return { familyId: null, contactId: null, triageRequired: false }
+    { referralSource: 'Aircall', actorId: null, requestId: eventId },
+  )
+  return {
+    familyId: result.familyId,
+    contactId: result.contactId,
+    triageRequired: result.triageRequired,
   }
+}
 
-  // Resolve a single Family if all matched Contacts share it; otherwise the
-  // call attaches to the first Family and an agent triages the Contact link.
-  const familyIds = new Set<string>()
-  for (const c of contacts) {
-    for (const m of c.familyMembers) familyIds.add(m.familyId)
-    for (const f of c.billingForFamily) familyIds.add(f.id)
+/** Caller name from the Aircall-attached contact, when present. */
+function extractCounterpartyName(
+  call: AircallCallResource,
+): { firstName: string | null; lastName: string | null } | null {
+  const c = call.contact
+  if (!c) return null
+  const first = c.first_name?.trim()
+  const last = c.last_name?.trim()
+  if (first || last) {
+    return { firstName: first || null, lastName: last || null }
   }
-
-  if (contacts.length === 1) {
-    const only = contacts[0]
-    if (!only) return { familyId: null, contactId: null, triageRequired: false }
-    const familyId = familyIds.size === 1 ? [...familyIds][0] ?? null : null
-    return {
-      familyId,
-      contactId: only.id,
-      triageRequired: false,
-    }
+  const full = c.full_name?.trim()
+  if (full) {
+    const split = splitDisplayName(full)
+    return { firstName: split.firstName || null, lastName: split.lastName }
   }
+  return null
+}
 
-  // Multiple Contacts share the number. Attach to a Family if they all share
-  // one, and force triage. CLAUDE.md §10.
-  const familyId = familyIds.size === 1 ? [...familyIds][0] ?? null : null
-  return { familyId, contactId: null, triageRequired: true }
+function extractCounterpartyEmail(call: AircallCallResource): string | null {
+  const email = call.contact?.emails?.find((e) => e.value)?.value
+  return email?.trim() || null
 }
 
 function extractCounterpartyPhone(call: AircallCallResource): string | null {

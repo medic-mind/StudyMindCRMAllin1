@@ -24,6 +24,10 @@ export interface AircallCallResource {
   raw_digits: string
   number?: { id: number; digits: string; name: string }
   contact?: {
+    first_name?: string | null
+    last_name?: string | null
+    /** Aircall sometimes only gives a single combined display name. */
+    full_name?: string | null
     phone_numbers?: { value: string }[]
     emails?: { value: string }[]
   } | null

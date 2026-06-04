@@ -283,6 +283,37 @@ export async function processLead(
     const wantCard = plan.createCard && destination !== null
 
     await db.$transaction(async (tx) => {
+      // Fill in details the existing contact is missing (e.g. a contact
+      // auto-created from an Aircall/Google Voice call has a phone but no name
+      // or email yet). Only blanks are filled — we never overwrite a value the
+      // contact already has (CLAUDE.md §3 no silent mutation).
+      const existingContact = await tx.contact.findUnique({
+        where: { id: contactId },
+        select: { firstName: true, lastName: true, email: true, phoneE164: true },
+      })
+      if (existingContact) {
+        const patch: Prisma.ContactUpdateInput = {}
+        if (!existingContact.firstName && normalised.firstName)
+          patch.firstName = clamp(normalised.firstName, 120)
+        if (!existingContact.lastName && normalised.lastName)
+          patch.lastName = clamp(normalised.lastName, 120)
+        if (!existingContact.email && normalised.email) patch.email = normalised.email
+        if (!existingContact.phoneE164 && normalised.phoneE164)
+          patch.phoneE164 = normalised.phoneE164
+        if (Object.keys(patch).length > 0) {
+          patch.updatedById = ACTOR_ID
+          await tx.contact.update({ where: { id: contactId }, data: patch })
+          await writeAuditLogEntry(tx, {
+            actorId: ACTOR_ID,
+            requestId: lead.id,
+            action: 'contact.updated',
+            target: { type: 'Contact', id: contactId },
+            before: existingContact,
+            after: { ...patch, viaLead: lead.id },
+          })
+        }
+      }
+
       await tx.interaction.create({
         data: {
           id: createId(),
