@@ -7,8 +7,10 @@ import { notFound, redirect } from 'next/navigation'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { getCurrentUser } from '@/lib/auth/server'
+import { parseCardFace } from '@/lib/board/card-face'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { BoardCardFaceAdmin } from './BoardCardFaceAdmin'
 import { BoardQuickActionsAdmin } from './BoardQuickActionsAdmin'
 import { BoardSettings } from './BoardSettings'
 
@@ -79,6 +81,10 @@ export default async function BoardSettingsPage({ params }: PageProps) {
             }}
             stages={stages}
             labels={labels}
+          />
+          <BoardCardFaceAdmin
+            boardId={boardId}
+            initialFields={parseCardFace(board.cardFields)}
           />
           <BoardQuickActionsAdmin boardId={boardId} allStages={allStages} />
         </div>

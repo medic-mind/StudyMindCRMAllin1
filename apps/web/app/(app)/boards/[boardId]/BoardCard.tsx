@@ -11,6 +11,7 @@
 
 import { useState, type CSSProperties, type HTMLAttributes, type Ref } from 'react'
 
+import { cardFaceHas, type CardFaceKey } from '@/lib/board/card-face'
 import { Badge } from '@/components/ui/badge'
 import { PhoneIcon } from '@/components/ui/icon'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
@@ -90,6 +91,9 @@ interface Props {
   stages: ReadonlyArray<StageOption>
   crossBoardStages?: ReadonlyArray<CrossBoardGroup>
   quickActions: ReadonlyArray<QuickAction>
+  /** Operator-configured card face (which preview fields show). undefined/null
+   * means show all. */
+  cardFields?: CardFaceKey[] | null
   canWrite: boolean
   canComment: boolean
   canDeleteCard: boolean
@@ -111,6 +115,7 @@ export function BoardCard({
   stages,
   crossBoardStages = [],
   quickActions,
+  cardFields,
   canWrite,
   canComment,
   canDeleteCard,
@@ -145,18 +150,23 @@ export function BoardCard({
           <div className="min-w-0 truncate text-[13px] font-semibold text-neutral-900 group-hover:text-primary-700">
             {card.contactName}
           </div>
-          {card.priority != null && PRIORITY_CHIP_TONE[card.priority] && (
-            <span
-              className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${PRIORITY_CHIP_TONE[card.priority]}`}
-              title={`Priority P${card.priority}`}
-            >
-              P{card.priority}
-            </span>
-          )}
+          {cardFaceHas(cardFields, 'priority') &&
+            card.priority != null &&
+            PRIORITY_CHIP_TONE[card.priority] && (
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold leading-none ${PRIORITY_CHIP_TONE[card.priority]}`}
+                title={`Priority P${card.priority}`}
+              >
+                P{card.priority}
+              </span>
+            )}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {card.subject ? <Badge tone="info">{card.subject.name}</Badge> : null}
-          {card.labels.map((l) => (
+          {cardFaceHas(cardFields, 'subject') && card.subject ? (
+            <Badge tone="info">{card.subject.name}</Badge>
+          ) : null}
+          {cardFaceHas(cardFields, 'labels') &&
+            card.labels.map((l) => (
             <span
               key={l.id}
               className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
@@ -170,7 +180,7 @@ export function BoardCard({
             without opening the card. `pointer-events-auto` re-enables clicks
             inside the otherwise click-through card body; the links
             stopPropagation so they don't also open the modal. */}
-        {(card.contactEmail || card.contactPhone) && (
+        {cardFaceHas(cardFields, 'contact') && (card.contactEmail || card.contactPhone) && (
           <div className="pointer-events-auto mt-2 flex flex-col gap-1 text-xs text-neutral-600">
             {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
             {card.contactEmail && <EmailLink email={card.contactEmail} />}
@@ -178,7 +188,7 @@ export function BoardCard({
         )}
         {/* Note preview — first 2 lines of the card description so the
             agent gets context at a glance. */}
-        {card.description && card.description.trim().length > 0 && (
+        {cardFaceHas(cardFields, 'description') && card.description && card.description.trim().length > 0 && (
           <p className="mt-2 line-clamp-2 text-xs leading-snug text-neutral-600">
             {card.description.trim()}
           </p>
@@ -186,7 +196,7 @@ export function BoardCard({
         {/* Scheduled call is the headline metadata on these boards — give it
             its own row at a readable size (was lost in the meta strip
             previously). Past times go red; future times stay primary. */}
-        {card.scheduledCallAt ? (
+        {cardFaceHas(cardFields, 'scheduledCall') && card.scheduledCallAt ? (
           <div className="mt-2">
             <span
               className={
@@ -209,7 +219,7 @@ export function BoardCard({
         {/* Tertiary meta — assignee + due + last activity. Small, even
             spacing, no emoji so the row is uniform. */}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-neutral-500">
-          {card.assigneeId && (
+          {cardFaceHas(cardFields, 'assignee') && card.assigneeId && (
             <span
               className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary-100 text-[9px] font-semibold text-primary-800"
               title={card.assigneeName ?? card.assigneeEmail ?? 'Assigned'}
@@ -217,7 +227,7 @@ export function BoardCard({
               {initialsOf(card.assigneeName, card.assigneeEmail)}
             </span>
           )}
-          {card.dueAt && (
+          {cardFaceHas(cardFields, 'dueDate') && card.dueAt && (
             <span
               className={
                 new Date(card.dueAt).getTime() < now.getTime()
@@ -245,7 +255,7 @@ export function BoardCard({
               )}
             </span>
           )}
-          {card.lastActivityAt ? (
+          {cardFaceHas(cardFields, 'lastActivity') && card.lastActivityAt ? (
             <span className="font-mono tabular-nums">
               {formatRelativeTime(new Date(card.lastActivityAt), now)}
             </span>

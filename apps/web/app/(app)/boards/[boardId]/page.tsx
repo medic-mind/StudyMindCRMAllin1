@@ -10,6 +10,7 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { SettingsIcon } from '@/components/ui/icon'
 import { getCurrentUser } from '@/lib/auth/server'
+import { parseCardFace } from '@/lib/board/card-face'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { AddCardButton } from './AddCardButton'
@@ -158,6 +159,7 @@ export default async function BoardPage({ params }: PageProps) {
             crossBoardStages={otherBoardStages}
             quickActions={quickActions}
             labels={labels}
+            cardFields={parseCardFace(board.cardFields)}
             canWrite={canWrite}
             canComment={canComment}
             canDeleteCard={canDeleteCard}

@@ -13,6 +13,7 @@
 // is satisfied.
 
 import { createId } from '@paralleldrive/cuid2'
+import { Prisma } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -213,6 +214,7 @@ const boardSelect = {
   isDefault: true,
   tickActionStageId: true,
   xActionStageId: true,
+  cardFields: true,
 } as const
 
 const boardStagesRouter = router({
@@ -571,6 +573,33 @@ const boardRouter = router({
       } catch (err) {
         mapBusinessError(err)
       }
+    }),
+
+  // Configurable "card face" — which preview fields show on every card on this
+  // board. Manager+ (same tier as board management). Empty array is stored as
+  // null ("show all"). CLAUDE.md §6.4.
+  setCardFields: auditedProcedure
+    .input(z.object({ boardId: z.string(), fields: z.array(z.string()).max(20) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertBoardManage(user.role)
+      const board = await ctx.db.board.findFirst({
+        where: { id: input.boardId, archivedAt: null },
+        select: { id: true, cardFields: true },
+      })
+      if (!board) throw new TRPCError({ code: 'NOT_FOUND', message: 'Board not found' })
+      const value = input.fields.length > 0 ? input.fields : null
+      await ctx.db.board.update({
+        where: { id: input.boardId },
+        data: { cardFields: value ?? Prisma.DbNull },
+      })
+      await ctx.audit({
+        action: 'board.updated',
+        target: { type: 'Board', id: input.boardId },
+        before: { cardFields: board.cardFields },
+        after: { cardFields: value },
+      })
+      return { ok: true }
     }),
 
   stages: boardStagesRouter,

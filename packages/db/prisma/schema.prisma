@@ -874,6 +874,13 @@ model Board {
   /// rows.
   tickActionStageId String?
   xActionStageId    String?
+  /// Operator-configurable "card face": which preview fields show on every
+  /// card on this board (phone/email, subject, labels, note, scheduled call,
+  /// priority, assignee, due date, last activity). JSON array of field keys
+  /// (see apps/web/lib/board/card-face.ts). NULL = show all (back-compat);
+  /// managers tune it from /boards/[id]/settings so they never need a code
+  /// change to declutter a board.
+  cardFields        Json?
   archivedAt        DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt

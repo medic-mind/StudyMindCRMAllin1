@@ -28,6 +28,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+import type { CardFaceKey } from '@/lib/board/card-face'
 import { trpc } from '@/lib/trpc/client'
 
 import { BoardColumn } from './BoardColumn'
@@ -88,6 +89,7 @@ interface Props {
   crossBoardStages?: ReadonlyArray<CrossBoardGroup>
   quickActions: ReadonlyArray<QuickAction>
   labels: ReadonlyArray<LabelChip>
+  cardFields?: CardFaceKey[] | null
   canWrite: boolean
   canComment: boolean
   canDeleteCard: boolean
@@ -112,6 +114,7 @@ export function BoardDnd({
   crossBoardStages = [],
   quickActions,
   labels,
+  cardFields,
   canWrite,
   canComment,
   canDeleteCard,
@@ -277,6 +280,7 @@ export function BoardDnd({
               crossBoardStages={crossBoardStages}
               quickActions={quickActions}
               labels={labels}
+              cardFields={cardFields}
               canWrite={canWrite}
               canComment={canComment}
               canDeleteCard={canDeleteCard}

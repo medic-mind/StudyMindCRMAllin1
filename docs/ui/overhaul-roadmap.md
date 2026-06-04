@@ -79,14 +79,16 @@ Guiding principles (the "think like a manager who won't recode later" rule):
 - **Next:** a "Current status" summary band; migrate the card detail modal onto
   `<SlideOver>`.
 
-### Increment 4 — Boards / pipeline
-- Card modal → standardise on the `<Modal>`/`<SlideOver>` primitive; group the
-  call-summary + quick-action + move controls into a single clear rail.
-- **Configurable card face** — let managers choose which preview fields show on
-  a card (phone, email, subject, labels, scheduled call, last activity) per
-  board, persisted on the board (no recode).
-- Column WIP limits + per-column colour already exist; expose them in board
-  settings consistently.
+### Increment 4 — Boards / pipeline — *in progress*
+- **Shipped: configurable card face.** Managers pick which preview fields show
+  on every card on a board (phone/email, subject, labels, note, scheduled call,
+  priority, assignee, due date, last activity) from `/boards/[id]/settings` →
+  *Card layout*. Stored on `Board.cardFields` (JSON; NULL = show all, so existing
+  boards are unchanged); `card.setCardFields` is Manager+ and audited. Field
+  registry + helpers in `apps/web/lib/board/card-face.ts`; the board page parses
+  it and threads it to every card. No code change to declutter a board.
+- **Next:** card modal → standardise on `<Modal>`/`<SlideOver>`; group the
+  call-summary + quick-action + move controls into one rail.
 
 ### Increment 5 — Inbox / Comms Centre
 - Reply composer → quick-reply picker + in-house compose parity; guarded send.

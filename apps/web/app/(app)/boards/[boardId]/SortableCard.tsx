@@ -10,6 +10,8 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
+import type { CardFaceKey } from '@/lib/board/card-face'
+
 import { BoardCard } from './BoardCard'
 
 interface StageOption {
@@ -59,6 +61,7 @@ interface Props {
   stages: ReadonlyArray<StageOption>
   crossBoardStages?: ReadonlyArray<CrossBoardGroup>
   quickActions: ReadonlyArray<QuickAction>
+  cardFields?: CardFaceKey[] | null
   canWrite: boolean
   canComment: boolean
   canDeleteCard: boolean

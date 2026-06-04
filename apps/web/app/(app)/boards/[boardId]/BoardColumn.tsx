@@ -7,6 +7,7 @@
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 
+import type { CardFaceKey } from '@/lib/board/card-face'
 import { Badge } from '@/components/ui/badge'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
@@ -67,6 +68,7 @@ interface Props {
   crossBoardStages?: ReadonlyArray<CrossBoardGroup>
   quickActions: ReadonlyArray<QuickAction>
   labels: ReadonlyArray<LabelOption>
+  cardFields?: CardFaceKey[] | null
   canWrite: boolean
   canComment: boolean
   canDeleteCard: boolean
@@ -86,6 +88,7 @@ export function BoardColumn({
   crossBoardStages = [],
   quickActions,
   labels,
+  cardFields,
   canWrite,
   canComment,
   canDeleteCard,
@@ -138,6 +141,7 @@ export function BoardColumn({
                 stages={stages}
                 crossBoardStages={crossBoardStages}
                 quickActions={quickActions}
+                cardFields={cardFields}
                 canWrite={canWrite}
                 canComment={canComment}
                 canDeleteCard={canDeleteCard}
