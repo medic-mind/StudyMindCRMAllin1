@@ -557,6 +557,10 @@ model Contact {
   /// contact; null when never reviewed.
   riskReview ContactRiskReview?
 
+  /// Weekly-webinar enrolments (the auto-enrollment system). A contact created
+  /// from a Stripe subscription is matched to a WebinarClass and surfaced here.
+  webinarEnrollments WebinarEnrollment[]
+
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
@@ -3375,4 +3379,260 @@ model ChatReaction {
 
   @@unique([messageId, userId, emoji])
   @@index([messageId])
+}
+
+// -----------------------------------------------------------------------------
+// Weekly webinars / live classes (auto-enrollment system).
+//
+// Parents pay weekly for live subject classes (Biology / Chemistry / Physics /
+// Maths at GCSE and A-Level) via Stripe subscriptions. The CRM detects those
+// payers, organises them into the right class (deterministic matcher first,
+// AI advisory only when the rules are unsure — CLAUDE.md §3, §18), then sends a
+// weekly email carrying the Zoom link and a PDF schedule. When a subscription
+// lapses the enrolment expires and the emails stop. All times are stored UTC;
+// the wall-clock slot is held as a local weekday + minute + IANA timezone.
+// -----------------------------------------------------------------------------
+
+enum WebinarLevel {
+  gcse
+  a_level
+}
+
+enum WebinarCohortStatus {
+  planning
+  active
+  archived
+}
+
+/// Enrolment lifecycle. `pending_review` = the matcher found a candidate but a
+/// human has not confirmed it (low confidence, or policy requires review).
+/// `active` = receiving weekly emails. `paused` = temporarily muted by staff.
+/// `expired` = the backing Stripe subscription lapsed. `cancelled` = removed by
+/// staff. Only `active` enrolments are emailed.
+enum WebinarEnrollmentStatus {
+  pending_review
+  active
+  paused
+  expired
+  cancelled
+}
+
+/// How the enrolment came to be. `auto_rule` = deterministic keyword matcher.
+/// `ai_advisory` = the AI organiser suggested it (always lands as
+/// `pending_review`). `manual` = a staff member added it by hand.
+enum WebinarEnrollmentSource {
+  auto_rule
+  ai_advisory
+  manual
+}
+
+/// Per-session, per-enrolment email log. Doubles as the idempotency guard so a
+/// retried job never double-sends a week's email.
+enum WebinarDispatchStatus {
+  scheduled
+  sent
+  skipped_holiday
+  skipped_inactive
+  failed
+}
+
+/// An academic year of classes, e.g. "2026/2027". Holidays and classes hang off
+/// it. Future cohorts are created ahead of time and flipped to `active` when the
+/// year starts.
+model WebinarCohort {
+  id       String              @id
+  /// Display name, unique. "2026/2027".
+  name     String              @unique
+  startsOn DateTime            @db.Date
+  endsOn   DateTime            @db.Date
+  status   WebinarCohortStatus @default(planning)
+  /// IANA timezone the cohort's wall-clock slots are expressed in.
+  timezone String              @default("Europe/London")
+  notes    String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  holidays WebinarHoliday[]
+  classes  WebinarClass[]
+
+  @@index([status])
+}
+
+/// A break in a cohort during which no class emails are sent. Fully
+/// customisable; the seed pre-fills the usual UK term breaks.
+model WebinarHoliday {
+  id       String   @id
+  cohortId String
+  name     String
+  startsOn DateTime @db.Date
+  endsOn   DateTime @db.Date
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  cohort WebinarCohort @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+
+  @@index([cohortId])
+}
+
+/// One weekly class within a cohort (a subject at a level). Holds the
+/// customisable Zoom link + rotation tracking, the weekly slot, the email
+/// send-offset and template overrides, and either a generated syllabus
+/// (WebinarSyllabusWeek rows) or an uploaded PDF.
+model WebinarClass {
+  id           String       @id
+  cohortId     String
+  /// Lower-case subject handle: biology | chemistry | physics | maths (and any
+  /// future ones the matcher learns). String, not an enum, so admins can add a
+  /// subject without a migration.
+  subject      String
+  level        WebinarLevel
+  title        String
+  /// 0 = Monday … 6 = Sunday (matches CallPeakWindow's convention).
+  dayOfWeek    Int
+  /// Minutes from local midnight, e.g. 1080 = 18:00.
+  startMinute  Int
+  durationMins Int          @default(60)
+  timezone     String       @default("Europe/London")
+
+  /// Customisable join link. Rotated periodically; staff are reminded.
+  zoomLink             String?
+  zoomLinkUpdatedAt    DateTime?
+  zoomRotateEveryWeeks Int       @default(4)
+
+  /// Send the weekly email this many hours before the session starts.
+  sendOffsetHours      Int     @default(24)
+  /// Per-class overrides; fall back to WebinarSettings when null.
+  emailSubjectTemplate String?
+  emailBodyTemplate    String?
+
+  active Boolean @default(true)
+
+  /// Optional uploaded syllabus PDF (admin-supplied). When present it is
+  /// attached verbatim instead of the generated schedule. Stored in Postgres
+  /// like CallSummaryTemplate so a self-hosted install needs no S3.
+  syllabusPdfData        Bytes?
+  syllabusPdfFileName    String?
+  syllabusPdfContentType String?
+  syllabusPdfByteSize    Int?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  cohort        WebinarCohort         @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  syllabusWeeks WebinarSyllabusWeek[]
+  enrollments   WebinarEnrollment[]
+  dispatches    WebinarEmailDispatch[]
+
+  @@unique([cohortId, subject, level])
+  @@index([cohortId])
+  @@index([active])
+}
+
+/// A single week of an app-generated syllabus. Drives the PDF schedule when no
+/// uploaded PDF is attached.
+model WebinarSyllabusWeek {
+  id         String  @id
+  classId    String
+  weekNumber Int
+  topic      String
+  notes      String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  webinarClass WebinarClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, weekNumber])
+  @@index([classId])
+}
+
+/// A contact's enrolment in a class. `stripeSubscriptionId`/`stripeCustomerId`
+/// are the EXTERNAL Stripe ids (not our mirror row ids) so the expiry walker
+/// can resolve the live subscription without a hard FK into the finance mirror.
+model WebinarEnrollment {
+  id                   String                  @id
+  classId              String
+  contactId            String
+  stripeSubscriptionId String?
+  stripeCustomerId     String?
+  status               WebinarEnrollmentStatus @default(pending_review)
+  source               WebinarEnrollmentSource @default(manual)
+  /// 0..1 matcher confidence; null for manual adds.
+  matchConfidence      Float?
+  matchReason          String?
+  /// Mirrors the subscription's current_period_end. Null = no known expiry.
+  expiresAt            DateTime?
+  /// When the enrolment first became `active`.
+  enrolledAt           DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  webinarClass WebinarClass           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  contact      Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dispatches   WebinarEmailDispatch[]
+
+  @@unique([classId, contactId])
+  @@index([contactId])
+  @@index([status])
+  @@index([stripeSubscriptionId])
+}
+
+/// Per-session, per-enrolment email record. The unique (enrollmentId,
+/// weekNumber) is the idempotency key — a retried dispatch job upserts and
+/// never double-sends.
+model WebinarEmailDispatch {
+  id           String                @id
+  classId      String
+  enrollmentId String
+  weekNumber   Int
+  sessionAt    DateTime
+  status       WebinarDispatchStatus @default(scheduled)
+  gmailMessageId String?
+  error          String?
+  sentAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  webinarClass WebinarClass      @relation(fields: [classId], references: [id], onDelete: Cascade)
+  enrollment   WebinarEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, weekNumber])
+  @@index([classId, weekNumber])
+  @@index([status])
+}
+
+/// Singleton (id = "webinar") holding the system-wide email defaults and the
+/// sending mailbox. Per-class fields override these.
+model WebinarSettings {
+  id                          String  @id
+  /// User.id whose connected Gmail sends the weekly emails. Null = resolve the
+  /// system mailbox (SYSTEM_GMAIL_EMAIL) at send time.
+  senderMailboxUserId         String?
+  defaultSendOffsetHours      Int     @default(24)
+  defaultZoomRotateEveryWeeks Int     @default(4)
+  emailSubjectTemplate        String
+  emailBodyTemplate           String
+  fromName                    String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
 }

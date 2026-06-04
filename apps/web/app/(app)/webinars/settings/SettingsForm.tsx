@@ -1,0 +1,154 @@
+'use client'
+
+import { useState } from 'react'
+import { toast } from 'sonner'
+
+import { Button } from '@/components/ui/button'
+import { Card, CardBody } from '@/components/ui/card'
+import { Field } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { trpc } from '@/lib/trpc/client'
+
+interface Settings {
+  senderMailboxUserId: string | null
+  defaultSendOffsetHours: number
+  defaultZoomRotateEveryWeeks: number
+  emailSubjectTemplate: string
+  emailBodyTemplate: string
+  fromName: string
+}
+
+const PLACEHOLDERS = [
+  'studentName',
+  'className',
+  'subject',
+  'level',
+  'dateLabel',
+  'timeLabel',
+  'zoomLink',
+  'weekNumber',
+  'weekTopic',
+  'fromName',
+]
+
+const DEFAULT_SUBJECT = "{{className}} — this week's class ({{dateLabel}})"
+const DEFAULT_BODY = `Hi {{studentName}},
+
+Here are the details for this week's {{className}} session:
+
+  • When: {{dateLabel}} at {{timeLabel}}
+  • Week {{weekNumber}}: {{weekTopic}}
+  • Join here: {{zoomLink}}
+
+The full term schedule is attached as a PDF. Save the join link — it is the
+same each week unless we tell you otherwise.
+
+See you there,
+{{fromName}}`
+
+export function SettingsForm({ initial, canManage }: { initial: Settings; canManage: boolean }) {
+  const [fromName, setFromName] = useState(initial.fromName)
+  const [subjectTpl, setSubjectTpl] = useState(initial.emailSubjectTemplate || DEFAULT_SUBJECT)
+  const [bodyTpl, setBodyTpl] = useState(initial.emailBodyTemplate || DEFAULT_BODY)
+  const [offset, setOffset] = useState(initial.defaultSendOffsetHours)
+  const [rotate, setRotate] = useState(initial.defaultZoomRotateEveryWeeks)
+
+  const save = trpc.webinar.settings.update.useMutation({
+    onSuccess: () => toast.success('Settings saved'),
+    onError: (e) => toast.error(e.message),
+  })
+
+  return (
+    <form
+      className="max-w-3xl space-y-5"
+      onSubmit={(e) => {
+        e.preventDefault()
+        save.mutate({
+          fromName,
+          emailSubjectTemplate: subjectTpl,
+          emailBodyTemplate: bodyTpl,
+          defaultSendOffsetHours: offset,
+          defaultZoomRotateEveryWeeks: rotate,
+        })
+      }}
+    >
+      <Card>
+        <CardBody className="space-y-3">
+          <h2 className="text-sm font-semibold text-neutral-900">Email template</h2>
+          <p className="text-xs text-neutral-500">
+            Use placeholders:{' '}
+            {PLACEHOLDERS.map((p) => (
+              <code key={p} className="mr-1 rounded bg-neutral-100 px-1 py-0.5 text-[11px]">
+                {'{{' + p + '}}'}
+              </code>
+            ))}
+          </p>
+          <Field label="From name" htmlFor="fromName">
+            <Input
+              id="fromName"
+              value={fromName}
+              placeholder="The StudyMind team"
+              onChange={(e) => setFromName(e.target.value)}
+              disabled={!canManage}
+            />
+          </Field>
+          <Field label="Subject line" htmlFor="subjectTpl">
+            <Input
+              id="subjectTpl"
+              value={subjectTpl}
+              onChange={(e) => setSubjectTpl(e.target.value)}
+              disabled={!canManage}
+            />
+          </Field>
+          <Field label="Body" htmlFor="bodyTpl">
+            <Textarea
+              id="bodyTpl"
+              rows={14}
+              value={bodyTpl}
+              onChange={(e) => setBodyTpl(e.target.value)}
+              disabled={!canManage}
+            />
+          </Field>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardBody className="grid gap-3 md:grid-cols-2">
+          <Field
+            label="Default send offset (hours before class)"
+            htmlFor="offset"
+            hint="When a class doesn't override it."
+          >
+            <Input
+              id="offset"
+              type="number"
+              min={0}
+              max={168}
+              value={offset}
+              onChange={(e) => setOffset(Number(e.target.value))}
+              disabled={!canManage}
+            />
+          </Field>
+          <Field label="Default Zoom rotation (weeks)" htmlFor="rotate">
+            <Input
+              id="rotate"
+              type="number"
+              min={0}
+              max={52}
+              value={rotate}
+              onChange={(e) => setRotate(Number(e.target.value))}
+              disabled={!canManage}
+            />
+          </Field>
+        </CardBody>
+      </Card>
+
+      {canManage ? (
+        <Button type="submit" disabled={save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save settings'}
+        </Button>
+      ) : null}
+    </form>
+  )
+}

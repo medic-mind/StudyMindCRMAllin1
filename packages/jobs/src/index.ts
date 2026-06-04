@@ -111,5 +111,27 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     cron: '*/15 * * * *',
     description: 'Detect missed recurring jobs via CronRun heartbeat and page on-call',
   },
+  // Weekly-webinar auto-enrollment system (boundary functions registered in
+  // apps/web/app/api/inngest/_boundary/webinar.ts).
+  {
+    id: 'webinar/dispatch-weekly-emails',
+    cron: '0 * * * *',
+    description: 'Send the weekly class email (Zoom link + PDF schedule) for any session now due',
+  },
+  {
+    id: 'webinar/expire-enrollments',
+    cron: '15 * * * *',
+    description: 'Expire webinar enrolments whose Stripe subscription has lapsed so emails stop',
+  },
+  {
+    id: 'webinar/zoom-rotation-reminder',
+    cron: '0 8 * * 1',
+    description: 'Open a Task to rotate each class Zoom link older than its rotation interval',
+  },
+  {
+    id: 'webinar/detect-enrollments',
+    cron: '30 6 * * *',
+    description: 'Scan active Stripe subscriptions and organise weekly-class payers into classes',
+  },
 ]
 

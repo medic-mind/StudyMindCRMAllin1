@@ -22,6 +22,7 @@ export type AiTaskCategory =
   | 'transcription'
   | 'lead_classification'
   | 'product_classification'
+  | 'webinar_class_match'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -47,6 +48,9 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   // Advisory pass over a payment description when rules find no catalogue
   // match. Low volume, mini-tier (ADR 0030).
   product_classification: { daily: 3, monthly: 60 },
+  // Advisory subject/level match for a weekly-webinar payer when the
+  // deterministic matcher is unsure. Low volume, mini-tier.
+  webinar_class_match: { daily: 2, monthly: 40 },
 }
 
 interface UsageBucket {

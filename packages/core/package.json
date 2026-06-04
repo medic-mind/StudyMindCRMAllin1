@@ -51,7 +51,8 @@
     "./provider-events": "./src/provider-events/index.ts",
     "./realtime": "./src/realtime/index.ts",
     "./reports": "./src/reports/index.ts",
-    "./retention/policies": "./src/retention/policies.ts"
+    "./retention/policies": "./src/retention/policies.ts",
+    "./webinar": "./src/webinar/index.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --emitDeclarationOnly false --noEmit",

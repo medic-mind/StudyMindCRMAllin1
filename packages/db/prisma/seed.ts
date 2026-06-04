@@ -3,6 +3,7 @@
 
 import { db } from '../src/index'
 import { seedInitialSuperAdmin } from './seed-super-admin'
+import { seedWebinar } from './seed-webinar'
 
 async function main(): Promise<void> {
   const result = await seedInitialSuperAdmin()
@@ -11,6 +12,9 @@ async function main(): Promise<void> {
     `seed: ceo ${result.email} ` +
       (result.alreadyExisted ? '(password overwritten)' : '(created)'),
   )
+  const webinar = await seedWebinar()
+  /* eslint-disable-next-line no-console */
+  console.log(`seed: webinar cohorts + ${webinar.classes} classes ready`)
 }
 
 main()

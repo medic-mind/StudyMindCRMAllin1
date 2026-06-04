@@ -61,6 +61,7 @@ import { searchRouter } from './routers/search'
 import { taskRouter } from './routers/task'
 import { teamRouter } from './routers/team'
 import { uploadedInvoiceRouter } from './routers/uploadedInvoice'
+import { webinarRouter } from './routers/webinar'
 
 export const appRouter = router({
   account: accountRouter,
@@ -99,6 +100,7 @@ export const appRouter = router({
   task: taskRouter,
   team: teamRouter,
   uploadedInvoice: uploadedInvoiceRouter,
+  webinar: webinarRouter,
 })
 
 export type AppRouter = typeof appRouter

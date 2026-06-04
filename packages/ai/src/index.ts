@@ -127,3 +127,10 @@ export {
   type ProductClassificationPromptInput,
   type ProductCatalogueOption,
 } from './prompts/product-classification'
+export {
+  buildWebinarClassMatchPrompt,
+  webinarClassMatchSchema,
+  VERSION as WEBINAR_CLASS_MATCH_PROMPT_VERSION,
+  type WebinarClassMatchAi,
+  type WebinarClassMatchPromptInput,
+} from './prompts/webinar-class-match'

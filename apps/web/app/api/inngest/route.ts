@@ -28,6 +28,7 @@ import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
 import { flagDdDefaultersNightly } from './_boundary/flag-dd-defaulters'
 import { leadClassifyRequested } from './_boundary/process-lead'
 import { uebaWeekly } from './_boundary/ueba'
+import { WEBINAR_BOUNDARY_FUNCTIONS } from './_boundary/webinar'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,6 +42,7 @@ const BOUNDARY_FUNCTIONS = [
   flagDdDefaultersNightly,
   leadClassifyRequested,
   uebaWeekly,
+  ...WEBINAR_BOUNDARY_FUNCTIONS,
 ]
 
 const handlers = serve({

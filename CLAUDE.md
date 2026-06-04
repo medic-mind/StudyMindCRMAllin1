@@ -502,6 +502,10 @@ Every async unit of work is an Inngest function. Conventions:
 | `ai/regenerate-status-summaries` | every 30 min for changed contacts | Refresh the 2 sentence "Current Status" header |
 | `aircall/recover-disabled-webhook` | hourly | Re-enable Aircall webhook if it was disabled by failures |
 | `gocardless/reconcile-late-failures` | every 4 hours | Walk recent confirmations and surface any new late failures |
+| `webinar/dispatch-weekly-emails` | hourly | Send the weekly class email (Zoom link + PDF schedule) for any session whose send window has opened (ADR 0031) |
+| `webinar/expire-enrollments` | hourly | Expire webinar enrolments whose Stripe subscription has lapsed so the links stop |
+| `webinar/detect-enrollments` | daily 06:30 UTC | Scan active Stripe subscriptions and organise weekly-class payers into classes |
+| `webinar/zoom-rotation-reminder` | weekly Mon 08:00 | Open a Task to rotate each class Zoom link older than its rotation interval |
 | `trengo/retry-pending-send` | every 5 min | Re-send outbound Trengo Interactions stuck in `pending_send` (ADR 0020 Phase 7a). Bounded at 5 attempts per row; skips TOKEN_EXPIRED (the agent must reconnect). |
 | `trengo/unsnooze-due` | every 5 min | Resurface snoozed conversations whose `snoozedUntil` has passed (ADR 0020 Phase 6g). Flips `Conversation.status` snoozed→open + SSE-nudges open inboxes. A new inbound also resurfaces immediately (webhook job). |
 
@@ -1118,6 +1122,7 @@ When asked something that touches money, safeguarding, or external mutation:
 | Add a webhook event handler | `packages/integrations/<svc>/events/<event-name>.ts` plus a fixture |
 | Register a new event name | `packages/core/events/registry.ts` (Section 45) |
 | Add a domain invariant | `packages/core/<domain>/invariants.ts` with a property-based test |
+| Change webinar matching / scheduling | `packages/core/src/webinar/` (matching.ts, schedule.ts); jobs in `apps/web/app/api/inngest/_boundary/webinar.ts` (Section 47) |
 | Manage pipeline stages | `apps/web/app/(app)/pipeline/manage/page.tsx` + `ManageStagesTable.tsx` |
 | Add a pipeline stage helper | `packages/core/src/pipeline/stages.ts` |
 | Change how Family.stageId is written | `packages/core/src/family/pipeline.ts` (`moveFamily`) |
@@ -1372,6 +1377,31 @@ Backups exist; what matters is that we have rehearsed the restore. This section 
 ### 46.4 Rehearsal
 
 Quarterly DR rehearsal restores production into a sandbox account and runs a smoke suite. The exercise is graded against RPO and RTO; misses become ADR follow-ups. The most recent rehearsal date and result live at the top of the DR runbook.
+
+---
+
+## 47. Weekly webinars (live classes) — auto-enrollment system
+
+Families pay weekly via Stripe for live online classes — **Biology, Chemistry, Physics, Maths** at **GCSE** and **A-Level**. The CRM detects those payers, organises them into the right class, emails the Zoom link + a PDF schedule each week, and stops when a subscription lapses. UI lives under `/webinars` (Operations). ADR 0031 records the design.
+
+### 47.1 Domain model
+
+New tables (forward-only migration `…_add_webinar_system`):
+
+- **WebinarCohort** — an academic year ("2026/2027"), `startsOn`/`endsOn`, `status` (`planning | active | archived`), timezone. Future cohorts are created ahead and flipped to `active`.
+- **WebinarHoliday** — fully-customisable break inside a cohort; no emails are sent on those dates.
+- **WebinarClass** — one row per subject+level in a cohort (`@@unique([cohortId, subject, level])`). Holds the weekly slot (`dayOfWeek` 0=Mon, `startMinute`, `timezone`), the customisable `zoomLink` + rotation tracking (`zoomLinkUpdatedAt`, `zoomRotateEveryWeeks`, default 4), the email `sendOffsetHours` (default 24), optional per-class template overrides, and either generated `WebinarSyllabusWeek` rows or an uploaded syllabus PDF (stored in Postgres like CallSummaryTemplate).
+- **WebinarEnrollment** — a contact in a class. `@@unique([classId, contactId])`. `status` (`pending_review | active | paused | expired | cancelled`), `source` (`auto_rule | ai_advisory | manual`), `matchConfidence`/`matchReason`, `expiresAt` (mirrors the subscription's `current_period_end`), and the external `stripeSubscriptionId`/`stripeCustomerId`.
+- **WebinarEmailDispatch** — per-session, per-enrolment log; `@@unique([enrollmentId, weekNumber])` is the idempotency guard against double-sends.
+- **WebinarSettings** — singleton (`id = "webinar"`): default email template, send offset, rotation interval, and the sending mailbox.
+
+### 47.2 Matching ("organise it on the app")
+
+Pure logic in `packages/core/src/webinar/`. `detectWebinarClasses(...texts)` is the **authoritative** deterministic matcher (subject keywords + level keywords) and follows the rules-first / AI-advisory pattern (§3, §18, ADR 0030). It reads Stripe text — product name, price nickname, description, customer name. Confidence ≥ `AUTO_ENROLL_CONFIDENCE` (0.8) auto-enrols (needs an explicit level); everything else lands in the **review queue**. When the rules find nothing, the advisory `webinar_class_match` AI mini-task (`packages/ai/prompts/webinar-class-match.ts`) may suggest a class — always as `pending_review`, never auto-enrolled. Reconciles the user's "automatic" ask with golden rule #3.
+
+### 47.3 Flow
+
+`webinar.enrollment.detectFromStripe` (button on the Enrolments page) and the daily `webinar/detect-enrollments` job both call `detectEnrollmentsFromStripe` (`apps/web/lib/webinar/enrollment-service.ts`): list active Stripe subscriptions → match → upsert enrolments (creating a Contact per payer if needed). Emails go out via `webinar/dispatch-weekly-emails` (hourly), which computes due sessions (holiday-aware, DST-correct), renders the template, attaches the schedule PDF, and sends through the connected **Google/Gmail** mailbox (`sendSystemEmail`, §14) — no third-party email API. `webinar/expire-enrollments` flips enrolments to `expired` when `expiresAt` passes or our StripeSubscription mirror shows a terminal state, so only `active` enrolments are ever emailed. `webinar/zoom-rotation-reminder` opens a Task when a class link is older than its interval. All mutations are audited (`webinar.*`, registered in `packages/core/events/registry.ts`). Manager+ manages; all roles read.
 
 ---
 

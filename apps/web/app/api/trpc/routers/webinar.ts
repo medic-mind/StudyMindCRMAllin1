@@ -1,0 +1,908 @@
+// Weekly-webinar system router. Manages cohorts, holidays, classes, syllabi,
+// enrolments and settings, plus the "detect from Stripe" organiser.
+//
+// Role model: all authenticated users can read; Manager+ manages (CLAUDE.md
+// §20.1). Mutations are audited.
+
+import { createId } from '@paralleldrive/cuid2'
+import { TRPCError } from '@trpc/server'
+import { z } from 'zod'
+
+import {
+  AUTO_ENROLL_CONFIDENCE,
+  computeSessions,
+  formatSessionDateShort,
+  formatSessionTime,
+  levelLabel,
+  sessionStartInstant,
+  subjectLabel,
+  webinarLevelSchema,
+  webinarSubjectSchema,
+  WEEKDAY_LABEL,
+  zoomRotationDue,
+  type WebinarLevel,
+} from '@studymind/core/webinar'
+
+import {
+  auditedProcedure,
+  protectedProcedure,
+  requireUser,
+  router,
+  type UserRole,
+} from '@/lib/trpc/builders'
+import { detectEnrollmentsFromStripe } from '@/lib/webinar/enrollment-service'
+
+const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  'ceo',
+  'senior_manager',
+  'manager',
+])
+
+function assertCanManage(role: UserRole): void {
+  if (!MANAGE_ROLES.has(role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Only Manager or above can manage webinars' })
+  }
+}
+
+/** Accept a YYYY-MM-DD string and return a UTC-midnight Date. */
+const dateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
+  .transform((s) => new Date(`${s}T00:00:00.000Z`))
+
+const MAX_PDF_BYTES = 8 * 1024 * 1024
+
+/* -------------------------------------------------------------------------- */
+/* Cohorts + holidays                                                          */
+/* -------------------------------------------------------------------------- */
+
+const cohortRouter = router({
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const rows = await ctx.db.webinarCohort.findMany({
+      where: { deletedAt: null },
+      orderBy: { startsOn: 'desc' },
+      include: { _count: { select: { classes: true, holidays: true } } },
+    })
+    return rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      startsOn: c.startsOn.toISOString().slice(0, 10),
+      endsOn: c.endsOn.toISOString().slice(0, 10),
+      status: c.status,
+      timezone: c.timezone,
+      notes: c.notes,
+      classCount: c._count.classes,
+      holidayCount: c._count.holidays,
+    }))
+  }),
+
+  get: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+    const c = await ctx.db.webinarCohort.findFirst({
+      where: { id: input.id, deletedAt: null },
+      include: {
+        holidays: { orderBy: { startsOn: 'asc' } },
+        classes: {
+          where: { deletedAt: null },
+          orderBy: [{ subject: 'asc' }, { level: 'asc' }],
+          include: { _count: { select: { enrollments: true } } },
+        },
+      },
+    })
+    if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+    return {
+      id: c.id,
+      name: c.name,
+      startsOn: c.startsOn.toISOString().slice(0, 10),
+      endsOn: c.endsOn.toISOString().slice(0, 10),
+      status: c.status,
+      timezone: c.timezone,
+      notes: c.notes,
+      holidays: c.holidays.map((h) => ({
+        id: h.id,
+        name: h.name,
+        startsOn: h.startsOn.toISOString().slice(0, 10),
+        endsOn: h.endsOn.toISOString().slice(0, 10),
+      })),
+      classes: c.classes.map((cl) => ({
+        id: cl.id,
+        subject: cl.subject,
+        subjectLabel: subjectLabel(cl.subject),
+        level: cl.level,
+        levelLabel: levelLabel(cl.level as WebinarLevel),
+        title: cl.title,
+        active: cl.active,
+        enrollmentCount: cl._count.enrollments,
+      })),
+    }
+  }),
+
+  create: auditedProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(1).max(40),
+        startsOn: dateSchema,
+        endsOn: dateSchema,
+        timezone: z.string().trim().min(1).max(64).default('Europe/London'),
+        status: z.enum(['planning', 'active', 'archived']).default('planning'),
+        notes: z.string().trim().max(1000).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      if (input.endsOn.getTime() <= input.startsOn.getTime()) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'End date must be after start date.' })
+      }
+      const id = createId()
+      try {
+        await ctx.db.webinarCohort.create({
+          data: {
+            id,
+            name: input.name,
+            startsOn: input.startsOn,
+            endsOn: input.endsOn,
+            timezone: input.timezone,
+            status: input.status,
+            notes: input.notes ?? null,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        })
+      } catch (err) {
+        if (err instanceof Error && /Unique/i.test(err.message)) {
+          throw new TRPCError({ code: 'CONFLICT', message: 'A cohort with that name exists.' })
+        }
+        throw err
+      }
+      await ctx.audit({
+        action: 'webinar.cohort_created',
+        target: { type: 'WebinarCohort', id },
+        after: { name: input.name, status: input.status },
+      })
+      return { id }
+    }),
+
+  setStatus: auditedProcedure
+    .input(z.object({ id: z.string(), status: z.enum(['planning', 'active', 'archived']) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const before = await ctx.db.webinarCohort.findUnique({
+        where: { id: input.id },
+        select: { status: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.webinarCohort.update({
+        where: { id: input.id },
+        data: { status: input.status, updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'webinar.cohort_status_changed',
+        target: { type: 'WebinarCohort', id: input.id },
+        before,
+        after: { status: input.status },
+      })
+      return { id: input.id }
+    }),
+
+  addHoliday: auditedProcedure
+    .input(
+      z.object({
+        cohortId: z.string(),
+        name: z.string().trim().min(1).max(80),
+        startsOn: dateSchema,
+        endsOn: dateSchema,
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const id = createId()
+      await ctx.db.webinarHoliday.create({
+        data: {
+          id,
+          cohortId: input.cohortId,
+          name: input.name,
+          startsOn: input.startsOn,
+          endsOn: input.endsOn,
+          createdById: user.id,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'webinar.holiday_added',
+        target: { type: 'WebinarCohort', id: input.cohortId },
+        after: { name: input.name },
+      })
+      return { id }
+    }),
+
+  removeHoliday: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const holiday = await ctx.db.webinarHoliday.findUnique({
+        where: { id: input.id },
+        select: { cohortId: true, name: true },
+      })
+      if (!holiday) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.webinarHoliday.delete({ where: { id: input.id } })
+      await ctx.audit({
+        action: 'webinar.holiday_removed',
+        target: { type: 'WebinarCohort', id: holiday.cohortId },
+        before: { name: holiday.name },
+      })
+      return { id: input.id }
+    }),
+})
+
+/* -------------------------------------------------------------------------- */
+/* Classes                                                                     */
+/* -------------------------------------------------------------------------- */
+
+const classRouter = router({
+  list: protectedProcedure
+    .input(z.object({ cohortId: z.string().optional() }).default({}))
+    .query(async ({ ctx, input }) => {
+      const now = new Date()
+      const rows = await ctx.db.webinarClass.findMany({
+        where: { deletedAt: null, ...(input.cohortId ? { cohortId: input.cohortId } : {}) },
+        orderBy: [{ subject: 'asc' }, { level: 'asc' }],
+        include: {
+          cohort: { select: { name: true, status: true } },
+          _count: { select: { enrollments: true } },
+        },
+      })
+      return rows.map((cl) => ({
+        id: cl.id,
+        cohortId: cl.cohortId,
+        cohortName: cl.cohort.name,
+        subject: cl.subject,
+        subjectLabel: subjectLabel(cl.subject),
+        level: cl.level,
+        levelLabel: levelLabel(cl.level as WebinarLevel),
+        title: cl.title,
+        dayOfWeek: cl.dayOfWeek,
+        dayLabel: WEEKDAY_LABEL[cl.dayOfWeek] ?? '—',
+        startMinute: cl.startMinute,
+        timezone: cl.timezone,
+        zoomLink: cl.zoomLink,
+        zoomLinkUpdatedAt: cl.zoomLinkUpdatedAt,
+        zoomRotationDue: zoomRotationDue(cl.zoomLinkUpdatedAt, cl.zoomRotateEveryWeeks, now),
+        active: cl.active,
+        enrollmentCount: cl._count.enrollments,
+        hasUploadedPdf: (cl.syllabusPdfByteSize ?? 0) > 0,
+      }))
+    }),
+
+  get: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+    const cl = await ctx.db.webinarClass.findFirst({
+      where: { id: input.id, deletedAt: null },
+      include: {
+        cohort: { include: { holidays: true } },
+        syllabusWeeks: { orderBy: { weekNumber: 'asc' } },
+      },
+    })
+    if (!cl) throw new TRPCError({ code: 'NOT_FOUND' })
+    const sessions = computeSessions(
+      cl.cohort.startsOn,
+      cl.cohort.endsOn,
+      cl.dayOfWeek,
+      cl.cohort.holidays.map((h) => ({ startsOn: h.startsOn, endsOn: h.endsOn })),
+    )
+    const topics = new Map(cl.syllabusWeeks.map((w) => [w.weekNumber, w.topic]))
+    const schedule = sessions.map((s) => ({
+      weekNumber: s.weekNumber,
+      dateLabel: formatSessionDateShort(
+        sessionStartInstant(s, cl.startMinute, cl.timezone),
+        cl.timezone,
+      ),
+      timeLabel: formatSessionTime(sessionStartInstant(s, cl.startMinute, cl.timezone), cl.timezone),
+      topic: topics.get(s.weekNumber) ?? '',
+    }))
+    return {
+      id: cl.id,
+      cohortId: cl.cohortId,
+      cohortName: cl.cohort.name,
+      subject: cl.subject,
+      subjectLabel: subjectLabel(cl.subject),
+      level: cl.level,
+      levelLabel: levelLabel(cl.level as WebinarLevel),
+      title: cl.title,
+      dayOfWeek: cl.dayOfWeek,
+      startMinute: cl.startMinute,
+      durationMins: cl.durationMins,
+      timezone: cl.timezone,
+      zoomLink: cl.zoomLink,
+      zoomLinkUpdatedAt: cl.zoomLinkUpdatedAt,
+      zoomRotateEveryWeeks: cl.zoomRotateEveryWeeks,
+      sendOffsetHours: cl.sendOffsetHours,
+      emailSubjectTemplate: cl.emailSubjectTemplate,
+      emailBodyTemplate: cl.emailBodyTemplate,
+      active: cl.active,
+      hasUploadedPdf: (cl.syllabusPdfByteSize ?? 0) > 0,
+      uploadedPdfFileName: cl.syllabusPdfFileName,
+      sessionCount: sessions.length,
+      schedule,
+    }
+  }),
+
+  create: auditedProcedure
+    .input(
+      z.object({
+        cohortId: z.string(),
+        subject: webinarSubjectSchema,
+        level: webinarLevelSchema,
+        title: z.string().trim().min(1).max(120),
+        dayOfWeek: z.number().int().min(0).max(6),
+        startMinute: z.number().int().min(0).max(1439),
+        durationMins: z.number().int().min(15).max(480).default(60),
+        timezone: z.string().trim().min(1).max(64).default('Europe/London'),
+        zoomLink: z.string().trim().url().max(500).optional(),
+        sendOffsetHours: z.number().int().min(0).max(168).default(24),
+        zoomRotateEveryWeeks: z.number().int().min(0).max(52).default(4),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const id = createId()
+      try {
+        await ctx.db.webinarClass.create({
+          data: {
+            id,
+            cohortId: input.cohortId,
+            subject: input.subject,
+            level: input.level,
+            title: input.title,
+            dayOfWeek: input.dayOfWeek,
+            startMinute: input.startMinute,
+            durationMins: input.durationMins,
+            timezone: input.timezone,
+            zoomLink: input.zoomLink ?? null,
+            zoomLinkUpdatedAt: input.zoomLink ? new Date() : null,
+            sendOffsetHours: input.sendOffsetHours,
+            zoomRotateEveryWeeks: input.zoomRotateEveryWeeks,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        })
+      } catch (err) {
+        if (err instanceof Error && /Unique/i.test(err.message)) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'That subject + level already exists in this cohort.',
+          })
+        }
+        throw err
+      }
+      await ctx.audit({
+        action: 'webinar.class_created',
+        target: { type: 'WebinarClass', id },
+        after: { subject: input.subject, level: input.level, title: input.title },
+      })
+      return { id }
+    }),
+
+  update: auditedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        title: z.string().trim().min(1).max(120).optional(),
+        dayOfWeek: z.number().int().min(0).max(6).optional(),
+        startMinute: z.number().int().min(0).max(1439).optional(),
+        durationMins: z.number().int().min(15).max(480).optional(),
+        timezone: z.string().trim().min(1).max(64).optional(),
+        sendOffsetHours: z.number().int().min(0).max(168).optional(),
+        zoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
+        emailSubjectTemplate: z.string().trim().max(300).nullish(),
+        emailBodyTemplate: z.string().trim().max(8000).nullish(),
+        active: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const { id, ...rest } = input
+      const before = await ctx.db.webinarClass.findUnique({
+        where: { id },
+        select: { title: true, active: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.webinarClass.update({
+        where: { id },
+        data: { ...rest, updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'webinar.class_updated',
+        target: { type: 'WebinarClass', id },
+        before,
+        after: rest,
+      })
+      return { id }
+    }),
+
+  setZoomLink: auditedProcedure
+    .input(z.object({ id: z.string(), zoomLink: z.string().trim().url().max(500) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const before = await ctx.db.webinarClass.findUnique({
+        where: { id: input.id },
+        select: { zoomLink: true, title: true, subject: true, level: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.webinarClass.update({
+        where: { id: input.id },
+        data: { zoomLink: input.zoomLink, zoomLinkUpdatedAt: new Date(), updatedById: user.id },
+      })
+      // Close any open rotation reminder for this class.
+      const title = `[Webinar] Update Zoom link — ${subjectLabel(before.subject)} ${levelLabel(
+        before.level as WebinarLevel,
+      )}`
+      await ctx.db.task.updateMany({
+        where: { title, status: { in: ['open', 'in_progress'] } },
+        data: { status: 'done' },
+      })
+      await ctx.audit({
+        action: 'webinar.zoom_link_rotated',
+        target: { type: 'WebinarClass', id: input.id },
+        before: { zoomLink: before.zoomLink },
+        after: { zoomLink: input.zoomLink },
+      })
+      return { id: input.id }
+    }),
+
+  archive: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const before = await ctx.db.webinarClass.findUnique({
+        where: { id: input.id },
+        select: { title: true, deletedAt: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.webinarClass.update({
+        where: { id: input.id },
+        data: { deletedAt: new Date(), active: false, updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'webinar.class_archived',
+        target: { type: 'WebinarClass', id: input.id },
+        before,
+      })
+      return { id: input.id }
+    }),
+
+  uploadSyllabusPdf: auditedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        fileName: z.string().trim().min(1).max(255),
+        dataBase64: z.string().min(1).max(12_000_000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const cls = await ctx.db.webinarClass.findUnique({
+        where: { id: input.id },
+        select: { id: true },
+      })
+      if (!cls) throw new TRPCError({ code: 'NOT_FOUND' })
+      const data = Buffer.from(input.dataBase64, 'base64')
+      if (data.byteLength === 0) throw new TRPCError({ code: 'BAD_REQUEST', message: 'File is empty.' })
+      if (data.byteLength > MAX_PDF_BYTES) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'PDF must be 8 MB or smaller.' })
+      }
+      if (data.subarray(0, 5).toString('ascii') !== '%PDF-') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'File is not a PDF.' })
+      }
+      await ctx.db.webinarClass.update({
+        where: { id: input.id },
+        data: {
+          syllabusPdfData: data,
+          syllabusPdfFileName: input.fileName,
+          syllabusPdfContentType: 'application/pdf',
+          syllabusPdfByteSize: data.byteLength,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'webinar.syllabus_pdf_uploaded',
+        target: { type: 'WebinarClass', id: input.id },
+        after: { fileName: input.fileName, byteSize: data.byteLength },
+      })
+      return { id: input.id, byteSize: data.byteLength }
+    }),
+
+  removeSyllabusPdf: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      await ctx.db.webinarClass.update({
+        where: { id: input.id },
+        data: {
+          syllabusPdfData: null,
+          syllabusPdfFileName: null,
+          syllabusPdfContentType: null,
+          syllabusPdfByteSize: null,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'webinar.syllabus_pdf_removed',
+        target: { type: 'WebinarClass', id: input.id },
+      })
+      return { id: input.id }
+    }),
+})
+
+/* -------------------------------------------------------------------------- */
+/* Syllabus                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const syllabusRouter = router({
+  set: auditedProcedure
+    .input(
+      z.object({
+        classId: z.string(),
+        weeks: z
+          .array(
+            z.object({
+              weekNumber: z.number().int().min(1).max(60),
+              topic: z.string().trim().min(1).max(300),
+              notes: z.string().trim().max(2000).optional(),
+            }),
+          )
+          .max(60),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      await ctx.db.$transaction([
+        ctx.db.webinarSyllabusWeek.deleteMany({ where: { classId: input.classId } }),
+        ctx.db.webinarSyllabusWeek.createMany({
+          data: input.weeks.map((w) => ({
+            id: createId(),
+            classId: input.classId,
+            weekNumber: w.weekNumber,
+            topic: w.topic,
+            notes: w.notes ?? null,
+            createdById: user.id,
+            updatedById: user.id,
+          })),
+        }),
+      ])
+      await ctx.audit({
+        action: 'webinar.syllabus_set',
+        target: { type: 'WebinarClass', id: input.classId },
+        after: { weeks: input.weeks.length },
+      })
+      return { count: input.weeks.length }
+    }),
+
+  /** Auto-generate placeholder weeks for every computed session. */
+  generate: auditedProcedure
+    .input(z.object({ classId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const cl = await ctx.db.webinarClass.findFirst({
+        where: { id: input.classId, deletedAt: null },
+        include: { cohort: { include: { holidays: true } } },
+      })
+      if (!cl) throw new TRPCError({ code: 'NOT_FOUND' })
+      const sessions = computeSessions(
+        cl.cohort.startsOn,
+        cl.cohort.endsOn,
+        cl.dayOfWeek,
+        cl.cohort.holidays.map((h) => ({ startsOn: h.startsOn, endsOn: h.endsOn })),
+      )
+      await ctx.db.$transaction([
+        ctx.db.webinarSyllabusWeek.deleteMany({ where: { classId: input.classId } }),
+        ctx.db.webinarSyllabusWeek.createMany({
+          data: sessions.map((s) => ({
+            id: createId(),
+            classId: input.classId,
+            weekNumber: s.weekNumber,
+            topic: `Week ${s.weekNumber} — topic to be confirmed`,
+            createdById: user.id,
+            updatedById: user.id,
+          })),
+        }),
+      ])
+      await ctx.audit({
+        action: 'webinar.syllabus_generated',
+        target: { type: 'WebinarClass', id: input.classId },
+        after: { weeks: sessions.length },
+      })
+      return { count: sessions.length }
+    }),
+})
+
+/* -------------------------------------------------------------------------- */
+/* Enrolments                                                                  */
+/* -------------------------------------------------------------------------- */
+
+const ENROLLMENT_STATUSES = ['pending_review', 'active', 'paused', 'expired', 'cancelled'] as const
+
+const enrollmentRouter = router({
+  list: protectedProcedure
+    .input(
+      z
+        .object({
+          classId: z.string().optional(),
+          status: z.enum(ENROLLMENT_STATUSES).optional(),
+          limit: z.number().int().min(1).max(500).default(200),
+        })
+        .default({}),
+    )
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.webinarEnrollment.findMany({
+        where: {
+          deletedAt: null,
+          ...(input.classId ? { classId: input.classId } : {}),
+          ...(input.status ? { status: input.status } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: input.limit,
+        include: {
+          contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+          webinarClass: { select: { subject: true, level: true, title: true } },
+        },
+      })
+      return rows.map((e) => ({
+        id: e.id,
+        status: e.status,
+        source: e.source,
+        matchConfidence: e.matchConfidence,
+        matchReason: e.matchReason,
+        expiresAt: e.expiresAt,
+        classId: e.classId,
+        classLabel: `${subjectLabel(e.webinarClass.subject)} ${levelLabel(
+          e.webinarClass.level as WebinarLevel,
+        )}`,
+        contactId: e.contact.id,
+        contactName:
+          [e.contact.firstName, e.contact.lastName].filter(Boolean).join(' ') || '(no name)',
+        contactEmail: e.contact.email,
+      }))
+    }),
+
+  setStatus: auditedProcedure
+    .input(z.object({ id: z.string(), status: z.enum(ENROLLMENT_STATUSES) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const before = await ctx.db.webinarEnrollment.findUnique({
+        where: { id: input.id },
+        select: { status: true, classId: true, contactId: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.webinarEnrollment.update({
+        where: { id: input.id },
+        data: {
+          status: input.status,
+          enrolledAt: input.status === 'active' ? new Date() : undefined,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'webinar.enrollment_status_changed',
+        target: { type: 'WebinarEnrollment', id: input.id },
+        before,
+        after: { status: input.status },
+      })
+      return { id: input.id }
+    }),
+
+  create: auditedProcedure
+    .input(
+      z.object({
+        classId: z.string(),
+        contactId: z.string(),
+        status: z.enum(['active', 'pending_review']).default('active'),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const id = createId()
+      try {
+        await ctx.db.webinarEnrollment.create({
+          data: {
+            id,
+            classId: input.classId,
+            contactId: input.contactId,
+            status: input.status,
+            source: 'manual',
+            enrolledAt: input.status === 'active' ? new Date() : null,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        })
+      } catch (err) {
+        if (err instanceof Error && /Unique/i.test(err.message)) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'That contact is already enrolled in this class.',
+          })
+        }
+        throw err
+      }
+      await ctx.audit({
+        action: 'webinar.enrollment_created',
+        target: { type: 'WebinarEnrollment', id },
+        after: { classId: input.classId, contactId: input.contactId, status: input.status },
+      })
+      return { id }
+    }),
+
+  remove: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      await ctx.db.webinarEnrollment.update({
+        where: { id: input.id },
+        data: { status: 'cancelled', deletedAt: new Date(), updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'webinar.enrollment_removed',
+        target: { type: 'WebinarEnrollment', id: input.id },
+      })
+      return { id: input.id }
+    }),
+
+  /** Scan Stripe and organise weekly-class payers into classes. */
+  detectFromStripe: auditedProcedure
+    .input(z.object({ useAi: z.boolean().default(true) }).default({}))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const result = await detectEnrollmentsFromStripe(ctx.db, {
+        actorId: user.id,
+        requestId: ctx.requestId,
+        useAi: input.useAi,
+      })
+      await ctx.audit({
+        action: 'webinar.detect_run',
+        target: { type: 'WebinarSettings', id: 'webinar' },
+        after: {
+          scanned: result.scanned,
+          matched: result.matched,
+          autoEnrolled: result.autoEnrolled,
+          pendingReview: result.pendingReview,
+        },
+      })
+      return result
+    }),
+})
+
+/* -------------------------------------------------------------------------- */
+/* Settings                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const settingsRouter = router({
+  get: protectedProcedure.query(async ({ ctx }) => {
+    const row = await ctx.db.webinarSettings.findUnique({ where: { id: 'webinar' } })
+    return {
+      senderMailboxUserId: row?.senderMailboxUserId ?? null,
+      defaultSendOffsetHours: row?.defaultSendOffsetHours ?? 24,
+      defaultZoomRotateEveryWeeks: row?.defaultZoomRotateEveryWeeks ?? 4,
+      emailSubjectTemplate: row?.emailSubjectTemplate ?? '',
+      emailBodyTemplate: row?.emailBodyTemplate ?? '',
+      fromName: row?.fromName ?? '',
+    }
+  }),
+
+  update: auditedProcedure
+    .input(
+      z.object({
+        senderMailboxUserId: z.string().nullish(),
+        defaultSendOffsetHours: z.number().int().min(0).max(168).optional(),
+        defaultZoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
+        emailSubjectTemplate: z.string().trim().max(300).optional(),
+        emailBodyTemplate: z.string().trim().max(8000).optional(),
+        fromName: z.string().trim().max(120).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      await ctx.db.webinarSettings.upsert({
+        where: { id: 'webinar' },
+        create: {
+          id: 'webinar',
+          senderMailboxUserId: input.senderMailboxUserId ?? null,
+          defaultSendOffsetHours: input.defaultSendOffsetHours ?? 24,
+          defaultZoomRotateEveryWeeks: input.defaultZoomRotateEveryWeeks ?? 4,
+          emailSubjectTemplate: input.emailSubjectTemplate ?? '',
+          emailBodyTemplate: input.emailBodyTemplate ?? '',
+          fromName: input.fromName ?? null,
+          createdById: user.id,
+          updatedById: user.id,
+        },
+        update: {
+          ...(input.senderMailboxUserId !== undefined
+            ? { senderMailboxUserId: input.senderMailboxUserId }
+            : {}),
+          ...(input.defaultSendOffsetHours !== undefined
+            ? { defaultSendOffsetHours: input.defaultSendOffsetHours }
+            : {}),
+          ...(input.defaultZoomRotateEveryWeeks !== undefined
+            ? { defaultZoomRotateEveryWeeks: input.defaultZoomRotateEveryWeeks }
+            : {}),
+          ...(input.emailSubjectTemplate !== undefined
+            ? { emailSubjectTemplate: input.emailSubjectTemplate }
+            : {}),
+          ...(input.emailBodyTemplate !== undefined
+            ? { emailBodyTemplate: input.emailBodyTemplate }
+            : {}),
+          ...(input.fromName !== undefined ? { fromName: input.fromName } : {}),
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'webinar.settings_updated',
+        target: { type: 'WebinarSettings', id: 'webinar' },
+        after: { fromName: input.fromName },
+      })
+      return { ok: true }
+    }),
+})
+
+/* -------------------------------------------------------------------------- */
+/* Overview                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export const webinarRouter = router({
+  overview: protectedProcedure.query(async ({ ctx }) => {
+    const now = new Date()
+    const soon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    const [activeCohort, classes, activeEnrollments, pendingReview, expiringSoon, recentDispatches] =
+      await Promise.all([
+        ctx.db.webinarCohort.findFirst({
+          where: { status: 'active', deletedAt: null },
+          orderBy: { startsOn: 'desc' },
+          select: { id: true, name: true },
+        }),
+        ctx.db.webinarClass.findMany({
+          where: { active: true, deletedAt: null, cohort: { status: 'active' } },
+          select: { zoomLinkUpdatedAt: true, zoomRotateEveryWeeks: true },
+        }),
+        ctx.db.webinarEnrollment.count({ where: { status: 'active', deletedAt: null } }),
+        ctx.db.webinarEnrollment.count({ where: { status: 'pending_review', deletedAt: null } }),
+        ctx.db.webinarEnrollment.count({
+          where: { status: 'active', deletedAt: null, expiresAt: { gte: now, lte: soon } },
+        }),
+        ctx.db.webinarEmailDispatch.count({
+          where: { status: 'sent', sentAt: { gte: new Date(now.getTime() - 7 * 864e5) } },
+        }),
+      ])
+    const zoomDue = classes.filter((c) =>
+      zoomRotationDue(c.zoomLinkUpdatedAt, c.zoomRotateEveryWeeks, now),
+    ).length
+    return {
+      activeCohort,
+      classCount: classes.length,
+      activeEnrollments,
+      pendingReview,
+      expiringSoon,
+      zoomRotationDue: zoomDue,
+      emailsSentLast7Days: recentDispatches,
+      autoEnrollThreshold: AUTO_ENROLL_CONFIDENCE,
+    }
+  }),
+
+  cohort: cohortRouter,
+  class: classRouter,
+  syllabus: syllabusRouter,
+  enrollment: enrollmentRouter,
+  settings: settingsRouter,
+})

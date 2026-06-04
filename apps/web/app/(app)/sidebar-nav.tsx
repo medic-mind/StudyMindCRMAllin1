@@ -13,6 +13,7 @@ import type { ComponentType, SVGProps } from 'react'
 import {
   BarChartIcon,
   BuildingIcon,
+  CalendarIcon,
   CoinsIcon,
   GitBranchIcon,
   HashIcon,
@@ -75,6 +76,7 @@ const ICONS: Record<string, IconComp> = {
   '/pipeline': GitBranchIcon,
   '/boards': GitBranchIcon,
   '/tasks': ListTodoIcon,
+  '/webinars': CalendarIcon,
   '/finance': CoinsIcon,
   '/reports': BarChartIcon,
   '/settings': SettingsIcon,
@@ -98,6 +100,7 @@ const SECTION: Record<string, string> = {
   '/accounts': 'Work',
   '/boards': 'Work',
   '/tasks': 'Work',
+  '/webinars': 'Operations',
   '/finance': 'Operations',
   '/reports': 'Operations',
   '/settings': 'Admin',

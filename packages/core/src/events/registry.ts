@@ -386,6 +386,26 @@ export const EVENT_NAMES = [
   'contact.suggestion_created',
   'contact.suggestion_accepted',
   'contact.suggestion_rejected',
+  // Weekly-webinar auto-enrollment system.
+  'webinar.cohort_created',
+  'webinar.cohort_status_changed',
+  'webinar.holiday_added',
+  'webinar.holiday_removed',
+  'webinar.class_created',
+  'webinar.class_updated',
+  'webinar.class_archived',
+  'webinar.zoom_link_rotated',
+  'webinar.syllabus_set',
+  'webinar.syllabus_generated',
+  'webinar.syllabus_pdf_uploaded',
+  'webinar.syllabus_pdf_removed',
+  'webinar.enrollment_detected',
+  'webinar.enrollment_created',
+  'webinar.enrollment_status_changed',
+  'webinar.enrollment_expired',
+  'webinar.enrollment_removed',
+  'webinar.detect_run',
+  'webinar.settings_updated',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

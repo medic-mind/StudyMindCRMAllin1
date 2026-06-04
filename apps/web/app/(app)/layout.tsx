@@ -65,6 +65,17 @@ function buildNav(role: Role): NavItem[] {
     { href: '/boards', label: 'Boards' },
     { href: '/tasks', label: 'Tasks' },
     {
+      href: '/webinars',
+      label: 'Webinars',
+      children: [
+        { href: '/webinars', label: 'Overview' },
+        { href: '/webinars/classes', label: 'Classes' },
+        { href: '/webinars/enrollments', label: 'Enrolments' },
+        { href: '/webinars/cohorts', label: 'Cohorts & holidays' },
+        { href: '/webinars/settings', label: 'Settings' },
+      ],
+    },
+    {
       href: '/finance',
       label: 'Finance',
       // Sales Executives do not see Finance — they can create payment links
