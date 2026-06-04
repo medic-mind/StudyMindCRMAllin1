@@ -5,6 +5,7 @@ import { getBrandingLogoMeta } from '@studymind/core/branding'
 import { getCurrentUser } from '@/lib/auth/server'
 import { db } from '@/lib/db'
 import { ComposeEmailProvider } from '@/components/mail/compose-email'
+import { ConfirmProvider } from '@/components/ui/confirm'
 import { BackfillProgressBanner } from '@/components/shell/backfill-progress-banner'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
 import { TopBar } from '@/components/shell/top-bar'
@@ -149,36 +150,39 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const branding = await getBrandingLogoMeta(db)
 
   return (
-    <div className="flex min-h-screen flex-col bg-neutral-50">
-      <TopBar
-        user={{
-          email: me.email,
-          name: me.name ?? null,
-          role: me.role,
-          totpEnabled,
-        }}
-        logoVersion={branding.version}
-      />
-      <div className="flex flex-1">
-        <aside
-          className="flex flex-col border-r border-neutral-200 bg-white px-3 py-4"
-          style={{ width: 'var(--shell-sidebar-width)' }}
-          aria-label="Sidebar"
-        >
-          <SidebarNav items={nav} />
-        </aside>
-        <main id="main" className="flex-1">
-          <GmailReconnectBanner />
-          <TrengoTokenBanner />
-          <BackfillProgressBanner />
-          {/* In-house email composer is available to every authenticated
-              surface (board cards, list rows, contact pages) via
-              useComposeEmail(). VAs can draft but not send (role-gated). */}
-          <ComposeEmailProvider canSend={role !== 'virtual_assistant'}>
-            <div className="px-6 py-6">{children}</div>
-          </ComposeEmailProvider>
-        </main>
-      </div>
-    </div>
+    // Shell-wide workflow-popup providers (CLAUDE.md §26). ConfirmProvider gives
+    // every surface a branded guarded-confirm; ComposeEmailProvider wraps the
+    // TopBar too so the ⌘K command palette can open the in-house composer. VAs
+    // can draft but not send (role-gated).
+    <ConfirmProvider>
+      <ComposeEmailProvider canSend={role !== 'virtual_assistant'}>
+        <div className="flex min-h-screen flex-col bg-neutral-50">
+          <TopBar
+            user={{
+              email: me.email,
+              name: me.name ?? null,
+              role: me.role,
+              totpEnabled,
+            }}
+            logoVersion={branding.version}
+          />
+          <div className="flex flex-1">
+            <aside
+              className="flex flex-col border-r border-neutral-200 bg-white px-3 py-4"
+              style={{ width: 'var(--shell-sidebar-width)' }}
+              aria-label="Sidebar"
+            >
+              <SidebarNav items={nav} />
+            </aside>
+            <main id="main" className="flex-1">
+              <GmailReconnectBanner />
+              <TrengoTokenBanner />
+              <BackfillProgressBanner />
+              <div className="px-6 py-6">{children}</div>
+            </main>
+          </div>
+        </div>
+      </ComposeEmailProvider>
+    </ConfirmProvider>
   )
 }

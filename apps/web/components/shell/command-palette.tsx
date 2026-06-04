@@ -1,13 +1,16 @@
-// Global Cmd+K search palette. Calls search.global over tRPC with debounce,
-// renders grouped results (Contacts, Families), and lets the user jump to
-// the picked entity's detail page. CLAUDE.md §26 (RSC + client island),
-// §28 (keyboard-first), §44.2 (no PII in URLs).
+// Global ⌘K palette. Two things in one surface:
+//   • Quick actions / navigation (new contact, compose email, jump to a page) —
+//     shown when the box is empty, filtered as you type.
+//   • Entity search (Contacts, Families) via search.global once you type 2+
+//     chars.
+// Keyboard-first: ↑↓ to move, Enter to run, Esc to close (CLAUDE.md §28).
 
 'use client'
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { useComposeEmail } from '@/components/mail/compose-email'
 import { trpc } from '@/lib/trpc/client'
 
 interface CommandPaletteProps {
@@ -15,8 +18,17 @@ interface CommandPaletteProps {
   onOpenChange: (open: boolean) => void
 }
 
+interface Row {
+  kind: string
+  id: string
+  label: string
+  sub?: string
+  onSelect: () => void
+}
+
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const router = useRouter()
+  const compose = useComposeEmail()
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [raw, setRaw] = useState('')
   const [query, setQuery] = useState('')
@@ -31,7 +43,6 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     if (open) {
       setRaw('')
       setQuery('')
-      // Defer the focus so the dialog is mounted before we steal focus.
       const id = requestAnimationFrame(() => inputRef.current?.focus())
       return () => cancelAnimationFrame(id)
     }
@@ -44,9 +55,49 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     { enabled, staleTime: 30_000 },
   )
 
-  const flat = useMemo(() => {
-    type Row = { kind: string; id: string; label: string; sub?: string; href: string }
-    if (!data) return [] as Row[]
+  function go(href: string) {
+    onOpenChange(false)
+    router.push(href)
+  }
+
+  // Quick actions + navigation. Filtered by the query (label match) so typing
+  // "board" surfaces the board jump, "email" surfaces compose, etc.
+  const commands = useMemo<Row[]>(() => {
+    const all: Row[] = [
+      {
+        kind: 'Action',
+        id: 'new-contact',
+        label: 'New contact',
+        sub: 'Create a contact',
+        onSelect: () => go('/contacts/new'),
+      },
+      {
+        kind: 'Action',
+        id: 'compose-email',
+        label: 'Compose email',
+        sub: 'Send from the CRM',
+        onSelect: () => {
+          onOpenChange(false)
+          compose?.openCompose()
+        },
+      },
+      { kind: 'Go', id: 'nav-dashboard', label: 'Dashboard', onSelect: () => go('/') },
+      { kind: 'Go', id: 'nav-inbox', label: 'Inbox', onSelect: () => go('/inbox') },
+      { kind: 'Go', id: 'nav-mail', label: 'Mail', onSelect: () => go('/mail') },
+      { kind: 'Go', id: 'nav-leads', label: 'Leads', onSelect: () => go('/leads') },
+      { kind: 'Go', id: 'nav-contacts', label: 'Customers', onSelect: () => go('/contacts') },
+      { kind: 'Go', id: 'nav-accounts', label: 'Accounts', onSelect: () => go('/accounts') },
+      { kind: 'Go', id: 'nav-boards', label: 'Boards', onSelect: () => go('/boards') },
+      { kind: 'Go', id: 'nav-tasks', label: 'Tasks', onSelect: () => go('/tasks') },
+      { kind: 'Go', id: 'nav-reports', label: 'Reports', onSelect: () => go('/reports') },
+    ]
+    const q = query.toLowerCase()
+    if (q.length === 0) return all
+    return all.filter((c) => c.label.toLowerCase().includes(q) || c.sub?.toLowerCase().includes(q))
+  }, [query, compose])
+
+  const entityRows = useMemo<Row[]>(() => {
+    if (!data) return []
     const rows: Row[] = []
     for (const c of data.contacts ?? []) {
       const sub = [c.email, c.phoneE164].filter(Boolean).join(' · ')
@@ -55,7 +106,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         id: c.id,
         label: c.displayName,
         sub: sub.length > 0 ? sub : undefined,
-        href: `/contacts/${c.id}`,
+        onSelect: () => go(`/contacts/${c.id}`),
       })
     }
     for (const f of data.families ?? []) {
@@ -64,11 +115,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         id: f.id,
         label: f.name,
         sub: f.billingContactName ?? undefined,
-        href: `/contacts/families/${f.id}`,
+        onSelect: () => go(`/contacts/families/${f.id}`),
       })
     }
     return rows
   }, [data])
+
+  const flat = useMemo(() => [...commands, ...entityRows], [commands, entityRows])
 
   const [highlight, setHighlight] = useState(0)
   useEffect(() => {
@@ -95,8 +148,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       const pick = flat[highlight]
       if (pick) {
         e.preventDefault()
-        onOpenChange(false)
-        router.push(pick.href)
+        pick.onSelect()
       }
     }
   }
@@ -107,7 +159,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Global search"
+      aria-label="Command palette"
       className="fixed inset-0 z-50 flex items-start justify-center bg-neutral-900/40 px-4 pt-[15vh] backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onOpenChange(false)
@@ -135,22 +187,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search contacts and families…"
+            placeholder="Search, or type a command (new contact, compose, boards…)"
             className="w-full bg-transparent py-1 text-sm text-neutral-900 outline-none placeholder:text-neutral-400"
-            aria-label="Search query"
+            aria-label="Search or command"
             autoComplete="off"
           />
         </div>
         <div className="max-h-80 overflow-y-auto py-2">
-          {query.length < 2 && (
-            <p className="px-4 py-6 text-center text-xs text-neutral-500">
-              Start typing to search. ↑↓ to navigate, Enter to open, Esc to close.
-            </p>
+          {enabled && isFetching && entityRows.length === 0 && (
+            <p className="px-4 py-2 text-center text-xs text-neutral-400">Searching…</p>
           )}
-          {enabled && isFetching && flat.length === 0 && (
-            <p className="px-4 py-6 text-center text-xs text-neutral-500">Searching…</p>
-          )}
-          {enabled && !isFetching && flat.length === 0 && (
+          {flat.length === 0 && (
             <p className="px-4 py-6 text-center text-xs text-neutral-500">
               No matches for &ldquo;{query}&rdquo;.
             </p>
@@ -159,10 +206,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             <button
               key={`${row.kind}:${row.id}`}
               type="button"
-              onClick={() => {
-                onOpenChange(false)
-                router.push(row.href)
-              }}
+              onClick={row.onSelect}
               onMouseEnter={() => setHighlight(i)}
               className={`flex w-full items-center gap-3 px-4 py-2 text-left text-sm focus:outline-none ${
                 highlight === i ? 'bg-neutral-100' : 'hover:bg-neutral-50'
@@ -173,15 +217,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               </span>
               <span className="flex-1 truncate">
                 <span className="font-medium text-neutral-900">{row.label}</span>
-                {row.sub && (
-                  <span className="ml-2 text-xs text-neutral-500">{row.sub}</span>
-                )}
+                {row.sub && <span className="ml-2 text-xs text-neutral-500">{row.sub}</span>}
               </span>
             </button>
           ))}
         </div>
         <div className="border-t border-neutral-200 bg-neutral-50 px-3 py-1.5 text-[10px] text-neutral-500">
-          ↑↓ navigate · Enter open · Esc close
+          ↑↓ navigate · Enter run · Esc close
         </div>
       </div>
     </div>

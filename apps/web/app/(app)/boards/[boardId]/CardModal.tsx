@@ -19,6 +19,7 @@ import { CommentThread } from '@/components/thread/CommentThread'
 import type { ThreadComment } from '@/components/thread/comment-types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '@/components/ui/confirm'
 import { trpc } from '@/lib/trpc/client'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
@@ -74,6 +75,7 @@ export function CardModal({
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
+  const confirm = useConfirm()
   const [editingDesc, setEditingDesc] = useState(false)
   const [descDraft, setDescDraft] = useState('')
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -91,18 +93,15 @@ export function CardModal({
     },
     onError: (e) => toast.error(e.message ?? 'Could not delete card'),
   })
-  function onDelete() {
+  async function onDelete() {
     const name = cardQuery.data?.contactName ?? 'this card'
-    if (
-      !confirm(
-        `Permanently delete the card for "${name}"?\n\n` +
-          `This cannot be undone. The card, its labels, and its sub-tasks ` +
-          `will be removed. The backing contact and the card's history on ` +
-          `the contact timeline are preserved.`,
-      )
-    ) {
-      return
-    }
+    const ok = await confirm({
+      title: `Permanently delete the card for ${name}?`,
+      body: "This cannot be undone. The card, its labels, and its sub-tasks will be removed. The backing contact and the card's history on the contact timeline are preserved.",
+      confirmLabel: 'Delete card',
+      tone: 'danger',
+    })
+    if (!ok) return
     deleteCardMutation.mutate({ id: cardId })
   }
   const setDescription = trpc.card.setDescription.useMutation({

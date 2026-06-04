@@ -35,17 +35,31 @@ Guiding principles (the "think like a manager who won't recode later" rule):
 
 ---
 
+## Shipped (increment 2 — foundation)
+
+- **`<Modal>` + `<SlideOver>` primitives** (`components/ui/modal.tsx`,
+  `slide-over.tsx`): portal-rendered, focus-trapped, Esc + overlay close, focus
+  restore, body-scroll lock, reduced-motion (CLAUDE.md §28). The shared surface
+  new dialogs build on; existing hand-rolled overlays migrate onto them
+  incrementally.
+- **`useConfirm()` guarded-dialog** (`components/ui/confirm.tsx`,
+  `ConfirmProvider` in the shell): promise-based branded confirm that states what
+  happens + reversibility. Adopted for the destructive paths discussed —
+  Contacts bulk **delete** + **merge**, and board **card delete**. Remaining
+  `window.confirm` sites (invoices, documents, accounts, peak windows, mailbox
+  disconnect, templates, messages) convert in a follow-up sweep.
+- **⌘K command palette + quick-create** (`components/shell/command-palette.tsx`):
+  the existing search palette now also lists **quick actions** (New contact,
+  Compose email) and **navigation** (Dashboard, Inbox, Mail, Leads, Customers,
+  Accounts, Boards, Tasks, Reports), filtered as you type. Compose opens the
+  in-house composer (the provider now wraps the TopBar too).
+
 ## Staged plan (next increments)
 
-### Increment 2 — Shared workflow-popup foundation
-- **`<Modal>` + `<SlideOver>` primitives** (focus-trap, Esc-to-close, restore
-  focus, `prefers-reduced-motion`) — replace the hand-rolled fixed-overlay divs
-  (compose, quick-add, card modal) with one accessible primitive (CLAUDE.md §28).
-- **`useConfirm()` guarded-dialog hook** — replace `window.confirm` (bulk
-  delete/merge, card delete) with a branded confirm dialog that states what
-  happens and whether it's reversible.
-- **⌘K command palette + quick-create** — global launcher: find a contact,
-  new contact, log a call, compose email, new card, jump to a page.
+### Increment 2b — finish the confirm sweep + adopt the primitives
+- Convert the remaining `window.confirm` call sites to `useConfirm()`.
+- Migrate the compose + quick-add overlays onto `<Modal>` for one consistent
+  surface.
 
 ### Increment 3 — Contacts (deep)
 - Contact **detail page** → tabbed/slide-over sections; sticky identity header

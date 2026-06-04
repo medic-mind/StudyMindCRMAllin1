@@ -22,6 +22,7 @@ import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { useConfirm } from '@/components/ui/confirm'
 import { Popover } from '@/components/ui/popover'
 import { Toolbar } from '@/components/ui/toolbar'
 import {
@@ -133,6 +134,7 @@ const CAN_LABEL = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'
 export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
+  const confirm = useConfirm()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
 
@@ -180,15 +182,19 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
       return
     }
     const loserIds = ids.filter((id) => id !== survivor.id)
-    if (
-      !confirm(
-        `Merge ${loserIds.length} contact${loserIds.length === 1 ? '' : 's'} into ` +
-          `"${survivor.displayName}"? The others are soft-deleted and their ` +
-          `history is re-parented onto ${survivor.displayName}. This cannot be ` +
-          `auto-undone.`,
-      )
-    )
-      return
+    const ok = await confirm({
+      title: `Merge into ${survivor.displayName}?`,
+      body: (
+        <>
+          {loserIds.length} contact{loserIds.length === 1 ? '' : 's'} will be soft-deleted and
+          their history re-parented onto <strong>{survivor.displayName}</strong>. This cannot be
+          auto-undone.
+        </>
+      ),
+      confirmLabel: 'Merge',
+      tone: 'danger',
+    })
+    if (!ok) return
     setBusy(true)
     try {
       const result = await bulkMerge.mutateAsync({
@@ -235,13 +241,13 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
   async function onBulkDelete() {
     const ids = Array.from(selected)
     if (ids.length === 0) return
-    if (
-      !confirm(
-        `Soft-delete ${ids.length} contact${ids.length === 1 ? '' : 's'}? ` +
-          `They can be restored from audit within the 30-day grace window.`,
-      )
-    )
-      return
+    const ok = await confirm({
+      title: `Delete ${ids.length} contact${ids.length === 1 ? '' : 's'}?`,
+      body: 'They can be restored from audit within the 30-day grace window.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    })
+    if (!ok) return
     setBusy(true)
     try {
       const result = await bulkDelete.mutateAsync({ contactIds: ids })
