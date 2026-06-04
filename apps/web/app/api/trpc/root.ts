@@ -58,6 +58,7 @@ import { pipelineRouter } from './routers/pipeline'
 import { quickReplyRouter } from './routers/quickReply'
 import { reportsRouter } from './routers/reports'
 import { searchRouter } from './routers/search'
+import { slackChannelRouter } from './routers/slackChannel'
 import { taskRouter } from './routers/task'
 import { teamRouter } from './routers/team'
 import { uploadedInvoiceRouter } from './routers/uploadedInvoice'
@@ -97,6 +98,7 @@ export const appRouter = router({
   quickReply: quickReplyRouter,
   reports: reportsRouter,
   search: searchRouter,
+  slackChannel: slackChannelRouter,
   task: taskRouter,
   team: teamRouter,
   uploadedInvoice: uploadedInvoiceRouter,

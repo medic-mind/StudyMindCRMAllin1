@@ -135,6 +135,14 @@ export const EVENT_NAMES = [
   'call_summary_template.pdf_attached',
   'call_summary_template.pdf_removed',
 
+  // Slack channel options (Settings → Slack channels). Operator-managed Slack
+  // channels the call-summary "Internal — Slack" section can post to, with
+  // optional deep-link action buttons for virtual assistants.
+  'slack_channel_option.created',
+  'slack_channel_option.updated',
+  'slack_channel_option.archived',
+  'slack_channel_option.restored',
+
   // Uploaded invoices — manually uploaded invoice files attached to a
   // BusinessAccount / Contact / Family. Different from the finance-mirrored
   // Invoice rows.

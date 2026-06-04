@@ -92,6 +92,14 @@ const GROUPS: Group[] = [
         icon: <MailIcon size={16} />,
       },
       {
+        href: '/settings/slack-channels',
+        title: 'Slack channels',
+        description:
+          'Channels a call summary can be posted to as an internal action point for VAs, with deep-link buttons back into the CRM.',
+        roles: 'Manager+',
+        icon: <GitBranchIcon size={16} />,
+      },
+      {
         href: '/settings/quick-replies',
         title: 'Quick replies',
         description:

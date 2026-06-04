@@ -8,6 +8,11 @@
 
 import type { CallSummarySenders, ChannelResult } from '@studymind/core/board'
 import { BusinessError } from '@studymind/core/errors'
+import {
+  buildCallSummarySlackBlocks,
+  buildCallSummarySlackText,
+  parseActionButtons,
+} from '@studymind/core/slack'
 import { db } from '@/lib/db'
 
 interface BuildArgs {
@@ -23,12 +28,6 @@ function appUrl(): string {
   ).replace(/\/$/, '')
 }
 
-/** Compose the message text shared across channels. */
-function composeText(body: string, contactName: string, contactId: string): string {
-  const link = `${appUrl()}/contacts/${contactId}`
-  return `Call summary for ${contactName}\n\n${body}\n\n${link}`
-}
-
 /**
  * Build the live senders. Returns a partial map: a channel is only included
  * when it is wired (always, for the three we support). Availability checks
@@ -38,13 +37,34 @@ function composeText(body: string, contactName: string, contactId: string): stri
 export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): CallSummarySenders {
   return {
     async slack({ body, contactName, contactId, slackChannelId }): Promise<ChannelResult> {
-      const channelId = slackChannelId ?? process.env['SLACK_ALERTS_CHANNEL_ID']
+      // Resolve the target channel + its deep-link action buttons. Order:
+      // (1) the channel the agent picked (slackChannelId), (2) the configured
+      // default SlackChannelOption, (3) the legacy env channel as a fallback so
+      // deploys without any configured options keep working (CLAUDE.md §12).
+      const option = slackChannelId
+        ? await db.slackChannelOption.findFirst({
+            where: { channelId: slackChannelId, archivedAt: null },
+            select: { channelId: true, actionButtons: true },
+          })
+        : await db.slackChannelOption.findFirst({
+            where: { isDefault: true, archivedAt: null },
+            select: { channelId: true, actionButtons: true },
+          })
+
+      const channelId =
+        option?.channelId ?? slackChannelId ?? process.env['SLACK_ALERTS_CHANNEL_ID']
       if (!channelId) {
         return { status: 'skipped', detail: 'No Slack channel configured' }
       }
+
+      const contactUrl = `${appUrl()}/contacts/${contactId}`
+      const buttons = parseActionButtons(option?.actionButtons)
+      const blocks = buildCallSummarySlackBlocks({ contactName, body, contactUrl, buttons })
+
       const { postAlert } = await import('@studymind/integration-slack/outbound')
       const result = await postAlert({
-        message: composeText(body, contactName, contactId),
+        message: buildCallSummarySlackText({ contactName, body, contactUrl }),
+        blocks,
         idempotencyKey: `call-summary:${contactId}:${requestId}`,
         channelId,
         ctx: { actorId: agentId, requestId },

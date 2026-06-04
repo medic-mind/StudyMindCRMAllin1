@@ -25,6 +25,7 @@
     "./lead": "./src/lead/index.ts",
     "./mail": "./src/mail/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
+    "./slack": "./src/slack/index.ts",
     "./backfill": "./src/backfill/index.ts",
     "./cache/redis-rate-limit": "./src/cache/redis-rate-limit.ts",
     "./auth/policies": "./src/auth/policies.ts",

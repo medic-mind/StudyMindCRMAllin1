@@ -2191,6 +2191,43 @@ model CallSummaryTemplate {
   @@index([sortOrder])
 }
 
+/// Operator-managed Slack channels that a call summary can be posted to as an
+/// internal action point for virtual assistants (CLAUDE.md §10/§12). Replaces
+/// the single env-configured SLACK_ALERTS_CHANNEL_ID for the call-summary
+/// "Internal — Slack" section: the agent picks a channel from this list at
+/// send time. Each option carries an optional set of deep-link action buttons
+/// rendered as Block Kit buttons on the posted message — VAs click through to
+/// the CRM (e.g. "Open in CRM", "Create follow-up task"). Editable from
+/// Settings → Slack channels (Manager+). `channelId` is the Slack channel id
+/// (Cxxxx). `actionButtons` is a JSON array validated by
+/// `SlackActionButton` in packages/core/src/slack/types.ts.
+model SlackChannelOption {
+  id        String @id
+  /// Friendly name shown in the picker, e.g. "VA action points".
+  label     String
+  /// Slack channel id (e.g. C0123456789). Unique so we never list the same
+  /// channel twice.
+  channelId String @unique
+  /// Optional one-line description of what this channel is for.
+  purpose   String?
+  /// At most one option is the default; the picker pre-selects it.
+  isDefault Boolean @default(false)
+  /// Deep-link action buttons rendered on the Slack message. JSON array of
+  /// { label, url } — `url` may contain {{contactUrl}} which is substituted
+  /// at send time. Empty array = no buttons.
+  actionButtons Json @default("[]")
+  sortOrder Int    @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  @@index([archivedAt])
+  @@index([sortOrder])
+}
+
 // -----------------------------------------------------------------------------
 // B2B accounts — schools and partnership organisations we work with. Tracked
 // as first-class records (name, contact info, lifecycle status, address,

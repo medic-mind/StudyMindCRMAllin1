@@ -744,7 +744,13 @@ const cardRouter = router({
         if (!card) throw new TRPCError({ code: 'NOT_FOUND', message: 'Card not found' })
         const contactId = card.contact.id
 
-        const hasSlackChannel = Boolean(process.env['SLACK_ALERTS_CHANNEL_ID'])
+        // Slack is actionable when an operator has configured at least one
+        // channel option, or the legacy env channel is set (CLAUDE.md §12).
+        const slackOptionCount = await ctx.db.slackChannelOption.count({
+          where: { archivedAt: null },
+        })
+        const hasSlackChannel =
+          slackOptionCount > 0 || Boolean(process.env['SLACK_ALERTS_CHANNEL_ID'])
 
         const hasPhone = Boolean(card.contact.phoneE164)
         const trengoConvo = hasPhone
@@ -961,7 +967,12 @@ const cardRouter = router({
         ).replace(/\/$/, '')
         const composed = `Call summary for ${contactName}\n\n${input.body}\n\n${appUrl}/contacts/${contact.id}`
 
-        const slackChannelId = process.env['SLACK_ALERTS_CHANNEL_ID'] ?? null
+        const defaultSlackOption = await ctx.db.slackChannelOption.findFirst({
+          where: { isDefault: true, archivedAt: null },
+          select: { channelId: true },
+        })
+        const slackChannelId =
+          defaultSlackOption?.channelId ?? process.env['SLACK_ALERTS_CHANNEL_ID'] ?? null
 
         // Trengo target — same lookup buildCallSummarySenders does.
         const recentMessage = contact.phoneE164
