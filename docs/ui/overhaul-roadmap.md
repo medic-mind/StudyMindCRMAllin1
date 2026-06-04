@@ -70,9 +70,14 @@ Guiding principles (the "think like a manager who won't recode later" rule):
   dial picker (`PhoneLink`), and a dedicated **Email** action button
   (`ComposeEmailButton`, a reusable primitive) sits beside the logged
   `CallButton`. No more `mailto:` / `tel:` bounce-outs.
-- **Next:** inline edit of core fields via a `<SlideOver>` instead of the
-  separate `/edit` page; per-row hover **quick actions** (call · email · add
-  task) on the list; a "Current status" summary band.
+- **Shipped:** **inline edit in a `<SlideOver>`** — "Edit details" opens the
+  existing edit form in a right-hand drawer (saves + refreshes in place); the
+  full `/edit` page stays as a deep-link. Per-row **hover quick actions** on the
+  Contacts list: call + email already live in their columns, and a
+  hover-revealed **"+ Task"** opens a follow-up task on that customer without
+  leaving the list (`NewTaskDialog` now takes a customisable trigger).
+- **Next:** a "Current status" summary band; migrate the card detail modal onto
+  `<SlideOver>`.
 
 ### Increment 4 — Boards / pipeline
 - Card modal → standardise on the `<Modal>`/`<SlideOver>` primitive; group the

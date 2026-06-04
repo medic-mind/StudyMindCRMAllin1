@@ -38,6 +38,8 @@ import { formatMoneyMinor } from '@/lib/format/money'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
 
+import { NewTaskDialog } from '../tasks/NewTaskDialog'
+
 type SortBy = 'createdAt' | 'name' | 'hoursBooked' | 'hoursDelivered' | 'lastLessonAt'
 type SortDir = 'asc' | 'desc'
 
@@ -688,13 +690,27 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
                       {formatRelativeTime(new Date(c.createdAt), now)}
                     </td>
                     <td className="px-3 py-2 align-top text-right">
-                      <Link
-                        href={`/contacts/${c.id}`}
-                        aria-label={`Open ${c.displayName}`}
-                        className="inline-flex text-neutral-300 transition-colors group-hover:text-primary-600"
-                      >
-                        <ChevronRightIcon size={16} />
-                      </Link>
+                      <div className="flex items-center justify-end gap-1">
+                        {/* Hover-revealed quick action — add a follow-up task on
+                            this customer without leaving the list. Call + email
+                            already live in their own columns. */}
+                        <span className="opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                          <NewTaskDialog
+                            contactId={c.id}
+                            contactName={c.displayName}
+                            triggerLabel="+ Task"
+                            triggerVariant="ghost"
+                            triggerSize="xs"
+                          />
+                        </span>
+                        <Link
+                          href={`/contacts/${c.id}`}
+                          aria-label={`Open ${c.displayName}`}
+                          className="inline-flex text-neutral-300 transition-colors group-hover:text-primary-600"
+                        >
+                          <ChevronRightIcon size={16} />
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 )

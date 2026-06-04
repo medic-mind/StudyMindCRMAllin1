@@ -100,7 +100,15 @@ function Section({
   )
 }
 
-export function EditContactForm({ contact }: { contact: InitialContact }) {
+export function EditContactForm({
+  contact,
+  onSaved,
+}: {
+  contact: InitialContact
+  /** When provided (e.g. the slide-over), called after a successful save
+   * instead of navigating — the caller closes + refreshes in place. */
+  onSaved?: () => void
+}) {
   const router = useRouter()
   const [form, setForm] = useState<FormState>({
     companyIds: contact.companyIds,
@@ -136,8 +144,13 @@ export function EditContactForm({ contact }: { contact: InitialContact }) {
   const update = trpc.contact.update.useMutation({
     onSuccess: () => {
       toast.success('Contact updated')
-      router.push(`/contacts/${contact.id}`)
-      router.refresh()
+      if (onSaved) {
+        onSaved()
+        router.refresh()
+      } else {
+        router.push(`/contacts/${contact.id}`)
+        router.refresh()
+      }
     },
     onError: (err) => {
       toast.error(err.message ?? 'Could not save changes')

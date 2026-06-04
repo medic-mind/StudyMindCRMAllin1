@@ -21,9 +21,22 @@ interface Props {
   familyId?: string
   /** When the contact is preset (e.g. from a contact page), its display name. */
   contactName?: string
+  /** Customise the trigger so the dialog can be a compact row action. */
+  triggerLabel?: React.ReactNode
+  triggerVariant?: 'default' | 'secondary' | 'ghost' | 'destructive'
+  triggerSize?: 'xs' | 'sm' | 'md' | 'lg'
+  triggerClassName?: string
 }
 
-export function NewTaskDialog({ contactId, familyId, contactName }: Props) {
+export function NewTaskDialog({
+  contactId,
+  familyId,
+  contactName,
+  triggerLabel,
+  triggerVariant,
+  triggerSize = 'sm',
+  triggerClassName,
+}: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -108,11 +121,13 @@ export function NewTaskDialog({ contactId, familyId, contactName }: Props) {
     <>
       <Button
         type="button"
-        size="sm"
+        size={triggerSize}
+        variant={triggerVariant}
+        className={triggerClassName}
         ref={triggerRef}
         onClick={() => setOpen(true)}
       >
-        New task
+        {triggerLabel ?? 'New task'}
       </Button>
       {open ? (
         <div

@@ -17,7 +17,6 @@ import { ComposeEmailButton } from '@/components/mail/compose-email'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
   ActivityIcon,
@@ -35,6 +34,7 @@ import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 
 import { AddNote } from './AddNote'
 import { CallButton } from './CallButton'
+import { EditContactButton } from './EditContactButton'
 import { Timeline } from './Timeline'
 import { CallsSection } from './sections/CallsSection'
 import { CallSummarySection } from './sections/CallSummarySection'
@@ -250,11 +250,7 @@ export default async function ContactDetailPage({
             {contact.email && (
               <ComposeEmailButton to={contact.email} size="sm" variant="secondary" />
             )}
-            <Link href={`/contacts/${contact.id}/edit`}>
-              <Button size="sm" variant="secondary">
-                Edit details
-              </Button>
-            </Link>
+            <EditContactButton contactId={contact.id} />
             {contact.family && (
               <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
             )}
