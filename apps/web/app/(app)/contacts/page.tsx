@@ -8,7 +8,6 @@ import Link from 'next/link'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 
-import { Button } from '@/components/ui/button'
 import { FacetedFilter } from '@/components/ui/faceted-filter'
 import { ClearFiltersButton, FilterBar, ToggleFilter } from '@/components/ui/filter-bar'
 import { SearchField } from '@/components/ui/search-field'
@@ -17,6 +16,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { ContactsExportButton } from './ContactsExportButton'
 import { ContactsTable } from './ContactsTable'
+import { QuickAddContactButton } from './QuickAddContactButton'
 
 interface PageSearchParams {
   q?: string
@@ -105,9 +105,7 @@ export default async function ContactsPage({
         actions={
           <div className="flex items-center gap-2">
             <ContactsExportButton q={sp.q} companyId={activeCompany?.id} />
-            <Link href="/contacts/new">
-              <Button>New contact</Button>
-            </Link>
+            <QuickAddContactButton />
           </div>
         }
       />

@@ -4,6 +4,7 @@ import { getBrandingLogoMeta } from '@studymind/core/branding'
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { db } from '@/lib/db'
+import { ComposeEmailProvider } from '@/components/mail/compose-email'
 import { BackfillProgressBanner } from '@/components/shell/backfill-progress-banner'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
 import { TopBar } from '@/components/shell/top-bar'
@@ -170,7 +171,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <GmailReconnectBanner />
           <TrengoTokenBanner />
           <BackfillProgressBanner />
-          <div className="px-6 py-6">{children}</div>
+          {/* In-house email composer is available to every authenticated
+              surface (board cards, list rows, contact pages) via
+              useComposeEmail(). VAs can draft but not send (role-gated). */}
+          <ComposeEmailProvider canSend={role !== 'virtual_assistant'}>
+            <div className="px-6 py-6">{children}</div>
+          </ComposeEmailProvider>
         </main>
       </div>
     </div>

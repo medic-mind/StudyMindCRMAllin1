@@ -13,6 +13,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { useComposeEmail } from '@/components/mail/compose-email'
 import { ChevronDownIcon, MailIcon, PhoneIcon } from '@/components/ui/icon'
 
 function looksUK(phone: string): boolean {
@@ -30,16 +31,26 @@ export function EmailLink({
   email: string | null | undefined
   className?: string
 }) {
+  const compose = useComposeEmail()
   if (!email) return <span className="text-neutral-300">—</span>
   return (
     <a
       href={`mailto:${email}`}
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation()
+        // When the in-house composer is mounted (anywhere in the app shell),
+        // open it prefilled to this address instead of bouncing out to the OS
+        // mail client. Falls back to the mailto href otherwise.
+        if (compose) {
+          e.preventDefault()
+          compose.openCompose({ to: email })
+        }
+      }}
       className={
         className ??
         'inline-flex max-w-[18rem] items-center gap-1 truncate text-neutral-700 hover:text-primary-700 hover:underline'
       }
-      title={`Email ${email}`}
+      title={`Email ${email} in the CRM`}
     >
       <MailIcon size={12} className="shrink-0 text-neutral-400" />
       <span className="truncate">{email}</span>
