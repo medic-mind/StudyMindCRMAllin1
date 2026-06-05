@@ -96,7 +96,10 @@ export const adminBackfillRouter = router({
         const res = await startBackfill(ctx.db, inngest, {
           provider: input.provider,
           agentId: null,
-          windowDays: 90,
+          // Aircall: a clean 1-month historic import (CLAUDE.md §10); the
+          // recurring aircall/sync-calls cron keeps it current from there.
+          // Slack stays on the standard 90-day window (ADR 0017).
+          windowDays: input.provider === 'aircall' ? 30 : 90,
           ctx: { actorId: user.id, requestId: ctx.requestId },
         })
         // startBackfill already wrote the backfill.started audit row; record

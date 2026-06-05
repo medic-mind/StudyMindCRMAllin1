@@ -16,7 +16,10 @@ import { processBackfillCall } from './backfill'
 import { createClient, type AircallCallResource } from './client'
 
 const OVERLAP_MS = 60 * 60 * 1000 // re-pull the last hour each run (idempotent)
-const DEFAULT_LOOKBACK_DAYS = 90
+// Cold-start reach-back when we hold no calls yet: a clean 1-month import,
+// matching the admin backfill window (CLAUDE.md §10). Override via
+// AIRCALL_SYNC_LOOKBACK_DAYS. After the first run the cursor moves forward.
+const DEFAULT_LOOKBACK_DAYS = 30
 const MAX_PAGES = 40 // bound per run: 40 × 50 = 2000 calls
 
 export const aircallSyncCalls = inngest.createFunction(
