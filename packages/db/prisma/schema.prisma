@@ -626,6 +626,24 @@ model CallPeakWindow {
   @@index([year])
 }
 
+/// Manual triage state for the missed-calls workspace (CLAUDE.md §10). The
+/// "called back" status itself is *derived* (a later outbound call to the same
+/// number) and never stored; this row records only a human override —
+/// `actioned` (handled another way) or `dismissed` (spam / ignore) — so it
+/// survives re-derivation and drives the missed-calls filters. Keyed on the
+/// Aircall call id (stringified). Sales Executive+ writes; read by all staff.
+model MissedCallReview {
+  aircallCallId String   @id
+  /// `actioned` = manually marked handled; `dismissed` = spam / not worth a call.
+  status        String
+  note          String?
+  reviewedById  String?
+  reviewedAt    DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+}
+
 /// Booking lifecycle for a Contact relative to booking.studymind.co.uk.
 /// Default for every new contact is `lead` — the booking site sync flips
 /// it once a registration / lesson is observed. CLAUDE.md §15.

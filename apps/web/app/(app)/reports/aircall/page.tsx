@@ -620,9 +620,17 @@ export default async function AircallReportPage({
 
               <div className="grid gap-6 lg:grid-cols-2">
                 <Card className="overflow-hidden">
-                  <div className="border-b border-neutral-100 bg-rose-50/60 px-4 py-3">
-                    <h2 className="text-sm font-semibold text-neutral-900">Recent missed calls</h2>
-                    <p className="text-xs text-neutral-500">Worth a callback.</p>
+                  <div className="flex items-start justify-between gap-2 border-b border-neutral-100 bg-rose-50/60 px-4 py-3">
+                    <div>
+                      <h2 className="text-sm font-semibold text-neutral-900">Recent missed calls</h2>
+                      <p className="text-xs text-neutral-500">Worth a callback.</p>
+                    </div>
+                    <Link
+                      href="/calls"
+                      className="shrink-0 text-xs font-medium text-primary-700 hover:underline"
+                    >
+                      Missed-calls queue →
+                    </Link>
                   </div>
                   <div className="px-4 py-2">
                     <TrayList rows={data.missedTray} emptyText="No missed calls in this period." />

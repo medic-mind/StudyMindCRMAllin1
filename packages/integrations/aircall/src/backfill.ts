@@ -107,9 +107,15 @@ export const aircallBackfillRequested = inngest.createFunction(
   },
 )
 
-async function processBackfillCall(
+/**
+ * Persist a single Aircall call as a `call` Interaction (matched OR unmatched),
+ * idempotent on the Aircall call id. Shared by the historic backfill and the
+ * recurring sync so both keep the mirror complete. Returns whether a row was
+ * newly created and whether it linked to a Contact.
+ */
+export async function processBackfillCall(
   call: AircallCallResource,
-): Promise<{ matched: boolean }> {
+): Promise<{ created: boolean; matched: boolean }> {
   // Idempotent on aircall call id.
   const existing = await db.interaction.findFirst({
     where: {
@@ -118,30 +124,37 @@ async function processBackfillCall(
     },
     select: { id: true },
   })
-  if (existing) return { matched: true }
+  if (existing) return { created: false, matched: true }
 
-  // E.164 match (CLAUDE.md §10).
+  // E.164 match (CLAUDE.md §10) — but persist the call regardless of whether a
+  // Contact matches, so the mirror is COMPLETE (all Aircall calls reflected,
+  // not just known numbers). Unmatched calls keep contactId null and surface in
+  // the missed-calls workspace by their raw number. This mirrors the live
+  // webhook path, which already stores unmatched calls.
   const phone = call.raw_digits?.trim()
-  if (!phone || !phone.startsWith('+')) return { matched: false }
-
-  const contacts = await db.contact.findMany({
-    where: { phoneE164: phone, deletedAt: null },
-    select: {
-      id: true,
-      familyMembers: { select: { familyId: true } },
-      billingForFamily: { select: { id: true } },
-    },
-  })
-  if (contacts.length === 0) return { matched: false }
-
-  const familyIds = new Set<string>()
-  for (const c of contacts) {
-    for (const m of c.familyMembers) familyIds.add(m.familyId)
-    for (const f of c.billingForFamily) familyIds.add(f.id)
+  let contactId: string | null = null
+  let familyId: string | null = null
+  let triageRequired = false
+  if (phone && phone.startsWith('+')) {
+    const contacts = await db.contact.findMany({
+      where: { phoneE164: phone, deletedAt: null },
+      select: {
+        id: true,
+        familyMembers: { select: { familyId: true } },
+        billingForFamily: { select: { id: true } },
+      },
+    })
+    if (contacts.length > 0) {
+      const familyIds = new Set<string>()
+      for (const c of contacts) {
+        for (const m of c.familyMembers) familyIds.add(m.familyId)
+        for (const f of c.billingForFamily) familyIds.add(f.id)
+      }
+      familyId = familyIds.size === 1 ? [...familyIds][0] ?? null : null
+      contactId = contacts.length === 1 ? contacts[0]?.id ?? null : null
+      triageRequired = contacts.length > 1
+    }
   }
-  const familyId = familyIds.size === 1 ? [...familyIds][0] ?? null : null
-  const contactId = contacts.length === 1 ? contacts[0]?.id ?? null : null
-  const triageRequired = contacts.length > 1
 
   // Stream recording to S3 if present and we don't already have it.
   let recordingS3Key: string | null = null
@@ -188,7 +201,7 @@ async function processBackfillCall(
       },
     },
   })
-  return { matched: true }
+  return { created: true, matched: contactId != null }
 }
 
 export const BACKFILL_FUNCTIONS = [aircallBackfillRequested] as const
