@@ -21,6 +21,7 @@ import {
   InboxIcon,
   ListTodoIcon,
   MailIcon,
+  PhoneIcon,
   SettingsIcon,
   UserCircleIcon,
   UserPlusIcon,
@@ -67,6 +68,7 @@ const ICONS: Record<string, IconComp> = {
   // Communications — customer channels.
   '/inbox': InboxIcon,
   '/mail': MailIcon,
+  '/calls': PhoneIcon,
   // Internal — staff↔staff (distinct glyph from the customer Inbox).
   '/messages': HashIcon,
   // Work.
@@ -92,6 +94,7 @@ const SECTION: Record<string, string> = {
   // Communications — everything that talks to customers.
   '/inbox': 'Communications',
   '/mail': 'Communications',
+  '/calls': 'Communications',
   // Internal — staff↔staff only.
   '/messages': 'Internal',
   // Work — CRM records.
