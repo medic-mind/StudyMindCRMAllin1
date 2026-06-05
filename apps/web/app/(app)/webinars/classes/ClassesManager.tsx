@@ -15,7 +15,13 @@ import { trpc } from '@/lib/trpc/client'
 import type { ClassRow } from '../types'
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-const SUBJECTS = ['biology', 'chemistry', 'physics', 'maths']
+const SUBJECTS: Array<{ value: string; label: string }> = [
+  { value: 'biology', label: 'Biology' },
+  { value: 'chemistry', label: 'Chemistry' },
+  { value: 'physics', label: 'Physics' },
+  { value: 'maths', label: 'Maths' },
+  { value: 'english_language', label: 'English Language' },
+]
 
 interface CohortOpt {
   id: string
@@ -113,8 +119,8 @@ export function ClassesManager({
               <Field label="Subject" htmlFor="subject">
                 <Select id="subject" value={subject} onChange={(e) => setSubject(e.target.value)}>
                   {SUBJECTS.map((s) => (
-                    <option key={s} value={s}>
-                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                    <option key={s.value} value={s.value}>
+                      {s.label}
                     </option>
                   ))}
                 </Select>

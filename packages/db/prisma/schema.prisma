@@ -3582,7 +3582,13 @@ model WebinarClass {
   zoomLinkUpdatedAt    DateTime?
   zoomRotateEveryWeeks Int       @default(4)
 
-  /// Send the weekly email this many hours before the session starts.
+  /// Reminder send days, 0=Mon..6=Sun (default Mon+Tue). One email goes out on
+  /// each listed day of the class's week, carrying that week's Zoom link + PDF.
+  sendDaysOfWeek       Int[]   @default([0, 1])
+  /// Local hour (0-23) on a send day from which the reminder may go out.
+  sendHourLocal        Int     @default(9)
+  /// DEPRECATED — superseded by sendDaysOfWeek/sendHourLocal. Retained
+  /// forward-only (§19); no longer read by the dispatcher.
   sendOffsetHours      Int     @default(24)
   /// Per-class overrides; fall back to WebinarSettings when null.
   emailSubjectTemplate String?
@@ -3648,8 +3654,13 @@ model WebinarEnrollment {
   /// 0..1 matcher confidence; null for manual adds.
   matchConfidence      Float?
   matchReason          String?
-  /// Mirrors the subscription's current_period_end. Null = no known expiry.
+  /// Mirrors the subscription's current_period_end. For a yearly subscription
+  /// this is ~1 year from purchase (Stripe's period end), giving a year of
+  /// access; for monthly it advances each renewal. Null = no known expiry.
   expiresAt            DateTime?
+  /// Stripe billing interval: "month" | "year" (display + reasoning). Null for
+  /// manual adds.
+  billingInterval      String?
   /// When the enrolment first became `active`.
   enrolledAt           DateTime?
 
@@ -3669,14 +3680,16 @@ model WebinarEnrollment {
   @@index([stripeSubscriptionId])
 }
 
-/// Per-session, per-enrolment email record. The unique (enrollmentId,
-/// weekNumber) is the idempotency key — a retried dispatch job upserts and
-/// never double-sends.
+/// Per-reminder, per-enrolment email record. The unique
+/// (enrollmentId, weekNumber, sendDayOfWeek) is the idempotency key — each
+/// reminder day in a class-week sends at most once, however often the job runs.
 model WebinarEmailDispatch {
   id           String                @id
   classId      String
   enrollmentId String
   weekNumber   Int
+  /// Which reminder day this row covers (0=Mon..6=Sun).
+  sendDayOfWeek Int                  @default(0)
   sessionAt    DateTime
   status       WebinarDispatchStatus @default(scheduled)
   gmailMessageId String?
@@ -3689,7 +3702,7 @@ model WebinarEmailDispatch {
   webinarClass WebinarClass      @relation(fields: [classId], references: [id], onDelete: Cascade)
   enrollment   WebinarEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
 
-  @@unique([enrollmentId, weekNumber])
+  @@unique([enrollmentId, weekNumber, sendDayOfWeek])
   @@index([classId, weekNumber])
   @@index([status])
 }
@@ -3701,6 +3714,10 @@ model WebinarSettings {
   /// User.id whose connected Gmail sends the weekly emails. Null = resolve the
   /// system mailbox (SYSTEM_GMAIL_EMAIL) at send time.
   senderMailboxUserId         String?
+  /// Default reminder send days (0=Mon..6=Sun) and local send hour.
+  defaultSendDaysOfWeek       Int[]   @default([0, 1])
+  defaultSendHourLocal        Int     @default(9)
+  /// DEPRECATED — superseded by the send-day model. Retained forward-only.
   defaultSendOffsetHours      Int     @default(24)
   defaultZoomRotateEveryWeeks Int     @default(4)
   emailSubjectTemplate        String

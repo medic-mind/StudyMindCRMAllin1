@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { trpc } from '@/lib/trpc/client'
 
+import { SendDaysPicker } from '../../SendDaysPicker'
 import type { ClassDetailView as Detail, EnrollmentRow } from '../../types'
 
 type EnrollmentStatus = 'pending_review' | 'active' | 'paused' | 'expired' | 'cancelled'
@@ -239,7 +240,8 @@ function SyllabusCard({ detail, canManage }: { detail: Detail; canManage: boolea
 function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolean }) {
   const utils = trpc.useUtils()
   const router = useRouter()
-  const [sendOffsetHours, setSendOffset] = useState(detail.sendOffsetHours)
+  const [sendDays, setSendDays] = useState<number[]>(detail.sendDaysOfWeek)
+  const [sendHour, setSendHour] = useState(detail.sendHourLocal)
   const [rotate, setRotate] = useState(detail.zoomRotateEveryWeeks)
   const [active, setActive] = useState(detail.active)
   const update = trpc.webinar.class.update.useMutation({
@@ -254,54 +256,62 @@ function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolea
   return (
     <Card>
       <CardBody>
-        <h2 className="mb-3 text-sm font-semibold text-neutral-900">Class settings</h2>
+        <h2 className="mb-1 text-sm font-semibold text-neutral-900">Reminder schedule</h2>
+        <p className="mb-3 text-xs text-neutral-500">
+          A reminder email (Zoom link + PDF) goes out on each selected day of the class&apos;s week,
+          from the chosen local hour.
+        </p>
         <form
-          className="grid gap-3 md:grid-cols-3"
+          className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
             update.mutate({
               id: detail.id,
-              sendOffsetHours,
+              sendDaysOfWeek: sendDays,
+              sendHourLocal: sendHour,
               zoomRotateEveryWeeks: rotate,
               active,
             })
           }}
         >
-          <Field label="Send email this many hours before" htmlFor="offset">
-            <Input
-              id="offset"
-              type="number"
-              min={0}
-              max={168}
-              value={sendOffsetHours}
-              onChange={(e) => setSendOffset(Number(e.target.value))}
-            />
+          <Field label="Send on these days" htmlFor="send-days">
+            <SendDaysPicker value={sendDays} onChange={setSendDays} />
           </Field>
-          <Field label="Rotate Zoom link every (weeks)" htmlFor="rotate">
-            <Input
-              id="rotate"
-              type="number"
-              min={0}
-              max={52}
-              value={rotate}
-              onChange={(e) => setRotate(Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Status" htmlFor="active">
-            <Select
-              id="active"
-              value={active ? 'yes' : 'no'}
-              onChange={(e) => setActive(e.target.value === 'yes')}
-            >
-              <option value="yes">Active</option>
-              <option value="no">Inactive (paused)</option>
-            </Select>
-          </Field>
-          <div className="md:col-span-3">
-            <Button type="submit" disabled={update.isPending}>
-              {update.isPending ? 'Saving…' : 'Save settings'}
-            </Button>
+          <div className="grid gap-3 md:grid-cols-3">
+            <Field label="Send from (local hour)" htmlFor="send-hour">
+              <Input
+                id="send-hour"
+                type="number"
+                min={0}
+                max={23}
+                value={sendHour}
+                onChange={(e) => setSendHour(Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Rotate Zoom link every (weeks)" htmlFor="rotate">
+              <Input
+                id="rotate"
+                type="number"
+                min={0}
+                max={52}
+                value={rotate}
+                onChange={(e) => setRotate(Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Status" htmlFor="active">
+              <Select
+                id="active"
+                value={active ? 'yes' : 'no'}
+                onChange={(e) => setActive(e.target.value === 'yes')}
+              >
+                <option value="yes">Active</option>
+                <option value="no">Inactive (paused)</option>
+              </Select>
+            </Field>
           </div>
+          <Button type="submit" disabled={update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save settings'}
+          </Button>
         </form>
       </CardBody>
     </Card>
@@ -331,12 +341,19 @@ function EnrollmentsCard({
   return (
     <Card>
       <CardBody>
-        <h2 className="mb-3 text-sm font-semibold text-neutral-900">
-          Enrolments ({rows.length})
-        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-neutral-900">Mailing list ({rows.length})</h2>
+        </div>
+        {canManage ? (
+          <AddToList
+            classId={classId}
+            onAdded={() => void utils.webinar.enrollment.list.invalidate({ classId })}
+          />
+        ) : null}
         {rows.length === 0 ? (
           <p className="text-sm text-neutral-500">
-            No one enrolled yet. Use <strong>Detect from Stripe</strong> on the Enrolments page.
+            No one on the list yet. Add someone above, or use <strong>Detect from Stripe</strong> on
+            the Enrolments page.
           </p>
         ) : (
           <div className="space-y-1.5">
@@ -348,6 +365,16 @@ function EnrollmentsCard({
                 <div>
                   <span className="font-medium text-neutral-800">{e.contactName}</span>{' '}
                   <span className="text-neutral-500">{e.contactEmail}</span>
+                  {e.billingInterval ? (
+                    <Badge tone="neutral" className="ml-2">
+                      {e.billingInterval === 'year' ? 'yearly' : 'monthly'}
+                    </Badge>
+                  ) : null}
+                  {e.expiresAt ? (
+                    <span className="ml-2 text-xs text-neutral-400">
+                      access to {new Date(e.expiresAt).toLocaleDateString('en-GB')}
+                    </span>
+                  ) : null}
                   {e.matchReason ? (
                     <span className="ml-2 text-xs text-neutral-400">{e.matchReason}</span>
                   ) : null}
@@ -383,5 +410,49 @@ function EnrollmentsCard({
         )}
       </CardBody>
     </Card>
+  )
+}
+
+function AddToList({ classId, onAdded }: { classId: string; onAdded: () => void }) {
+  const [term, setTerm] = useState('')
+  const search = trpc.webinar.enrollment.contactSearch.useQuery(
+    { term },
+    { enabled: term.trim().length >= 2 },
+  )
+  const create = trpc.webinar.enrollment.create.useMutation({
+    onSuccess: () => {
+      toast.success('Added to the mailing list')
+      setTerm('')
+      onAdded()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const results = search.data ?? []
+  return (
+    <div className="mb-3">
+      <Input
+        placeholder="Add a contact by name or email…"
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+      />
+      {term.trim().length >= 2 && results.length > 0 ? (
+        <div className="mt-1 divide-y divide-neutral-100 rounded-md border border-neutral-200 bg-white">
+          {results.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm hover:bg-neutral-50"
+              onClick={() => create.mutate({ classId, contactId: c.id, status: 'active' })}
+            >
+              <span>
+                <span className="font-medium text-neutral-800">{c.name}</span>{' '}
+                <span className="text-neutral-500">{c.email}</span>
+              </span>
+              <span className="text-xs text-primary-700">Add →</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }

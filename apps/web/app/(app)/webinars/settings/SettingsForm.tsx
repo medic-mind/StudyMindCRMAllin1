@@ -10,14 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
-interface Settings {
-  senderMailboxUserId: string | null
-  defaultSendOffsetHours: number
-  defaultZoomRotateEveryWeeks: number
-  emailSubjectTemplate: string
-  emailBodyTemplate: string
-  fromName: string
-}
+import { SendDaysPicker } from '../SendDaysPicker'
+import type { WebinarSettingsView as Settings } from '../types'
 
 const PLACEHOLDERS = [
   'studentName',
@@ -51,7 +45,8 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
   const [fromName, setFromName] = useState(initial.fromName)
   const [subjectTpl, setSubjectTpl] = useState(initial.emailSubjectTemplate || DEFAULT_SUBJECT)
   const [bodyTpl, setBodyTpl] = useState(initial.emailBodyTemplate || DEFAULT_BODY)
-  const [offset, setOffset] = useState(initial.defaultSendOffsetHours)
+  const [sendDays, setSendDays] = useState<number[]>(initial.defaultSendDaysOfWeek)
+  const [sendHour, setSendHour] = useState(initial.defaultSendHourLocal)
   const [rotate, setRotate] = useState(initial.defaultZoomRotateEveryWeeks)
 
   const save = trpc.webinar.settings.update.useMutation({
@@ -68,7 +63,8 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
           fromName,
           emailSubjectTemplate: subjectTpl,
           emailBodyTemplate: bodyTpl,
-          defaultSendOffsetHours: offset,
+          defaultSendDaysOfWeek: sendDays,
+          defaultSendHourLocal: sendHour,
           defaultZoomRotateEveryWeeks: rotate,
         })
       }}
@@ -114,33 +110,39 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
       </Card>
 
       <Card>
-        <CardBody className="grid gap-3 md:grid-cols-2">
-          <Field
-            label="Default send offset (hours before class)"
-            htmlFor="offset"
-            hint="When a class doesn't override it."
-          >
-            <Input
-              id="offset"
-              type="number"
-              min={0}
-              max={168}
-              value={offset}
-              onChange={(e) => setOffset(Number(e.target.value))}
-              disabled={!canManage}
-            />
+        <CardBody className="space-y-3">
+          <h2 className="text-sm font-semibold text-neutral-900">Reminder defaults</h2>
+          <p className="text-xs text-neutral-500">
+            Applied to new classes (and any class that doesn&apos;t override them). Emails send from
+            <strong> info@studymind.co.uk</strong> (the connected Google mailbox).
+          </p>
+          <Field label="Default send days" htmlFor="send-days">
+            <SendDaysPicker value={sendDays} onChange={setSendDays} disabled={!canManage} />
           </Field>
-          <Field label="Default Zoom rotation (weeks)" htmlFor="rotate">
-            <Input
-              id="rotate"
-              type="number"
-              min={0}
-              max={52}
-              value={rotate}
-              onChange={(e) => setRotate(Number(e.target.value))}
-              disabled={!canManage}
-            />
-          </Field>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Default send hour (local, 0-23)" htmlFor="send-hour">
+              <Input
+                id="send-hour"
+                type="number"
+                min={0}
+                max={23}
+                value={sendHour}
+                onChange={(e) => setSendHour(Number(e.target.value))}
+                disabled={!canManage}
+              />
+            </Field>
+            <Field label="Default Zoom rotation (weeks)" htmlFor="rotate">
+              <Input
+                id="rotate"
+                type="number"
+                min={0}
+                max={52}
+                value={rotate}
+                onChange={(e) => setRotate(Number(e.target.value))}
+                disabled={!canManage}
+              />
+            </Field>
+          </div>
         </CardBody>
       </Card>
 

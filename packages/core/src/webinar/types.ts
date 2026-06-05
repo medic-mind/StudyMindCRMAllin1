@@ -4,7 +4,13 @@
 import { z } from 'zod'
 
 /** Canonical subject handles. Strings, not a DB enum, so admins can extend. */
-export const WEBINAR_SUBJECTS = ['biology', 'chemistry', 'physics', 'maths'] as const
+export const WEBINAR_SUBJECTS = [
+  'biology',
+  'chemistry',
+  'physics',
+  'maths',
+  'english_language',
+] as const
 export type WebinarSubject = (typeof WEBINAR_SUBJECTS)[number]
 
 export const WEBINAR_LEVELS = ['gcse', 'a_level'] as const
@@ -16,6 +22,7 @@ export const SUBJECT_LABEL: Record<string, string> = {
   chemistry: 'Chemistry',
   physics: 'Physics',
   maths: 'Maths',
+  english_language: 'English Language',
 }
 
 export const LEVEL_LABEL: Record<WebinarLevel, string> = {

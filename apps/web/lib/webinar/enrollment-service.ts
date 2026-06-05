@@ -1,11 +1,12 @@
 // Enrolment orchestration: detect weekly-class payers on Stripe, organise them
-// into the right class (deterministic matcher first, AI advisory only when
-// unsure), and expire enrolments when the subscription lapses.
+// into the right class in the RIGHT cohort for today's date (so an August
+// sign-up joins the upcoming year, not last year), and expire enrolments when
+// the subscription lapses.
 //
 // CLAUDE.md §3 — AI suggests, humans confirm: high-confidence rule matches
-// auto-activate; everything else (AI suggestions, low confidence) lands as
-// `pending_review`. CLAUDE.md §4/§8 — external API is the source of truth; we
-// read the live subscription rather than trusting our mirror.
+// auto-activate; AI suggestions and low confidence land as `pending_review`.
+// CLAUDE.md §4 — the external API is the source of truth; the expiry walker
+// refetches the live subscription when Stripe is configured.
 
 import { createId } from '@paralleldrive/cuid2'
 import type { PrismaClient } from '@prisma/client'
@@ -33,6 +34,8 @@ export interface DetectOptions {
   useAi?: boolean
   /** Cap on subscriptions scanned per run. */
   limit?: number
+  /** Reference time used to pick the current cohort. Defaults to now. */
+  now?: Date
 }
 
 export interface DetectResult {
@@ -42,23 +45,52 @@ export interface DetectResult {
   pendingReview: number
   contactsCreated: number
   aiConsulted: number
+  cohort: string | null
   errors: string[]
 }
 
-/** Index of the active cohort's classes keyed by `${subject}:${level}`. */
-async function activeClassIndex(db: PrismaClient): Promise<Map<string, string>> {
-  const cohort = await db.webinarCohort.findFirst({
-    where: { status: 'active', deletedAt: null },
-    orderBy: { startsOn: 'desc' },
+interface ResolvedClassIndex {
+  cohortId: string
+  cohortName: string
+  /** `${subject}:${level}` -> classId. */
+  index: Map<string, string>
+}
+
+/**
+ * Pick the cohort that applies for `now` and index its classes. Preference:
+ *   1. a cohort whose [startsOn, endsOn] contains `now` (prefer status=active),
+ *   2. else the soonest upcoming cohort (so summer sign-ups join the new year),
+ *   3. else the most recently-ended non-archived cohort.
+ * This is how the system "figures out what year it is" at enrolment time.
+ */
+export async function resolveCohortForDate(
+  db: PrismaClient,
+  now: Date,
+): Promise<ResolvedClassIndex | null> {
+  const cohorts = await db.webinarCohort.findMany({
+    where: { deletedAt: null, status: { in: ['active', 'planning'] } },
+    orderBy: { startsOn: 'asc' },
+    select: { id: true, name: true, status: true, startsOn: true, endsOn: true },
   })
-  const index = new Map<string, string>()
-  if (!cohort) return index
+  if (cohorts.length === 0) return null
+
+  const containing = cohorts
+    .filter((c) => c.startsOn.getTime() <= now.getTime() && now.getTime() <= c.endsOn.getTime())
+    .sort((a, b) => (a.status === 'active' ? -1 : b.status === 'active' ? 1 : 0))
+  const upcoming = cohorts
+    .filter((c) => c.startsOn.getTime() > now.getTime())
+    .sort((a, b) => a.startsOn.getTime() - b.startsOn.getTime())
+
+  const chosen = containing[0] ?? upcoming[0] ?? cohorts[cohorts.length - 1]
+  if (!chosen) return null
+
   const classes = await db.webinarClass.findMany({
-    where: { cohortId: cohort.id, active: true, deletedAt: null },
+    where: { cohortId: chosen.id, active: true, deletedAt: null },
     select: { id: true, subject: true, level: true },
   })
+  const index = new Map<string, string>()
   for (const c of classes) index.set(`${c.subject}:${c.level}`, c.id)
-  return index
+  return { cohortId: chosen.id, cohortName: chosen.name, index }
 }
 
 /** Find an existing contact by email, or create one for the Stripe payer. */
@@ -91,23 +123,42 @@ async function resolveContact(
   return { id, created: true }
 }
 
-/** Pull the descriptive text from a subscription for the matcher. */
+/** Flatten a metadata object into "key value" fragments for the matcher. */
+function metadataText(meta: Stripe.Metadata | null | undefined): string[] {
+  if (!meta) return []
+  return Object.entries(meta).map(([k, v]) => `${k} ${v}`)
+}
+
+/** Pull every descriptive fragment from a subscription for the matcher. */
 function subscriptionTexts(sub: Stripe.Subscription): string[] {
   const texts: string[] = []
+  texts.push(...metadataText(sub.metadata))
+  if (sub.description) texts.push(sub.description)
   for (const item of sub.items.data) {
     const price = item.price
     if (price?.nickname) texts.push(price.nickname)
+    texts.push(...metadataText(price?.metadata))
     const product = price?.product
-    if (product && typeof product !== 'string' && 'name' in product && !product.deleted) {
-      texts.push(product.name)
+    if (product && typeof product !== 'string' && !product.deleted) {
+      if ('name' in product && product.name) texts.push(product.name)
+      if ('description' in product && product.description) texts.push(product.description)
+      texts.push(...metadataText(product.metadata))
     }
   }
-  if (sub.description) texts.push(sub.description)
   const customer = sub.customer
-  if (customer && typeof customer !== 'string' && !customer.deleted) {
-    if (customer.name) texts.push(customer.name)
+  if (customer && typeof customer !== 'string' && !customer.deleted && customer.name) {
+    texts.push(customer.name)
   }
   return texts
+}
+
+/** "month" | "year" | null from the first recurring price. */
+function billingIntervalOf(sub: Stripe.Subscription): string | null {
+  for (const item of sub.items.data) {
+    const interval = item.price?.recurring?.interval
+    if (interval) return interval
+  }
+  return null
 }
 
 function payerOf(sub: Stripe.Subscription): { email: string | null; name: string | null } {
@@ -122,15 +173,11 @@ function customerIdOf(sub: Stripe.Subscription): string | null {
   return typeof sub.customer === 'string' ? sub.customer : (sub.customer?.id ?? null)
 }
 
-/**
- * Scan active Stripe subscriptions, match each to a class in the active cohort,
- * and upsert enrolments. Idempotent on (classId, contactId): re-running updates
- * the existing enrolment rather than duplicating it.
- */
 export async function detectEnrollmentsFromStripe(
   db: PrismaClient,
   opts: DetectOptions,
 ): Promise<DetectResult> {
+  const now = opts.now ?? new Date()
   const result: DetectResult = {
     scanned: 0,
     matched: 0,
@@ -138,14 +185,16 @@ export async function detectEnrollmentsFromStripe(
     pendingReview: 0,
     contactsCreated: 0,
     aiConsulted: 0,
+    cohort: null,
     errors: [],
   }
 
-  const classIndex = await activeClassIndex(db)
-  if (classIndex.size === 0) {
-    result.errors.push('No active cohort with classes — create one first.')
+  const resolved = await resolveCohortForDate(db, now)
+  if (!resolved || resolved.index.size === 0) {
+    result.errors.push('No cohort with classes applies to today — create/activate one first.')
     return result
   }
+  result.cohort = resolved.cohortName
 
   let stripe: Stripe
   try {
@@ -155,7 +204,12 @@ export async function detectEnrollmentsFromStripe(
     return result
   }
 
-  const limit = opts.limit ?? 500
+  // Per-run AI cache keyed on the normalised text, so identical product
+  // descriptions across many subscriptions cost at most one AI call (CLAUDE.md
+  // §32 cost control).
+  const aiCache = new Map<string, DetectedClass[]>()
+
+  const limit = opts.limit ?? 1000
   const params: Stripe.SubscriptionListParams = {
     status: 'active',
     limit: 100,
@@ -170,21 +224,27 @@ export async function detectEnrollmentsFromStripe(
       let detected: DetectedClass[] = detectWebinarClasses(...texts)
 
       if (detected.length === 0 && opts.useAi) {
-        const ai = await consultAi(texts.join(' '), opts.requestId)
-        result.aiConsulted += 1
-        if (ai) detected = [ai]
+        const key = texts.join(' ').toLowerCase().replace(/\s+/g, ' ').trim()
+        if (key) {
+          let cached = aiCache.get(key)
+          if (!cached) {
+            cached = await consultAi(key, opts.requestId)
+            aiCache.set(key, cached)
+            result.aiConsulted += 1
+          }
+          detected = cached
+        }
       }
       if (detected.length === 0) continue
 
       const payer = payerOf(sub)
       const stripeCustomerId = customerIdOf(sub)
-      const expiresAt = sub.current_period_end
-        ? new Date(sub.current_period_end * 1000)
-        : null
+      const billingInterval = billingIntervalOf(sub)
+      const expiresAt = sub.current_period_end ? new Date(sub.current_period_end * 1000) : null
 
       let contactId: string | null = null
       for (const d of detected) {
-        const classId = classIndex.get(`${d.subject}:${d.level}`)
+        const classId = resolved.index.get(`${d.subject}:${d.level}`)
         if (!classId) continue
         if (!contactId) {
           const c = await resolveContact(db, payer, opts.actorId)
@@ -196,6 +256,7 @@ export async function detectEnrollmentsFromStripe(
           contactId,
           stripeSubscriptionId: sub.id,
           stripeCustomerId,
+          billingInterval,
           expiresAt,
           detected: d,
           actorId: opts.actorId,
@@ -206,17 +267,15 @@ export async function detectEnrollmentsFromStripe(
         else result.pendingReview += 1
       }
     } catch (err) {
-      result.errors.push(
-        `Subscription ${sub.id}: ${err instanceof Error ? err.message : 'failed'}`,
-      )
+      result.errors.push(`Subscription ${sub.id}: ${err instanceof Error ? err.message : 'failed'}`)
     }
   }
 
   return result
 }
 
-async function consultAi(description: string, requestId: string): Promise<DetectedClass | null> {
-  if (!description.trim()) return null
+async function consultAi(description: string, requestId: string): Promise<DetectedClass[]> {
+  if (!description.trim()) return []
   try {
     const prompt = buildWebinarClassMatchPrompt({ description })
     const out = await runStructured({
@@ -225,19 +284,20 @@ async function consultAi(description: string, requestId: string): Promise<Detect
       schema: webinarClassMatchSchema,
       system: prompt.system,
       user: prompt.user,
+      // Mini tier (cheap) — explicit for clarity.
+      model: 'gpt-4o-mini',
       ctx: { requestId, source: 'webinar.detect' },
     })
-    if (!out.subject || !out.level) return null
-    return {
-      subject: out.subject,
-      level: out.level as WebinarLevel,
+    return out.matches.map((m) => ({
+      subject: m.subject,
+      level: m.level as WebinarLevel,
       // AI suggestions never auto-enrol: clamp below the threshold so they land
       // in review regardless of the model's self-reported confidence.
-      confidence: Math.min(out.confidence, AUTO_ENROLL_CONFIDENCE - 0.01),
+      confidence: Math.min(m.confidence, AUTO_ENROLL_CONFIDENCE - 0.01),
       reason: `AI: ${out.reason}`,
-    }
+    }))
   } catch {
-    return null
+    return []
   }
 }
 
@@ -246,6 +306,7 @@ interface UpsertInput {
   contactId: string
   stripeSubscriptionId: string
   stripeCustomerId: string | null
+  billingInterval: string | null
   expiresAt: Date | null
   detected: DetectedClass
   actorId: string | null
@@ -267,22 +328,34 @@ async function upsertEnrollment(
   })
 
   if (existing) {
-    // Refresh the subscription linkage + expiry; do not downgrade a human's
-    // decision (active/paused/cancelled stay as set).
+    // Refresh linkage + expiry (a re-subscribe brings a NEW subscription id and
+    // a fresh period end). Revive an expired enrolment; never downgrade a
+    // human's active/paused/cancelled decision.
+    const revive = existing.status === 'expired' || existing.status === 'cancelled'
     await db.webinarEnrollment.update({
       where: { id: existing.id },
       data: {
         stripeSubscriptionId: input.stripeSubscriptionId,
         stripeCustomerId: input.stripeCustomerId,
+        billingInterval: input.billingInterval,
         expiresAt: input.expiresAt,
         matchConfidence: input.detected.confidence,
         matchReason: input.detected.reason,
-        // An expired enrolment whose subscription is active again is revived.
-        ...(existing.status === 'expired' ? { status: 'active', enrolledAt: new Date() } : {}),
+        ...(revive ? { status: 'active', enrolledAt: new Date(), deletedAt: null } : {}),
         updatedById: input.actorId,
       },
     })
-    return existing.status === 'expired' ? 'active' : (existing.status as 'active' | 'pending_review')
+    if (revive) {
+      await writeAuditLogEntry(db, {
+        actorId: input.actorId,
+        action: 'webinar.enrollment_revived',
+        target: { type: 'WebinarEnrollment', id: existing.id },
+        after: { stripeSubscriptionId: input.stripeSubscriptionId },
+        requestId: input.requestId,
+      })
+      return 'active'
+    }
+    return existing.status === 'active' ? 'active' : 'pending_review'
   }
 
   const id = createId()
@@ -293,6 +366,7 @@ async function upsertEnrollment(
       contactId: input.contactId,
       stripeSubscriptionId: input.stripeSubscriptionId,
       stripeCustomerId: input.stripeCustomerId,
+      billingInterval: input.billingInterval,
       status,
       source,
       matchConfidence: input.detected.confidence,
@@ -318,10 +392,15 @@ export interface ExpireResult {
   expired: number
 }
 
+const TERMINAL_STATES = new Set(['canceled', 'unpaid', 'incomplete_expired'])
+
 /**
- * Expire active enrolments whose backing subscription is no longer collecting:
- * either we hold a past `expiresAt`, or our StripeSubscription mirror shows a
- * terminal state. Stops the weekly emails (only `active` enrolments are sent).
+ * Expire active enrolments whose subscription is no longer collecting. The live
+ * Stripe subscription is the source of truth (CLAUDE.md §4): when Stripe is
+ * configured we refetch each distinct subscription once and lapse on a terminal
+ * status or a past period end (which also covers cancel-at-period-end, since
+ * access runs to the end of the paid period — a year for yearly plans). Without
+ * Stripe we fall back to our StripeSubscription mirror + the stored expiry.
  */
 export async function expireLapsedEnrollments(
   db: PrismaClient,
@@ -330,21 +409,51 @@ export async function expireLapsedEnrollments(
 ): Promise<ExpireResult> {
   const active = await db.webinarEnrollment.findMany({
     where: { status: 'active', deletedAt: null },
-    select: { id: true, stripeSubscriptionId: true, expiresAt: true, classId: true, contactId: true },
+    select: {
+      id: true,
+      stripeSubscriptionId: true,
+      expiresAt: true,
+      classId: true,
+      contactId: true,
+    },
   })
 
-  const terminal = new Set(['canceled', 'unpaid', 'incomplete_expired'])
+  let stripe: Stripe | null = null
+  try {
+    stripe = stripeClient.createClient()
+  } catch {
+    stripe = null
+  }
+  const liveCache = new Map<string, { status: string; periodEnd: number | null } | null>()
+
   let expired = 0
   for (const e of active) {
     let lapsed = false
-    if (e.expiresAt && e.expiresAt.getTime() < now.getTime()) lapsed = true
-    if (!lapsed && e.stripeSubscriptionId) {
-      const mirror = await db.stripeSubscription.findUnique({
-        where: { stripeId: e.stripeSubscriptionId },
-        select: { state: true },
-      })
-      if (mirror && terminal.has(mirror.state)) lapsed = true
+
+    if (stripe && e.stripeSubscriptionId) {
+      let live = liveCache.get(e.stripeSubscriptionId)
+      if (live === undefined) {
+        live = await fetchLiveSubscription(stripe, e.stripeSubscriptionId)
+        liveCache.set(e.stripeSubscriptionId, live)
+      }
+      if (live) {
+        if (TERMINAL_STATES.has(live.status)) lapsed = true
+        if (live.periodEnd && live.periodEnd * 1000 < now.getTime()) lapsed = true
+      } else {
+        // Subscription not found on Stripe (deleted) → access ends.
+        lapsed = true
+      }
+    } else {
+      if (e.expiresAt && e.expiresAt.getTime() < now.getTime()) lapsed = true
+      if (!lapsed && e.stripeSubscriptionId) {
+        const mirror = await db.stripeSubscription.findUnique({
+          where: { stripeId: e.stripeSubscriptionId },
+          select: { state: true },
+        })
+        if (mirror && TERMINAL_STATES.has(mirror.state)) lapsed = true
+      }
     }
+
     if (!lapsed) continue
     await db.webinarEnrollment.update({
       where: { id: e.id },
@@ -360,4 +469,20 @@ export async function expireLapsedEnrollments(
     expired += 1
   }
   return { checked: active.length, expired }
+}
+
+async function fetchLiveSubscription(
+  stripe: Stripe,
+  subscriptionId: string,
+): Promise<{ status: string; periodEnd: number | null } | null> {
+  try {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId)
+    return { status: sub.status, periodEnd: sub.current_period_end ?? null }
+  } catch (err) {
+    // 404 → treat as gone; other errors → unknown, leave as-is (return a
+    // non-terminal marker so we don't expire on a transient API error).
+    const code = (err as { statusCode?: number }).statusCode
+    if (code === 404) return null
+    return { status: 'active', periodEnd: null }
+  }
 }

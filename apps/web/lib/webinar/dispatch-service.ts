@@ -1,9 +1,11 @@
-// Weekly email dispatcher. For every active class with a session whose send
-// window has opened, email each active enrolment the Zoom link + a PDF schedule
-// via the connected Google mailbox (sendSystemEmail). Idempotent: a unique
-// (enrollmentId, weekNumber) dispatch row guards against double-sends across
-// retries. Only `active` enrolments are emailed, so expired subscriptions stop
-// receiving links automatically (CLAUDE.md §3, §17.2).
+// Weekly reminder dispatcher. On each configured send day (default Mon + Tue),
+// from the configured local hour, every active enrolment of every active class
+// gets an email carrying that week's Zoom link and the class's PDF schedule
+// (the uploaded syllabus PDF if there is one, else a generated schedule). Sent
+// through the connected Google mailbox (sendSystemEmail → info@studymind.co.uk
+// by default). Idempotent per (enrolment, week, send-day), so re-runs and
+// overlapping days never double-send. Only `active` enrolments are emailed, so
+// expired/cancelled subscriptions stop receiving links automatically.
 
 import { createId } from '@paralleldrive/cuid2'
 import type { PrismaClient } from '@prisma/client'
@@ -11,11 +13,13 @@ import type { PrismaClient } from '@prisma/client'
 import {
   DEFAULT_EMAIL_BODY_TEMPLATE,
   DEFAULT_EMAIL_SUBJECT_TEMPLATE,
-  dueSessions,
   formatSessionDate,
   formatSessionTime,
   levelLabel,
   renderWebinarEmail,
+  reminderDayNow,
+  sessionForLocalWeek,
+  sessionStartInstant,
   subjectLabel,
 } from '@studymind/core/webinar'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
@@ -28,7 +32,7 @@ import {
 
 export interface DispatchResult {
   classesChecked: number
-  sessionsDue: number
+  remindersDue: number
   sent: number
   skipped: number
   failed: number
@@ -53,8 +57,8 @@ async function resolveSettings(db: PrismaClient): Promise<ResolvedSettings> {
 }
 
 /**
- * Send all webinar emails whose send time has arrived. Pass `now` so the cron
- * and tests are deterministic.
+ * Send all reminder emails due at `now`. Pass `now` so the cron and tests are
+ * deterministic.
  */
 export async function dispatchDueWebinarEmails(
   db: PrismaClient,
@@ -63,7 +67,7 @@ export async function dispatchDueWebinarEmails(
 ): Promise<DispatchResult> {
   const result: DispatchResult = {
     classesChecked: 0,
-    sessionsDue: 0,
+    remindersDue: 0,
     sent: 0,
     skipped: 0,
     failed: 0,
@@ -73,25 +77,37 @@ export async function dispatchDueWebinarEmails(
 
   const classes = await db.webinarClass.findMany({
     where: { active: true, deletedAt: null, cohort: { status: 'active' } },
-    select: { id: true, sendOffsetHours: true, emailSubjectTemplate: true, emailBodyTemplate: true },
+    select: {
+      id: true,
+      sendDaysOfWeek: true,
+      sendHourLocal: true,
+      timezone: true,
+      emailSubjectTemplate: true,
+      emailBodyTemplate: true,
+    },
   })
 
   for (const cls of classes) {
     result.classesChecked += 1
+
+    // Is today a reminder day for this class, at/after its send hour?
+    const reminderDay = reminderDayNow(now, cls.timezone, cls.sendDaysOfWeek, cls.sendHourLocal)
+    if (reminderDay === null) continue
+
     const schedule = await loadClassSchedule(db, cls.id)
     if (!schedule) continue
 
-    const due = dueSessions(
-      schedule.sessions,
-      schedule.startMinute,
-      schedule.timezone,
-      cls.sendOffsetHours,
-      now,
-    )
-    if (due.length === 0) continue
-    result.sessionsDue += due.length
+    // The session in THIS local week (the one the reminder is for). None during
+    // a holiday week or out of term.
+    const session = sessionForLocalWeek(schedule.sessions, now, schedule.timezone)
+    if (!session) continue
+    result.remindersDue += 1
 
-    // Build the schedule PDF once per class (same attachment for everyone).
+    const startsAt = sessionStartInstant(session, schedule.startMinute, schedule.timezone)
+    const dateLabel = formatSessionDate(startsAt, schedule.timezone)
+    const timeLabel = formatSessionTime(startsAt, schedule.timezone)
+    const topic = schedule.topics.get(session.weekNumber) ?? 'This week’s topic'
+
     const pdf = await classAttachment(db, cls.id, schedule)
     const subjectTemplate = cls.emailSubjectTemplate || settings.subjectTemplate
     const bodyTemplate = cls.emailBodyTemplate || settings.bodyTemplate
@@ -101,77 +117,71 @@ export async function dispatchDueWebinarEmails(
       include: { contact: { select: { id: true, firstName: true, email: true } } },
     })
 
-    for (const d of due) {
-      const startsAt = d.startsAt
-      const dateLabel = formatSessionDate(startsAt, schedule.timezone)
-      const timeLabel = formatSessionTime(startsAt, schedule.timezone)
-      const topic = schedule.topics.get(d.session.weekNumber) ?? 'This week’s topic'
+    for (const enr of enrollments) {
+      // Respect a known expiry that falls before this session.
+      if (enr.expiresAt && enr.expiresAt.getTime() < startsAt.getTime()) {
+        result.skipped += 1
+        continue
+      }
+      const email = enr.contact.email
+      if (!email) {
+        result.skipped += 1
+        continue
+      }
+      // Idempotency: claim (enrolment, week, send-day) before sending.
+      const claimed = await claimDispatch(db, {
+        classId: cls.id,
+        enrollmentId: enr.id,
+        weekNumber: session.weekNumber,
+        sendDayOfWeek: reminderDay,
+        sessionAt: startsAt,
+      })
+      if (!claimed) {
+        result.skipped += 1
+        continue
+      }
 
-      for (const enr of enrollments) {
-        // Respect a known expiry that falls before this session.
-        if (enr.expiresAt && enr.expiresAt.getTime() < startsAt.getTime()) {
-          result.skipped += 1
-          continue
-        }
-        const email = enr.contact.email
-        if (!email) {
-          result.skipped += 1
-          continue
-        }
-        // Idempotency: claim (enrollmentId, weekNumber) before sending.
-        const claimed = await claimDispatch(db, {
-          classId: cls.id,
-          enrollmentId: enr.id,
-          weekNumber: d.session.weekNumber,
-          sessionAt: startsAt,
+      const rendered = renderWebinarEmail(subjectTemplate, bodyTemplate, {
+        studentName: enr.contact.firstName || 'there',
+        className: `${subjectLabel(schedule.subject)} ${levelLabel(schedule.level)}`,
+        subject: subjectLabel(schedule.subject),
+        level: levelLabel(schedule.level),
+        dateLabel,
+        timeLabel,
+        zoomLink: schedule.zoomLink || '(link to be confirmed)',
+        weekNumber: session.weekNumber,
+        weekTopic: topic,
+        fromName: settings.fromName,
+      })
+
+      try {
+        const send = await sendSystemEmail({
+          to: email,
+          subject: rendered.subject,
+          text: rendered.text,
+          attachments: pdf
+            ? [{ filename: pdf.filename, content: pdf.content, contentType: 'application/pdf' }]
+            : undefined,
+          fromAgentId: settings.senderMailboxUserId ?? undefined,
+          requestId,
         })
-        if (!claimed) {
-          result.skipped += 1
-          continue
-        }
-
-        const rendered = renderWebinarEmail(subjectTemplate, bodyTemplate, {
-          studentName: enr.contact.firstName || 'there',
-          className: `${subjectLabel(schedule.subject)} ${levelLabel(schedule.level)}`,
-          subject: subjectLabel(schedule.subject),
-          level: levelLabel(schedule.level),
-          dateLabel,
-          timeLabel,
-          zoomLink: schedule.zoomLink || '(link to be confirmed)',
-          weekNumber: d.session.weekNumber,
-          weekTopic: topic,
-          fromName: settings.fromName,
+        await db.webinarEmailDispatch.update({
+          where: { id: claimed },
+          data: {
+            status: send.status === 'sent' ? 'sent' : 'failed',
+            gmailMessageId: send.id,
+            error: send.status === 'sent' ? null : (send.detail ?? send.status),
+            sentAt: send.status === 'sent' ? new Date() : null,
+          },
         })
-
-        try {
-          const send = await sendSystemEmail({
-            to: email,
-            subject: rendered.subject,
-            text: rendered.text,
-            attachments: pdf
-              ? [{ filename: pdf.filename, content: pdf.content, contentType: 'application/pdf' }]
-              : undefined,
-            fromAgentId: settings.senderMailboxUserId ?? undefined,
-            requestId,
-          })
-          await db.webinarEmailDispatch.update({
-            where: { id: claimed },
-            data: {
-              status: send.status === 'sent' ? 'sent' : 'failed',
-              gmailMessageId: send.id,
-              error: send.status === 'sent' ? null : (send.detail ?? send.status),
-              sentAt: send.status === 'sent' ? new Date() : null,
-            },
-          })
-          if (send.status === 'sent') result.sent += 1
-          else result.failed += 1
-        } catch (err) {
-          await db.webinarEmailDispatch.update({
-            where: { id: claimed },
-            data: { status: 'failed', error: err instanceof Error ? err.message : 'send failed' },
-          })
-          result.failed += 1
-        }
+        if (send.status === 'sent') result.sent += 1
+        else result.failed += 1
+      } catch (err) {
+        await db.webinarEmailDispatch.update({
+          where: { id: claimed },
+          data: { status: 'failed', error: err instanceof Error ? err.message : 'send failed' },
+        })
+        result.failed += 1
       }
     }
   }
@@ -203,12 +213,18 @@ async function classAttachment(
 
 /**
  * Insert the dispatch row, returning its id when WE created it (so we own the
- * send) or null when it already existed (another run claimed it). The unique
- * (enrollmentId, weekNumber) constraint makes this race-safe.
+ * send) or null when it already existed. The unique
+ * (enrollmentId, weekNumber, sendDayOfWeek) constraint makes this race-safe.
  */
 async function claimDispatch(
   db: PrismaClient,
-  input: { classId: string; enrollmentId: string; weekNumber: number; sessionAt: Date },
+  input: {
+    classId: string
+    enrollmentId: string
+    weekNumber: number
+    sendDayOfWeek: number
+    sessionAt: Date
+  },
 ): Promise<string | null> {
   const id = createId()
   try {
@@ -218,6 +234,7 @@ async function claimDispatch(
         classId: input.classId,
         enrollmentId: input.enrollmentId,
         weekNumber: input.weekNumber,
+        sendDayOfWeek: input.sendDayOfWeek,
         sessionAt: input.sessionAt,
         status: 'scheduled',
       },
@@ -225,7 +242,6 @@ async function claimDispatch(
     })
     return row.id
   } catch {
-    // Unique violation — already claimed/sent. Skip.
     return null
   }
 }

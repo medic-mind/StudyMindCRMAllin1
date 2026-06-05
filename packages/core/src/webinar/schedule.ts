@@ -181,6 +181,90 @@ export function nextSession(
   return best
 }
 
+/* -------------------------------------------------------------------------- */
+/* Reminder send-day model (Mon/Tue by default, fully configurable)            */
+/* -------------------------------------------------------------------------- */
+
+export interface LocalCalendar {
+  year: number
+  month: number
+  day: number
+  /** 0 = Monday … 6 = Sunday. */
+  weekday: number
+  /** 0-23 local hour. */
+  hour: number
+}
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  Mon: 0,
+  Tue: 1,
+  Wed: 2,
+  Thu: 3,
+  Fri: 4,
+  Sat: 5,
+  Sun: 6,
+}
+
+/** Resolve the local calendar (date, weekday, hour) for an instant in `tz`. */
+export function localCalendar(instant: Date, timeZone: string): LocalCalendar {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(instant)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+  return {
+    year: Number(get('year')),
+    month: Number(get('month')),
+    day: Number(get('day')),
+    weekday: WEEKDAY_INDEX[get('weekday')] ?? 0,
+    hour: Number(get('hour')),
+  }
+}
+
+/** The UTC-midnight calendar dates for Monday..Sunday of the local week of `now`. */
+export function localWeekRange(now: Date, timeZone: string): { monday: Date; sunday: Date } {
+  const cal = localCalendar(now, timeZone)
+  const todayUtc = Date.UTC(cal.year, cal.month - 1, cal.day)
+  const monday = new Date(todayUtc - cal.weekday * DAY_MS)
+  const sunday = new Date(monday.getTime() + 6 * DAY_MS)
+  return { monday, sunday }
+}
+
+/** The session that falls in the same local week as `now`, or null. */
+export function sessionForLocalWeek(
+  sessions: WebinarSession[],
+  now: Date,
+  timeZone: string,
+): WebinarSession | null {
+  const { monday, sunday } = localWeekRange(now, timeZone)
+  const lo = dayKey(monday)
+  const hi = dayKey(sunday)
+  return sessions.find((s) => lo <= dayKey(s.date) && dayKey(s.date) <= hi) ?? null
+}
+
+/**
+ * Whether `now` is on a configured reminder day at/after the configured local
+ * send hour. Returns the active reminder weekday (0=Mon..6=Sun) when due, else
+ * null. The dispatcher uses the weekday as part of the idempotency key so each
+ * reminder day sends at most once.
+ */
+export function reminderDayNow(
+  now: Date,
+  timeZone: string,
+  sendDaysOfWeek: number[],
+  sendHourLocal: number,
+): number | null {
+  const cal = localCalendar(now, timeZone)
+  if (!sendDaysOfWeek.includes(cal.weekday)) return null
+  if (cal.hour < sendHourLocal) return null
+  return cal.weekday
+}
+
 /**
  * Whether a class's Zoom link is due for rotation: never set, or older than
  * `rotateEveryWeeks`.

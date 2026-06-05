@@ -13,6 +13,8 @@ interface SubjectRule {
   subject: WebinarSubject
   /** Ordered: more specific spellings first so we match whole words. */
   patterns: RegExp[]
+  /** If present and matched, the subject is rejected (e.g. "literature"). */
+  exclude?: RegExp
 }
 
 // Word-boundary patterns. `maths` also matches American "math" and the long
@@ -23,10 +25,21 @@ const SUBJECT_RULES: SubjectRule[] = [
   { subject: 'chemistry', patterns: [/\bchemistry\b/, /\bchem\b/] },
   { subject: 'physics', patterns: [/\bphysics\b/, /\bphys\b/] },
   { subject: 'maths', patterns: [/\bmaths?\b/, /\bmathematics\b/] },
+  // English Language (the live product). Match "english language" / "english
+  // lang" / a bare "english" — but not "english literature", handled below.
+  {
+    subject: 'english_language',
+    patterns: [/\benglish\s*lang(uage)?\b/, /\benglish\b/],
+    // Don't claim "English Literature" (a different product we don't run as a
+    // class) unless "language" is explicitly present.
+    exclude: /\bliterature\b/,
+  },
 ]
 
-const A_LEVEL = /\b(a[-\s]?level|a2|as[-\s]?level|ks5|sixth[-\s]?form)\b/
-const GCSE = /\b(gcse|ks4|year\s?1[01]|igcse)\b/
+// Year groups are a strong level signal: Y12/Y13 (sixth form) → A-Level,
+// Y10/Y11 → GCSE. Listed before the generic patterns so they take precedence.
+const A_LEVEL = /\b(a[-_\s]?level|a2|as[-_\s]?level|ks5|sixth[-\s]?form|year\s?1[23]|y1[23])\b/
+const GCSE = /\b(gcse|ks4|year\s?1[01]|y1[01]|igcse)\b/
 
 /** Normalise to lower-case with collapsed whitespace for matching. */
 function normalise(text: string): string {
@@ -61,6 +74,9 @@ export function detectWebinarClasses(...texts: Array<string | null | undefined>)
   for (const rule of SUBJECT_RULES) {
     const hit = rule.patterns.find((p) => p.test(text))
     if (!hit || seen.has(rule.subject)) continue
+    // Reject on an exclusion word unless an explicit strong pattern overrides
+    // it (e.g. "english language" beats the "literature" guard).
+    if (rule.exclude && rule.exclude.test(text) && !rule.patterns[0]!.test(text)) continue
     seen.add(rule.subject)
     // Strong match (whole subject word) scores higher than an abbreviation.
     // An explicit level is what pushes a match over the auto-enrol threshold

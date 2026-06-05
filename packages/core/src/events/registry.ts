@@ -422,6 +422,7 @@ export const EVENT_NAMES = [
   'webinar.enrollment_created',
   'webinar.enrollment_status_changed',
   'webinar.enrollment_expired',
+  'webinar.enrollment_revived',
   'webinar.enrollment_removed',
   'webinar.detect_run',
   'webinar.settings_updated',

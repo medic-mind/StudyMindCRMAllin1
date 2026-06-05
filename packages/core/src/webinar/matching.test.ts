@@ -46,4 +46,35 @@ describe('detectWebinarClasses', () => {
     // "biographies" should not match "bio" (word boundary).
     expect(matchWebinarClass('biographies book club')).toBeNull()
   })
+
+  it('detects English Language but not English Literature', () => {
+    const ok = matchWebinarClass('GCSE English Language weekly class')
+    expect(ok!.subject).toBe('english_language')
+    expect(ok!.level).toBe('gcse')
+    expect(matchWebinarClass('A-Level English Literature')).toBeNull()
+  })
+
+  it('maps year groups to levels (Y12/13 → A-level, Y10/11 → GCSE)', () => {
+    expect(matchWebinarClass('Biology Year 13 group')!.level).toBe('a_level')
+    expect(matchWebinarClass('Maths Y10 group')!.level).toBe('gcse')
+  })
+
+  it('reads level from metadata-style text (a_level with underscore)', () => {
+    const out = matchWebinarClass('subject biology', 'level a_level')
+    expect(out!.subject).toBe('biology')
+    expect(out!.level).toBe('a_level')
+  })
+
+  it('handles a multi-subject bundle in one product', () => {
+    const out = detectWebinarClasses('GCSE Science Bundle: Biology, Chemistry, Physics')
+    expect(out.map((c) => c.subject).sort()).toEqual(['biology', 'chemistry', 'physics'])
+    expect(out.every((c) => c.level === 'gcse')).toBe(true)
+  })
+
+  it('ignores billing words and still matches subject+level', () => {
+    const out = matchWebinarClass('A-Level Chemistry — yearly subscription')
+    expect(out!.subject).toBe('chemistry')
+    expect(out!.level).toBe('a_level')
+    expect(out!.confidence).toBeGreaterThanOrEqual(0.8)
+  })
 })

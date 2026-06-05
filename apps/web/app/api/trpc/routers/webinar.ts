@@ -317,7 +317,8 @@ const classRouter = router({
       zoomLink: cl.zoomLink,
       zoomLinkUpdatedAt: cl.zoomLinkUpdatedAt,
       zoomRotateEveryWeeks: cl.zoomRotateEveryWeeks,
-      sendOffsetHours: cl.sendOffsetHours,
+      sendDaysOfWeek: cl.sendDaysOfWeek,
+      sendHourLocal: cl.sendHourLocal,
       emailSubjectTemplate: cl.emailSubjectTemplate,
       emailBodyTemplate: cl.emailBodyTemplate,
       active: cl.active,
@@ -340,7 +341,8 @@ const classRouter = router({
         durationMins: z.number().int().min(15).max(480).default(60),
         timezone: z.string().trim().min(1).max(64).default('Europe/London'),
         zoomLink: z.string().trim().url().max(500).optional(),
-        sendOffsetHours: z.number().int().min(0).max(168).default(24),
+        sendDaysOfWeek: z.array(z.number().int().min(0).max(6)).max(7).default([0, 1]),
+        sendHourLocal: z.number().int().min(0).max(23).default(9),
         zoomRotateEveryWeeks: z.number().int().min(0).max(52).default(4),
       }),
     )
@@ -362,7 +364,8 @@ const classRouter = router({
             timezone: input.timezone,
             zoomLink: input.zoomLink ?? null,
             zoomLinkUpdatedAt: input.zoomLink ? new Date() : null,
-            sendOffsetHours: input.sendOffsetHours,
+            sendDaysOfWeek: [...new Set(input.sendDaysOfWeek)].sort(),
+            sendHourLocal: input.sendHourLocal,
             zoomRotateEveryWeeks: input.zoomRotateEveryWeeks,
             createdById: user.id,
             updatedById: user.id,
@@ -394,7 +397,8 @@ const classRouter = router({
         startMinute: z.number().int().min(0).max(1439).optional(),
         durationMins: z.number().int().min(15).max(480).optional(),
         timezone: z.string().trim().min(1).max(64).optional(),
-        sendOffsetHours: z.number().int().min(0).max(168).optional(),
+        sendDaysOfWeek: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+        sendHourLocal: z.number().int().min(0).max(23).optional(),
         zoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
         emailSubjectTemplate: z.string().trim().max(300).nullish(),
         emailBodyTemplate: z.string().trim().max(8000).nullish(),
@@ -404,7 +408,7 @@ const classRouter = router({
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       assertCanManage(user.role)
-      const { id, ...rest } = input
+      const { id, sendDaysOfWeek, ...rest } = input
       const before = await ctx.db.webinarClass.findUnique({
         where: { id },
         select: { title: true, active: true },
@@ -412,7 +416,13 @@ const classRouter = router({
       if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
       await ctx.db.webinarClass.update({
         where: { id },
-        data: { ...rest, updatedById: user.id },
+        data: {
+          ...rest,
+          ...(sendDaysOfWeek !== undefined
+            ? { sendDaysOfWeek: [...new Set(sendDaysOfWeek)].sort() }
+            : {}),
+          updatedById: user.id,
+        },
       })
       await ctx.audit({
         action: 'webinar.class_updated',
@@ -663,6 +673,7 @@ const enrollmentRouter = router({
         matchConfidence: e.matchConfidence,
         matchReason: e.matchReason,
         expiresAt: e.expiresAt,
+        billingInterval: e.billingInterval,
         classId: e.classId,
         classLabel: `${subjectLabel(e.webinarClass.subject)} ${levelLabel(
           e.webinarClass.level as WebinarLevel,
@@ -759,6 +770,31 @@ const enrollmentRouter = router({
       return { id: input.id }
     }),
 
+  /** Typeahead for manually adding a contact to a class's mailing list. */
+  contactSearch: protectedProcedure
+    .input(z.object({ term: z.string().trim().min(1).max(120) }))
+    .query(async ({ ctx, input }) => {
+      const term = input.term
+      const rows = await ctx.db.contact.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { email: { contains: term, mode: 'insensitive' } },
+            { firstName: { contains: term, mode: 'insensitive' } },
+            { lastName: { contains: term, mode: 'insensitive' } },
+          ],
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+        select: { id: true, firstName: true, lastName: true, email: true },
+      })
+      return rows.map((c) => ({
+        id: c.id,
+        name: [c.firstName, c.lastName].filter(Boolean).join(' ') || '(no name)',
+        email: c.email,
+      }))
+    }),
+
   /** Scan Stripe and organise weekly-class payers into classes. */
   detectFromStripe: auditedProcedure
     .input(z.object({ useAi: z.boolean().default(true) }).default({}))
@@ -774,6 +810,7 @@ const enrollmentRouter = router({
         action: 'webinar.detect_run',
         target: { type: 'WebinarSettings', id: 'webinar' },
         after: {
+          cohort: result.cohort,
           scanned: result.scanned,
           matched: result.matched,
           autoEnrolled: result.autoEnrolled,
@@ -793,7 +830,8 @@ const settingsRouter = router({
     const row = await ctx.db.webinarSettings.findUnique({ where: { id: 'webinar' } })
     return {
       senderMailboxUserId: row?.senderMailboxUserId ?? null,
-      defaultSendOffsetHours: row?.defaultSendOffsetHours ?? 24,
+      defaultSendDaysOfWeek: row?.defaultSendDaysOfWeek ?? [0, 1],
+      defaultSendHourLocal: row?.defaultSendHourLocal ?? 9,
       defaultZoomRotateEveryWeeks: row?.defaultZoomRotateEveryWeeks ?? 4,
       emailSubjectTemplate: row?.emailSubjectTemplate ?? '',
       emailBodyTemplate: row?.emailBodyTemplate ?? '',
@@ -805,7 +843,8 @@ const settingsRouter = router({
     .input(
       z.object({
         senderMailboxUserId: z.string().nullish(),
-        defaultSendOffsetHours: z.number().int().min(0).max(168).optional(),
+        defaultSendDaysOfWeek: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+        defaultSendHourLocal: z.number().int().min(0).max(23).optional(),
         defaultZoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
         emailSubjectTemplate: z.string().trim().max(300).optional(),
         emailBodyTemplate: z.string().trim().max(8000).optional(),
@@ -815,12 +854,17 @@ const settingsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       assertCanManage(user.role)
+      const sendDays =
+        input.defaultSendDaysOfWeek !== undefined
+          ? [...new Set(input.defaultSendDaysOfWeek)].sort()
+          : undefined
       await ctx.db.webinarSettings.upsert({
         where: { id: 'webinar' },
         create: {
           id: 'webinar',
           senderMailboxUserId: input.senderMailboxUserId ?? null,
-          defaultSendOffsetHours: input.defaultSendOffsetHours ?? 24,
+          defaultSendDaysOfWeek: sendDays ?? [0, 1],
+          defaultSendHourLocal: input.defaultSendHourLocal ?? 9,
           defaultZoomRotateEveryWeeks: input.defaultZoomRotateEveryWeeks ?? 4,
           emailSubjectTemplate: input.emailSubjectTemplate ?? '',
           emailBodyTemplate: input.emailBodyTemplate ?? '',
@@ -832,8 +876,9 @@ const settingsRouter = router({
           ...(input.senderMailboxUserId !== undefined
             ? { senderMailboxUserId: input.senderMailboxUserId }
             : {}),
-          ...(input.defaultSendOffsetHours !== undefined
-            ? { defaultSendOffsetHours: input.defaultSendOffsetHours }
+          ...(sendDays !== undefined ? { defaultSendDaysOfWeek: sendDays } : {}),
+          ...(input.defaultSendHourLocal !== undefined
+            ? { defaultSendHourLocal: input.defaultSendHourLocal }
             : {}),
           ...(input.defaultZoomRotateEveryWeeks !== undefined
             ? { defaultZoomRotateEveryWeeks: input.defaultZoomRotateEveryWeeks }

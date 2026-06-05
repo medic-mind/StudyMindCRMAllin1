@@ -23,16 +23,25 @@ const HOLIDAYS_2026: HolidaySpec[] = [
   { name: 'May half term', startsOn: '2027-05-31', endsOn: '2027-06-04' },
 ]
 
-// subject, level, weekday (0=Mon), start minute (local).
+const SUBJECT_LABEL: Record<string, string> = {
+  biology: 'Biology',
+  chemistry: 'Chemistry',
+  physics: 'Physics',
+  maths: 'Maths',
+  english_language: 'English Language',
+}
+
+// The live 2026/2027 group schedule. weekday 0=Mon..6=Sun; minute is local.
+// GCSE = Years 10-11, A-Level = Years 12-13.
 const CLASSES: Array<{ subject: string; level: 'gcse' | 'a_level'; day: number; minute: number }> = [
-  { subject: 'biology', level: 'gcse', day: 0, minute: 17 * 60 }, // Mon 17:00
-  { subject: 'biology', level: 'a_level', day: 0, minute: 18 * 60 }, // Mon 18:00
-  { subject: 'chemistry', level: 'gcse', day: 1, minute: 17 * 60 }, // Tue 17:00
-  { subject: 'chemistry', level: 'a_level', day: 1, minute: 18 * 60 },
-  { subject: 'physics', level: 'gcse', day: 2, minute: 17 * 60 }, // Wed 17:00
-  { subject: 'physics', level: 'a_level', day: 2, minute: 18 * 60 },
-  { subject: 'maths', level: 'gcse', day: 3, minute: 17 * 60 }, // Thu 17:00
-  { subject: 'maths', level: 'a_level', day: 3, minute: 18 * 60 },
+  { subject: 'biology', level: 'gcse', day: 5, minute: 17 * 60 }, // Sat 17:00-18:00
+  { subject: 'chemistry', level: 'gcse', day: 6, minute: 17 * 60 }, // Sun 17:00-18:00
+  { subject: 'maths', level: 'gcse', day: 4, minute: 17 * 60 }, // Fri 17:00-18:00
+  { subject: 'physics', level: 'gcse', day: 3, minute: 17 * 60 }, // Thu 17:00-18:00
+  { subject: 'english_language', level: 'gcse', day: 2, minute: 17 * 60 }, // Wed 17:00-18:00
+  { subject: 'biology', level: 'a_level', day: 5, minute: 18 * 60 }, // Sat 18:00-19:00
+  { subject: 'chemistry', level: 'a_level', day: 6, minute: 18 * 60 }, // Sun 18:00-19:00
+  { subject: 'maths', level: 'a_level', day: 4, minute: 18 * 60 }, // Fri 18:00-19:00
 ]
 
 const DEFAULT_SUBJECT_TEMPLATE = "{{className}} — this week's class ({{dateLabel}})"
@@ -96,9 +105,9 @@ export async function seedWebinar(): Promise<{ cohortId: string; classes: number
   }
 
   for (const c of CLASSES) {
-    const title = `${c.subject[0]!.toUpperCase()}${c.subject.slice(1)} ${
-      c.level === 'a_level' ? 'A-Level' : 'GCSE'
-    } weekly class`
+    const levelLabel = c.level === 'a_level' ? 'A-Level' : 'GCSE'
+    const years = c.level === 'a_level' ? 'Y12-13' : 'Y10-11'
+    const title = `${levelLabel} ${SUBJECT_LABEL[c.subject] ?? c.subject} (${years}) weekly class`
     await db.webinarClass.upsert({
       where: {
         cohortId_subject_level: { cohortId: cohort2026.id, subject: c.subject, level: c.level },
