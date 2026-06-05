@@ -13,6 +13,7 @@ import {
   type FailedSignInEvent,
   type RefundEvent,
 } from '@studymind/jobs/security/ueba'
+import { resolveTopicChannelId } from '@studymind/core/slack'
 import { inngest } from '@studymind/jobs'
 import { postAlert } from '@studymind/integration-slack/outbound'
 import { triggerEvent } from '@studymind/integration-pagerduty/client'
@@ -75,7 +76,11 @@ export const uebaWeekly = inngest.createFunction(
     }
 
     // Slack: one post per finding to #crm-incidents.
-    const incidentsChannel = process.env['SLACK_INCIDENTS_CHANNEL_ID'] ?? null
+    const incidentsChannel = await resolveTopicChannelId(
+      db,
+      'security_alerts',
+      process.env['SLACK_INCIDENTS_CHANNEL_ID'] ?? null,
+    )
     for (const f of findings.findings) {
       if (incidentsChannel) {
         await step.run(`slack-${f.dedupKey}`, () =>

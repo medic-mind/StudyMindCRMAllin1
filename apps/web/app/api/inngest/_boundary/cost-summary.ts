@@ -20,6 +20,7 @@ import {
   renderCostMarkdown,
   type CostDbReader,
 } from '@studymind/jobs/cost-summary'
+import { resolveTopicChannelId } from '@studymind/core/slack'
 import { inngest } from '@studymind/jobs'
 import { postAlert } from '@studymind/integration-slack/outbound'
 
@@ -93,7 +94,11 @@ export const costSummaryWeekly = inngest.createFunction(
     )
 
     // 3) Post to #crm-finops (override the default alerts channel).
-    const finopsChannel = process.env['SLACK_FINOPS_CHANNEL_ID'] ?? null
+    const finopsChannel = await resolveTopicChannelId(
+      db,
+      'cost_summary',
+      process.env['SLACK_FINOPS_CHANNEL_ID'] ?? null,
+    )
     if (finopsChannel) {
       const { text, blocks } = buildSlackText(summary.weekIso, summary.aiTotalUsd, signedUrl)
       await step.run('slack-post', () =>

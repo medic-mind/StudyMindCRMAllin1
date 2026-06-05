@@ -2231,8 +2231,35 @@ model SlackChannelOption {
   updatedById String?
   archivedAt  DateTime?
 
+  routes SlackRoute[]
+
   @@index([archivedAt])
   @@index([sortOrder])
+}
+
+/// Notification routing (Settings → Slack channels → "Where notifications go").
+/// Maps a code-defined notification topic (call summaries, Google Voice alerts,
+/// finance alerts, security alerts, …) to a Slack channel, editable from the
+/// app so changing where a kind of message goes needs no code change. Topic
+/// keys are the registry in packages/core/src/slack/topics.ts. `enabled=false`
+/// mutes the topic; when no row exists (or the channel is unset/archived),
+/// senders fall back to their default channel → env.
+model SlackRoute {
+  id              String  @id
+  /// Topic key from SLACK_TOPICS. Unique — one route per topic.
+  topic           String  @unique
+  /// Target channel from the SlackChannelOption catalogue; null = fall back.
+  channelOptionId String?
+  enabled         Boolean @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  channelOption SlackChannelOption? @relation(fields: [channelOptionId], references: [id], onDelete: SetNull)
+
+  @@index([channelOptionId])
 }
 
 // -----------------------------------------------------------------------------

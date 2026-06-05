@@ -4,3 +4,5 @@
 
 export * from './types'
 export * from './blocks'
+export * from './topics'
+export * from './route-resolver'

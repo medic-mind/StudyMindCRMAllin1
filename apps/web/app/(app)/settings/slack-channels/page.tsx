@@ -7,6 +7,7 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 
 import { SlackChannelsAdmin } from './SlackChannelsAdmin'
+import { SlackRoutesAdmin } from './SlackRoutesAdmin'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,11 +34,14 @@ export default async function SlackChannelsSettingsPage() {
     <>
       <PageHeader
         title="Slack channels"
-        subtitle="The Slack channels a call summary can be posted to as an internal action point for virtual assistants. Add deep-link buttons that take VAs straight back into the CRM."
+        subtitle="Manage the channels the CRM posts to, and route each kind of notification to the channel you want — no code change needed."
         breadcrumbs={BREADCRUMBS}
       />
       <PageBody>
-        <SlackChannelsAdmin />
+        <div className="space-y-6">
+          <SlackChannelsAdmin />
+          <SlackRoutesAdmin />
+        </div>
       </PageBody>
     </>
   )

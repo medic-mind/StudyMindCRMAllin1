@@ -9,6 +9,7 @@
 // Runs after `finance/reconcile-all-families` completes (§17.3) so the
 // invoice/payment state it reads is consistent.
 
+import { resolveTopicChannelId } from '@studymind/core/slack'
 import { flagDefaulters } from '@studymind/jobs/finance/flag-dd-defaulters'
 import { inngest } from '@studymind/jobs'
 import { postAlert } from '@studymind/integration-slack/outbound'
@@ -46,7 +47,11 @@ export const flagDdDefaultersNightly = inngest.createFunction(
     // Notify finops only when there are newly-flagged families, and only when
     // the channel is configured. Idempotency key is the UTC day so retries do
     // not double-post.
-    const finopsChannel = process.env['SLACK_FINOPS_CHANNEL_ID'] ?? null
+    const finopsChannel = await resolveTopicChannelId(
+      db,
+      'finance_dd_defaulters',
+      process.env['SLACK_FINOPS_CHANNEL_ID'] ?? null,
+    )
     if (result.newlyDefaulted.length > 0 && finopsChannel) {
       const dayKey = new Date().toISOString().slice(0, 10)
       const { text, blocks } = buildSlackText(result.newlyDefaulted.length)

@@ -179,13 +179,12 @@ async function postManualReviewAlert(args: {
   messageId: string
 }): Promise<void> {
   try {
-    // Honour the configured default Slack channel; fall back to env via postAlert.
-    const option = await db.slackChannelOption.findFirst({
-      where: { isDefault: true, archivedAt: null },
-      select: { channelId: true },
-    })
-    const channelId = option?.channelId ?? process.env['SLACK_ALERTS_CHANNEL_ID']
-    if (!channelId) return // nothing configured — skip silently
+    // Route the alert via the operator-configured topic mapping (Settings →
+    // Slack channels → "Where notifications go"); falls back to the default
+    // channel → env. Null = muted/unconfigured → skip silently.
+    const { resolveTopicChannelId } = await import('@studymind/core/slack')
+    const channelId = await resolveTopicChannelId(db, 'google_voice')
+    if (!channelId) return
 
     const link = args.contactId ? `${APP_URL}/contacts/${args.contactId}` : null
     const lines = [
