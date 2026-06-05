@@ -1106,6 +1106,9 @@ model Interaction {
   type       InteractionType
   contactId  String?
   familyId   String?
+  /// Optional link to a B2B account, so notes / activity can hang off a
+  /// School or Partnership the same way they do off a Contact.
+  businessAccountId String?
   occurredAt DateTime
   summary    String?
   payload    Json
@@ -1123,9 +1126,11 @@ model Interaction {
 
   contact Contact? @relation("ContactInteractions", fields: [contactId], references: [id])
   family  Family?  @relation("FamilyInteractions", fields: [familyId], references: [id])
+  businessAccount BusinessAccount? @relation("BusinessAccountInteractions", fields: [businessAccountId], references: [id])
 
   @@index([contactId, occurredAt])
   @@index([familyId, occurredAt])
+  @@index([businessAccountId, occurredAt])
   @@index([type, occurredAt])
   @@index([pendingHardDeleteAt])
 }
@@ -2073,13 +2078,19 @@ model Task {
   updatedById String?
   deletedAt   DateTime?
 
+  /// Optional link to a B2B account so tasks can be raised against a School
+  /// or Partnership, not only a Contact / Family.
+  businessAccountId String?
+
   family Family? @relation(fields: [familyId], references: [id])
   team   Team?   @relation(fields: [teamId], references: [id])
+  businessAccount BusinessAccount? @relation(fields: [businessAccountId], references: [id])
 
   @@unique([asanaTaskId])
   @@index([assigneeId, status])
   @@index([familyId])
   @@index([contactId])
+  @@index([businessAccountId])
   @@index([teamId, status])
 }
 
@@ -2353,6 +2364,8 @@ model BusinessAccount {
   uploadedInvoices   UploadedInvoice[]
   companies          BusinessAccountCompany[]
   labels             BusinessAccountLabel[]
+  interactions       Interaction[]            @relation("BusinessAccountInteractions")
+  tasks              Task[]
   /// Mirror of customers on the B2B Invoices Platform (b2b.studymind.co.uk)
   /// that correlate to this account (schools, partnerships, AP/council).
   invoicingCustomers InvoicingCustomer[]

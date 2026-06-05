@@ -498,6 +498,123 @@ const companiesSubRouter = router({
     }),
 })
 
+// Notes / tasks / activity on a B2B account — parity with the customer view.
+// Notes + tasks are Sales Executive+ to write (VA reads). CLAUDE.md §20.1.
+const ACCOUNT_WRITE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+])
+
+function assertCanWriteAccount(role: UserRole): void {
+  if (!ACCOUNT_WRITE_ROLES.has(role)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Sales Executive or above can write here' })
+  }
+}
+
+const accountNotesRouter = router({
+  list: protectedProcedure
+    .input(z.object({ accountId: z.string(), limit: z.number().int().min(1).max(100).default(50) }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.interaction.findMany({
+        where: { businessAccountId: input.accountId, type: 'note', deletedAt: null },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        take: input.limit,
+        select: { id: true, occurredAt: true, summary: true, payload: true },
+      })
+      return rows.map((r) => {
+        const p = (r.payload ?? {}) as { body?: unknown }
+        return {
+          id: r.id,
+          occurredAt: r.occurredAt,
+          body: typeof p.body === 'string' ? p.body : r.summary ?? '',
+        }
+      })
+    }),
+
+  add: auditedProcedure
+    .input(z.object({ accountId: z.string(), body: z.string().trim().min(1).max(4000) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanWriteAccount(user.role)
+      const acct = await ctx.db.businessAccount.findFirst({
+        where: { id: input.accountId },
+        select: { id: true },
+      })
+      if (!acct) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
+      const id = createId()
+      await ctx.db.interaction.create({
+        data: {
+          id,
+          type: 'note',
+          businessAccountId: input.accountId,
+          occurredAt: new Date(),
+          summary: input.body.slice(0, 280),
+          payload: { event: 'note.added', body: input.body, source: 'business_account' },
+          createdById: user.id,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'business_account.note_added',
+        target: { type: 'BusinessAccount', id: input.accountId },
+        after: { interactionId: id },
+      })
+      return { id }
+    }),
+})
+
+const accountTasksRouter = router({
+  list: protectedProcedure
+    .input(z.object({ accountId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.task.findMany({
+        where: { businessAccountId: input.accountId, deletedAt: null },
+        orderBy: [{ status: 'asc' }, { dueAt: 'asc' }, { createdAt: 'desc' }],
+        select: { id: true, title: true, status: true, dueAt: true, assigneeId: true },
+        take: 100,
+      })
+      // Task has no User relation — resolve assignee names in one batch.
+      const assigneeIds = [...new Set(rows.map((r) => r.assigneeId).filter((x): x is string => !!x))]
+      const users = assigneeIds.length
+        ? await ctx.db.user.findMany({
+            where: { id: { in: assigneeIds } },
+            select: { id: true, name: true, email: true },
+          })
+        : []
+      const nameById = new Map(users.map((u) => [u.id, u.name ?? u.email]))
+      const items = rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        dueAt: r.dueAt,
+        assigneeName: r.assigneeId ? nameById.get(r.assigneeId) ?? null : null,
+      }))
+      const isOpen = (s: string) => s !== 'done' && s !== 'cancelled'
+      return { open: items.filter((t) => isOpen(t.status)), closed: items.filter((t) => !isOpen(t.status)) }
+    }),
+})
+
+const accountActivityRouter = router({
+  list: protectedProcedure
+    .input(z.object({ accountId: z.string(), limit: z.number().int().min(1).max(100).default(30) }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.interaction.findMany({
+        where: { businessAccountId: input.accountId, deletedAt: null },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        take: input.limit,
+        select: { id: true, type: true, occurredAt: true, summary: true },
+      })
+      return rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        occurredAt: r.occurredAt,
+        summary: r.summary,
+      }))
+    }),
+})
+
 export const businessAccountRouter = router({
   list: protectedProcedure
     .input(
@@ -1055,5 +1172,8 @@ export const businessAccountRouter = router({
 
   contacts: contactsRouter,
   students: studentsRouter,
+  notes: accountNotesRouter,
+  tasks: accountTasksRouter,
+  activity: accountActivityRouter,
   companies: companiesSubRouter,
 })

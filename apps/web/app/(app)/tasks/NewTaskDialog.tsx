@@ -19,6 +19,7 @@ interface Props {
   /** Optional preset linkages from the parent page. */
   contactId?: string
   familyId?: string
+  businessAccountId?: string
   /** When the contact is preset (e.g. from a contact page), its display name. */
   contactName?: string
   /** Customise the trigger so the dialog can be a compact row action. */
@@ -31,6 +32,7 @@ interface Props {
 export function NewTaskDialog({
   contactId,
   familyId,
+  businessAccountId,
   contactName,
   triggerLabel,
   triggerVariant,
@@ -114,6 +116,7 @@ export function NewTaskDialog({
       dueAt: dueAt ? new Date(dueAt) : undefined,
       contactId: pickedContactId ?? undefined,
       familyId,
+      businessAccountId,
     })
   }
 

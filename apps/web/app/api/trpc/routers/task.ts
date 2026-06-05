@@ -82,6 +82,7 @@ const CreateInput = z.object({
   dueAt: z.date().optional(),
   contactId: z.string().min(1).optional(),
   familyId: z.string().min(1).optional(),
+  businessAccountId: z.string().min(1).optional(),
 })
 
 export const taskRouter = router({
@@ -267,6 +268,13 @@ export const taskRouter = router({
       })
       if (!f) throw new TRPCError({ code: 'NOT_FOUND', message: 'Family not found' })
     }
+    if (input.businessAccountId) {
+      const a = await ctx.db.businessAccount.findFirst({
+        where: { id: input.businessAccountId },
+        select: { id: true },
+      })
+      if (!a) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
+    }
     const assignee = await ctx.db.user.findFirst({
       where: { id: input.assigneeId, deletedAt: null, isActive: true },
       select: { id: true },
@@ -284,6 +292,7 @@ export const taskRouter = router({
         teamId: input.teamId ?? null,
         contactId: input.contactId ?? null,
         familyId: input.familyId ?? null,
+        businessAccountId: input.businessAccountId ?? null,
         dueAt: input.dueAt ?? null,
         createdById: user.id,
         updatedById: user.id,

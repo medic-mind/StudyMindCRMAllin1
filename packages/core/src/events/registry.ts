@@ -125,6 +125,9 @@ export const EVENT_NAMES = [
   'business_account.student_added',
   'business_account.student_updated',
   'business_account.student_archived',
+  // Notes + tasks on a B2B account (parity with the customer view).
+  'business_account.note_added',
+  'business_account.task_created',
 
   // Call summary templates (Settings → Call summary templates). Admin
   // catalogue used to prefill the contact page Call Summary panel.
