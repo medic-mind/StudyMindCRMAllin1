@@ -38,8 +38,11 @@ const SUBJECT_RULES: SubjectRule[] = [
 
 // Year groups are a strong level signal: Y12/Y13 (sixth form) → A-Level,
 // Y10/Y11 → GCSE. Listed before the generic patterns so they take precedence.
-const A_LEVEL = /\b(a[-_\s]?level|a2|as[-_\s]?level|ks5|sixth[-\s]?form|year\s?1[23]|y1[23])\b/
-const GCSE = /\b(gcse|ks4|year\s?1[01]|y1[01]|igcse)\b/
+// Kept deliberately broad because product NAMES carry the level in many forms
+// ("A-Level", "A Level", "AS/A2", "KS5", "Lower Sixth", "Year 12", "Yr13").
+const A_LEVEL =
+  /\b(a[-_\s]?levels?|a[-_\s]?lvl|a2|as[-_\s]?level|ks5|sixth[-\s]?form|(lower|upper)[-\s]?sixth|(year|yr)\s?1[23]|y1[23])\b/
+const GCSE = /\b(i?gcses?|ks4|(year|yr)\s?1[01]|y1[01])\b/
 
 /** Normalise to lower-case with collapsed whitespace for matching. */
 function normalise(text: string): string {

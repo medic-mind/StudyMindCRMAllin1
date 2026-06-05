@@ -203,7 +203,14 @@ export function ClassesManager({
                       </div>
                       <div className="mt-0.5 text-xs text-neutral-500">
                         {c.cohortName} · {c.dayLabel}s at {fmtMinute(c.startMinute)} ·{' '}
-                        {c.enrollmentCount} enrolled
+                        {c.enrollmentCount} enrolled ·{' '}
+                        {c.weekState === 'in_week'
+                          ? `Week ${c.currentWeekNumber} of ${c.totalWeeks}`
+                          : c.weekState === 'not_started'
+                            ? 'not started'
+                            : c.weekState === 'between'
+                              ? `on a break (next Week ${c.currentWeekNumber})`
+                              : 'term ended'}
                       </div>
                     </div>
                     <span className="text-sm text-primary-700">Manage →</span>

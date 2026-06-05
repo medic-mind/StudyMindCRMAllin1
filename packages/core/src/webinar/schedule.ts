@@ -266,6 +266,59 @@ export function reminderDayNow(
 }
 
 /**
+ * Where the term is right now for a class. `in_week` = there is a session in
+ * the current local week; `not_started` = the term hasn't begun (date points at
+ * the first session); `between` = a gap/holiday week (date points at the next
+ * session); `ended` = the term is over.
+ */
+export type WeekState = 'not_started' | 'in_week' | 'between' | 'ended'
+
+export interface CurrentWeek {
+  state: WeekState
+  /** 1-based teaching week, or null when not_started/ended. */
+  weekNumber: number | null
+  /** The session date this points at (this week's, or the next upcoming). */
+  date: Date | null
+  /** Total teaching weeks in the term (holidays excluded). */
+  totalWeeks: number
+}
+
+/**
+ * Derive the current teaching week for a class from its sessions + `now`.
+ * This is how the CRM "knows what week it is on". Pure — pass `now`.
+ */
+export function currentWeekInfo(
+  sessions: WebinarSession[],
+  now: Date,
+  timeZone: string,
+): CurrentWeek {
+  const totalWeeks = sessions.length
+  if (totalWeeks === 0) {
+    return { state: 'not_started', weekNumber: null, date: null, totalWeeks }
+  }
+  const thisWeek = sessionForLocalWeek(sessions, now, timeZone)
+  if (thisWeek) {
+    return { state: 'in_week', weekNumber: thisWeek.weekNumber, date: thisWeek.date, totalWeeks }
+  }
+  const { monday } = localWeekRange(now, timeZone)
+  const firstDate = sessions[0]!.date
+  const lastDate = sessions[totalWeeks - 1]!.date
+  if (monday.getTime() < firstDate.getTime()) {
+    return { state: 'not_started', weekNumber: null, date: firstDate, totalWeeks }
+  }
+  if (monday.getTime() > lastDate.getTime()) {
+    return { state: 'ended', weekNumber: null, date: null, totalWeeks }
+  }
+  const next = sessions.find((s) => s.date.getTime() >= monday.getTime()) ?? null
+  return {
+    state: 'between',
+    weekNumber: next?.weekNumber ?? null,
+    date: next?.date ?? null,
+    totalWeeks,
+  }
+}
+
+/**
  * Whether a class's Zoom link is due for rotation: never set, or older than
  * `rotateEveryWeeks`.
  */

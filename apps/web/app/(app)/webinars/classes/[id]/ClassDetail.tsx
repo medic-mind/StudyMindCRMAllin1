@@ -38,11 +38,63 @@ export function ClassDetail({
 }) {
   return (
     <div className="space-y-5">
+      <ThisWeekCard detail={detail} />
       <ZoomCard detail={detail} canManage={canManage} />
       <SyllabusCard detail={detail} canManage={canManage} />
       <SettingsCard detail={detail} canManage={canManage} />
       <EnrollmentsCard classId={detail.id} initial={enrollments} canManage={canManage} />
     </div>
+  )
+}
+
+function ThisWeekCard({ detail }: { detail: Detail }) {
+  const w = detail.currentWeek
+  const headline =
+    w.state === 'in_week'
+      ? `This week — Week ${w.weekNumber} of ${w.totalWeeks}`
+      : w.state === 'not_started'
+        ? 'Term not started yet'
+        : w.state === 'between'
+          ? `On a break — next up Week ${w.weekNumber} of ${w.totalWeeks}`
+          : 'Term has ended'
+  const tone = w.state === 'in_week' ? 'success' : w.state === 'ended' ? 'neutral' : 'info'
+  return (
+    <Card className={w.state === 'in_week' ? 'border-emerald-200 bg-emerald-50/40' : undefined}>
+      <CardBody>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <Badge tone={tone}>{headline}</Badge>
+              {detail.hasUploadedPdf ? (
+                <Badge tone="info">PDF schedule attached</Badge>
+              ) : (
+                <Badge tone="neutral">auto schedule PDF</Badge>
+              )}
+            </div>
+            {w.dateLabel ? (
+              <p className="mt-1.5 text-sm text-neutral-700">
+                {w.state === 'not_started' ? 'Starts ' : 'Session: '}
+                <span className="font-medium">{w.dateLabel}</span>
+                {w.timeLabel ? ` at ${w.timeLabel}` : ''}
+                {w.topic ? <> — {w.topic}</> : null}
+              </p>
+            ) : null}
+            <p className="mt-1 text-xs text-neutral-500">
+              The reminder email reflects this week&apos;s session and attaches the schedule PDF the
+              CRM holds.
+            </p>
+          </div>
+          <a
+            href={`/webinars/classes/${detail.id}/schedule.pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-primary-700 hover:underline"
+          >
+            View schedule PDF →
+          </a>
+        </div>
+      </CardBody>
+    </Card>
   )
 }
 

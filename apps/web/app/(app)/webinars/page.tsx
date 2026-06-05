@@ -84,6 +84,7 @@ export default async function WebinarsOverviewPage() {
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
           <Stat label="Active classes" value={o.classCount} href="/webinars/classes" />
+          <Stat label="Sessions this week" value={o.sessionsThisWeek} href="/webinars/classes" />
           <Stat label="Active enrolments" value={o.activeEnrollments} href="/webinars/enrollments" />
           <Stat
             label="Awaiting review"

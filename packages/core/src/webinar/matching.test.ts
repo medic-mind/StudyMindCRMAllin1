@@ -77,4 +77,15 @@ describe('detectWebinarClasses', () => {
     expect(out!.level).toBe('a_level')
     expect(out!.confidence).toBeGreaterThanOrEqual(0.8)
   })
+
+  it('is robust to level wording in real product names', () => {
+    expect(matchWebinarClass('Lower Sixth Biology')!.level).toBe('a_level')
+    expect(matchWebinarClass('AQA A2 Maths weekly')!.level).toBe('a_level')
+    expect(matchWebinarClass('Yr11 Chemistry group')!.level).toBe('gcse')
+    expect(matchWebinarClass('Edexcel IGCSE Physics')!.level).toBe('gcse')
+    // Plural / spacing variants in a product name.
+    const p = matchWebinarClass('GCSEs - Biology Weekly Classes')
+    expect(p!.subject).toBe('biology')
+    expect(p!.level).toBe('gcse')
+  })
 })

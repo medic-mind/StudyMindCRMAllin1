@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   computeSessions,
+  currentWeekInfo,
   dueSessions,
   isHoliday,
   localCalendar,
@@ -124,6 +125,40 @@ describe('reminder send-day model', () => {
     const mon = new Date('2026-09-07T08:00:00Z')
     const s = sessionForLocalWeek(sessions, mon, tz)
     expect(s?.date.toISOString().slice(0, 10)).toBe('2026-09-12')
+  })
+})
+
+describe('currentWeekInfo', () => {
+  const tz = 'Europe/London'
+  // Saturdays in Sept 2026: 05(W1), 12(W2), 19(W3), 26(W4).
+  const sessions = computeSessions(d('2026-09-01'), d('2026-09-30'), 5)
+
+  it('knows the current teaching week', () => {
+    // Monday 2026-09-07 is in the week of Sat 2026-09-12 = week 2.
+    const info = currentWeekInfo(sessions, new Date('2026-09-07T09:00:00Z'), tz)
+    expect(info.state).toBe('in_week')
+    expect(info.weekNumber).toBe(2)
+    expect(info.totalWeeks).toBe(4)
+  })
+
+  it('reports not_started before the term and points at week 1', () => {
+    const info = currentWeekInfo(sessions, new Date('2026-08-20T09:00:00Z'), tz)
+    expect(info.state).toBe('not_started')
+    expect(info.date?.toISOString().slice(0, 10)).toBe('2026-09-05')
+  })
+
+  it('reports ended after the term', () => {
+    const info = currentWeekInfo(sessions, new Date('2026-10-20T09:00:00Z'), tz)
+    expect(info.state).toBe('ended')
+  })
+
+  it('reports between (holiday week) and points at the next session', () => {
+    const holidaySessions = computeSessions(d('2026-09-01'), d('2026-09-30'), 5, [
+      { startsOn: d('2026-09-07'), endsOn: d('2026-09-13') }, // knocks out Sat 09-12
+    ])
+    const info = currentWeekInfo(holidaySessions, new Date('2026-09-07T09:00:00Z'), tz)
+    expect(info.state).toBe('between')
+    expect(info.date?.toISOString().slice(0, 10)).toBe('2026-09-19')
   })
 })
 

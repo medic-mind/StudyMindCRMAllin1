@@ -11,6 +11,7 @@ import { z } from 'zod'
 import {
   AUTO_ENROLL_CONFIDENCE,
   computeSessions,
+  currentWeekInfo,
   formatSessionDateShort,
   formatSessionTime,
   levelLabel,
@@ -250,30 +251,42 @@ const classRouter = router({
         where: { deletedAt: null, ...(input.cohortId ? { cohortId: input.cohortId } : {}) },
         orderBy: [{ subject: 'asc' }, { level: 'asc' }],
         include: {
-          cohort: { select: { name: true, status: true } },
+          cohort: { select: { name: true, status: true, startsOn: true, endsOn: true, holidays: true } },
           _count: { select: { enrollments: true } },
         },
       })
-      return rows.map((cl) => ({
-        id: cl.id,
-        cohortId: cl.cohortId,
-        cohortName: cl.cohort.name,
-        subject: cl.subject,
-        subjectLabel: subjectLabel(cl.subject),
-        level: cl.level,
-        levelLabel: levelLabel(cl.level as WebinarLevel),
-        title: cl.title,
-        dayOfWeek: cl.dayOfWeek,
-        dayLabel: WEEKDAY_LABEL[cl.dayOfWeek] ?? '—',
-        startMinute: cl.startMinute,
-        timezone: cl.timezone,
-        zoomLink: cl.zoomLink,
-        zoomLinkUpdatedAt: cl.zoomLinkUpdatedAt,
-        zoomRotationDue: zoomRotationDue(cl.zoomLinkUpdatedAt, cl.zoomRotateEveryWeeks, now),
-        active: cl.active,
-        enrollmentCount: cl._count.enrollments,
-        hasUploadedPdf: (cl.syllabusPdfByteSize ?? 0) > 0,
-      }))
+      return rows.map((cl) => {
+        const sessions = computeSessions(
+          cl.cohort.startsOn,
+          cl.cohort.endsOn,
+          cl.dayOfWeek,
+          cl.cohort.holidays.map((h) => ({ startsOn: h.startsOn, endsOn: h.endsOn })),
+        )
+        const week = currentWeekInfo(sessions, now, cl.timezone)
+        return {
+          id: cl.id,
+          cohortId: cl.cohortId,
+          cohortName: cl.cohort.name,
+          subject: cl.subject,
+          subjectLabel: subjectLabel(cl.subject),
+          level: cl.level,
+          levelLabel: levelLabel(cl.level as WebinarLevel),
+          title: cl.title,
+          dayOfWeek: cl.dayOfWeek,
+          dayLabel: WEEKDAY_LABEL[cl.dayOfWeek] ?? '—',
+          startMinute: cl.startMinute,
+          timezone: cl.timezone,
+          zoomLink: cl.zoomLink,
+          zoomLinkUpdatedAt: cl.zoomLinkUpdatedAt,
+          zoomRotationDue: zoomRotationDue(cl.zoomLinkUpdatedAt, cl.zoomRotateEveryWeeks, now),
+          active: cl.active,
+          enrollmentCount: cl._count.enrollments,
+          hasUploadedPdf: (cl.syllabusPdfByteSize ?? 0) > 0,
+          weekState: week.state,
+          currentWeekNumber: week.weekNumber,
+          totalWeeks: week.totalWeeks,
+        }
+      })
     }),
 
   get: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
@@ -301,10 +314,30 @@ const classRouter = router({
       timeLabel: formatSessionTime(sessionStartInstant(s, cl.startMinute, cl.timezone), cl.timezone),
       topic: topics.get(s.weekNumber) ?? '',
     }))
+    const week = currentWeekInfo(sessions, new Date(), cl.timezone)
+    const currentWeek = {
+      state: week.state,
+      weekNumber: week.weekNumber,
+      totalWeeks: week.totalWeeks,
+      dateLabel: week.date
+        ? formatSessionDateShort(
+            sessionStartInstant({ weekNumber: week.weekNumber ?? 0, date: week.date }, cl.startMinute, cl.timezone),
+            cl.timezone,
+          )
+        : null,
+      timeLabel: week.date
+        ? formatSessionTime(
+            sessionStartInstant({ weekNumber: week.weekNumber ?? 0, date: week.date }, cl.startMinute, cl.timezone),
+            cl.timezone,
+          )
+        : null,
+      topic: week.weekNumber != null ? (topics.get(week.weekNumber) ?? '') : '',
+    }
     return {
       id: cl.id,
       cohortId: cl.cohortId,
       cohortName: cl.cohort.name,
+      currentWeek,
       subject: cl.subject,
       subjectLabel: subjectLabel(cl.subject),
       level: cl.level,
@@ -919,7 +952,13 @@ export const webinarRouter = router({
         }),
         ctx.db.webinarClass.findMany({
           where: { active: true, deletedAt: null, cohort: { status: 'active' } },
-          select: { zoomLinkUpdatedAt: true, zoomRotateEveryWeeks: true },
+          select: {
+            zoomLinkUpdatedAt: true,
+            zoomRotateEveryWeeks: true,
+            dayOfWeek: true,
+            timezone: true,
+            cohort: { select: { startsOn: true, endsOn: true, holidays: true } },
+          },
         }),
         ctx.db.webinarEnrollment.count({ where: { status: 'active', deletedAt: null } }),
         ctx.db.webinarEnrollment.count({ where: { status: 'pending_review', deletedAt: null } }),
@@ -933,6 +972,15 @@ export const webinarRouter = router({
     const zoomDue = classes.filter((c) =>
       zoomRotationDue(c.zoomLinkUpdatedAt, c.zoomRotateEveryWeeks, now),
     ).length
+    const sessionsThisWeek = classes.filter((c) => {
+      const sessions = computeSessions(
+        c.cohort.startsOn,
+        c.cohort.endsOn,
+        c.dayOfWeek,
+        c.cohort.holidays.map((h) => ({ startsOn: h.startsOn, endsOn: h.endsOn })),
+      )
+      return currentWeekInfo(sessions, now, c.timezone).state === 'in_week'
+    }).length
     return {
       activeCohort,
       classCount: classes.length,
@@ -940,6 +988,7 @@ export const webinarRouter = router({
       pendingReview,
       expiringSoon,
       zoomRotationDue: zoomDue,
+      sessionsThisWeek,
       emailsSentLast7Days: recentDispatches,
       autoEnrollThreshold: AUTO_ENROLL_CONFIDENCE,
     }
