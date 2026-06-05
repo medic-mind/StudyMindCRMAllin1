@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation'
 
 import { AccountInvoicingPanel } from '@/components/invoicing/AccountInvoicingPanel'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
+import { DetailTabs, TabPanel } from '@/components/shared/detail-tabs'
 import { getCurrentUser } from '@/lib/auth/server'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -87,36 +88,46 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
 
         <AccountStatsBand stats={account.stats} />
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <AccountEditor account={account} />
-          <AccountContacts account={account} />
-        </div>
+        <DetailTabs>
+          <TabPanel id="details" label="Details">
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
+              <AccountEditor account={account} />
+              <AccountContacts account={account} />
+            </div>
+          </TabPanel>
 
-        <AccountStudents accountId={account.id} />
+          <TabPanel id="students" label="Students">
+            <AccountStudents accountId={account.id} />
+          </TabPanel>
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-neutral-900">Invoicing</h2>
-            <span className="text-[11px] uppercase tracking-wide text-neutral-500">
-              B2B Invoices Platform
-            </span>
-          </div>
-          <AccountInvoicingPanel
-            target={{ kind: 'businessAccount', businessAccountId: account.id }}
-            canWrite={canInvoiceWrite}
-            canMarkPaid={canInvoiceMarkPaid}
-          />
-        </section>
+          <TabPanel id="invoicing" label="Invoicing">
+            <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-neutral-900">Invoicing</h2>
+                <span className="text-[11px] uppercase tracking-wide text-neutral-500">
+                  B2B Invoices Platform
+                </span>
+              </div>
+              <AccountInvoicingPanel
+                target={{ kind: 'businessAccount', businessAccountId: account.id }}
+                canWrite={canInvoiceWrite}
+                canMarkPaid={canInvoiceMarkPaid}
+              />
+            </section>
+          </TabPanel>
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-neutral-900">Invoice files</h2>
-            <span className="text-[11px] uppercase tracking-wide text-neutral-500">
-              Uploaded paperwork
-            </span>
-          </div>
-          <InvoicesPanel target={{ kind: 'businessAccount', businessAccountId: account.id }} />
-        </section>
+          <TabPanel id="invoice-files" label="Invoice files">
+            <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-neutral-900">Invoice files</h2>
+                <span className="text-[11px] uppercase tracking-wide text-neutral-500">
+                  Uploaded paperwork
+                </span>
+              </div>
+              <InvoicesPanel target={{ kind: 'businessAccount', businessAccountId: account.id }} />
+            </section>
+          </TabPanel>
+        </DetailTabs>
       </div>
     </>
   )
