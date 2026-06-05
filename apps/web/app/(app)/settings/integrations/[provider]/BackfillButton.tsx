@@ -19,6 +19,8 @@ interface Props {
 export function BackfillButton({ provider }: Props): JSX.Element {
   const router = useRouter()
   const [done, setDone] = useState(false)
+  // Aircall imports a clean 1 month; Slack keeps the standard 90 days.
+  const windowLabel = provider === 'aircall' ? 'last 1 month' : 'last 90 days'
   const start = trpc.admin.backfill.start.useMutation({
     onSuccess: () => {
       setDone(true)
@@ -42,7 +44,7 @@ export function BackfillButton({ provider }: Props): JSX.Element {
         ? 'Starting…'
         : done
           ? 'Backfill queued'
-          : 'Backfill last 90 days'}
+          : `Backfill ${windowLabel}`}
     </Button>
   )
 }

@@ -507,7 +507,7 @@ Every async unit of work is an Inngest function. Conventions:
 | `booking/sync-credit-ledger` | every 15 min | Pull the credit ledger → `BookingCreditTransaction` |
 | `ai/regenerate-status-summaries` | every 30 min for changed contacts | Refresh the 2 sentence "Current Status" header |
 | `aircall/recover-disabled-webhook` | hourly | Re-enable Aircall webhook if it was disabled by failures |
-| `aircall/sync-calls` | every 10 min | Pull recent Aircall calls (matched + unmatched) via REST so the call mirror stays complete even if a webhook is missed. No-op without `AIRCALL_API_*`. Cursor = newest stored call − 1h overlap (no cursor table) |
+| `aircall/sync-calls` | every 10 min | Pull recent Aircall calls (matched + unmatched) via REST so the call mirror stays complete even if a webhook is missed. No-op without `AIRCALL_API_*`. Cursor = newest stored call − 1h overlap (no cursor table); cold-start reaches back `AIRCALL_SYNC_LOOKBACK_DAYS` (default 30 — a clean 1-month import, matching the admin backfill) then moves forward |
 | `gocardless/reconcile-late-failures` | every 4 hours | Walk recent confirmations and surface any new late failures |
 | `webinar/dispatch-weekly-emails` | hourly | Send the weekly class email (Zoom link + PDF schedule) for any session whose send window has opened (ADR 0031) |
 | `webinar/expire-enrollments` | hourly | Expire webinar enrolments whose Stripe subscription has lapsed so the links stop |
