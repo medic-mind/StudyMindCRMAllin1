@@ -68,7 +68,7 @@ export const FLAGS = {
   },
   'google_voice.email_ingest_enabled': {
     description:
-      'Ingest Google Voice notification emails (voicemail / missed call / text) from voice-noreply@google.com via the Gmail sync, logging calls + alerting the team for manual follow-up (ADR 0031). Off until a Google Voice number points at a synced mailbox.',
+      'Ingest Google Voice notification emails (voicemail / missed call / text) from voice-noreply@google.com via the Gmail sync, logging calls + alerting the team for manual follow-up (ADR 0032). Off until a Google Voice number points at a synced mailbox.',
     kind: 'release',
     default: false,
     owner: 'tech-lead',

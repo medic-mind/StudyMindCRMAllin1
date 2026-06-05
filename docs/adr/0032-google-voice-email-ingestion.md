@@ -1,4 +1,4 @@
-# ADR 0031: Google Voice is ingested via its notification emails
+# ADR 0032: Google Voice is ingested via its notification emails
 
 - Status: Accepted
 - Date: 2026-06-04

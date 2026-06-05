@@ -156,7 +156,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   const bccAddrs = parseAddresses(bccHeader)
 
   // Google Voice notification emails (voicemail / missed call / text) are how
-  // we ingest that channel — it has no call API (ADR 0031). Behind a flag so
+  // we ingest that channel — it has no call API (ADR 0032). Behind a flag so
   // it stays off until a Google Voice number points at a synced mailbox.
   if (
     isGoogleVoiceSender(fromAddrs) &&

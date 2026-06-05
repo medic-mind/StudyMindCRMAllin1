@@ -1,4 +1,4 @@
-// Side-effecting Google Voice handler (Option A — ADR 0031). Called from the
+// Side-effecting Google Voice handler (Option A — ADR 0032). Called from the
 // Gmail sync `processMessage` when a message is a Google Voice notification and
 // the `google_voice.email_ingest_enabled` flag is on.
 //

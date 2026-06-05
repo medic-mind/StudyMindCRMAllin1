@@ -1,4 +1,4 @@
-// Pure parser for Google Voice notification emails (Option A — ADR 0031).
+// Pure parser for Google Voice notification emails (Option A — ADR 0032).
 //
 // Google Voice has no public call/SMS API, so we ingest the notification
 // emails it sends to the connected mailbox (voicemails with transcript +
