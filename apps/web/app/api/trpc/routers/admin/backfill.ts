@@ -127,6 +127,73 @@ export const adminBackfillRouter = router({
       }
     }),
 
+  /**
+   * Manual Trengo history import for the calling agent. Unlike the 90-day
+   * auto-on-connect backfill, this defaults to an ~8-month window and CREATES
+   * a Contact for senders not already in the CRM (the explicit, operator-
+   * confirmed exception to §11's webhook default). It runs through the
+   * caller's own per-agent Trengo token, so they must have connected one.
+   * CEO | Senior Manager only.
+   */
+  trengoImport: auditedProcedure
+    .input(
+      z.object({
+        windowDays: z.number().int().min(1).max(366).default(243),
+        createContacts: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!WRITE_ROLES.has(user.role)) throw new TRPCError({ code: 'FORBIDDEN' })
+
+      const token = await ctx.db.trengoToken.findFirst({
+        where: { agentId: user.id, deletedAt: null },
+        select: { agentId: true },
+      })
+      if (!token) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'Connect your Trengo token first (Account → Trengo), then start the import.',
+        })
+      }
+
+      const { inngest } = await import('@studymind/jobs')
+      try {
+        const res = await startBackfill(ctx.db, inngest, {
+          provider: 'trengo',
+          agentId: user.id,
+          windowDays: input.windowDays,
+          createContacts: input.createContacts,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        await ctx.audit({
+          action: 'backfill.started',
+          target: { type: 'BackfillJob', id: res.jobId },
+          after: {
+            provider: 'trengo',
+            windowDays: input.windowDays,
+            createContacts: input.createContacts,
+            initiatedBy: user.id,
+          },
+        })
+        return { jobId: res.jobId }
+      } catch (err) {
+        if (err instanceof BackfillAlreadyRunningError) {
+          await ctx.audit({
+            action: 'backfill.started',
+            target: { type: 'BackfillJob', id: err.existingJobId },
+            after: { provider: 'trengo', alreadyRunning: true },
+          })
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'A Trengo backfill is already pending or running.',
+          })
+        }
+        throw err
+      }
+    }),
+
   cancel: auditedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {

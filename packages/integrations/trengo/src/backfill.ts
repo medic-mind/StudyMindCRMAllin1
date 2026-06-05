@@ -13,6 +13,7 @@ import {
   markBackfillFailed,
   markBackfillRunning,
 } from '@studymind/core/backfill'
+import { splitDisplayName } from '@studymind/core/contact/from-call'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -24,6 +25,13 @@ interface BackfillRequestedData {
   agentId: string | null
   windowFrom: string
   windowTo: string
+  /**
+   * Manual import only: create a lightweight Contact for a conversation whose
+   * sender is not already in the CRM (instead of skipping it). The auto-on-
+   * connect 90-day backfill leaves this false and keeps its "matched only"
+   * behaviour.
+   */
+  createContacts?: boolean
 }
 
 interface TrengoConvSummary {
@@ -54,6 +62,7 @@ export const trengoBackfillRequested = inngest.createFunction(
   async ({ event, step, logger }) => {
     const data = event.data as BackfillRequestedData
     const { jobId, agentId, windowFrom } = data
+    const createContacts = data.createContacts ?? false
     if (!agentId) {
       await markBackfillFailed(db, jobId, 'trengo backfill requires agentId', jobId)
       return { skipped: true, reason: 'no_agent_id' }
@@ -64,6 +73,7 @@ export const trengoBackfillRequested = inngest.createFunction(
     let processed = 0
     let matched = 0
     let skipped = 0
+    let created = 0
     let page = 1
 
     try {
@@ -89,11 +99,18 @@ export const trengoBackfillRequested = inngest.createFunction(
 
         for (const conv of convs.rows) {
           const result = await step.run(`conv-${conv.id}`, async () =>
-            processConversation({ client, conv, jobId }),
+            processConversation({
+              client,
+              conv,
+              jobId,
+              createContacts,
+              actorId: agentId,
+            }),
           )
           processed += result.processed
           matched += result.matched
           skipped += result.skipped
+          created += result.created
         }
         await step.run(`progress-${page}`, async () =>
           incrementBackfillProgress(db, jobId, {
@@ -116,7 +133,7 @@ export const trengoBackfillRequested = inngest.createFunction(
           requestId: jobId,
         }),
       )
-      return { ok: true, processed, matched, skipped }
+      return { ok: true, processed, matched, skipped, created }
     } catch (err) {
       logger.error({ jobId, agentId, err }, 'trengo backfill failed')
       await markBackfillFailed(
@@ -134,12 +151,16 @@ interface ProcessConversationInput {
   client: TrengoClient
   conv: TrengoConvSummary
   jobId: string
+  /** Manual import: create a Contact for a sender not already in the CRM. */
+  createContacts: boolean
+  /** Stamped as createdById/updatedById on any Contact this creates. */
+  actorId: string | null
 }
 
 async function processConversation(
   input: ProcessConversationInput,
-): Promise<{ processed: number; matched: number; skipped: number }> {
-  const { client, conv } = input
+): Promise<{ processed: number; matched: number; skipped: number; created: number }> {
+  const { client, conv, createContacts } = input
 
   // Match conversation contact (phone first, email fallback — §11).
   const phone = conv.contact?.phone?.trim() ?? null
@@ -164,6 +185,24 @@ async function processConversation(
     if (c) {
       contactId = c.id
       familyId = c.familyMembers[0]?.familyId ?? null
+    }
+  }
+
+  // Unknown sender + operator-triggered import → create a lightweight Contact
+  // keyed on the sender's phone/email so the conversation has a home. The §11
+  // "never auto-create a Contact from Trengo" rule is the *webhook* default
+  // (spam routes); this explicit, role-gated bulk import is the deliberate
+  // exception. New rows are tagged `referralSource: 'Trengo import'` so the
+  // whole batch is filterable/reviewable. Dedup is the DB itself: the next
+  // conversation from the same person matches the row we just created, so one
+  // Contact is made per unique phone/email — and re-runs converge (the match
+  // finds it, message Interactions dedupe on trengoMessageId).
+  let created = 0
+  if (!contactId && createContacts) {
+    const newId = await createContactFromConversation(conv, input.actorId)
+    if (newId) {
+      contactId = newId
+      created = 1
     }
   }
 
@@ -213,7 +252,42 @@ async function processConversation(
     })
     matched += 1
   }
-  return { processed, matched, skipped }
+  return { processed, matched, skipped, created }
+}
+
+/**
+ * Create a lightweight Contact from a Trengo conversation's sender details.
+ * Returns the new id, or null when there is nothing to key the row on (no
+ * E.164 phone and no email) — we never make nameless ghost rows. Mirrors the
+ * call-channel onboarding (`resolveOrCreateContactForCall`): `kind: 'parent'`
+ * is the education-CRM default an agent recategorises.
+ */
+async function createContactFromConversation(
+  conv: TrengoConvSummary,
+  actorId: string | null,
+): Promise<string | null> {
+  const phone = conv.contact?.phone?.trim() ?? null
+  const email = conv.contact?.email?.trim().toLowerCase() ?? null
+  const hasPhone = !!phone && phone.startsWith('+')
+  if (!hasPhone && !email) return null
+
+  const name = conv.contact?.name?.trim() ?? ''
+  const split = name ? splitDisplayName(name) : { firstName: '', lastName: null }
+  const id = createId()
+  await db.contact.create({
+    data: {
+      id,
+      kind: 'parent',
+      firstName: split.firstName || null,
+      lastName: split.lastName,
+      email,
+      phoneE164: hasPhone ? phone : null,
+      referralSource: 'Trengo import',
+      createdById: actorId,
+      updatedById: actorId,
+    },
+  })
+  return id
 }
 
 export const BACKFILL_FUNCTIONS = [trengoBackfillRequested] as const

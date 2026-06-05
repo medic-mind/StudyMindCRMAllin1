@@ -20,6 +20,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 import { IntegrationTestButton } from '../IntegrationTestButton'
 
 import { BackfillButton } from './BackfillButton'
+import { TrengoImportButton } from './TrengoImportButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
 
 const BACKFILL_PROVIDERS = new Set(['gmail', 'aircall', 'trengo', 'slack'])
@@ -366,12 +367,16 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                 </h2>
                 {showBackfillButton ? (
                   <BackfillButton provider={provider as 'aircall' | 'slack'} />
+                ) : provider === 'trengo' && canTest ? (
+                  <TrengoImportButton />
                 ) : null}
               </div>
               <p className="mt-1 text-xs text-neutral-500">
                 {SHARED_TOKEN_BACKFILL.has(provider)
                   ? 'Pulls the last 90 days of history and creates retroactive timeline entries for matched contacts.'
-                  : 'A 90-day historic import runs automatically the first time an agent connects.'}
+                  : provider === 'trengo'
+                    ? 'A 90-day import runs automatically on first connect (matched contacts only). “Import last 8 months” pulls a longer window and creates a Contact for each unknown sender, tagged “Trengo import” so the batch stays reviewable.'
+                    : 'A 90-day historic import runs automatically the first time an agent connects.'}
               </p>
               {backfillRuns.length === 0 ? (
                 <p className="mt-3 rounded-lg border border-neutral-200 bg-white p-4 text-sm text-neutral-600 shadow-card">

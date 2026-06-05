@@ -52,6 +52,14 @@ export interface StartBackfillInput {
   windowDays?: number
   /** Anchor for the window. Defaults to "now". */
   windowTo?: Date
+  /**
+   * Trengo manual import only: when true, the worker creates a lightweight
+   * Contact for a conversation whose sender is not already in the CRM
+   * (instead of skipping it). Other providers ignore this. Defaults to false
+   * so the auto-on-connect backfill keeps its original "matched only"
+   * behaviour.
+   */
+  createContacts?: boolean
   ctx: BackfillCtx
 }
 
@@ -142,6 +150,7 @@ export async function startBackfill(
       agentId,
       windowFrom: windowFrom.toISOString(),
       windowTo: windowTo.toISOString(),
+      createContacts: input.createContacts ?? false,
     },
   })
 
