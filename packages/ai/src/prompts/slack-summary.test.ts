@@ -44,6 +44,7 @@ describe('slackSummarySchema', () => {
     const parsed = slackSummarySchema.parse({
       candidateContactIdentifier: { name: 'Jane Doe', email: null, phone: null },
       summary: 'Parent confirmed availability for Tuesday session.',
+      category: 'scheduling',
       sentiment: 'positive',
       suggestedNextAction: 'Book Tuesday slot',
       confidence: 0.84,
@@ -56,6 +57,7 @@ describe('slackSummarySchema', () => {
       slackSummarySchema.parse({
         candidateContactIdentifier: { name: null, email: null, phone: null },
         summary: 'x',
+        category: 'general',
         sentiment: 'neutral',
         suggestedNextAction: null,
         confidence: 1.2,

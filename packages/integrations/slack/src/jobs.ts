@@ -170,6 +170,14 @@ export const slackEventReceived = inngest.createFunction(
             slackEventId: eventId,
             slackTs: message.ts,
             channelId: message.channel,
+            channelName: null,
+            // Archive the ORIGINAL message text + author so the full internal
+            // record survives Slack's 90-day retention (§21). The view-model
+            // (contact-channels SlackMention) already surfaces these fields.
+            messageText: message.text,
+            senderName: message.user ?? null,
+            // AI categorisation so the archived record is sortable.
+            category: parsed.category,
             sentiment: parsed.sentiment,
             suggestedNextAction: parsed.suggestedNextAction,
             confidence: parsed.confidence,

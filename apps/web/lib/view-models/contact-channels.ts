@@ -314,6 +314,7 @@ export interface SlackMention {
   senderName: string | null
   messageText: string | null
   summary: string | null
+  category: string | null
   sentiment: string | null
   suggestedNextAction: string | null
   permalink: string | null
@@ -347,6 +348,7 @@ export async function slackMentionsForContact(
       senderName: asString(p['senderName']),
       messageText: asString(p['messageText']),
       summary: r.summary,
+      category: asString(p['category']),
       sentiment: asString(p['sentiment']),
       suggestedNextAction: asString(p['suggestedNextAction']),
       permalink: asString(p['permalink']) ?? asString(p['slackPermalink']),

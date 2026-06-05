@@ -235,7 +235,13 @@ async function processSlackMessage(
         event: 'slack.message_summarised',
         slackTs: message.ts,
         channelId,
+        channelName: null,
         permalink: message.permalink ?? null,
+        // Archive the original message + author so the record outlives Slack's
+        // 90-day window (ADR 0034). Category sorts the record.
+        messageText: message.text ?? null,
+        senderName: message.user ?? null,
+        category: parsed.category,
         sentiment: parsed.sentiment,
         suggestedNextAction: parsed.suggestedNextAction,
         confidence: parsed.confidence,

@@ -5,6 +5,7 @@
     "phone": null
   },
   "summary": "Reminder posted about a weekly finance review.",
+  "category": "general",
   "sentiment": "neutral",
   "suggestedNextAction": null,
   "confidence": 0.0

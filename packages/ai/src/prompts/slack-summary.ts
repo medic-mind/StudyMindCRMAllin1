@@ -9,7 +9,20 @@ import { z } from 'zod'
 import { sanitiseUserContent } from '../sanitise'
 import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding'
 
-export const VERSION = '2026-05-09.1'
+export const VERSION = '2026-06-05.1'
+
+/** Operational categories for archived Slack mentions about a customer. Keeps
+ * the internal record sortable (ADR 0034). */
+export const SLACK_SUMMARY_CATEGORIES = [
+  'billing',
+  'scheduling',
+  'feedback',
+  'complaint',
+  'academic',
+  'logistics',
+  'sales',
+  'general',
+] as const
 
 export const slackSummarySchema = z.object({
   candidateContactIdentifier: z.object({
@@ -18,6 +31,8 @@ export const slackSummarySchema = z.object({
     phone: z.string().nullable(),
   }),
   summary: z.string().min(1).max(600),
+  /** The kind of matter the message is about — for sorting the record. */
+  category: z.enum(SLACK_SUMMARY_CATEGORIES),
   sentiment: z.enum(['positive', 'neutral', 'negative']),
   suggestedNextAction: z.string().min(1).max(280).nullable(),
   confidence: z.number().min(0).max(1),
@@ -45,6 +60,9 @@ Definitions:
   message references no person, set all three to null.
 - summary: one or two sentences. No PII beyond what already appears in the
   message. Past tense.
+- category: the kind of matter the message is about, one of: billing,
+  scheduling, feedback, complaint, academic, logistics, sales, general. Pick
+  the single best fit; use "general" when nothing else clearly applies.
 - sentiment: dominant tone of the matter being discussed.
 - suggestedNextAction: a short imperative for the assigned ops agent. Null
   if no follow-up is warranted.

@@ -29,6 +29,11 @@ export function SlackSection({ mentions }: Props): JSX.Element {
             <span>
               {m.channelName ? `#${m.channelName}` : m.channelId ?? 'Slack'}
               {m.senderName && <> · {m.senderName}</>}
+              {m.category && (
+                <span className="ml-2 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-primary-800">
+                  {m.category}
+                </span>
+              )}
               {m.sentiment && (
                 <span
                   className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
