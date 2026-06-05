@@ -54,19 +54,6 @@ Guiding principles (the "think like a manager who won't recode later" rule):
   Accounts, Boards, Tasks, Reports), filtered as you type. Compose opens the
   in-house composer (the provider now wraps the TopBar too).
 
-## Shipped (increment 5 — tabbed detail pages)
-
-- Dense detail pages no longer scroll forever: a URL-driven `<DetailTabs>` /
-  `<TabPanel>` primitive (`components/shared/detail-tabs.tsx`) splits a long
-  section stack into tabs (state in `?tab=`, shareable; only the active tab's
-  client sections mount/fetch).
-- **Customer** page (`/contacts/[id]`): Overview · Comms · Finance · Tasks
-  (count badge) · Notes & files · Timeline — the identity rail stays alongside.
-- **B2B / Schools** page (`/accounts/[id]`): Details · Students · Invoicing ·
-  Invoice files.
-- Agents/users is a management list (no per-agent detail page), so it keeps its
-  list UI. The Family detail page is a candidate for the same treatment next.
-
 ## Staged plan (next increments)
 
 ### Increment 2b — confirm sweep — *shipped*

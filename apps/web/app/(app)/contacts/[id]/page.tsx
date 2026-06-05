@@ -15,7 +15,6 @@ import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButto
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { ComposeEmailButton } from '@/components/mail/compose-email'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
-import { DetailTabs, TabPanel } from '@/components/shared/detail-tabs'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -263,12 +262,12 @@ export default async function ContactDetailPage({
                 Open family
               </Link>
             )}
-            <Link href={`/contacts/${contact.id}?tab=notes`} className={ACTION_LINK_CLS}>
+            <a href="#section-notes" className={ACTION_LINK_CLS}>
               Add note
-            </Link>
-            <Link href={`/contacts/${contact.id}?tab=comms`} className={ACTION_LINK_CLS}>
+            </a>
+            <a href="#section-forward" className={ACTION_LINK_CLS}>
               Forward to…
-            </Link>
+            </a>
           </div>
         </div>
       </header>
@@ -277,10 +276,8 @@ export default async function ContactDetailPage({
       <ChannelTiles summary={summary} />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        {/* Main column — tabbed so dense customers stay navigable */}
-        <div className="min-w-0">
-          <DetailTabs>
-          <TabPanel id="overview" label="Overview">
+        {/* Main column */}
+        <div className="min-w-0 space-y-5">
           <ContactSearchBar contactId={contact.id} />
 
           <SectionCard
@@ -291,9 +288,6 @@ export default async function ContactDetailPage({
             <LinkedContactsSection contactId={contact.id} />
           </SectionCard>
 
-          </TabPanel>
-
-          <TabPanel id="comms" label="Comms">
           <SectionCard id="section-email" title="Email" icon={<MailIcon size={16} />}>
             <EmailSection threads={emailThreads.items} />
           </SectionCard>
@@ -351,9 +345,6 @@ export default async function ContactDetailPage({
             <TrengoSection contactId={contact.id} conversations={trengo.items} />
           </SectionCard>
 
-          </TabPanel>
-
-          <TabPanel id="finance" label="Finance">
           {contact.family && (
             <SectionCard id="section-payments" title="Payments" icon={<CoinsIcon size={16} />}>
               <PaymentsPanel target={{ contactId: contact.id }} />
@@ -368,9 +359,6 @@ export default async function ContactDetailPage({
             <InvoicesPanel target={{ kind: 'contact', contactId: contact.id }} />
           </SectionCard>
 
-          </TabPanel>
-
-          <TabPanel id="tasks" label="Tasks" count={tasks.open.length}>
           <SectionCard
             id="section-tasks"
             title="Tasks"
@@ -380,9 +368,6 @@ export default async function ContactDetailPage({
             <TasksSection open={tasks.open} closed={tasks.closed} />
           </SectionCard>
 
-          </TabPanel>
-
-          <TabPanel id="notes" label="Notes & files">
           <SectionCard id="section-notes" title="Notes" icon={<FileTextIcon size={16} />}>
             <div className="space-y-3">
               <AddNote contactId={contact.id} />
@@ -419,9 +404,6 @@ export default async function ContactDetailPage({
             <DocumentsSection contactId={contact.id} />
           </SectionCard>
 
-          </TabPanel>
-
-          <TabPanel id="timeline" label="Timeline">
           <SectionCard
             id="section-timeline"
             title="Activity timeline"
@@ -433,8 +415,6 @@ export default async function ContactDetailPage({
               contactId={contact.id}
             />
           </SectionCard>
-          </TabPanel>
-          </DetailTabs>
         </div>
 
         {/* Sticky detail rail */}
