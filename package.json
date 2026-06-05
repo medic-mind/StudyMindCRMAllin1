@@ -23,6 +23,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,md,json}\"",
     "db:migrate": "pnpm --filter @studymind/db exec prisma migrate dev",
     "db:seed": "pnpm --filter @studymind/db exec prisma db seed",
+    "db:seed:webinar": "pnpm --filter @studymind/db exec tsx prisma/seed-webinar-run.ts",
     "seed:super-admin": "pnpm --filter @studymind/db exec tsx prisma/seed-super-admin.ts",
     "db:reset-password": "pnpm --filter @studymind/db exec tsx prisma/reset-password.ts",
     "db:reset": "pnpm --filter @studymind/db exec prisma migrate reset --force",

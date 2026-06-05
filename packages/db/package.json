@@ -16,6 +16,7 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:webinar": "tsx prisma/seed-webinar-run.ts",
     "db:seed:super-admin": "tsx prisma/seed-super-admin.ts",
     "db:reset-password": "tsx prisma/reset-password.ts",
     "db:studio": "prisma studio"
