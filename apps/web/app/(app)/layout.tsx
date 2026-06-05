@@ -41,7 +41,14 @@ function buildNav(role: Role): NavItem[] {
     // Communications — customer channels. Inbox is the unified cross-channel
     // customer view (WhatsApp / SMS / web-chat / email); Mail is the focused
     // email client. Both are customer-facing.
-    { href: '/inbox', label: 'Inbox' },
+    {
+      href: '/inbox',
+      label: 'Inbox',
+      children: [
+        { href: '/inbox', label: 'Conversations' },
+        { href: '/inbox/slack-mentions', label: 'Slack mentions' },
+      ],
+    },
     { href: '/mail', label: 'Mail' },
     // Internal — staff↔staff chat. Renamed from the colliding "Messages"
     // (the sidebar said "Messages" for staff chat while the inbox said

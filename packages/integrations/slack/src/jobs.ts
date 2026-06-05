@@ -102,10 +102,14 @@ export const slackEventReceived = inngest.createFunction(
             channelId: message.channel,
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
+            messageText: message.text,
+            senderName: message.user ?? null,
           },
           update: {
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
+            messageText: message.text,
+            senderName: message.user ?? null,
           },
         }),
       )
@@ -135,10 +139,14 @@ export const slackEventReceived = inngest.createFunction(
             channelId: message.channel,
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
+            messageText: message.text,
+            senderName: message.user ?? null,
           },
           update: {
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
+            messageText: message.text,
+            senderName: message.user ?? null,
           },
         }),
       )

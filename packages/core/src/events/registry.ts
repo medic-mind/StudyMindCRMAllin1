@@ -269,6 +269,10 @@ export const EVENT_NAMES = [
   // Slack
   'slack.alert_posted',
   'slack.message_summarised',
+  // Triage of the unassigned Slack-mentions tray: a human assigns a parked
+  // mention to a contact (creating the slack_summary record) or dismisses it.
+  'slack_summary.assigned',
+  'slack_summary.dismissed',
 
   // System / audit
   'audit.logged',

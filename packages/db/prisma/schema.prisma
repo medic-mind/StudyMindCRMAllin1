@@ -2687,6 +2687,11 @@ model UnassignedSummary {
   /// Output of the slack-summary AI prompt.
   parsed       Json
   confidence   Float
+  /// Original Slack message + author, archived so the triage tray shows what
+  /// was actually said and the record survives Slack's 90-day retention even
+  /// before it is assigned to a contact (ADR 0034).
+  messageText  String?
+  senderName   String?
   createdAt    DateTime  @default(now())
   resolvedAt   DateTime?
   resolvedById String?

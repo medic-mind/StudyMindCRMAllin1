@@ -59,6 +59,7 @@ import { quickReplyRouter } from './routers/quickReply'
 import { reportsRouter } from './routers/reports'
 import { searchRouter } from './routers/search'
 import { slackChannelRouter } from './routers/slackChannel'
+import { slackSummaryRouter } from './routers/slackSummary'
 import { taskRouter } from './routers/task'
 import { teamRouter } from './routers/team'
 import { uploadedInvoiceRouter } from './routers/uploadedInvoice'
@@ -99,6 +100,7 @@ export const appRouter = router({
   reports: reportsRouter,
   search: searchRouter,
   slackChannel: slackChannelRouter,
+  slackSummary: slackSummaryRouter,
   task: taskRouter,
   team: teamRouter,
   uploadedInvoice: uploadedInvoiceRouter,
