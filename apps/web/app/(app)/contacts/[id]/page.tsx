@@ -154,6 +154,25 @@ export default async function ContactDetailPage({
 
   const kindTone = KIND_TONE[contact.kind] ?? 'neutral'
 
+  // Light "jump to section" nav — keeps the full page, just makes it navigable
+  // (every section still renders below). Anchors land below the sticky bar via
+  // the SectionCard heading's scroll-mt.
+  const sectionNav: Array<[string, string]> = [
+    ['section-links', 'Linked'],
+    ['section-email', 'Email'],
+    ['section-calls', 'Calls'],
+    ['section-call-summary', 'Call summary'],
+    ['section-forward', 'Forward'],
+    ['section-slack', 'Slack'],
+    ['section-trengo', 'Trengo'],
+    ...(contact.family ? ([['section-payments', 'Payments']] as Array<[string, string]>) : []),
+    ['section-invoices', 'Invoices'],
+    ['section-tasks', 'Tasks'],
+    ['section-notes', 'Notes'],
+    ['section-documents', 'Documents'],
+    ['section-timeline', 'Timeline'],
+  ]
+
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       {/* Hero header */}
@@ -278,6 +297,21 @@ export default async function ContactDetailPage({
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
         {/* Main column */}
         <div className="min-w-0 space-y-5">
+          {/* Quick jump nav — full page stays; this just makes it navigable. */}
+          <nav
+            aria-label="Jump to section"
+            className="sticky top-0 z-20 -mx-1 flex flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white/90 px-2 py-1.5 shadow-card backdrop-blur supports-[backdrop-filter]:bg-white/75"
+          >
+            {sectionNav.map(([anchor, label]) => (
+              <a
+                key={anchor}
+                href={`#${anchor}`}
+                className="rounded-md px-2.5 py-1 text-xs font-medium text-neutral-600 transition-colors hover:bg-primary-50 hover:text-primary-700"
+              >
+                {label}
+              </a>
+            ))}
+          </nav>
           <ContactSearchBar contactId={contact.id} />
 
           <SectionCard
