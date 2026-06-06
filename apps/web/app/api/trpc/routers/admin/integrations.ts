@@ -14,6 +14,8 @@ import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { STALE_BACKFILL_MS } from '@studymind/core/backfill'
+
 import {
   auditedProcedure,
   protectedProcedure,
@@ -517,14 +519,20 @@ export const adminIntegrationsRouter = router({
       // import job (backfill, the 10-min sync, webhook processing). A backfill
       // stuck `pending` past a few minutes means the worker isn't picking jobs
       // up, which usually means Inngest isn't connected/synced. CLAUDE.md §17.
-      const STUCK_PENDING_MS = 3 * 60 * 1000
+      // A pending OR running job whose progress has not advanced for the shared
+      // stale window is orphaned (the worker restarted mid-run or never picked
+      // it up). Counting `running` too — not just `pending` — is what surfaces
+      // the "Importing 0 items…" jobs that otherwise sit invisible.
       const [lastCronRun, stuckBackfills] = await Promise.all([
         ctx.db.cronRun.findFirst({
           orderBy: { finishedAt: 'desc' },
           select: { finishedAt: true, functionId: true, success: true },
         }),
         ctx.db.backfillJob.count({
-          where: { status: 'pending', createdAt: { lt: new Date(nowMs - STUCK_PENDING_MS) } },
+          where: {
+            status: { in: ['pending', 'running'] },
+            updatedAt: { lt: new Date(nowMs - STALE_BACKFILL_MS) },
+          },
         }),
       ])
       const backgroundJobs = {

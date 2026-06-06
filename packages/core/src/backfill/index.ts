@@ -33,6 +33,18 @@ import { logger } from '../logger'
 
 export type { BackfillJob, BackfillProvider } from '@prisma/client'
 
+/**
+ * A pending/running backfill whose progress has not advanced for this long is
+ * treated as orphaned: the web service that serves Inngest was almost always
+ * redeployed mid-run, so the Inngest run was abandoned and the row would sit
+ * `running`/`pending` forever — blocking every retry via
+ * `BackfillAlreadyRunningError` and showing "Importing 0 items…" indefinitely.
+ * `startBackfill` supersedes such a job instead of blocking, so an operator can
+ * always re-trigger an import; the integrations diagnostics reuse this window
+ * to flag stalled jobs.
+ */
+export const STALE_BACKFILL_MS = 15 * 60 * 1000
+
 /** Minimal interface a job-event sender (the Inngest client) must satisfy. */
 export interface BackfillEventSender {
   send(event: { name: string; data: Record<string, unknown> }): Promise<unknown>
@@ -104,16 +116,35 @@ export async function startBackfill(
   const windowFrom = new Date(windowTo.getTime() - windowDays * 24 * 60 * 60 * 1000)
   const agentId = input.agentId ?? null
 
+  // A genuinely in-flight job blocks a duplicate (idempotent). But an orphaned
+  // job — one whose progress has not advanced for STALE_BACKFILL_MS — is
+  // superseded (marked failed) so the operator is never deadlocked behind a
+  // run the worker abandoned. `updatedAt` advances on every progress write, so
+  // a healthy import is never mistaken for stale.
   const existing = await db.backfillJob.findFirst({
     where: {
       provider: input.provider,
       agentId,
       status: { in: ['pending', 'running'] },
     },
-    select: { id: true },
+    select: { id: true, updatedAt: true },
+    orderBy: { createdAt: 'desc' },
   })
   if (existing) {
-    throw new BackfillAlreadyRunningError(input.provider, agentId, existing.id)
+    const stale = Date.now() - existing.updatedAt.getTime() > STALE_BACKFILL_MS
+    if (!stale) {
+      throw new BackfillAlreadyRunningError(input.provider, agentId, existing.id)
+    }
+    await markBackfillFailed(
+      db,
+      existing.id,
+      'Superseded — the previous run stalled (the worker restarted mid-import or never picked it up).',
+      input.ctx.requestId,
+    )
+    logger.warn(
+      { provider: input.provider, agentId, supersededJobId: existing.id },
+      'backfill: superseding a stalled job and starting a fresh one',
+    )
   }
 
   const jobId = createId()

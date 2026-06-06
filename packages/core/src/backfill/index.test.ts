@@ -22,7 +22,7 @@ interface Recorded {
   sent: { name: string; data: Record<string, unknown> }[]
 }
 
-function makeStubs(existingJob: { id: string } | null = null) {
+function makeStubs(existingJob: { id: string; updatedAt?: Date } | null = null) {
   const rec: Recorded = {
     backfillJobCreate: [],
     backfillJobUpdate: [],
@@ -37,7 +37,10 @@ function makeStubs(existingJob: { id: string } | null = null) {
         rec.backfillJobCreate.push(args)
         return { id: 'x' }
       }),
-      update: vi.fn(async () => ({ provider: 'gmail', agentId: 'u1' })),
+      update: vi.fn(async (args: unknown) => {
+        rec.backfillJobUpdate.push(args)
+        return { provider: 'gmail', agentId: 'u1' }
+      }),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     auditLogEntry: {
@@ -73,8 +76,8 @@ describe('startBackfill', () => {
     expect(rec.auditCreate).toHaveLength(1)
   })
 
-  it('throws when an active job already exists for (provider, agentId)', async () => {
-    const { db, sender } = makeStubs({ id: 'existing' })
+  it('throws when an active, recently-progressing job already exists', async () => {
+    const { db, sender } = makeStubs({ id: 'existing', updatedAt: new Date() })
     await expect(
       startBackfill(db, sender, {
         provider: 'gmail',
@@ -82,6 +85,26 @@ describe('startBackfill', () => {
         ctx: { actorId: 'agent_1', requestId: 'req_2' },
       }),
     ).rejects.toBeInstanceOf(BackfillAlreadyRunningError)
+  })
+
+  it('supersedes a stalled job and starts a fresh one', async () => {
+    // An orphaned run (no progress for >15 min) must not deadlock retries.
+    const { db, sender, rec } = makeStubs({
+      id: 'orphaned',
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+    })
+    const res = await startBackfill(db, sender, {
+      provider: 'aircall',
+      agentId: null,
+      ctx: { actorId: 'agent_1', requestId: 'req_stale' },
+    })
+    expect(res.status).toBe('pending')
+    // The stale row was marked failed (superseded) ...
+    expect(rec.backfillJobUpdate).toHaveLength(1)
+    // ... and a brand-new job + event were created.
+    expect(rec.backfillJobCreate).toHaveLength(1)
+    expect(rec.sent).toHaveLength(1)
+    expect(rec.sent[0]?.name).toBe('backfill/aircall.requested')
   })
 
   it('honours a custom windowDays', async () => {
