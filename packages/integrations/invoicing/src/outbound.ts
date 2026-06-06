@@ -185,9 +185,17 @@ export interface RaiseInvoiceInput {
   currency?: string
   clientType?: InvoiceWritePayload['client_type']
   pricesIncludeVat?: boolean
+  issueDate?: string
   dueDate?: string
   poNumber?: string
+  paymentReference?: string
+  paymentTerms?: string
+  billToName?: string
+  fromEmail?: string
+  billingCompanyId?: string
+  bankAccountId?: string
   notes?: string
+  internalNotes?: string
   /** Pass 'draft' to keep it a draft; omit to auto-issue (platform default). */
   status?: InvoiceWritePayload['status']
   ctx: OutboundContext
@@ -213,14 +221,38 @@ export async function raiseInvoice(
     ...(input.currency ? { currency: input.currency } : {}),
     ...(input.clientType ? { client_type: input.clientType } : {}),
     ...(input.pricesIncludeVat !== undefined ? { prices_include_vat: input.pricesIncludeVat } : {}),
+    ...(input.issueDate ? { issue_date: input.issueDate } : {}),
     ...(input.dueDate ? { due_date: input.dueDate } : {}),
     ...(input.poNumber ? { po_number: input.poNumber } : {}),
+    ...(input.paymentReference ? { payment_reference: input.paymentReference } : {}),
+    ...(input.paymentTerms ? { payment_terms: input.paymentTerms } : {}),
+    ...(input.billToName ? { bill_to_name: input.billToName } : {}),
+    ...(input.fromEmail ? { from_email: input.fromEmail } : {}),
+    ...(input.billingCompanyId ? { billing_company_id: input.billingCompanyId } : {}),
+    ...(input.bankAccountId ? { bank_account_id: input.bankAccountId } : {}),
     ...(input.notes ? { notes: input.notes } : {}),
+    ...(input.internalNotes ? { internal_notes: input.internalNotes } : {}),
     ...(input.status ? { status: input.status } : {}),
   }
 
   const created = await client.createInvoice(payload)
-  const upserted = await upsertInvoiceFromRecord(db, created, 'api')
+
+  // Default the payment reference to the invoice number with dashes removed
+  // (INV-1001 → INV1001) when the caller didn't supply one — the B2B site's
+  // default. Best-effort: a failure here never fails the raise.
+  let record = created
+  if (!input.paymentReference && created.invoice_number) {
+    const ref = created.invoice_number.replace(/-/g, '')
+    if (ref) {
+      try {
+        record = await client.updateInvoice(created.id, { payment_reference: ref })
+      } catch {
+        record = created
+      }
+    }
+  }
+
+  const upserted = await upsertInvoiceFromRecord(db, record, 'api')
 
   await writeAuditLogEntry(db, {
     actorId: input.ctx.actorId,
@@ -231,6 +263,7 @@ export async function raiseInvoice(
       invoicingId: created.id,
       invoiceNumber: created.invoice_number ?? null,
       partnerId: input.partnerId,
+      clientType: input.clientType ?? null,
       lineItemCount: input.lineItems.length,
       status: created.status ?? null,
     },
@@ -308,6 +341,8 @@ export async function sendInvoice(
 export interface RecordPaymentInput {
   invoicingId: string
   amountMinor: number
+  /** YYYY-MM-DD. Used for adjustments/already-paid lines and back-dated receipts. */
+  paymentDate?: string
   method?: string
   reference?: string
   ctx: OutboundContext
@@ -323,6 +358,7 @@ export async function recordPayment(db: FullDb, input: RecordPaymentInput): Prom
   const amount = Math.round(input.amountMinor) / 100
   await client.recordPayment(input.invoicingId, {
     amount,
+    ...(input.paymentDate ? { payment_date: input.paymentDate } : {}),
     ...(input.method ? { method: input.method } : {}),
     ...(input.reference ? { reference: input.reference } : {}),
   })
@@ -395,12 +431,20 @@ export async function issueInvoice(db: FullDb, input: InvoiceActionInput): Promi
 export interface EditInvoiceInput extends InvoiceActionInput {
   /** When set, REPLACES every line item (the platform's PATCH semantics). */
   lineItems?: CrmLineItem[]
-  dueDate?: string
-  poNumber?: string
-  notes?: string
-  internalNotes?: string
+  currency?: string
   clientType?: InvoiceWritePayload['client_type']
   pricesIncludeVat?: boolean
+  issueDate?: string
+  dueDate?: string
+  poNumber?: string
+  paymentReference?: string
+  paymentTerms?: string
+  billToName?: string
+  fromEmail?: string
+  billingCompanyId?: string
+  bankAccountId?: string
+  notes?: string
+  internalNotes?: string
 }
 
 /** Edit an invoice (PATCH). `lineItems`, when given, replaces all rows. */
@@ -408,12 +452,20 @@ export async function editInvoice(db: FullDb, input: EditInvoiceInput): Promise<
   const client = input.client ?? (await createClientFromConfig())
   const patch: Partial<InvoiceWritePayload> = {
     ...(input.lineItems ? { line_items: input.lineItems.map(lineItemToPayload) } : {}),
-    ...(input.dueDate ? { due_date: input.dueDate } : {}),
-    ...(input.poNumber !== undefined ? { po_number: input.poNumber } : {}),
-    ...(input.notes !== undefined ? { notes: input.notes } : {}),
-    ...(input.internalNotes !== undefined ? { internal_notes: input.internalNotes } : {}),
+    ...(input.currency ? { currency: input.currency } : {}),
     ...(input.clientType ? { client_type: input.clientType } : {}),
     ...(input.pricesIncludeVat !== undefined ? { prices_include_vat: input.pricesIncludeVat } : {}),
+    ...(input.issueDate ? { issue_date: input.issueDate } : {}),
+    ...(input.dueDate ? { due_date: input.dueDate } : {}),
+    ...(input.poNumber !== undefined ? { po_number: input.poNumber } : {}),
+    ...(input.paymentReference !== undefined ? { payment_reference: input.paymentReference } : {}),
+    ...(input.paymentTerms !== undefined ? { payment_terms: input.paymentTerms } : {}),
+    ...(input.billToName !== undefined ? { bill_to_name: input.billToName } : {}),
+    ...(input.fromEmail !== undefined ? { from_email: input.fromEmail } : {}),
+    ...(input.billingCompanyId ? { billing_company_id: input.billingCompanyId } : {}),
+    ...(input.bankAccountId ? { bank_account_id: input.bankAccountId } : {}),
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.internalNotes !== undefined ? { internal_notes: input.internalNotes } : {}),
   }
   const updated = await client.updateInvoice(input.invoicingId, patch)
   await upsertInvoiceFromRecord(db, updated, 'api')
@@ -521,12 +573,21 @@ export async function sendReminder(
     ...(input.body ? { body: input.body } : {}),
     ...(input.attachPdf !== undefined ? { attach_pdf: input.attachPdf } : {}),
   })
+
+  // Record WHEN the reminder went out, mirroring lastEmailedAt for the initial
+  // send (the platform has no dedicated field for this).
+  const sentAt = new Date()
+  await db.invoicingInvoice.updateMany({
+    where: { invoicingId: input.invoicingId },
+    data: { lastReminderAt: sentAt },
+  })
+
   await writeAuditLogEntry(db, {
     actorId: input.ctx.actorId,
     action: 'invoicing.reminder_sent',
     target: { type: 'InvoicingInvoice', id: input.invoicingId },
     requestId: input.ctx.requestId,
-    after: { invoicingId: input.invoicingId, to: res.to, logId: res.log_id ?? null },
+    after: { invoicingId: input.invoicingId, to: res.to, logId: res.log_id ?? null, sentAt },
   })
   return { sent: res.sent, to: res.to, logId: res.log_id ?? null }
 }

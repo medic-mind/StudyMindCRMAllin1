@@ -85,3 +85,28 @@ webhook → Inngest).
 - New audit/event names registered in `packages/core/src/events/registry.ts`
   (`invoicing.invoice_issued/_edited/_cancelled/_reissued/_duplicated`,
   `invoicing.reminder_sent`, `invoicing.payment_removed`, `invoicing.pdf_viewed`).
+
+## Follow-up: full raise/edit parity
+
+A second pass brought the CRM's raise/edit screen to parity with the B2B site:
+
+- **Every write field** is exposed: the five client types (incl.
+  `alt_provision` — added to the `InvoicingClientType` enum), the VAT-mode toggle
+  (`prices_include_vat`), billing company + bank account (from the reference
+  reads, default-selecting `is_default`), currency, issue/due dates, bill-to
+  override, PO number, from-email, payment reference (defaults to the invoice
+  number without dashes), payment terms, and printed + internal notes.
+  International is forced VAT-free (every line `vat_rate: 0`,
+  `prices_include_vat: false`, VAT inputs hidden).
+- **Adjustments / already-paid** are modelled exactly as the B2B site does — as
+  payments whose `reference` is the human description — so they render as
+  deduction lines and auto-advance status. Recorded after the raise via the same
+  `recordPayment` path (now with `payment_date`).
+- **Compose-before-send**: Email/Reminder open a modal with editable
+  to/cc/subject/body before POSTing to `/send` / `/send-reminder`.
+- **PDF preview under strict CSP**: the app sends `X-Frame-Options: DENY` +
+  `frame-ancestors 'none'` on its own responses, so the iframe is fed a `blob:`
+  (no frame headers) fetched through the backend proxy; `frame-src 'self' blob:`
+  admits it. The key never reaches the browser.
+- **Reminder timestamp**: `lastReminderAt` (new column) is stamped on send and
+  surfaced on the row, mirroring `lastEmailedAt`.

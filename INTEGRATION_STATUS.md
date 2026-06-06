@@ -128,6 +128,41 @@ encrypted DB row is preferred). Inngest serve registers the invoicing `FUNCTIONS
 
 ---
 
+## Full B2B-site parity (follow-up)
+
+A second pass brought the CRM's invoice experience to full parity with the B2B
+site's raise screen and fixed the preview:
+
+- **Full raise/edit form** (`RaiseInvoiceForm.tsx`) exposes every write field:
+  the five **client types** — UK B2B, International B2B, B2B Summer School, B2B
+  School, **Alternative Provision (Council)** — the **VAT mode** toggle
+  (`prices_include_vat`, hidden for International which is forced VAT-free with
+  every line at 0%), **billing company** + **bank account** dropdowns (from
+  `GET /billing-companies` / `/bank-accounts`, default-selecting `is_default`),
+  currency, issue/due dates, bill-to override, PO number, invoice-from email,
+  payment reference (defaults to the invoice number without dashes), payment
+  terms, printed **notes** + **internal notes**, and repeatable line items. The
+  same form edits an existing invoice (PATCH replaces the line items).
+- **Adjustments / already-paid** section: repeatable {amount, date, method,
+  description} rows recorded after the raise as platform payments
+  (`description → reference`), so a discount/credit shows as a deduction line and
+  drops the total due — exactly how the B2B site models them.
+- **Compose-before-send**: the Email and Reminder buttons open a modal
+  (`InvoiceComposeModal.tsx`) with editable to / cc / subject / body (+ from
+  name/email for send, attach-PDF for reminder); blank fields fall back to the
+  platform defaults.
+- **PDF preview fix**: the iframe was blocked because the app sends
+  `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` on its own responses.
+  `InvoicePdfPreview.tsx` now fetches the PDF through the backend proxy as a
+  **blob** and frames the `blob:` URL (no frame headers) — `frame-src 'self'
+  blob:` admits it while the app stays unframeable. Byte-identical to the client's
+  copy; download uses the proxy with `?download=1`.
+- **Reminder timestamp**: `sendReminder` stamps `InvoicingInvoice.lastReminderAt`
+  (new column + migration), surfaced as "Reminded 2h ago" on the row alongside
+  "Emailed …".
+- **alt_provision client type** added to the `InvoicingClientType` enum (+ migration)
+  so an AP-billed invoice keeps full mirror fidelity.
+
 ## Acceptance tests
 
 | # | Criterion | Status |
@@ -135,7 +170,8 @@ encrypted DB row is preferred). Inngest serve registers the invoicing `FUNCTIONS
 | 1 | Create a school in the CRM → appears on the platform within ~2s | ✅ `invoices.raise` lookup-or-creates the customer via `POST /customers`. |
 | 2 | Edit the school's phone on the platform UI → CRM reflects it; `source:"app"` | ✅ `partner.updated` webhook → `upsertCustomerFromRecord` (record is source of truth). |
 | 3 | Raise an invoice → correct line items, subtotal, VAT, grand total; international = no VAT | ✅ totals mirrored from the response; `client_type:'international'` is passed through, PDF renders VAT-free. |
-| 4 | Preview PDF matches what the client receives byte-for-byte | ✅ proxy streams the same `?format=pdf` renderer Send uses. |
+| 4 | Preview PDF matches what the client receives byte-for-byte | ✅ proxy → blob iframe (works under the app's strict frame headers); same `?format=pdf` renderer Send uses. |
+| — | Raise offers all 5 client types + VAT toggle + billing/bank/notes/adjustments | ✅ `RaiseInvoiceForm`; International shows no VAT; an adjustment posts as a deduction and drops the total due. |
 | 5 | Send then Send reminder → client gets email + PDF; platform activity shows both | ✅ `invoices.send` + `invoices.sendReminder`; activity readable via `invoices.activity`. |
 | 6 | Mark paid on the platform UI → CRM marks paid; no double-payment | ✅ payment dedup on the platform payment id (integration test proves it). |
 | 7 | Cancel / reissue / duplicate from the CRM → state matches on both sides | ✅ `invoices.{cancel,reissue,duplicate}` + mirror re-sync. |
@@ -147,6 +183,9 @@ encrypted DB row is preferred). Inngest serve registers the invoicing `FUNCTIONS
 
 - `client.test.ts` (19) — every new endpoint hits the right path/method, unwraps
   the `{ data }` envelope, maps 401/403, PDF bytes + filename, SSE parse + stream.
+- `outbound.test.ts` (5) — payment-reference default on raise, full field
+  pass-through (incl. International VAT-free lines), `payment_date` on an
+  adjustment, and the `lastReminderAt` stamp on reminder.
 - `webhook.test.ts` (16) — HMAC verify matrix, money helpers, fail-closed enums.
 - `adapter.test.ts` (8) — category routing + payload shaping.
 - `config.test.ts` (3) — encrypted save/load round-trip.
@@ -156,7 +195,7 @@ encrypted DB row is preferred). Inngest serve registers the invoicing `FUNCTIONS
   double-payment**, skip-when-not-mirrored, **remove-payment recompute**,
   soft-delete.
 
-Full repo suite green: **1101 tests / 151 files**, plus `tsc` + ESLint clean
+Full repo suite green: **1107 tests / 152 files**, plus `tsc` + ESLint clean
 across the integration package, `apps/web`, and `packages/core`.
 
 ---

@@ -53,15 +53,32 @@ writes an `AuditLogEntry`. Roles: raise/edit/issue/send/reminder/record/reissue/
 duplicate = Sales Executive+; cancel/remove-payment/mark-paid = Manager+
 (finance tier).
 
+The raise/edit UI (`RaiseInvoiceForm.tsx`) exposes the **full** write field set:
+the five client types (UK B2B / International B2B / B2B Summer School / B2B
+School / Alternative Provision (Council)), the VAT-mode toggle
+(`prices_include_vat`; International is forced VAT-free), billing company + bank
+account (from the reference reads, default-selecting `is_default`), currency,
+issue/due dates, bill-to override, PO number, from-email, payment reference
+(defaults to the number without dashes), payment terms, printed + internal
+notes, line items, and a create-time **Adjustments / already-paid** section.
+Adjustments are recorded as payments whose `reference` carries the description
+(e.g. "Discount – Referral"), so they render as deduction lines and drop the
+total due — the same model the B2B site uses. `lastReminderAt` is stamped when a
+reminder is sent.
+
 ## PDF preview / download (no email)
 
 `client.getInvoicePdfBytes(id)` fetches `GET /invoices/:id/pdf?format=pdf` — the
 same renderer Send uses, so it is byte-identical to what the client receives.
 Served through the backend proxy
 `apps/web/app/api/internal/invoicing/invoices/[invoicingId]/pdf/route.ts` (staff-
-gated, audited) so the API key never reaches the browser. The account panel shows
-it inline in an `<iframe>` (`?download=1` forces a download). International
-invoices render VAT-free.
+gated, audited) so the API key never reaches the browser. The preview
+(`InvoicePdfPreview.tsx`) fetches that proxy as a **blob** and frames the `blob:`
+URL — the app sends `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` on its
+own responses (so nobody frames *us*), which would block framing the proxy route
+directly; a blob carries no such headers and `frame-src 'self' blob:` (csp.ts)
+admits it. `?download=1` forces a download. International invoices render
+VAT-free.
 
 ## Reference data (read-only)
 

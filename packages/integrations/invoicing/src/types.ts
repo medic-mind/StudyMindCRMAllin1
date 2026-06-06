@@ -32,6 +32,7 @@ export type InvoicingClientType =
   | 'school'
   | 'summer_school'
   | 'international'
+  | 'alt_provision'
   | 'unknown'
 
 const KNOWN_CATEGORIES = new Set<string>(['b2b', 'b2c', 'alt_provision'])
@@ -44,7 +45,13 @@ const KNOWN_INVOICE_STATUSES = new Set<string>([
   'overdue',
   'cancelled',
 ])
-const KNOWN_CLIENT_TYPES = new Set<string>(['uk_b2b', 'school', 'summer_school', 'international'])
+const KNOWN_CLIENT_TYPES = new Set<string>([
+  'uk_b2b',
+  'school',
+  'summer_school',
+  'international',
+  'alt_provision',
+])
 
 export function mapCustomerCategory(value: string | null | undefined): InvoicingCustomerCategory {
   if (!value) return 'unknown'

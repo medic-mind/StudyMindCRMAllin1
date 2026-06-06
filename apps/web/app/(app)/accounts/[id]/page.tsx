@@ -177,6 +177,7 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
             target={{ kind: 'businessAccount', businessAccountId: account.id }}
             canWrite={canInvoiceWrite}
             canMarkPaid={canInvoiceMarkPaid}
+            defaultClientType={account.kind === 'school' ? 'school' : 'uk_b2b'}
           />
         </section>
 

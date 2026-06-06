@@ -20,6 +20,10 @@ describe('CSP builder', () => {
     expect(csp).toContain("object-src 'none'")
   })
 
+  it('allows same-origin + blob frame-src for the invoice PDF preview', () => {
+    expect(buildCsp('n')).toContain("frame-src 'self' blob:")
+  })
+
   it('uses strict-dynamic for script-src', () => {
     expect(buildCsp('n')).toContain("'strict-dynamic'")
   })

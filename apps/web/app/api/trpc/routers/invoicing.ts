@@ -146,6 +146,24 @@ const LineItemInput = z.object({
   vatRate: z.number().int().min(0).max(100).optional(),
 })
 
+// The five client types the B2B site exposes (incl. alt_provision / council).
+const ClientTypeEnum = z.enum([
+  'uk_b2b',
+  'school',
+  'summer_school',
+  'international',
+  'alt_provision',
+])
+
+// An "adjustment / already paid" row — recorded as a platform payment whose
+// `reference` carries the human description (e.g. "Discount – Referral").
+const AdjustmentInput = z.object({
+  amountMinor: z.number().int().positive(),
+  date: z.string().trim().optional(),
+  method: z.enum(['bank_transfer', 'card', 'cheque', 'other']).optional(),
+  description: z.string().trim().max(200).optional(),
+})
+
 // -----------------------------------------------------------------------------
 // config subrouter
 // -----------------------------------------------------------------------------
@@ -406,6 +424,7 @@ const invoicesRouter = router({
         status: r.status,
         clientType: r.clientType,
         currency: r.currency,
+        pricesIncludeVat: r.pricesIncludeVat,
         subtotalMinor: r.subtotalMinor,
         vatTotalMinor: r.vatTotalMinor,
         grandTotalMinor: r.grandTotalMinor,
@@ -413,7 +432,14 @@ const invoicesRouter = router({
         issueDate: r.issueDate,
         dueDate: r.dueDate,
         poNumber: r.poNumber,
+        paymentReference: r.paymentReference,
+        paymentTerms: r.paymentTerms,
+        billToName: r.billToName,
+        fromEmail: r.fromEmail,
+        notes: r.notes,
+        internalNotes: r.internalNotes,
         lastEmailedAt: r.lastEmailedAt,
+        lastReminderAt: r.lastReminderAt,
         customerId: r.customerId,
         lineItems: r.lineItems.map((li) => ({
           id: li.id,
@@ -447,11 +473,20 @@ const invoicesRouter = router({
           isAlternativeProvision: z.boolean().optional(),
           lineItems: z.array(LineItemInput).min(1).max(100),
           currency: z.string().trim().length(3).optional(),
-          clientType: z.enum(['uk_b2b', 'school', 'summer_school', 'international']).optional(),
+          clientType: ClientTypeEnum.optional(),
           pricesIncludeVat: z.boolean().optional(),
+          issueDate: z.string().trim().optional(),
           dueDate: z.string().trim().optional(),
           poNumber: z.string().trim().max(120).optional(),
+          paymentReference: z.string().trim().max(120).optional(),
+          paymentTerms: z.string().trim().max(2000).optional(),
+          billToName: z.string().trim().max(300).optional(),
+          fromEmail: z.string().trim().max(300).optional(),
+          billingCompanyId: z.string().trim().optional(),
+          bankAccountId: z.string().trim().optional(),
           notes: z.string().trim().max(8000).optional(),
+          internalNotes: z.string().trim().max(8000).optional(),
+          adjustments: z.array(AdjustmentInput).max(50).optional(),
           draft: z.boolean().optional(),
         })
         .refine((v) => Boolean(v.businessAccountId) !== Boolean(v.contactId), {
@@ -525,12 +560,35 @@ const invoicesRouter = router({
           currency: input.currency,
           clientType: resolvedClientType,
           pricesIncludeVat: input.pricesIncludeVat,
+          issueDate: input.issueDate,
           dueDate: input.dueDate,
           poNumber: input.poNumber,
+          paymentReference: input.paymentReference,
+          paymentTerms: input.paymentTerms,
+          billToName: input.billToName,
+          fromEmail: input.fromEmail,
+          billingCompanyId: input.billingCompanyId,
+          bankAccountId: input.bankAccountId,
           notes: input.notes,
+          internalNotes: input.internalNotes,
           status: input.draft ? 'draft' : undefined,
           ctx: outCtx,
         })
+
+        // 3. record any adjustments / already-paid lines as platform payments
+        //    (description → reference). The platform reduces the total due and
+        //    advances the status automatically. Each recordPayment refetches +
+        //    re-syncs the canonical invoice.
+        for (const adj of input.adjustments ?? []) {
+          await recordPayment(ctx.db, {
+            invoicingId: result.invoicingId,
+            amountMinor: adj.amountMinor,
+            paymentDate: adj.date,
+            method: adj.method ?? 'other',
+            reference: adj.description,
+            ctx: outCtx,
+          })
+        }
 
         ctx.audit.called = true
         return result
@@ -641,12 +699,20 @@ const invoicesRouter = router({
       z.object({
         invoicingId: z.string(),
         lineItems: z.array(LineItemInput).min(1).max(100).optional(),
+        currency: z.string().trim().length(3).optional(),
+        clientType: ClientTypeEnum.optional(),
+        pricesIncludeVat: z.boolean().optional(),
+        issueDate: z.string().trim().optional(),
         dueDate: z.string().trim().optional(),
         poNumber: z.string().trim().max(120).optional(),
+        paymentReference: z.string().trim().max(120).optional(),
+        paymentTerms: z.string().trim().max(2000).optional(),
+        billToName: z.string().trim().max(300).optional(),
+        fromEmail: z.string().trim().max(300).optional(),
+        billingCompanyId: z.string().trim().optional(),
+        bankAccountId: z.string().trim().optional(),
         notes: z.string().trim().max(8000).optional(),
         internalNotes: z.string().trim().max(8000).optional(),
-        clientType: z.enum(['uk_b2b', 'school', 'summer_school', 'international']).optional(),
-        pricesIncludeVat: z.boolean().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -656,12 +722,20 @@ const invoicesRouter = router({
         await editInvoice(ctx.db, {
           invoicingId: input.invoicingId,
           lineItems: input.lineItems,
-          dueDate: input.dueDate,
-          poNumber: input.poNumber,
-          notes: input.notes,
-          internalNotes: input.internalNotes,
+          currency: input.currency,
           clientType: input.clientType,
           pricesIncludeVat: input.pricesIncludeVat,
+          issueDate: input.issueDate,
+          dueDate: input.dueDate,
+          poNumber: input.poNumber,
+          paymentReference: input.paymentReference,
+          paymentTerms: input.paymentTerms,
+          billToName: input.billToName,
+          fromEmail: input.fromEmail,
+          billingCompanyId: input.billingCompanyId,
+          bankAccountId: input.bankAccountId,
+          notes: input.notes,
+          internalNotes: input.internalNotes,
           ctx: { actorId: user.id, requestId: ctx.requestId },
         })
         ctx.audit.called = true

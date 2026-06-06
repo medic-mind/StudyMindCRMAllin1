@@ -1,10 +1,11 @@
-// Live invoicing panel for a BusinessAccount (and, with `contactId`, a B2C
-// Contact). Lists invoices mirrored from the B2B Invoices Platform and lets an
-// agent raise / send / record-payment / mark-paid from inside the CRM. Money
-// is shown in GBP from integer minor units (CLAUDE.md §19, §29).
+// Live invoicing panel for a BusinessAccount (and, with a contact target, a B2C
+// Contact). Lists invoices mirrored from the B2B Invoices Platform and drives
+// every action from inside the CRM — raise / edit (full field parity) / preview
+// PDF / email / reminder (compose) / record + remove payment / issue / reissue /
+// duplicate / cancel / mark paid (ADR 0036). Money is GBP-from-pence (§19, §29).
 //
-// Roles are enforced server-side; the UI hides actions a Virtual Assistant
-// cannot use, but never relies on that for security (CLAUDE.md §20).
+// Roles are enforced server-side; the UI hides actions a role can't use but
+// never relies on that for security (CLAUDE.md §20).
 
 'use client'
 
@@ -14,24 +15,31 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { useConfirm } from '@/components/ui/confirm'
-import { Input } from '@/components/ui/input'
 import { Modal } from '@/components/ui/modal'
-import { trpc } from '@/lib/trpc/client'
+import { trpc, type RouterOutputs } from '@/lib/trpc/client'
 
-type Target =
-  | { kind: 'businessAccount'; businessAccountId: string }
-  | { kind: 'contact'; contactId: string }
+import { InvoiceComposeModal, type ComposeMode } from './InvoiceComposeModal'
+import { InvoicePdfPreview, invoicePdfUrl } from './InvoicePdfPreview'
+import {
+  RaiseInvoiceForm,
+  type ClientType,
+  type EditableInvoice,
+  type InvoiceTarget,
+} from './RaiseInvoiceForm'
 
-interface LineDraft {
-  description: string
-  quantity: string
-  unitPrice: string
-  vatRate: string
+function money(minor: number, currency = 'GBP'): string {
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency }).format(minor / 100)
 }
 
-const gbp = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' })
-function money(minor: number): string {
-  return gbp.format(minor / 100)
+function timeAgo(d: Date | string | null): string {
+  if (!d) return ''
+  const ms = Date.now() - new Date(d).getTime()
+  const min = Math.floor(ms / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  return `${Math.floor(hr / 24)}d ago`
 }
 
 const STATUS_TONE: Record<string, string> = {
@@ -44,14 +52,43 @@ const STATUS_TONE: Record<string, string> = {
   unknown: 'bg-neutral-100 text-neutral-500',
 }
 
+type InvoiceRow = RouterOutputs['invoicing']['invoices']['list'][number]
+
+function toEditable(inv: InvoiceRow): EditableInvoice {
+  return {
+    invoicingId: inv.invoicingId,
+    invoiceNumber: inv.invoiceNumber,
+    clientType: inv.clientType,
+    currency: inv.currency,
+    pricesIncludeVat: inv.pricesIncludeVat,
+    issueDate: inv.issueDate,
+    dueDate: inv.dueDate,
+    poNumber: inv.poNumber,
+    paymentReference: inv.paymentReference,
+    paymentTerms: inv.paymentTerms,
+    billToName: inv.billToName,
+    fromEmail: inv.fromEmail,
+    notes: inv.notes,
+    internalNotes: inv.internalNotes,
+    lineItems: inv.lineItems.map((li) => ({
+      description: li.description,
+      quantity: li.quantity,
+      unitPriceMinor: li.unitPriceMinor,
+      vatRate: li.vatRate,
+    })),
+  }
+}
+
 export function AccountInvoicingPanel({
   target,
   canWrite,
   canMarkPaid,
+  defaultClientType = 'uk_b2b',
 }: {
-  target: Target
+  target: InvoiceTarget
   canWrite: boolean
   canMarkPaid: boolean
+  defaultClientType?: ClientType
 }) {
   const router = useRouter()
   const confirm = useConfirm()
@@ -61,19 +98,25 @@ export function AccountInvoicingPanel({
       : { contactId: target.contactId }
   const invoicesQuery = trpc.invoicing.invoices.list.useQuery(listInput)
 
-  const raise = trpc.invoicing.invoices.raise.useMutation()
-  const send = trpc.invoicing.invoices.send.useMutation()
   const recordPayment = trpc.invoicing.invoices.recordPayment.useMutation()
   const markPaid = trpc.invoicing.invoices.markPaid.useMutation()
   const issue = trpc.invoicing.invoices.issue.useMutation()
-  const sendReminder = trpc.invoicing.invoices.sendReminder.useMutation()
   const reissue = trpc.invoicing.invoices.reissue.useMutation()
   const duplicate = trpc.invoicing.invoices.duplicate.useMutation()
   const cancel = trpc.invoicing.invoices.cancel.useMutation()
   const removePayment = trpc.invoicing.invoices.removePayment.useMutation()
 
+  const [showRaise, setShowRaise] = useState(false)
+  const [editing, setEditing] = useState<InvoiceRow | null>(null)
   const [previewId, setPreviewId] = useState<string | null>(null)
+  const [previewNumber, setPreviewNumber] = useState<string | null>(null)
+  const [compose, setCompose] = useState<{
+    mode: ComposeMode
+    invoicingId: string
+    invoiceNumber: string | null
+  } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
   function toggleExpanded(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -82,75 +125,10 @@ export function AccountInvoicingPanel({
       return next
     })
   }
-  function pdfUrl(invoicingId: string, download = false): string {
-    const base = `/api/internal/invoicing/invoices/${encodeURIComponent(invoicingId)}/pdf`
-    return download ? `${base}?download=1` : base
-  }
 
-  const [showRaise, setShowRaise] = useState(false)
-  const [poNumber, setPoNumber] = useState('')
-  const [dueDate, setDueDate] = useState('')
-  const [pricesIncludeVat, setPricesIncludeVat] = useState(false)
-  const [lines, setLines] = useState<LineDraft[]>([
-    { description: '', quantity: '1', unitPrice: '', vatRate: '20' },
-  ])
-
-  function updateLine(i: number, patch: Partial<LineDraft>) {
-    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
-  }
-  function addLine() {
-    setLines((prev) => [...prev, { description: '', quantity: '1', unitPrice: '', vatRate: '20' }])
-  }
-  function removeLine(i: number) {
-    setLines((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev))
-  }
-
-  async function submitRaise() {
-    const parsedLines = lines
-      .filter((l) => l.description.trim() && l.unitPrice.trim())
-      .map((l) => ({
-        description: l.description.trim(),
-        quantity: Number(l.quantity) || 1,
-        // Convert the typed major-unit price to integer pence without float drift.
-        unitPriceMinor: Math.round(Number(l.unitPrice) * 100),
-        ...(l.vatRate.trim() ? { vatRate: Math.round(Number(l.vatRate)) } : {}),
-      }))
-    if (parsedLines.length === 0) {
-      toast.error('Add at least one line item with a description and price.')
-      return
-    }
-    try {
-      const base =
-        target.kind === 'businessAccount'
-          ? { businessAccountId: target.businessAccountId }
-          : { contactId: target.contactId }
-      const result = await raise.mutateAsync({
-        ...base,
-        lineItems: parsedLines,
-        pricesIncludeVat,
-        ...(dueDate ? { dueDate } : {}),
-        ...(poNumber.trim() ? { poNumber: poNumber.trim() } : {}),
-      })
-      toast.success(`Invoice ${result.invoiceNumber ?? 'raised'} created`)
-      setShowRaise(false)
-      setLines([{ description: '', quantity: '1', unitPrice: '', vatRate: '20' }])
-      setPoNumber('')
-      setDueDate('')
-      await invoicesQuery.refetch()
-      router.refresh()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not raise invoice')
-    }
-  }
-
-  async function handleSend(invoicingId: string) {
-    try {
-      const res = await send.mutateAsync({ invoicingId })
-      toast.success(`Sent to ${res.to}`)
-      await invoicesQuery.refetch()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not send invoice')
-    }
+  async function refresh() {
+    await invoicesQuery.refetch()
+    router.refresh()
   }
 
   async function handleRecordPayment(invoicingId: string, outstandingMinor: number) {
@@ -167,8 +145,7 @@ export function AccountInvoicingPanel({
     try {
       await recordPayment.mutateAsync({ invoicingId, amountMinor, method: 'bank_transfer' })
       toast.success('Payment recorded')
-      await invoicesQuery.refetch()
-      router.refresh()
+      await refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not record payment')
     }
@@ -179,8 +156,7 @@ export function AccountInvoicingPanel({
     try {
       await markPaid.mutateAsync({ invoicingId })
       toast.success('Invoice marked paid')
-      await invoicesQuery.refetch()
-      router.refresh()
+      await refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not mark paid')
     }
@@ -190,20 +166,9 @@ export function AccountInvoicingPanel({
     try {
       await issue.mutateAsync({ invoicingId })
       toast.success('Invoice issued')
-      await invoicesQuery.refetch()
-      router.refresh()
+      await refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not issue invoice')
-    }
-  }
-
-  async function handleReminder(invoicingId: string) {
-    try {
-      const res = await sendReminder.mutateAsync({ invoicingId })
-      toast.success(`Reminder sent to ${res.to}`)
-      await invoicesQuery.refetch()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not send reminder')
     }
   }
 
@@ -212,8 +177,7 @@ export function AccountInvoicingPanel({
     try {
       await reissue.mutateAsync({ invoicingId })
       toast.success('Invoice reissued')
-      await invoicesQuery.refetch()
-      router.refresh()
+      await refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not reissue')
     }
@@ -223,8 +187,7 @@ export function AccountInvoicingPanel({
     try {
       const res = await duplicate.mutateAsync({ invoicingId })
       toast.success(`Duplicated as ${res.invoiceNumber ?? 'new draft'}`)
-      await invoicesQuery.refetch()
-      router.refresh()
+      await refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not duplicate')
     }
@@ -243,8 +206,7 @@ export function AccountInvoicingPanel({
     try {
       await cancel.mutateAsync({ invoicingId })
       toast.success('Invoice cancelled')
-      await invoicesQuery.refetch()
-      router.refresh()
+      await refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not cancel')
     }
@@ -263,8 +225,7 @@ export function AccountInvoicingPanel({
     try {
       await removePayment.mutateAsync({ invoicingId, paymentInvoicingId })
       toast.success('Payment removed')
-      await invoicesQuery.refetch()
-      router.refresh()
+      await refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not remove payment')
     }
@@ -277,87 +238,11 @@ export function AccountInvoicingPanel({
       <div className="flex items-center justify-between">
         <p className="text-xs text-neutral-500">Synced live with the B2B Invoices Platform.</p>
         {canWrite && (
-          <Button type="button" size="sm" onClick={() => setShowRaise((s) => !s)}>
-            {showRaise ? 'Cancel' : 'Raise invoice'}
+          <Button type="button" size="sm" onClick={() => setShowRaise(true)}>
+            Raise invoice
           </Button>
         )}
       </div>
-
-      {showRaise && canWrite && (
-        <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
-          <div className="space-y-2">
-            {lines.map((line, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2">
-                <Input
-                  className="col-span-5"
-                  placeholder="Description"
-                  value={line.description}
-                  onChange={(e) => updateLine(i, { description: e.target.value })}
-                />
-                <Input
-                  className="col-span-2"
-                  type="number"
-                  placeholder="Qty"
-                  value={line.quantity}
-                  onChange={(e) => updateLine(i, { quantity: e.target.value })}
-                />
-                <Input
-                  className="col-span-2"
-                  type="number"
-                  placeholder="Unit £"
-                  value={line.unitPrice}
-                  onChange={(e) => updateLine(i, { unitPrice: e.target.value })}
-                />
-                <Input
-                  className="col-span-2"
-                  type="number"
-                  placeholder="VAT %"
-                  value={line.vatRate}
-                  onChange={(e) => updateLine(i, { vatRate: e.target.value })}
-                />
-                <button
-                  type="button"
-                  className="col-span-1 text-neutral-400 hover:text-red-600"
-                  onClick={() => removeLine(i)}
-                  aria-label="Remove line"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="mt-2 text-xs text-primary-700 hover:underline"
-            onClick={addLine}
-          >
-            + Add line
-          </button>
-
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <Input
-              placeholder="PO number (optional)"
-              value={poNumber}
-              onChange={(e) => setPoNumber(e.target.value)}
-            />
-            <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-          </div>
-          <label className="mt-3 flex items-center gap-2 text-xs text-neutral-600">
-            <input
-              type="checkbox"
-              checked={pricesIncludeVat}
-              onChange={(e) => setPricesIncludeVat(e.target.checked)}
-            />
-            Prices include VAT (gross). Unticked = net, VAT added on top.
-          </label>
-
-          <div className="mt-3">
-            <Button type="button" size="sm" disabled={raise.isPending} onClick={submitRaise}>
-              {raise.isPending ? 'Raising…' : 'Create invoice'}
-            </Button>
-          </div>
-        </div>
-      )}
 
       {invoicesQuery.isLoading ? (
         <p className="text-sm text-neutral-500">Loading invoices…</p>
@@ -372,6 +257,7 @@ export function AccountInvoicingPanel({
             const isOpen = expanded.has(inv.id)
             const isDraft = inv.status === 'draft'
             const isCancelled = inv.status === 'cancelled'
+            const isPaid = inv.status === 'paid'
             return (
               <li key={inv.id} className="p-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -387,17 +273,27 @@ export function AccountInvoicingPanel({
                       </span>
                     </div>
                     <div className="mt-0.5 text-xs text-neutral-500">
-                      {money(inv.grandTotalMinor)} total
-                      {inv.paidMinor > 0 && ` · ${money(inv.paidMinor)} paid`}
-                      {outstanding > 0 && ` · ${money(outstanding)} due`}
+                      {money(inv.grandTotalMinor, inv.currency)} total
+                      {inv.paidMinor > 0 && ` · ${money(inv.paidMinor, inv.currency)} paid`}
+                      {outstanding > 0 && ` · ${money(outstanding, inv.currency)} due`}
                     </div>
+                    {(inv.lastEmailedAt || inv.lastReminderAt) && (
+                      <div className="mt-0.5 text-[11px] text-neutral-400">
+                        {inv.lastEmailedAt && `Emailed ${timeAgo(inv.lastEmailedAt)}`}
+                        {inv.lastEmailedAt && inv.lastReminderAt && ' · '}
+                        {inv.lastReminderAt && `Reminded ${timeAgo(inv.lastReminderAt)}`}
+                      </div>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <Button
                       type="button"
                       size="sm"
                       variant="ghost"
-                      onClick={() => setPreviewId(inv.invoicingId)}
+                      onClick={() => {
+                        setPreviewId(inv.invoicingId)
+                        setPreviewNumber(inv.invoiceNumber)
+                      }}
                     >
                       Preview PDF
                     </Button>
@@ -406,13 +302,18 @@ export function AccountInvoicingPanel({
                         type="button"
                         size="sm"
                         variant="ghost"
-                        disabled={send.isPending}
-                        onClick={() => handleSend(inv.invoicingId)}
+                        onClick={() =>
+                          setCompose({
+                            mode: 'send',
+                            invoicingId: inv.invoicingId,
+                            invoiceNumber: inv.invoiceNumber,
+                          })
+                        }
                       >
-                        Send
+                        Email
                       </Button>
                     )}
-                    {canWrite && inv.status !== 'paid' && !isCancelled && (
+                    {canWrite && !isPaid && !isCancelled && (
                       <Button
                         type="button"
                         size="sm"
@@ -423,7 +324,7 @@ export function AccountInvoicingPanel({
                         Record payment
                       </Button>
                     )}
-                    {canMarkPaid && inv.status !== 'paid' && !isCancelled && (
+                    {canMarkPaid && !isPaid && !isCancelled && (
                       <Button
                         type="button"
                         size="sm"
@@ -448,11 +349,10 @@ export function AccountInvoicingPanel({
 
                 {isOpen && (
                   <div className="mt-3 space-y-3 rounded-md bg-neutral-50 p-3">
-                    {/* Recorded payments + per-payment remove */}
                     {inv.payments.length > 0 && (
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">
-                          Payments
+                          Payments &amp; adjustments
                         </p>
                         <ul className="mt-1 space-y-1">
                           {inv.payments.map((p) => (
@@ -461,9 +361,9 @@ export function AccountInvoicingPanel({
                               className="flex items-center justify-between gap-2 text-xs text-neutral-700"
                             >
                               <span>
-                                {money(p.amountMinor)}
-                                {p.method ? ` · ${p.method.replace('_', ' ')}` : ''}
+                                {money(p.amountMinor, inv.currency)}
                                 {p.reference ? ` · ${p.reference}` : ''}
+                                {!p.reference && p.method ? ` · ${p.method.replace('_', ' ')}` : ''}
                               </span>
                               {canMarkPaid && (
                                 <button
@@ -481,14 +381,23 @@ export function AccountInvoicingPanel({
                       </div>
                     )}
 
-                    {/* Secondary actions */}
                     <div className="flex flex-wrap items-center gap-1">
                       <a
-                        href={pdfUrl(inv.invoicingId, true)}
+                        href={invoicePdfUrl(inv.invoicingId, true)}
                         className="rounded-md px-2 py-1 text-xs text-primary-700 hover:bg-white hover:underline"
                       >
                         Download PDF
                       </a>
+                      {canWrite && !isCancelled && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditing(inv)}
+                        >
+                          Edit
+                        </Button>
+                      )}
                       {canWrite && isDraft && (
                         <Button
                           type="button"
@@ -500,13 +409,18 @@ export function AccountInvoicingPanel({
                           Issue
                         </Button>
                       )}
-                      {canWrite && !isDraft && !isCancelled && inv.status !== 'paid' && (
+                      {canWrite && !isDraft && !isCancelled && !isPaid && (
                         <Button
                           type="button"
                           size="sm"
                           variant="ghost"
-                          disabled={sendReminder.isPending}
-                          onClick={() => handleReminder(inv.invoicingId)}
+                          onClick={() =>
+                            setCompose({
+                              mode: 'reminder',
+                              invoicingId: inv.invoicingId,
+                              invoiceNumber: inv.invoiceNumber,
+                            })
+                          }
                         >
                           Send reminder
                         </Button>
@@ -554,38 +468,64 @@ export function AccountInvoicingPanel({
         </ul>
       )}
 
-      {/* Inline PDF preview — byte-identical to what the client receives. The
-          iframe points at the server-side proxy so the API key stays on the
-          backend. */}
+      {/* Raise (create) */}
       <Modal
-        open={previewId !== null}
-        onClose={() => setPreviewId(null)}
+        open={showRaise}
+        onClose={() => setShowRaise(false)}
         size="xl"
-        title="Invoice PDF"
-        footer={
-          previewId ? (
-            <>
-              <a
-                href={pdfUrl(previewId, true)}
-                className="rounded-md px-3 py-1.5 text-sm font-medium text-primary-700 hover:underline"
-              >
-                Download
-              </a>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewId(null)}>
-                Close
-              </Button>
-            </>
-          ) : null
-        }
+        title="Raise invoice"
+        dismissable={false}
       >
-        {previewId && (
-          <iframe
-            title="Invoice PDF preview"
-            src={pdfUrl(previewId)}
-            className="h-[70vh] w-full border-0"
+        {showRaise && (
+          <RaiseInvoiceForm
+            mode="create"
+            target={target}
+            defaultClientType={defaultClientType}
+            onDone={() => {
+              setShowRaise(false)
+              void invoicesQuery.refetch()
+            }}
+            onCancel={() => setShowRaise(false)}
           />
         )}
       </Modal>
+
+      {/* Edit */}
+      <Modal
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        size="xl"
+        title={`Edit invoice${editing?.invoiceNumber ? ` — ${editing.invoiceNumber}` : ''}`}
+        dismissable={false}
+      >
+        {editing && (
+          <RaiseInvoiceForm
+            mode="edit"
+            invoice={toEditable(editing)}
+            onDone={() => {
+              setEditing(null)
+              void invoicesQuery.refetch()
+            }}
+            onCancel={() => setEditing(null)}
+          />
+        )}
+      </Modal>
+
+      {/* PDF preview */}
+      <InvoicePdfPreview
+        invoicingId={previewId}
+        invoiceNumber={previewNumber}
+        onClose={() => setPreviewId(null)}
+      />
+
+      {/* Email / reminder compose */}
+      <InvoiceComposeModal
+        mode={compose?.mode ?? null}
+        invoicingId={compose?.invoicingId ?? null}
+        invoiceNumber={compose?.invoiceNumber ?? null}
+        onClose={() => setCompose(null)}
+        onSent={() => void invoicesQuery.refetch()}
+      />
     </div>
   )
 }

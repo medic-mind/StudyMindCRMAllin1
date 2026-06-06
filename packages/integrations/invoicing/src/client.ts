@@ -87,7 +87,7 @@ export interface InvoiceWritePayload {
   from_email?: string
   payment_reference?: string
   billing_company_id?: string
-  client_type?: 'uk_b2b' | 'school' | 'summer_school' | 'international'
+  client_type?: 'uk_b2b' | 'school' | 'summer_school' | 'international' | 'alt_provision'
   prices_include_vat?: boolean
   bank_account_id?: string
   po_number?: string
@@ -96,6 +96,8 @@ export interface InvoiceWritePayload {
 
 export interface PaymentWritePayload {
   amount: number
+  /** YYYY-MM-DD. Defaults to "today" on the platform when omitted. */
+  payment_date?: string
   method?: string
   reference?: string
 }

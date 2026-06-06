@@ -17,7 +17,12 @@ export function buildCsp(nonce: string): string {
     `img-src 'self' data: blob:`,
     `font-src 'self' data:`,
     `connect-src 'self' https://*.sentry.io https://*.ingest.sentry.io https://api.axiom.co`,
-    `frame-src 'self'`,
+    // `blob:` so the invoice-PDF preview can frame the bytes we fetch through our
+    // own backend proxy as a blob URL (the proxy keeps the invoicing API key
+    // server-side; a blob carries no X-Frame-Options/frame-ancestors so it is
+    // not blocked by our own DENY headers). `frame-ancestors 'none'` below still
+    // stops anyone framing *us*.
+    `frame-src 'self' blob:`,
     `object-src 'none'`,
     `frame-ancestors 'none'`,
     `form-action 'self' https://accounts.google.com`,

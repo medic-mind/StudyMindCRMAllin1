@@ -3079,6 +3079,7 @@ enum InvoicingClientType {
   school
   summer_school
   international
+  alt_provision
   unknown
 }
 
@@ -3165,6 +3166,10 @@ model InvoicingInvoice {
   notes            String?
   internalNotes    String?
   lastEmailedAt    DateTime?
+  /// When a payment reminder (chaser) was last sent from the CRM. Stamped by
+  /// the `invoicing.invoices.sendReminder` outbound, mirroring `lastEmailedAt`
+  /// for the initial send (the platform has no dedicated field for this).
+  lastReminderAt   DateTime?
 
   lastSyncedAt    DateTime?
   lastEventSource String?
