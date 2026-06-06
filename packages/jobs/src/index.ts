@@ -129,6 +129,12 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     description: 'Open a Task to rotate each class Zoom link older than its rotation interval',
   },
   {
+    id: 'webinar/send-recordings',
+    cron: '30 * * * *',
+    description:
+      'Email each class its Zoom cloud recording after a session, then optionally trash it (ADR 0035, opt-in)',
+  },
+  {
     id: 'webinar/detect-enrollments',
     cron: '30 6 * * *',
     description: 'Scan active Stripe subscriptions and organise weekly-class payers into classes',

@@ -28,6 +28,7 @@
     "@studymind/integration-slack": "workspace:*",
     "@studymind/integration-stripe": "workspace:*",
     "@studymind/integration-trengo": "workspace:*",
+    "@studymind/integration-zoom": "workspace:*",
     "@studymind/jobs": "workspace:*",
     "@studymind/ui": "workspace:*",
     "@tanstack/react-query": "^5.59.20",

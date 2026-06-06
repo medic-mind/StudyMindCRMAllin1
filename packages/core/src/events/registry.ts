@@ -433,6 +433,10 @@ export const EVENT_NAMES = [
   'webinar.subject_updated',
   'webinar.level_created',
   'webinar.level_updated',
+  // Zoom integration (ADR 0035): app-generated links + recording distribution.
+  'webinar.zoom_meeting_created',
+  'webinar.recording_sent',
+  'webinar.recording_trashed',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

@@ -37,6 +37,8 @@ import {
   router,
   type UserRole,
 } from '@/lib/trpc/builders'
+import { client as zoomClient } from '@studymind/integration-zoom'
+
 import { detectEnrollmentsFromStripe } from '@/lib/webinar/enrollment-service'
 import { importToText, parseScheduleFallback, type ImportKind } from '@/lib/webinar/import-helpers'
 
@@ -506,6 +508,70 @@ const classRouter = router({
       return { id: input.id }
     }),
 
+  /**
+   * Generate a Zoom meeting for the class via the Zoom integration (ADR 0035):
+   * a recurring meeting open to all (join-before-host, no registration) with
+   * cloud auto-recording. Stores the join link + meeting id and clears the
+   * rotation reminder. Requires the Zoom Server-to-Server app to be configured.
+   */
+  generateZoomLink: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      if (!zoomClient.isConfigured()) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Zoom is not connected. Add the Server-to-Server credentials first.',
+        })
+      }
+      const cls = await ctx.db.webinarClass.findFirst({
+        where: { id: input.id, deletedAt: null },
+        include: { cohort: { select: { name: true } } },
+      })
+      if (!cls) throw new TRPCError({ code: 'NOT_FOUND' })
+      const settings = await ctx.db.webinarSettings.findUnique({
+        where: { id: 'webinar' },
+        select: { zoomHostEmail: true },
+      })
+      const host = cls.zoomHostEmail || settings?.zoomHostEmail || undefined
+      const topic = `${subjectLabel(cls.subject)} ${levelLabel(cls.level)} — ${cls.cohort.name}`
+      let meeting
+      try {
+        meeting = await zoomClient.createRecurringMeeting({
+          hostEmail: host,
+          topic,
+          timezone: cls.timezone,
+        })
+      } catch (err) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: err instanceof Error ? `Zoom: ${err.message}` : 'Zoom meeting creation failed',
+        })
+      }
+      await ctx.db.webinarClass.update({
+        where: { id: input.id },
+        data: {
+          zoomLink: meeting.join_url,
+          zoomMeetingId: String(meeting.id),
+          zoomHostEmail: host ?? null,
+          zoomLinkUpdatedAt: new Date(),
+          updatedById: user.id,
+        },
+      })
+      const taskTitle = `[Webinar] Update Zoom link — ${subjectLabel(cls.subject)} ${levelLabel(cls.level)}`
+      await ctx.db.task.updateMany({
+        where: { title: taskTitle, status: { in: ['open', 'in_progress'] } },
+        data: { status: 'done' },
+      })
+      await ctx.audit({
+        action: 'webinar.zoom_meeting_created',
+        target: { type: 'WebinarClass', id: input.id },
+        after: { zoomMeetingId: String(meeting.id) },
+      })
+      return { id: input.id, joinUrl: meeting.join_url }
+    }),
+
   archive: auditedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -953,6 +1019,12 @@ const settingsRouter = router({
       emailSubjectTemplate: row?.emailSubjectTemplate ?? '',
       emailBodyTemplate: row?.emailBodyTemplate ?? '',
       fromName: row?.fromName ?? '',
+      // Zoom integration (ADR 0035).
+      zoomConnected: zoomClient.isConfigured(),
+      zoomAutoCreate: row?.zoomAutoCreate ?? false,
+      zoomSendRecordings: row?.zoomSendRecordings ?? false,
+      zoomTrashAfterSend: row?.zoomTrashAfterSend ?? false,
+      zoomHostEmail: row?.zoomHostEmail ?? '',
     }
   }),
 
@@ -966,6 +1038,10 @@ const settingsRouter = router({
         emailSubjectTemplate: z.string().trim().max(300).optional(),
         emailBodyTemplate: z.string().trim().max(8000).optional(),
         fromName: z.string().trim().max(120).optional(),
+        zoomAutoCreate: z.boolean().optional(),
+        zoomSendRecordings: z.boolean().optional(),
+        zoomTrashAfterSend: z.boolean().optional(),
+        zoomHostEmail: z.string().trim().max(160).nullish(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -986,6 +1062,10 @@ const settingsRouter = router({
           emailSubjectTemplate: input.emailSubjectTemplate ?? '',
           emailBodyTemplate: input.emailBodyTemplate ?? '',
           fromName: input.fromName ?? null,
+          zoomAutoCreate: input.zoomAutoCreate ?? false,
+          zoomSendRecordings: input.zoomSendRecordings ?? false,
+          zoomTrashAfterSend: input.zoomTrashAfterSend ?? false,
+          zoomHostEmail: input.zoomHostEmail ?? null,
           createdById: user.id,
           updatedById: user.id,
         },
@@ -1007,6 +1087,14 @@ const settingsRouter = router({
             ? { emailBodyTemplate: input.emailBodyTemplate }
             : {}),
           ...(input.fromName !== undefined ? { fromName: input.fromName } : {}),
+          ...(input.zoomAutoCreate !== undefined ? { zoomAutoCreate: input.zoomAutoCreate } : {}),
+          ...(input.zoomSendRecordings !== undefined
+            ? { zoomSendRecordings: input.zoomSendRecordings }
+            : {}),
+          ...(input.zoomTrashAfterSend !== undefined
+            ? { zoomTrashAfterSend: input.zoomTrashAfterSend }
+            : {}),
+          ...(input.zoomHostEmail !== undefined ? { zoomHostEmail: input.zoomHostEmail } : {}),
           updatedById: user.id,
         },
       })

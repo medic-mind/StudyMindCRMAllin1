@@ -49,6 +49,11 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   '*.sentry.io',
   // PagerDuty (Events API v2)
   'events.pagerduty.com',
+  // Zoom (Server-to-Server OAuth + REST API) — webinar link generation +
+  // recordings (ADR 0035).
+  'zoom.us',
+  'api.zoom.us',
+  '*.zoom.us',
 ]
 
 /** True if `host` is exactly listed or matches a `*.suffix` wildcard entry. */

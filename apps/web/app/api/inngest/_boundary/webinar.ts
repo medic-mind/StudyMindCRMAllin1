@@ -17,6 +17,7 @@ import {
   detectEnrollmentsFromStripe,
   expireLapsedEnrollments,
 } from '@/lib/webinar/enrollment-service'
+import { sendDueRecordings } from '@/lib/webinar/recordings-service'
 import { createZoomRotationTasks } from '@/lib/webinar/zoom-reminder-service'
 
 export const webinarDispatchWeeklyEmails = inngest.createFunction(
@@ -89,9 +90,27 @@ export const webinarDetectEnrollments = inngest.createFunction(
   },
 )
 
+export const webinarSendRecordings = inngest.createFunction(
+  {
+    id: 'webinar/send-recordings',
+    name: 'Webinar: email class recordings (Zoom) and optionally trash them',
+    concurrency: { limit: 1 },
+    retries: 2,
+  },
+  { cron: '30 * * * *' },
+  async ({ step, logger }) => {
+    const result = await step.run('send-recordings', async () =>
+      sendDueRecordings(db, new Date(), createId()),
+    )
+    logger.info({ ...result }, 'webinar.recordings.complete')
+    return result
+  },
+)
+
 export const WEBINAR_BOUNDARY_FUNCTIONS = [
   webinarDispatchWeeklyEmails,
   webinarExpireEnrollments,
   webinarZoomRotationReminder,
   webinarDetectEnrollments,
+  webinarSendRecordings,
 ]

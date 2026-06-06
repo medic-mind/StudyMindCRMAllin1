@@ -48,6 +48,9 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
   const [sendDays, setSendDays] = useState<number[]>(initial.defaultSendDaysOfWeek)
   const [sendHour, setSendHour] = useState(initial.defaultSendHourLocal)
   const [rotate, setRotate] = useState(initial.defaultZoomRotateEveryWeeks)
+  const [zoomHostEmail, setZoomHostEmail] = useState(initial.zoomHostEmail)
+  const [zoomSendRecordings, setZoomSendRecordings] = useState(initial.zoomSendRecordings)
+  const [zoomTrashAfterSend, setZoomTrashAfterSend] = useState(initial.zoomTrashAfterSend)
 
   const save = trpc.webinar.settings.update.useMutation({
     onSuccess: () => toast.success('Settings saved'),
@@ -66,6 +69,9 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
           defaultSendDaysOfWeek: sendDays,
           defaultSendHourLocal: sendHour,
           defaultZoomRotateEveryWeeks: rotate,
+          zoomHostEmail,
+          zoomSendRecordings,
+          zoomTrashAfterSend,
         })
       }}
     >
@@ -143,6 +149,57 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
               />
             </Field>
           </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardBody className="space-y-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-neutral-900">Zoom integration</h2>
+            <span
+              className={
+                'rounded px-2 py-0.5 text-xs ' +
+                (initial.zoomConnected
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-neutral-100 text-neutral-500')
+              }
+            >
+              {initial.zoomConnected ? 'Connected' : 'Not connected'}
+            </span>
+          </div>
+          <p className="text-xs text-neutral-500">
+            {initial.zoomConnected
+              ? 'Generate join links per class (open to all + cloud auto-recording) from each class page.'
+              : 'Add a Zoom Server-to-Server OAuth app (ZOOM_ACCOUNT_ID / ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET) to enable link generation and recordings.'}
+          </p>
+          <Field label="Default Zoom host email" htmlFor="zoom-host" hint="The Zoom user meetings are created under (optional).">
+            <Input
+              id="zoom-host"
+              type="email"
+              placeholder="classes@studymind.co.uk"
+              value={zoomHostEmail}
+              onChange={(e) => setZoomHostEmail(e.target.value)}
+              disabled={!canManage || !initial.zoomConnected}
+            />
+          </Field>
+          <label className="flex items-center gap-2 text-sm text-neutral-700">
+            <input
+              type="checkbox"
+              checked={zoomSendRecordings}
+              onChange={(e) => setZoomSendRecordings(e.target.checked)}
+              disabled={!canManage || !initial.zoomConnected}
+            />
+            Email each class its cloud recording after the session
+          </label>
+          <label className="flex items-center gap-2 text-sm text-neutral-700">
+            <input
+              type="checkbox"
+              checked={zoomTrashAfterSend}
+              onChange={(e) => setZoomTrashAfterSend(e.target.checked)}
+              disabled={!canManage || !initial.zoomConnected || !zoomSendRecordings}
+            />
+            After sending, move the recording to Zoom Trash (recoverable for 30 days)
+          </label>
         </CardBody>
       </Card>
 

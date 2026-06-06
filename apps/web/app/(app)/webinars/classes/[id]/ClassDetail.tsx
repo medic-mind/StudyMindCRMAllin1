@@ -112,6 +112,16 @@ function ZoomCard({ detail, canManage }: { detail: Detail; canManage: boolean })
     },
     onError: (e) => toast.error(e.message),
   })
+  const settings = trpc.webinar.settings.get.useQuery()
+  const generate = trpc.webinar.class.generateZoomLink.useMutation({
+    onSuccess: ({ joinUrl }) => {
+      toast.success('Zoom meeting created (open to all, cloud recording on)')
+      setLink(joinUrl)
+      void utils.webinar.class.get.invalidate({ id: detail.id })
+      router.refresh()
+    },
+    onError: (e) => toast.error(e.message),
+  })
   const updated = detail.zoomLinkUpdatedAt ? new Date(detail.zoomLinkUpdatedAt) : null
   return (
     <Card>
@@ -149,10 +159,25 @@ function ZoomCard({ detail, canManage }: { detail: Detail; canManage: boolean })
             <Button type="submit" disabled={save.isPending}>
               {save.isPending ? 'Saving…' : 'Update link'}
             </Button>
+            {settings.data?.zoomConnected ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={generate.isPending}
+                onClick={() => generate.mutate({ id: detail.id })}
+              >
+                {generate.isPending ? 'Generating…' : 'Generate via Zoom'}
+              </Button>
+            ) : null}
           </form>
         ) : (
           <p className="mt-2 text-sm text-neutral-700">{detail.zoomLink ?? '— not set —'}</p>
         )}
+        {settings.data && !settings.data.zoomConnected ? (
+          <p className="mt-2 text-xs text-neutral-400">
+            Connect a Zoom account in Settings to auto-generate links (open to all + auto-recording).
+          </p>
+        ) : null}
       </CardBody>
     </Card>
   )
