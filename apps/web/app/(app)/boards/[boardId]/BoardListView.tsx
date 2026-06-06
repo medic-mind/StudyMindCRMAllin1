@@ -1,0 +1,333 @@
+// List view for a board (alternative to the kanban). Same cards + stages,
+// rendered as compact tables grouped by stage instead of columns. A row click
+// opens the same CardModal; per-row Move + quick actions reuse the kanban's
+// components, so the two views stay behaviourally identical. Selected via
+// `?view=list` on the board page (BoardViewToggle). CLAUDE.md §26, §28, §3.
+
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+
+import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
+import { Badge } from '@/components/ui/badge'
+import { PhoneIcon } from '@/components/ui/icon'
+import { formatLondon } from '@/lib/format/london-time'
+import { formatRelativeTime } from '@/lib/format/relative-time'
+
+import { resolveStageColor } from '../../pipeline/stage-color'
+import { CardModal } from './CardModal'
+import { MoveCardMenu } from './MoveCardMenu'
+import { QuickActionButtons } from './QuickActionButtons'
+
+interface StageOption {
+  id: string
+  name: string
+}
+interface LabelChip {
+  id: string
+  name: string
+  color: string
+}
+interface CardData {
+  id: string
+  stageId: string
+  contactId: string
+  contactName: string
+  contactEmail?: string | null
+  contactPhone?: string | null
+  description?: string | null
+  subject: { id: string; name: string } | null
+  labels: ReadonlyArray<LabelChip>
+  lastActivityAt: string | Date | null
+  dueAt?: Date | string | null
+  scheduledCallAt?: Date | string | null
+  priority?: number | null
+  assigneeId?: string | null
+  assigneeName?: string | null
+  assigneeEmail?: string | null
+}
+interface Stage {
+  id: string
+  name: string
+  color: string
+  isClosed: boolean
+}
+interface CrossBoardGroup {
+  boardId: string
+  boardName: string
+  stages: ReadonlyArray<StageOption>
+}
+interface QuickAction {
+  id: string
+  label: string
+  color: string | null
+  targetStageId: string
+  targetStageName: string
+  targetBoardName: string | null
+}
+
+interface Props {
+  stages: ReadonlyArray<Stage>
+  cards: ReadonlyArray<CardData>
+  stageOptions: ReadonlyArray<StageOption>
+  crossBoardStages?: ReadonlyArray<CrossBoardGroup>
+  quickActions: ReadonlyArray<QuickAction>
+  canWrite: boolean
+  canComment: boolean
+  canDeleteCard: boolean
+  currentUserName: string
+}
+
+function initialsOf(name: string | null | undefined, email: string | null | undefined) {
+  const s = (name ?? email ?? '?').trim()
+  if (!s) return '?'
+  const parts = s.split(/[\s@]+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase()
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase()
+}
+
+export function BoardListView({
+  stages,
+  cards: initialCards,
+  stageOptions,
+  crossBoardStages = [],
+  quickActions,
+  canWrite,
+  canComment,
+  canDeleteCard,
+  currentUserName,
+}: Props) {
+  const [cards, setCards] = useState<CardData[]>(() => [...initialCards])
+  const [openCardId, setOpenCardId] = useState<string | null>(null)
+
+  // Reconcile server → local on any meaningful change (mirrors BoardDnd) so a
+  // move/refresh elsewhere is reflected without clobbering optimistic moves.
+  const serverSignature = useMemo(
+    () =>
+      initialCards
+        .map((c) =>
+          [
+            c.id,
+            c.stageId,
+            c.contactName,
+            c.assigneeId ?? '',
+            c.dueAt ? new Date(c.dueAt).getTime() : '',
+            c.scheduledCallAt ? new Date(c.scheduledCallAt).getTime() : '',
+            c.lastActivityAt ? new Date(c.lastActivityAt).getTime() : '',
+            c.labels.length,
+          ].join(':'),
+        )
+        .join('|'),
+    [initialCards],
+  )
+  const latestServerCards = useRef(initialCards)
+  latestServerCards.current = initialCards
+  useEffect(() => {
+    setCards([...latestServerCards.current])
+  }, [serverSignature])
+
+  function moveCardLocal(cardId: string, toStageId: string) {
+    setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, stageId: toStageId } : c)))
+  }
+
+  const byStage = useMemo(() => {
+    const map = new Map<string, CardData[]>()
+    for (const s of stages) map.set(s.id, [])
+    for (const c of cards) map.get(c.stageId)?.push(c)
+    return map
+  }, [cards, stages])
+
+  const now = new Date()
+  const colCount = canWrite ? 7 : 6
+
+  return (
+    <div className="space-y-6">
+      {stages.map((stage) => {
+        const stageCards = byStage.get(stage.id) ?? []
+        const dot = resolveStageColor(stage.color)
+        return (
+          <section
+            key={stage.id}
+            className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card"
+          >
+            <header className="flex items-center gap-2 border-b border-neutral-100 px-4 py-2">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: dot }}
+                aria-hidden
+              />
+              <h2 className="text-sm font-semibold text-neutral-800">{stage.name}</h2>
+              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
+                {stageCards.length}
+              </span>
+            </header>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-100 text-left text-[11px] uppercase tracking-wide text-neutral-500">
+                    <th className="px-4 py-2 font-medium">Contact</th>
+                    <th className="px-3 py-2 font-medium">Subject / labels</th>
+                    <th className="px-3 py-2 font-medium">Scheduled call</th>
+                    <th className="px-3 py-2 font-medium">Due</th>
+                    <th className="px-3 py-2 font-medium">Assignee</th>
+                    <th className="px-3 py-2 font-medium">Last activity</th>
+                    {canWrite ? <th className="px-3 py-2 font-medium">Actions</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {stageCards.length === 0 ? (
+                    <tr>
+                      <td colSpan={colCount} className="px-4 py-3 text-sm text-neutral-400">
+                        No cards in this stage.
+                      </td>
+                    </tr>
+                  ) : (
+                    stageCards.map((card) => (
+                      <tr
+                        key={card.id}
+                        onClick={() => setOpenCardId(card.id)}
+                        className="cursor-pointer border-b border-neutral-50 last:border-0 hover:bg-neutral-50"
+                      >
+                        <td className="px-4 py-2 align-top">
+                          <div className="font-semibold text-neutral-900">{card.contactName}</div>
+                          {card.contactPhone || card.contactEmail ? (
+                            <div
+                              className="mt-0.5 flex flex-col gap-0.5 text-xs text-neutral-600"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
+                              {card.contactEmail && <EmailLink email={card.contactEmail} />}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          <div className="flex flex-wrap items-center gap-1">
+                            {card.subject ? <Badge tone="info">{card.subject.name}</Badge> : null}
+                            {card.labels.map((l) => (
+                              <span
+                                key={l.id}
+                                className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                                style={{ backgroundColor: resolveStageColor(l.color) }}
+                              >
+                                {l.name}
+                              </span>
+                            ))}
+                          </div>
+                          {card.description && card.description.trim().length > 0 ? (
+                            <p className="mt-1 line-clamp-1 text-xs text-neutral-500">
+                              {card.description.trim()}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          {card.scheduledCallAt ? (
+                            <span
+                              className={
+                                new Date(card.scheduledCallAt).getTime() < now.getTime()
+                                  ? 'inline-flex items-center gap-1 text-[11px] font-semibold text-red-700'
+                                  : 'inline-flex items-center gap-1 text-[11px] font-semibold text-primary-700'
+                              }
+                              title="Scheduled call (UK time)"
+                            >
+                              <PhoneIcon size={11} />
+                              {formatLondon(card.scheduledCallAt, {
+                                day: '2-digit',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          ) : (
+                            <span className="text-neutral-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top text-xs">
+                          {card.dueAt ? (
+                            <span
+                              className={
+                                new Date(card.dueAt).getTime() < now.getTime()
+                                  ? 'font-semibold text-red-700'
+                                  : 'text-neutral-600'
+                              }
+                            >
+                              {new Intl.DateTimeFormat('en-GB', { dateStyle: 'short' }).format(
+                                new Date(card.dueAt),
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-neutral-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          {card.assigneeId ? (
+                            <span
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 text-[10px] font-semibold text-primary-800"
+                              title={card.assigneeName ?? card.assigneeEmail ?? 'Assigned'}
+                            >
+                              {initialsOf(card.assigneeName, card.assigneeEmail)}
+                            </span>
+                          ) : (
+                            <span className="text-neutral-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top text-xs text-neutral-500">
+                          {card.lastActivityAt ? (
+                            <span className="font-mono tabular-nums">
+                              {formatRelativeTime(new Date(card.lastActivityAt), now)}
+                            </span>
+                          ) : (
+                            <span className="text-neutral-300">—</span>
+                          )}
+                        </td>
+                        {canWrite ? (
+                          <td
+                            className="px-3 py-2 align-top"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="space-y-1.5">
+                              {quickActions.length > 0 ? (
+                                <QuickActionButtons
+                                  cardId={card.id}
+                                  currentStageId={card.stageId}
+                                  actions={quickActions}
+                                  onLocalMove={moveCardLocal}
+                                />
+                              ) : null}
+                              <MoveCardMenu
+                                cardId={card.id}
+                                currentStageId={card.stageId}
+                                stages={stageOptions}
+                                crossBoardStages={crossBoardStages}
+                                onLocalMove={moveCardLocal}
+                              />
+                            </div>
+                          </td>
+                        ) : null}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )
+      })}
+
+      {openCardId !== null ? (
+        <CardModal
+          cardId={openCardId}
+          open
+          onClose={() => setOpenCardId(null)}
+          stages={stageOptions}
+          crossBoardStages={crossBoardStages}
+          quickActions={quickActions}
+          canWrite={canWrite}
+          canComment={canComment}
+          canDeleteCard={canDeleteCard}
+          currentUserName={currentUserName}
+        />
+      ) : null}
+    </div>
+  )
+}

@@ -15,7 +15,9 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { AddCardButton } from './AddCardButton'
 import { BoardDnd } from './BoardDnd'
+import { BoardListView } from './BoardListView'
 import { BoardSwitcher } from './BoardSwitcher'
+import { BoardViewToggle } from './BoardViewToggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,10 +28,13 @@ const CAN_DELETE_CARD = new Set(['ceo', 'senior_manager', 'manager'])
 
 interface PageProps {
   params: Promise<{ boardId: string }>
+  searchParams: Promise<{ view?: string }>
 }
 
-export default async function BoardPage({ params }: PageProps) {
+export default async function BoardPage({ params, searchParams }: PageProps) {
   const { boardId } = await params
+  const { view: viewParam } = await searchParams
+  const view: 'kanban' | 'list' = viewParam === 'list' ? 'list' : 'kanban'
   const me = await getCurrentUser()
   const role = me?.role ?? 'virtual_assistant'
   const canWrite = CAN_WRITE.has(role)
@@ -137,6 +142,9 @@ export default async function BoardPage({ params }: PageProps) {
             Settings
           </a>
         ) : null}
+        <div className="ml-auto">
+          <BoardViewToggle view={view} />
+        </div>
       </div>
       <PageBody>
         {stages.length === 0 ? (
@@ -150,6 +158,18 @@ export default async function BoardPage({ params }: PageProps) {
               'Ask an administrator to add a stage.'
             )}
           </div>
+        ) : view === 'list' ? (
+          <BoardListView
+            stages={dndStages}
+            cards={dndCards}
+            stageOptions={stageOptions}
+            crossBoardStages={otherBoardStages}
+            quickActions={quickActions}
+            canWrite={canWrite}
+            canComment={canComment}
+            canDeleteCard={canDeleteCard}
+            currentUserName={currentUserName}
+          />
         ) : (
           <BoardDnd
             boardId={board.id}
