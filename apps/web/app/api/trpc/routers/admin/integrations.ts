@@ -122,7 +122,7 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
     label: 'Aircall',
     description: 'Inbound/outbound calls, voicemail, AI Assist transcripts. CLAUDE.md §10.',
     envVars: ['AIRCALL_API_ID', 'AIRCALL_API_TOKEN', 'AIRCALL_WEBHOOK_TOKEN'],
-    cronFunctionIds: ['aircall/recover-disabled-webhook'],
+    cronFunctionIds: ['aircall/sync-calls', 'aircall/recover-disabled-webhook'],
     perAgentTokens: null,
     runbook: '/docs/runbooks/aircall-webhook-disabled.md',
     setupSteps: [
@@ -469,6 +469,35 @@ export const adminIntegrationsRouter = router({
 
       const expiredCount = perAgent?.filter((a) => a.expired).length ?? null
 
+      // Aircall: how many calls have actually landed in our mirror, so the
+      // operator can see at a glance whether import is working (CLAUDE.md §10).
+      let importStats: {
+        totalCalls: number
+        last7dCalls: number
+        last24hCalls: number
+        lastCallAt: Date | null
+      } | null = null
+      if (input.provider === 'aircall') {
+        const sevenDaysAgo = new Date(nowMs - 7 * oneDayMs)
+        const oneDayAgo = new Date(nowMs - oneDayMs)
+        const [totalCalls, last7dCalls, last24hCalls, lastCall] = await Promise.all([
+          ctx.db.interaction.count({ where: { type: 'call' } }),
+          ctx.db.interaction.count({ where: { type: 'call', occurredAt: { gte: sevenDaysAgo } } }),
+          ctx.db.interaction.count({ where: { type: 'call', occurredAt: { gte: oneDayAgo } } }),
+          ctx.db.interaction.findFirst({
+            where: { type: 'call' },
+            orderBy: { occurredAt: 'desc' },
+            select: { occurredAt: true },
+          }),
+        ])
+        importStats = {
+          totalCalls,
+          last7dCalls,
+          last24hCalls,
+          lastCallAt: lastCall?.occurredAt ?? null,
+        }
+      }
+
       const status = deriveConnectionStatus({
         envVarsAllSet,
         lastReceivedAt: recentEvents[0]?.receivedAt ?? null,
@@ -488,9 +517,53 @@ export const adminIntegrationsRouter = router({
         recentEvents,
         recentCronRuns,
         perAgent,
+        importStats,
         setupSteps: cfg.setupSteps,
       }
     }),
+
+  /**
+   * Live Aircall connectivity probe (CEO / Senior Manager). Unlike `test`
+   * (which only proves our own persistence path), this actually calls the
+   * Aircall REST API with the configured AIRCALL_API_ID / AIRCALL_API_TOKEN
+   * and reports whether the keys work and how many calls Aircall can see — so
+   * "nothing is importing" can be pinned to keys, webhook, or an empty account.
+   * Read-only against Aircall; audited.
+   */
+  probeAircall: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    if (!TEST_ROLES.has(user.role)) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
+    }
+    const result = await (async (): Promise<
+      | { ok: true; totalCallsVisible: number | null; mostRecentCallAt: Date | null }
+      | { ok: false; error: string }
+    > => {
+      try {
+        const { createClient } = await import('@studymind/integration-aircall/client')
+        const client = createClient() // throws if API_ID / API_TOKEN are unset
+        const res = await client.request<{
+          calls?: Array<{ started_at?: number }>
+          meta?: { total?: number }
+        }>('GET', '/calls?per_page=1&order=desc')
+        const recent = res.calls?.[0]
+        return {
+          ok: true,
+          totalCallsVisible: res.meta?.total ?? null,
+          mostRecentCallAt:
+            recent?.started_at != null ? new Date(recent.started_at * 1000) : null,
+        }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'unknown error' }
+      }
+    })()
+    await ctx.audit({
+      action: 'admin.integration_tested',
+      target: { type: 'Integration', id: 'aircall' },
+      after: { probe: 'aircall_api_live', ok: result.ok },
+    })
+    return result
+  }),
 
   /**
    * Synthetic ping that proves the ProviderEvent persistence path is
