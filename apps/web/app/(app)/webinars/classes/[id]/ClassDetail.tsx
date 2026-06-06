@@ -10,6 +10,7 @@ import { Card, CardBody } from '@/components/ui/card'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
 import { SendDaysPicker } from '../../SendDaysPicker'
@@ -41,6 +42,7 @@ export function ClassDetail({
       <ThisWeekCard detail={detail} />
       <ZoomCard detail={detail} canManage={canManage} />
       <SyllabusCard detail={detail} canManage={canManage} />
+      {canManage ? <ImportScheduleCard classId={detail.id} /> : null}
       <SettingsCard detail={detail} canManage={canManage} />
       <EnrollmentsCard classId={detail.id} initial={enrollments} canManage={canManage} />
     </div>
@@ -460,6 +462,147 @@ function EnrollmentsCard({
             ))}
           </div>
         )}
+      </CardBody>
+    </Card>
+  )
+}
+
+function ImportScheduleCard({ classId }: { classId: string }) {
+  const utils = trpc.useUtils()
+  const router = useRouter()
+  const [kind, setKind] = useState<'text' | 'csv' | 'pdf'>('text')
+  const [text, setText] = useState('')
+  const [rows, setRows] = useState<Array<{ weekNumber: number; topic: string }>>([])
+  const [note, setNote] = useState<string>('')
+
+  const preview = trpc.webinar.syllabus.importPreview.useMutation({
+    onSuccess: (r) => {
+      setRows(r.weeks)
+      setNote(r.note)
+      if (r.weeks.length === 0) toast.error(r.note)
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const save = trpc.webinar.syllabus.set.useMutation({
+    onSuccess: () => {
+      toast.success('Schedule saved to the syllabus')
+      setRows([])
+      setText('')
+      void utils.webinar.class.get.invalidate({ id: classId })
+      router.refresh()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  async function fileToBase64(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const buf = await file.arrayBuffer()
+    // Chunked to avoid call-stack limits on large files.
+    let binary = ''
+    const bytes = new Uint8Array(buf)
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    }
+    const base64 = btoa(binary)
+    preview.mutate({ classId, kind, dataBase64: base64 })
+    e.target.value = ''
+  }
+
+  return (
+    <Card>
+      <CardBody>
+        <h2 className="text-sm font-semibold text-neutral-900">Import schedule (AI)</h2>
+        <p className="mt-1 text-xs text-neutral-500">
+          Paste your schedule, or upload a CSV or PDF. The app uses AI to pull out the weekly topics
+          — review and save. The uploaded PDF (if any) is still attached to every email.
+        </p>
+
+        <div className="mt-3 flex gap-1">
+          {(['text', 'csv', 'pdf'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKind(k)}
+              className={
+                'rounded-md px-3 py-1.5 text-sm ' +
+                (kind === k
+                  ? 'bg-primary-50 font-medium text-primary-800'
+                  : 'text-neutral-600 hover:bg-neutral-100')
+              }
+            >
+              {k === 'text' ? 'Paste' : k.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        {kind === 'text' ? (
+          <div className="mt-2 space-y-2">
+            <Textarea
+              rows={6}
+              placeholder={'Week 1: Cell structure\nWeek 2: Transport in cells\n…'}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+            <Button
+              size="sm"
+              disabled={preview.isPending || text.trim().length === 0}
+              onClick={() => preview.mutate({ classId, kind: 'text', text })}
+            >
+              {preview.isPending ? 'Reading…' : 'Preview import'}
+            </Button>
+          </div>
+        ) : (
+          <div className="mt-2">
+            <label className="inline-flex">
+              <span className="inline-flex h-8 cursor-pointer items-center rounded-md border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50">
+                {preview.isPending ? 'Reading…' : `Choose ${kind.toUpperCase()} file`}
+              </span>
+              <input
+                type="file"
+                accept={kind === 'pdf' ? 'application/pdf' : '.csv,text/csv,text/plain'}
+                className="hidden"
+                onChange={fileToBase64}
+              />
+            </label>
+          </div>
+        )}
+
+        {rows.length > 0 ? (
+          <div className="mt-4 space-y-1.5">
+            <p className="text-xs text-neutral-500">{note}</p>
+            {rows.map((r, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="w-12 shrink-0 text-xs text-neutral-500">W{r.weekNumber}</span>
+                <Input
+                  value={r.topic}
+                  onChange={(e) => {
+                    const next = [...rows]
+                    next[i] = { ...r, topic: e.target.value }
+                    setRows(next)
+                  }}
+                />
+              </div>
+            ))}
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                size="sm"
+                disabled={save.isPending}
+                onClick={() =>
+                  save.mutate({
+                    classId,
+                    weeks: rows.filter((r) => r.topic.trim().length > 0),
+                  })
+                }
+              >
+                {save.isPending ? 'Saving…' : `Save ${rows.length} weeks to syllabus`}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setRows([])}>
+                Discard
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </CardBody>
     </Card>
   )

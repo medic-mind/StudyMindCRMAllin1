@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { AUTO_ENROLL_CONFIDENCE, detectWebinarClasses, matchWebinarClass } from './matching'
+import {
+  AUTO_ENROLL_CONFIDENCE,
+  buildLevelRules,
+  buildSubjectRules,
+  detectWebinarClasses,
+  detectWebinarClassesWithRules,
+  matchWebinarClass,
+} from './matching'
 
 describe('detectWebinarClasses', () => {
   it('matches a clear subject + level with high confidence', () => {
@@ -24,11 +31,10 @@ describe('detectWebinarClasses', () => {
     expect(out.every((c) => c.level === 'gcse')).toBe(true)
   })
 
-  it('defaults level to a_level but lowers confidence when level is absent', () => {
-    const out = matchWebinarClass('Maths weekly class')
-    expect(out!.subject).toBe('maths')
-    expect(out!.level).toBe('a_level')
-    expect(out!.confidence).toBeLessThan(AUTO_ENROLL_CONFIDENCE)
+  it('does not guess a class when no level is mentioned', () => {
+    // Subject without an explicit level is left for AI / manual review (safe in
+    // a world with GCSE / A-Level / UCAT / GAMSAT / …).
+    expect(matchWebinarClass('Maths weekly class')).toBeNull()
   })
 
   it('reads across multiple text fields (product + customer name)', () => {
@@ -87,5 +93,32 @@ describe('detectWebinarClasses', () => {
     const p = matchWebinarClass('GCSEs - Biology Weekly Classes')
     expect(p!.subject).toBe('biology')
     expect(p!.level).toBe('gcse')
+  })
+
+  it('matches operator-added subjects + levels (UCAT / GAMSAT)', () => {
+    const subjectRules = buildSubjectRules([
+      { handle: 'biology', label: 'Biology' },
+      { handle: 'ucat', label: 'UCAT' },
+    ])
+    const levelRules = buildLevelRules([
+      { handle: 'a_level', label: 'A-Level' },
+      { handle: 'ucat', label: 'UCAT' },
+      { handle: 'gamsat', label: 'GAMSAT' },
+    ])
+    const out = detectWebinarClassesWithRules(
+      { subjectRules, levelRules },
+      ['UCAT 2026 weekly course'],
+    )
+    expect(out[0]?.subject).toBe('ucat')
+    expect(out[0]?.level).toBe('ucat')
+  })
+
+  it('matches a custom subject (Further Maths) at a built-in level', () => {
+    const subjectRules = buildSubjectRules([
+      { handle: 'further_maths', label: 'Further Maths', aliases: ['fm'] },
+    ])
+    const out = detectWebinarClassesWithRules({ subjectRules }, ['A-Level Further Maths'])
+    expect(out[0]?.subject).toBe('further_maths')
+    expect(out[0]?.level).toBe('a_level')
   })
 })

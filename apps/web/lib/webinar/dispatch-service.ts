@@ -15,12 +15,10 @@ import {
   DEFAULT_EMAIL_SUBJECT_TEMPLATE,
   formatSessionDate,
   formatSessionTime,
-  levelLabel,
   renderWebinarEmail,
   reminderDayNow,
   sessionForLocalWeek,
   sessionStartInstant,
-  subjectLabel,
 } from '@studymind/core/webinar'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 
@@ -143,9 +141,9 @@ export async function dispatchDueWebinarEmails(
 
       const rendered = renderWebinarEmail(subjectTemplate, bodyTemplate, {
         studentName: enr.contact.firstName || 'there',
-        className: `${subjectLabel(schedule.subject)} ${levelLabel(schedule.level)}`,
-        subject: subjectLabel(schedule.subject),
-        level: levelLabel(schedule.level),
+        className: `${schedule.subjectLabel} ${schedule.levelLabel}`,
+        subject: schedule.subjectLabel,
+        level: schedule.levelLabel,
         dateLabel,
         timeLabel,
         zoomLink: schedule.zoomLink || '(link to be confirmed)',

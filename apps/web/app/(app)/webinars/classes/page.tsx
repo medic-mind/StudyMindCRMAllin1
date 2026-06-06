@@ -1,6 +1,6 @@
-// Classes list. One class per subject + level within a cohort. Create classes,
-// see Zoom-rotation status, and drill into a class to manage its syllabus,
-// Zoom link and enrolments.
+// Classes list. One class per subject + level within an academic year. Create
+// classes from the catalogue-driven workflow, see Zoom-rotation + current-week
+// status, and drill into a class to manage its syllabus, Zoom link and list.
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
@@ -16,16 +16,18 @@ const MANAGE = new Set(['ceo', 'senior_manager', 'manager'])
 export default async function ClassesPage() {
   const me = await getCurrentUser()
   const caller = await createServerCaller()
-  const [classes, cohorts] = await Promise.all([
+  const [classes, cohorts, subjects, levels] = await Promise.all([
     caller.webinar.class.list({}),
     caller.webinar.cohort.list(),
+    caller.webinar.subject.pickList(),
+    caller.webinar.level.pickList(),
   ])
 
   return (
     <>
       <PageHeader
         title="Classes"
-        subtitle="Weekly live classes. Each is a subject at a level within a cohort."
+        subtitle="Weekly live classes. Each is a subject at a level/type within an academic year."
         breadcrumbs={[
           { label: 'Webinars', href: '/webinars' },
           { label: 'Classes', href: '/webinars/classes' },
@@ -34,7 +36,9 @@ export default async function ClassesPage() {
       <PageBody>
         <ClassesManager
           initialClasses={classes}
-          cohorts={cohorts.map((c) => ({ id: c.id, name: c.name, status: c.status }))}
+          initialCohorts={cohorts}
+          initialSubjects={subjects}
+          initialLevels={levels}
           canManage={MANAGE.has(me?.role ?? '')}
         />
       </PageBody>

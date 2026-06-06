@@ -59,7 +59,39 @@ same each week unless we tell you otherwise.
 See you there,
 {{fromName}}`
 
+const SUBJECT_OPTIONS: Array<{ handle: string; label: string; aliases?: string[]; sortOrder: number }> = [
+  { handle: 'biology', label: 'Biology', aliases: ['bio'], sortOrder: 10 },
+  { handle: 'chemistry', label: 'Chemistry', aliases: ['chem'], sortOrder: 20 },
+  { handle: 'physics', label: 'Physics', aliases: ['phys'], sortOrder: 30 },
+  { handle: 'maths', label: 'Maths', aliases: ['math', 'mathematics'], sortOrder: 40 },
+  { handle: 'english_language', label: 'English Language', aliases: ['english'], sortOrder: 50 },
+]
+
+// GCSE + A-Level ship live; UCAT + GAMSAT are seeded as ready-to-use examples
+// of the extensible level/type catalogue (admins add more from the UI).
+const LEVEL_OPTIONS: Array<{ handle: string; label: string; aliases?: string[]; sortOrder: number }> = [
+  { handle: 'a_level', label: 'A-Level', aliases: ['a level', 'as', 'a2', 'ks5'], sortOrder: 10 },
+  { handle: 'gcse', label: 'GCSE', aliases: ['ks4', 'igcse'], sortOrder: 20 },
+  { handle: 'ucat', label: 'UCAT', aliases: ['ukcat'], sortOrder: 30 },
+  { handle: 'gamsat', label: 'GAMSAT', sortOrder: 40 },
+]
+
 export async function seedWebinar(): Promise<{ cohortId: string; classes: number }> {
+  for (const s of SUBJECT_OPTIONS) {
+    await db.webinarSubjectOption.upsert({
+      where: { handle: s.handle },
+      create: { id: createId(), handle: s.handle, label: s.label, aliases: s.aliases ?? [], sortOrder: s.sortOrder },
+      update: {},
+    })
+  }
+  for (const l of LEVEL_OPTIONS) {
+    await db.webinarLevelOption.upsert({
+      where: { handle: l.handle },
+      create: { id: createId(), handle: l.handle, label: l.label, aliases: l.aliases ?? [], sortOrder: l.sortOrder },
+      update: {},
+    })
+  }
+
   const cohort2026 = await db.webinarCohort.upsert({
     where: { name: '2026/2027' },
     create: {

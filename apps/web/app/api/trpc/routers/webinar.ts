@@ -21,8 +21,14 @@ import {
   webinarSubjectSchema,
   WEEKDAY_LABEL,
   zoomRotationDue,
-  type WebinarLevel,
 } from '@studymind/core/webinar'
+
+import {
+  buildScheduleImportPrompt,
+  runStructured,
+  scheduleImportSchema,
+  WEBINAR_SCHEDULE_IMPORT_PROMPT_VERSION,
+} from '@studymind/ai'
 
 import {
   auditedProcedure,
@@ -32,6 +38,9 @@ import {
   type UserRole,
 } from '@/lib/trpc/builders'
 import { detectEnrollmentsFromStripe } from '@/lib/webinar/enrollment-service'
+import { importToText, parseScheduleFallback, type ImportKind } from '@/lib/webinar/import-helpers'
+
+import { webinarLevelRouter, webinarSubjectRouter } from './webinar-catalogue'
 
 const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
@@ -109,7 +118,7 @@ const cohortRouter = router({
         subject: cl.subject,
         subjectLabel: subjectLabel(cl.subject),
         level: cl.level,
-        levelLabel: levelLabel(cl.level as WebinarLevel),
+        levelLabel: levelLabel(cl.level),
         title: cl.title,
         active: cl.active,
         enrollmentCount: cl._count.enrollments,
@@ -270,7 +279,7 @@ const classRouter = router({
           subject: cl.subject,
           subjectLabel: subjectLabel(cl.subject),
           level: cl.level,
-          levelLabel: levelLabel(cl.level as WebinarLevel),
+          levelLabel: levelLabel(cl.level),
           title: cl.title,
           dayOfWeek: cl.dayOfWeek,
           dayLabel: WEEKDAY_LABEL[cl.dayOfWeek] ?? '—',
@@ -341,7 +350,7 @@ const classRouter = router({
       subject: cl.subject,
       subjectLabel: subjectLabel(cl.subject),
       level: cl.level,
-      levelLabel: levelLabel(cl.level as WebinarLevel),
+      levelLabel: levelLabel(cl.level),
       title: cl.title,
       dayOfWeek: cl.dayOfWeek,
       startMinute: cl.startMinute,
@@ -482,7 +491,7 @@ const classRouter = router({
       })
       // Close any open rotation reminder for this class.
       const title = `[Webinar] Update Zoom link — ${subjectLabel(before.subject)} ${levelLabel(
-        before.level as WebinarLevel,
+        before.level,
       )}`
       await ctx.db.task.updateMany({
         where: { title, status: { in: ['open', 'in_progress'] } },
@@ -666,6 +675,81 @@ const syllabusRouter = router({
       })
       return { count: sessions.length }
     }),
+
+  /**
+   * Import a schedule from an uploaded CSV / PDF / pasted text. Uses AI to
+   * structure the (often messy) text into weekly topics, with a deterministic
+   * fallback. Returns a PREVIEW only — the human confirms and `syllabus.set`
+   * saves it (CLAUDE.md §3). Not audited: reads + AI only, writes nothing.
+   */
+  importPreview: protectedProcedure
+    .input(
+      z.object({
+        classId: z.string(),
+        kind: z.enum(['pdf', 'csv', 'text']),
+        dataBase64: z.string().max(16_000_000).optional(),
+        text: z.string().max(60_000).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const cl = await ctx.db.webinarClass.findFirst({
+        where: { id: input.classId, deletedAt: null },
+        include: { cohort: { include: { holidays: true } } },
+      })
+      if (!cl) throw new TRPCError({ code: 'NOT_FOUND' })
+      const totalWeeks = computeSessions(
+        cl.cohort.startsOn,
+        cl.cohort.endsOn,
+        cl.dayOfWeek,
+        cl.cohort.holidays.map((h) => ({ startsOn: h.startsOn, endsOn: h.endsOn })),
+      ).length
+
+      const text = importToText(input.kind as ImportKind, {
+        base64: input.dataBase64,
+        text: input.text,
+      })
+      if (text.trim().length === 0) {
+        return {
+          weeks: [] as Array<{ weekNumber: number; topic: string }>,
+          note:
+            input.kind === 'pdf'
+              ? 'Could not read text from that PDF (it may be scanned). Paste the schedule or upload a CSV instead.'
+              : 'No text found to import.',
+          source: 'none' as const,
+        }
+      }
+
+      // AI-structure first; fall back to a deterministic parse on any failure
+      // (budget exhausted, provider error, empty result).
+      try {
+        const prompt = buildScheduleImportPrompt({ text, totalWeeks: totalWeeks || 52 })
+        const out = await runStructured({
+          task: 'webinar_schedule_import',
+          promptVersion: WEBINAR_SCHEDULE_IMPORT_PROMPT_VERSION,
+          schema: scheduleImportSchema,
+          system: prompt.system,
+          user: prompt.user,
+          model: 'gpt-4o-mini',
+          ctx: { requestId: ctx.requestId, source: 'webinar.import' },
+        })
+        if (out.weeks.length > 0) {
+          return { weeks: out.weeks, note: out.note || 'Parsed with AI.', source: 'ai' as const }
+        }
+      } catch {
+        // fall through to deterministic parse
+      }
+      const fallback = parseScheduleFallback(text, totalWeeks || 52)
+      return {
+        weeks: fallback,
+        note:
+          fallback.length > 0
+            ? 'Parsed without AI (rule-based). Please check the weeks below.'
+            : 'Could not parse a schedule from that input.',
+        source: 'fallback' as const,
+      }
+    }),
 })
 
 /* -------------------------------------------------------------------------- */
@@ -709,7 +793,7 @@ const enrollmentRouter = router({
         billingInterval: e.billingInterval,
         classId: e.classId,
         classLabel: `${subjectLabel(e.webinarClass.subject)} ${levelLabel(
-          e.webinarClass.level as WebinarLevel,
+          e.webinarClass.level,
         )}`,
         contactId: e.contact.id,
         contactName:
@@ -999,4 +1083,6 @@ export const webinarRouter = router({
   syllabus: syllabusRouter,
   enrollment: enrollmentRouter,
   settings: settingsRouter,
+  subject: webinarSubjectRouter,
+  level: webinarLevelRouter,
 })

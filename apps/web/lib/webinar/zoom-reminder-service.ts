@@ -6,7 +6,7 @@
 import { createId } from '@paralleldrive/cuid2'
 import type { PrismaClient } from '@prisma/client'
 
-import { subjectLabel, levelLabel, zoomRotationDue, type WebinarLevel } from '@studymind/core/webinar'
+import { subjectLabel, levelLabel, zoomRotationDue } from '@studymind/core/webinar'
 
 export interface ZoomReminderResult {
   classesChecked: number
@@ -36,9 +36,7 @@ export async function createZoomRotationTasks(
   for (const cls of classes) {
     if (!zoomRotationDue(cls.zoomLinkUpdatedAt, cls.zoomRotateEveryWeeks, now)) continue
 
-    const title = `${TASK_PREFIX} — ${subjectLabel(cls.subject)} ${levelLabel(
-      cls.level as WebinarLevel,
-    )}`
+    const title = `${TASK_PREFIX} — ${subjectLabel(cls.subject)} ${levelLabel(cls.level)}`
     // Skip if an open reminder for this class already exists.
     const existing = await db.task.findFirst({
       where: { title, status: { in: ['open', 'in_progress'] } },

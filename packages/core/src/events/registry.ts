@@ -429,6 +429,10 @@ export const EVENT_NAMES = [
   'webinar.enrollment_removed',
   'webinar.detect_run',
   'webinar.settings_updated',
+  'webinar.subject_created',
+  'webinar.subject_updated',
+  'webinar.level_created',
+  'webinar.level_updated',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

@@ -17,13 +17,17 @@ import {
   runStructured,
   webinarClassMatchSchema,
   WEBINAR_CLASS_MATCH_PROMPT_VERSION,
+  type WebinarCatalogueOption,
 } from '@studymind/ai'
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
   AUTO_ENROLL_CONFIDENCE,
-  detectWebinarClasses,
+  buildLevelRules,
+  buildSubjectRules,
+  detectWebinarClassesWithRules,
   type DetectedClass,
-  type WebinarLevel,
+  type LevelRule,
+  type SubjectRule,
 } from '@studymind/core/webinar'
 import { client as stripeClient } from '@studymind/integration-stripe'
 
@@ -196,6 +200,10 @@ export async function detectEnrollmentsFromStripe(
   }
   result.cohort = resolved.cohortName
 
+  // Operator catalogues drive both the deterministic matcher and the AI fallback
+  // so added subjects/levels (UCAT, GAMSAT, …) are recognised.
+  const cat = await loadCatalogues(db)
+
   let stripe: Stripe
   try {
     stripe = stripeClient.createClient()
@@ -221,14 +229,17 @@ export async function detectEnrollmentsFromStripe(
     result.scanned += 1
     try {
       const texts = subscriptionTexts(sub)
-      let detected: DetectedClass[] = detectWebinarClasses(...texts)
+      let detected: DetectedClass[] = detectWebinarClassesWithRules(
+        { subjectRules: cat.subjectRules, levelRules: cat.levelRules },
+        texts,
+      )
 
       if (detected.length === 0 && opts.useAi) {
         const key = texts.join(' ').toLowerCase().replace(/\s+/g, ' ').trim()
         if (key) {
           let cached = aiCache.get(key)
           if (!cached) {
-            cached = await consultAi(key, opts.requestId)
+            cached = await consultAi(key, cat, opts.requestId)
             aiCache.set(key, cached)
             result.aiConsulted += 1
           }
@@ -274,10 +285,51 @@ export async function detectEnrollmentsFromStripe(
   return result
 }
 
-async function consultAi(description: string, requestId: string): Promise<DetectedClass[]> {
-  if (!description.trim()) return []
+interface Catalogues {
+  subjectRules: SubjectRule[]
+  levelRules: LevelRule[]
+  subjects: WebinarCatalogueOption[]
+  levels: WebinarCatalogueOption[]
+  subjectHandles: Set<string>
+  levelHandles: Set<string>
+}
+
+/** Load the active subject + level catalogues and build matcher rules. */
+async function loadCatalogues(db: PrismaClient): Promise<Catalogues> {
+  const [subjectRows, levelRows] = await Promise.all([
+    db.webinarSubjectOption.findMany({
+      where: { archivedAt: null },
+      orderBy: { sortOrder: 'asc' },
+      select: { handle: true, label: true, aliases: true },
+    }),
+    db.webinarLevelOption.findMany({
+      where: { archivedAt: null },
+      orderBy: { sortOrder: 'asc' },
+      select: { handle: true, label: true, aliases: true },
+    }),
+  ])
+  return {
+    subjectRules: buildSubjectRules(subjectRows),
+    levelRules: buildLevelRules(levelRows),
+    subjects: subjectRows.map((s) => ({ handle: s.handle, label: s.label })),
+    levels: levelRows.map((l) => ({ handle: l.handle, label: l.label })),
+    subjectHandles: new Set(subjectRows.map((s) => s.handle)),
+    levelHandles: new Set(levelRows.map((l) => l.handle)),
+  }
+}
+
+async function consultAi(
+  description: string,
+  cat: Catalogues,
+  requestId: string,
+): Promise<DetectedClass[]> {
+  if (!description.trim() || cat.subjects.length === 0) return []
   try {
-    const prompt = buildWebinarClassMatchPrompt({ description })
+    const prompt = buildWebinarClassMatchPrompt({
+      description,
+      subjects: cat.subjects,
+      levels: cat.levels,
+    })
     const out = await runStructured({
       task: 'webinar_class_match',
       promptVersion: WEBINAR_CLASS_MATCH_PROMPT_VERSION,
@@ -288,14 +340,18 @@ async function consultAi(description: string, requestId: string): Promise<Detect
       model: 'gpt-4o-mini',
       ctx: { requestId, source: 'webinar.detect' },
     })
-    return out.matches.map((m) => ({
-      subject: m.subject,
-      level: m.level as WebinarLevel,
-      // AI suggestions never auto-enrol: clamp below the threshold so they land
-      // in review regardless of the model's self-reported confidence.
-      confidence: Math.min(m.confidence, AUTO_ENROLL_CONFIDENCE - 0.01),
-      reason: `AI: ${out.reason}`,
-    }))
+    return out.matches
+      // The model must copy a real handle; drop anything outside the catalogue
+      // so it can never invent a subject/level (CLAUDE.md §3).
+      .filter((m) => cat.subjectHandles.has(m.subject) && cat.levelHandles.has(m.level))
+      .map((m) => ({
+        subject: m.subject,
+        level: m.level,
+        // AI suggestions never auto-enrol: clamp below the threshold so they
+        // land in review regardless of the model's self-reported confidence.
+        confidence: Math.min(m.confidence, AUTO_ENROLL_CONFIDENCE - 0.01),
+        reason: `AI: ${out.reason}`,
+      }))
   } catch {
     return []
   }

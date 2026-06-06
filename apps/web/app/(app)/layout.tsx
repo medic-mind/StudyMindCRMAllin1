@@ -83,6 +83,8 @@ function buildNav(role: Role): NavItem[] {
         { href: '/webinars', label: 'Overview' },
         { href: '/webinars/classes', label: 'Classes' },
         { href: '/webinars/enrollments', label: 'Enrolments' },
+        { href: '/webinars/zoom', label: 'Zoom links' },
+        { href: '/webinars/subjects', label: 'Subjects & levels' },
         { href: '/webinars/cohorts', label: 'Cohorts & holidays' },
         { href: '/webinars/settings', label: 'Settings' },
       ],

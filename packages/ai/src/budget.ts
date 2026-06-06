@@ -23,6 +23,7 @@ export type AiTaskCategory =
   | 'lead_classification'
   | 'product_classification'
   | 'webinar_class_match'
+  | 'webinar_schedule_import'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -51,6 +52,8 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   // Advisory subject/level match for a weekly-webinar payer when the
   // deterministic matcher is unsure. Low volume, mini-tier.
   webinar_class_match: { daily: 2, monthly: 40 },
+  // One-shot schedule import (CSV/PDF/paste → weekly topics). Rare, mini-tier.
+  webinar_schedule_import: { daily: 2, monthly: 40 },
 }
 
 interface UsageBucket {

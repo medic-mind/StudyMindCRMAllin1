@@ -133,4 +133,12 @@ export {
   VERSION as WEBINAR_CLASS_MATCH_PROMPT_VERSION,
   type WebinarClassMatchAi,
   type WebinarClassMatchPromptInput,
+  type WebinarCatalogueOption,
 } from './prompts/webinar-class-match'
+export {
+  buildScheduleImportPrompt,
+  scheduleImportSchema,
+  VERSION as WEBINAR_SCHEDULE_IMPORT_PROMPT_VERSION,
+  type ScheduleImportAi,
+  type ScheduleImportPromptInput,
+} from './prompts/webinar-schedule-import'

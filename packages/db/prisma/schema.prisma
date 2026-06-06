@@ -3595,11 +3595,12 @@ model WebinarHoliday {
 model WebinarClass {
   id           String       @id
   cohortId     String
-  /// Lower-case subject handle: biology | chemistry | physics | maths (and any
-  /// future ones the matcher learns). String, not an enum, so admins can add a
-  /// subject without a migration.
+  /// Lower-case subject handle (biology, chemistry, …). Free string backed by
+  /// the WebinarSubjectOption catalogue so admins add subjects with no migration.
   subject      String
-  level        WebinarLevel
+  /// Lower-case level/type handle (gcse, a_level, ucat, gamsat, …). Free string
+  /// backed by the WebinarLevelOption catalogue — admins add levels/types too.
+  level        String
   title        String
   /// 0 = Monday … 6 = Sunday (matches CallPeakWindow's convention).
   dayOfWeek    Int
@@ -3759,4 +3760,46 @@ model WebinarSettings {
   updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
+}
+
+/// Operator-managed catalogue of webinar subjects (Biology, Chemistry, …). The
+/// "New class" workflow reads this for its Subject dropdown, and admins can add
+/// new subjects without a code change (CLAUDE.md §47). `handle` is the stable
+/// lower-case key stored on WebinarClass.subject; `aliases` are extra spellings
+/// the Stripe matcher should also recognise for this subject.
+model WebinarSubjectOption {
+  id        String   @id
+  handle    String   @unique
+  label     String
+  aliases   String[] @default([])
+  sortOrder Int      @default(100)
+  archivedAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([archivedAt])
+}
+
+/// Operator-managed catalogue of webinar levels/types (GCSE, A-Level, UCAT,
+/// GAMSAT, 11+, …). The "New class" workflow reads this for its Level dropdown,
+/// and admins can add new levels/types without a code change. `handle` is the
+/// stable lower-case key stored on WebinarClass.level; `aliases` are extra
+/// spellings the Stripe matcher should also recognise.
+model WebinarLevelOption {
+  id        String   @id
+  handle    String   @unique
+  label     String
+  aliases   String[] @default([])
+  sortOrder Int      @default(100)
+  archivedAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([archivedAt])
 }

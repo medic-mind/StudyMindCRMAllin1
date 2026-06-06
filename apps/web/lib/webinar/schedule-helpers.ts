@@ -9,10 +9,9 @@ import {
   formatSessionDateShort,
   formatSessionTime,
   sessionStartInstant,
-  subjectLabel,
-  levelLabel,
+  subjectLabel as subjectLabelFallback,
+  levelLabel as levelLabelFallback,
   type ScheduleRow,
-  type WebinarLevel,
   type WebinarSession,
 } from '@studymind/core/webinar'
 
@@ -20,7 +19,10 @@ export interface ClassWithSchedule {
   id: string
   title: string
   subject: string
-  level: WebinarLevel
+  level: string
+  /** Display labels resolved from the operator catalogue (UCAT, GAMSAT, …). */
+  subjectLabel: string
+  levelLabel: string
   dayOfWeek: number
   startMinute: number
   timezone: string
@@ -57,11 +59,18 @@ export async function loadClassSchedule(
   const topics = new Map<number, string>()
   for (const w of cls.syllabusWeeks) topics.set(w.weekNumber, w.topic)
 
+  const [subjectOpt, levelOpt] = await Promise.all([
+    db.webinarSubjectOption.findUnique({ where: { handle: cls.subject }, select: { label: true } }),
+    db.webinarLevelOption.findUnique({ where: { handle: cls.level }, select: { label: true } }),
+  ])
+
   return {
     id: cls.id,
     title: cls.title,
     subject: cls.subject,
-    level: cls.level as WebinarLevel,
+    level: cls.level,
+    subjectLabel: subjectOpt?.label ?? subjectLabelFallback(cls.subject),
+    levelLabel: levelOpt?.label ?? levelLabelFallback(cls.level),
     dayOfWeek: cls.dayOfWeek,
     startMinute: cls.startMinute,
     timezone: cls.timezone,
@@ -94,7 +103,7 @@ export function buildClassSchedulePdf(schedule: ClassWithSchedule): Buffer {
       )
     : ''
   return buildSchedulePdf({
-    className: `${subjectLabel(schedule.subject)} ${levelLabel(schedule.level)} — ${schedule.title}`,
+    className: `${schedule.subjectLabel} ${schedule.levelLabel} — ${schedule.title}`,
     timeLabel,
     zoomLink: schedule.zoomLink,
     cohortName: schedule.cohortName,
