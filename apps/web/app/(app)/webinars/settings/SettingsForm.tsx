@@ -49,11 +49,19 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
   const [sendHour, setSendHour] = useState(initial.defaultSendHourLocal)
   const [rotate, setRotate] = useState(initial.defaultZoomRotateEveryWeeks)
   const [zoomHostEmail, setZoomHostEmail] = useState(initial.zoomHostEmail)
+  const [zoomAutoCreate, setZoomAutoCreate] = useState(initial.zoomAutoCreate)
   const [zoomSendRecordings, setZoomSendRecordings] = useState(initial.zoomSendRecordings)
   const [zoomTrashAfterSend, setZoomTrashAfterSend] = useState(initial.zoomTrashAfterSend)
 
   const save = trpc.webinar.settings.update.useMutation({
     onSuccess: () => toast.success('Settings saved'),
+    onError: (e) => toast.error(e.message),
+  })
+  const testZoom = trpc.webinar.zoom.testConnection.useMutation({
+    onSuccess: (r) => {
+      if (r.ok) toast.success(`Zoom connected as ${r.email}`)
+      else toast.error(r.error)
+    },
     onError: (e) => toast.error(e.message),
   })
 
@@ -70,6 +78,7 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
           defaultSendHourLocal: sendHour,
           defaultZoomRotateEveryWeeks: rotate,
           zoomHostEmail,
+          zoomAutoCreate,
           zoomSendRecordings,
           zoomTrashAfterSend,
         })
@@ -166,6 +175,17 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
             >
               {initial.zoomConnected ? 'Connected' : 'Not connected'}
             </span>
+            {initial.zoomConnected && canManage ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
+                disabled={testZoom.isPending}
+                onClick={() => testZoom.mutate()}
+              >
+                {testZoom.isPending ? 'Testing…' : 'Test connection'}
+              </Button>
+            ) : null}
           </div>
           <p className="text-xs text-neutral-500">
             {initial.zoomConnected
@@ -182,6 +202,15 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
               disabled={!canManage || !initial.zoomConnected}
             />
           </Field>
+          <label className="flex items-center gap-2 text-sm text-neutral-700">
+            <input
+              type="checkbox"
+              checked={zoomAutoCreate}
+              onChange={(e) => setZoomAutoCreate(e.target.checked)}
+              disabled={!canManage || !initial.zoomConnected}
+            />
+            Auto-generate a Zoom meeting when a new class is created
+          </label>
           <label className="flex items-center gap-2 text-sm text-neutral-700">
             <input
               type="checkbox"

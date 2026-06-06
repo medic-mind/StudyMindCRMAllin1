@@ -435,6 +435,7 @@ export const EVENT_NAMES = [
   'webinar.level_updated',
   // Zoom integration (ADR 0035): app-generated links + recording distribution.
   'webinar.zoom_meeting_created',
+  'webinar.zoom_meeting_deleted',
   'webinar.recording_sent',
   'webinar.recording_trashed',
 ] as const
@@ -498,6 +499,9 @@ export const INNGEST_EVENT_NAMES = [
   // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
   // persists a Lead then hands off async classification + pipeline routing.
   'lead/classify.requested',
+  // Zoom recording.completed webhook (ADR 0035): hands off async so the class
+  // recording is emailed promptly instead of waiting for the hourly sweep.
+  'webinar/recording.completed',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]

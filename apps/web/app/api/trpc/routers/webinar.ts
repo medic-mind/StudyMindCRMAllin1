@@ -41,6 +41,7 @@ import { client as zoomClient } from '@studymind/integration-zoom'
 
 import { detectEnrollmentsFromStripe } from '@/lib/webinar/enrollment-service'
 import { importToText, parseScheduleFallback, type ImportKind } from '@/lib/webinar/import-helpers'
+import { sendRecordingsForClassId } from '@/lib/webinar/recordings-service'
 
 import { webinarLevelRouter, webinarSubjectRouter } from './webinar-catalogue'
 
@@ -429,7 +430,47 @@ const classRouter = router({
         target: { type: 'WebinarClass', id },
         after: { subject: input.subject, level: input.level, title: input.title },
       })
-      return { id }
+
+      // Auto-generate the Zoom meeting when the operator has opted in and a Zoom
+      // app is configured (best effort — never fails class creation).
+      let zoomGenerated = false
+      if (!input.zoomLink && zoomClient.isConfigured()) {
+        const settings = await ctx.db.webinarSettings.findUnique({
+          where: { id: 'webinar' },
+          select: { zoomAutoCreate: true, zoomHostEmail: true },
+        })
+        if (settings?.zoomAutoCreate) {
+          try {
+            const cohort = await ctx.db.webinarCohort.findUnique({
+              where: { id: input.cohortId },
+              select: { name: true },
+            })
+            const meeting = await zoomClient.createRecurringMeeting({
+              hostEmail: settings.zoomHostEmail || undefined,
+              topic: `${subjectLabel(input.subject)} ${levelLabel(input.level)} — ${cohort?.name ?? ''}`,
+              timezone: input.timezone,
+            })
+            await ctx.db.webinarClass.update({
+              where: { id },
+              data: {
+                zoomLink: meeting.join_url,
+                zoomMeetingId: String(meeting.id),
+                zoomHostEmail: settings.zoomHostEmail || null,
+                zoomLinkUpdatedAt: new Date(),
+              },
+            })
+            await ctx.audit({
+              action: 'webinar.zoom_meeting_created',
+              target: { type: 'WebinarClass', id },
+              after: { zoomMeetingId: String(meeting.id), auto: true },
+            })
+            zoomGenerated = true
+          } catch {
+            // Leave the class without a link; staff can generate it manually.
+          }
+        }
+      }
+      return { id, zoomGenerated }
     }),
 
   update: auditedProcedure
@@ -549,6 +590,20 @@ const classRouter = router({
           message: err instanceof Error ? `Zoom: ${err.message}` : 'Zoom meeting creation failed',
         })
       }
+      // Regenerating: delete the OLD meeting so its join link stops working
+      // (the whole point of rotation — a lapsed member can't reuse it).
+      if (cls.zoomMeetingId && cls.zoomMeetingId !== String(meeting.id)) {
+        try {
+          await zoomClient.deleteMeeting(cls.zoomMeetingId)
+          await ctx.audit({
+            action: 'webinar.zoom_meeting_deleted',
+            target: { type: 'WebinarClass', id: input.id },
+            before: { zoomMeetingId: cls.zoomMeetingId },
+          })
+        } catch {
+          // Best effort — the new link is already live.
+        }
+      }
       await ctx.db.webinarClass.update({
         where: { id: input.id },
         data: {
@@ -572,6 +627,16 @@ const classRouter = router({
       return { id: input.id, joinUrl: meeting.join_url }
     }),
 
+  /** Manually email this class's latest Zoom recording to the active list now. */
+  sendRecordingNow: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const result = await sendRecordingsForClassId(ctx.db, input.id, ctx.requestId, { force: true })
+      return result
+    }),
+
   archive: auditedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -579,13 +644,21 @@ const classRouter = router({
       assertCanManage(user.role)
       const before = await ctx.db.webinarClass.findUnique({
         where: { id: input.id },
-        select: { title: true, deletedAt: true },
+        select: { title: true, deletedAt: true, zoomMeetingId: true },
       })
       if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
       await ctx.db.webinarClass.update({
         where: { id: input.id },
         data: { deletedAt: new Date(), active: false, updatedById: user.id },
       })
+      // Clean up the Zoom meeting so its link dies with the class.
+      if (before.zoomMeetingId && zoomClient.isConfigured()) {
+        try {
+          await zoomClient.deleteMeeting(before.zoomMeetingId)
+        } catch {
+          // Best effort.
+        }
+      }
       await ctx.audit({
         action: 'webinar.class_archived',
         target: { type: 'WebinarClass', id: input.id },
@@ -1108,6 +1181,27 @@ const settingsRouter = router({
 })
 
 /* -------------------------------------------------------------------------- */
+/* Zoom                                                                        */
+/* -------------------------------------------------------------------------- */
+
+const zoomRouter = router({
+  /** Verify the configured Zoom credentials by fetching the connected user. */
+  testConnection: protectedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    if (!zoomClient.isConfigured()) {
+      return { ok: false as const, error: 'Zoom credentials are not set.' }
+    }
+    try {
+      const me = await zoomClient.getMe()
+      return { ok: true as const, email: me.email }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : 'Zoom request failed' }
+    }
+  }),
+})
+
+/* -------------------------------------------------------------------------- */
 /* Overview                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -1173,4 +1267,5 @@ export const webinarRouter = router({
   settings: settingsRouter,
   subject: webinarSubjectRouter,
   level: webinarLevelRouter,
+  zoom: zoomRouter,
 })

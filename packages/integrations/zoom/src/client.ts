@@ -10,6 +10,8 @@
 
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
 
+import { createHmac } from 'node:crypto'
+
 const TOKEN_URL = 'https://zoom.us/oauth/token'
 const API_BASE = 'https://api.zoom.us/v2'
 
@@ -139,6 +141,28 @@ export async function createRecurringMeeting(
   )
 }
 
+/** The connected Zoom user. Used by the Settings "Test connection" check. */
+export interface ZoomUser {
+  id: string
+  email: string
+  account_id?: string
+}
+
+export async function getMe(config?: ZoomConfig): Promise<ZoomUser> {
+  return api<ZoomUser>('/users/me', { method: 'GET' }, config)
+}
+
+/** Delete a meeting (invalidates its join link). Used when rotating/cleaning up. */
+export async function deleteMeeting(meetingId: string | number, config?: ZoomConfig): Promise<void> {
+  try {
+    await api<unknown>(`/meetings/${encodeURIComponent(String(meetingId))}`, { method: 'DELETE' }, config)
+  } catch (err) {
+    // Already gone → fine.
+    if (err instanceof ZoomApiError && err.status === 404) return
+    throw err
+  }
+}
+
 export interface ZoomRecordingFile {
   id: string
   recording_type: string
@@ -187,4 +211,50 @@ export async function trashMeetingRecordings(
     { method: 'DELETE' },
     config,
   )
+}
+
+/* -------------------------------------------------------------------------- */
+/* Webhooks (recording.completed + endpoint URL validation)                    */
+/* -------------------------------------------------------------------------- */
+
+export function readWebhookSecret(): string | null {
+  return process.env['ZOOM_WEBHOOK_SECRET_TOKEN'] ?? null
+}
+
+/**
+ * Verify a Zoom webhook signature. Zoom signs as:
+ *   message   = `v0:${x-zm-request-timestamp}:${rawBody}`
+ *   signature = `v0=${HMAC_SHA256(secretToken, message)}`  (header x-zm-signature)
+ */
+export function verifyWebhookSignature(input: {
+  rawBody: string
+  signature: string | null
+  timestamp: string | null
+  secret?: string | null
+}): boolean {
+  const secret = input.secret ?? readWebhookSecret()
+  if (!secret || !input.signature || !input.timestamp) return false
+  const message = `v0:${input.timestamp}:${input.rawBody}`
+  const expected = `v0=${createHmac('sha256', secret).update(message).digest('hex')}`
+  // Constant-time-ish compare (lengths match for same algo).
+  if (expected.length !== input.signature.length) return false
+  let diff = 0
+  for (let i = 0; i < expected.length; i += 1) diff |= expected.charCodeAt(i) ^ input.signature.charCodeAt(i)
+  return diff === 0
+}
+
+/**
+ * Response to Zoom's `endpoint.url_validation` challenge: echo the plainToken and
+ * its HMAC under the secret token.
+ */
+export function buildUrlValidationResponse(
+  plainToken: string,
+  secret?: string | null,
+): { plainToken: string; encryptedToken: string } | null {
+  const s = secret ?? readWebhookSecret()
+  if (!s) return null
+  return {
+    plainToken,
+    encryptedToken: createHmac('sha256', s).update(plainToken).digest('hex'),
+  }
 }

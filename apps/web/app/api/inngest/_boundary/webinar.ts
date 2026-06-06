@@ -17,7 +17,7 @@ import {
   detectEnrollmentsFromStripe,
   expireLapsedEnrollments,
 } from '@/lib/webinar/enrollment-service'
-import { sendDueRecordings } from '@/lib/webinar/recordings-service'
+import { sendDueRecordings, sendRecordingsForMeetingId } from '@/lib/webinar/recordings-service'
 import { createZoomRotationTasks } from '@/lib/webinar/zoom-reminder-service'
 
 export const webinarDispatchWeeklyEmails = inngest.createFunction(
@@ -107,10 +107,32 @@ export const webinarSendRecordings = inngest.createFunction(
   },
 )
 
+// Real-time recording delivery off the Zoom `recording.completed` webhook
+// (ADR 0035). The hourly sweep above is the backstop.
+export const webinarRecordingCompleted = inngest.createFunction(
+  {
+    id: 'webinar/recording-completed',
+    name: 'Webinar: email a class recording when Zoom signals it is ready',
+    concurrency: { limit: 3 },
+    retries: 3,
+  },
+  { event: 'webinar/recording.completed' },
+  async ({ event, step, logger }) => {
+    const meetingId = (event.data as { meetingId?: string }).meetingId
+    if (!meetingId) return { skipped: true }
+    const result = await step.run('send', async () =>
+      sendRecordingsForMeetingId(db, meetingId, createId()),
+    )
+    logger.info({ meetingId, ...result }, 'webinar.recording_completed.handled')
+    return result
+  },
+)
+
 export const WEBINAR_BOUNDARY_FUNCTIONS = [
   webinarDispatchWeeklyEmails,
   webinarExpireEnrollments,
   webinarZoomRotationReminder,
   webinarDetectEnrollments,
   webinarSendRecordings,
+  webinarRecordingCompleted,
 ]

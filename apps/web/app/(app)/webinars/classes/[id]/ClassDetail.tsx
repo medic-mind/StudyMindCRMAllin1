@@ -122,6 +122,14 @@ function ZoomCard({ detail, canManage }: { detail: Detail; canManage: boolean })
     },
     onError: (e) => toast.error(e.message),
   })
+  const sendRecording = trpc.webinar.class.sendRecordingNow.useMutation({
+    onSuccess: (r) => {
+      if (r.errors.length > 0) toast.error(r.errors[0])
+      else if (r.sent > 0) toast.success('Recording emailed to the class')
+      else toast.message('No new recording found to send yet')
+    },
+    onError: (e) => toast.error(e.message),
+  })
   const updated = detail.zoomLinkUpdatedAt ? new Date(detail.zoomLinkUpdatedAt) : null
   return (
     <Card>
@@ -166,7 +174,17 @@ function ZoomCard({ detail, canManage }: { detail: Detail; canManage: boolean })
                 disabled={generate.isPending}
                 onClick={() => generate.mutate({ id: detail.id })}
               >
-                {generate.isPending ? 'Generating…' : 'Generate via Zoom'}
+                {generate.isPending ? 'Generating…' : detail.zoomLink ? 'Regenerate via Zoom' : 'Generate via Zoom'}
+              </Button>
+            ) : null}
+            {settings.data?.zoomConnected && detail.zoomLink ? (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={sendRecording.isPending}
+                onClick={() => sendRecording.mutate({ id: detail.id })}
+              >
+                {sendRecording.isPending ? 'Sending…' : 'Send recording now'}
               </Button>
             ) : null}
           </form>
