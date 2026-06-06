@@ -498,6 +498,28 @@ export const adminIntegrationsRouter = router({
         }
       }
 
+      // Background-job (Inngest) health — Inngest is the engine that runs every
+      // import job (backfill, the 10-min sync, webhook processing). A backfill
+      // stuck `pending` past a few minutes means the worker isn't picking jobs
+      // up, which usually means Inngest isn't connected/synced. CLAUDE.md §17.
+      const STUCK_PENDING_MS = 3 * 60 * 1000
+      const [lastCronRun, stuckBackfills] = await Promise.all([
+        ctx.db.cronRun.findFirst({
+          orderBy: { finishedAt: 'desc' },
+          select: { finishedAt: true, functionId: true, success: true },
+        }),
+        ctx.db.backfillJob.count({
+          where: { status: 'pending', createdAt: { lt: new Date(nowMs - STUCK_PENDING_MS) } },
+        }),
+      ])
+      const backgroundJobs = {
+        inngestEventKeySet: Boolean(process.env['INNGEST_EVENT_KEY']),
+        inngestSigningKeySet: Boolean(process.env['INNGEST_SIGNING_KEY']),
+        lastCronRunAt: lastCronRun?.finishedAt ?? null,
+        lastCronFunctionId: lastCronRun?.functionId ?? null,
+        stuckBackfills,
+      }
+
       const status = deriveConnectionStatus({
         envVarsAllSet,
         lastReceivedAt: recentEvents[0]?.receivedAt ?? null,
@@ -518,6 +540,7 @@ export const adminIntegrationsRouter = router({
         recentCronRuns,
         perAgent,
         importStats,
+        backgroundJobs,
         setupSteps: cfg.setupSteps,
       }
     }),
