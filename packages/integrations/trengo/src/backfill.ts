@@ -98,19 +98,27 @@ export const trengoBackfillRequested = inngest.createFunction(
         })
 
         for (const conv of convs.rows) {
-          const result = await step.run(`conv-${conv.id}`, async () =>
-            processConversation({
-              client,
-              conv,
-              jobId,
-              createContacts,
-              actorId: agentId,
-            }),
-          )
-          processed += result.processed
-          matched += result.matched
-          skipped += result.skipped
-          created += result.created
+          try {
+            const result = await step.run(`conv-${conv.id}`, async () =>
+              processConversation({
+                client,
+                conv,
+                jobId,
+                createContacts,
+                actorId: agentId,
+              }),
+            )
+            processed += result.processed
+            matched += result.matched
+            skipped += result.skipped
+            created += result.created
+          } catch (err) {
+            // One conversation that fails (a contact write clash, an odd
+            // message shape) must not abort the whole import. Skip it and keep
+            // paging so the rest of the history lands.
+            skipped += 1
+            logger.warn({ jobId, convId: conv.id, err }, 'trengo backfill: skipped a conversation that failed to import')
+          }
         }
         await step.run(`progress-${page}`, async () =>
           incrementBackfillProgress(db, jobId, {

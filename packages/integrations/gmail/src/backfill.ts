@@ -102,12 +102,20 @@ export const gmailBackfillRequested = inngest.createFunction(
         )
 
         for (const messageId of ids) {
-          const result = await step.run(`message-${messageId}`, async () =>
-            processBackfillMessage({ agentId, messageId, agentAddr, requestId: jobId }),
-          )
-          processed += 1
-          if (result.matched > 0) matched += result.matched
-          else skipped += 1
+          try {
+            const result = await step.run(`message-${messageId}`, async () =>
+              processBackfillMessage({ agentId, messageId, agentAddr, requestId: jobId }),
+            )
+            processed += 1
+            if (result.matched > 0) matched += result.matched
+            else skipped += 1
+          } catch (err) {
+            // One unreadable/oddly-shaped message must not abort the whole
+            // import. Skip it and keep going so the rest of the mailbox lands.
+            processed += 1
+            skipped += 1
+            logger.warn({ jobId, messageId, err }, 'gmail backfill: skipped a message that failed to import')
+          }
         }
         await step.run(`progress-${pageToken ?? 'first'}`, async () =>
           incrementBackfillProgress(db, jobId, {
