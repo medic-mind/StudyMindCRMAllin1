@@ -3557,6 +3557,18 @@ model WebinarCohort {
   timezone String              @default("Europe/London")
   notes    String?
 
+  /// Per-cohort email template + send schedule (CLAUDE.md §47). Each cohort
+  /// authors its own weekly reminder; classes inherit it. Null = fall back to
+  /// the built-in default. `emailBodyHtml` is an optional rich/HTML version sent
+  /// alongside the plaintext body.
+  emailSubjectTemplate String?
+  emailBodyTemplate    String?
+  emailBodyHtml        String?
+  fromName             String?
+  /// Reminder send days (0=Mon..6=Sun, default Mon+Tue) and local send hour.
+  sendDaysOfWeek       Int[]   @default([0, 1])
+  sendHourLocal        Int     @default(9)
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   createdById String?

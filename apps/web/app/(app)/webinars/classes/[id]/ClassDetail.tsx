@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
@@ -13,7 +14,6 @@ import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
-import { SendDaysPicker } from '../../SendDaysPicker'
 import type { ClassDetailView as Detail, EnrollmentRow } from '../../types'
 
 type EnrollmentStatus = 'pending_review' | 'active' | 'paused' | 'expired' | 'cancelled'
@@ -42,7 +42,7 @@ export function ClassDetail({
       <ThisWeekCard detail={detail} />
       <ZoomCard detail={detail} canManage={canManage} />
       <SyllabusCard detail={detail} canManage={canManage} />
-      {canManage ? <ImportScheduleCard classId={detail.id} /> : null}
+      {canManage ? <ImportScheduleCard classId={detail.id} cohortId={detail.cohortId} /> : null}
       <SettingsCard detail={detail} canManage={canManage} />
       <EnrollmentsCard classId={detail.id} initial={enrollments} canManage={canManage} />
       {canManage ? <BroadcastCard classId={detail.id} /> : null}
@@ -407,8 +407,6 @@ function SyllabusCard({ detail, canManage }: { detail: Detail; canManage: boolea
 function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolean }) {
   const utils = trpc.useUtils()
   const router = useRouter()
-  const [sendDays, setSendDays] = useState<number[]>(detail.sendDaysOfWeek)
-  const [sendHour, setSendHour] = useState(detail.sendHourLocal)
   const [rotate, setRotate] = useState(detail.zoomRotateEveryWeeks)
   const [active, setActive] = useState(detail.active)
   const update = trpc.webinar.class.update.useMutation({
@@ -423,38 +421,22 @@ function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolea
   return (
     <Card>
       <CardBody>
-        <h2 className="mb-1 text-sm font-semibold text-neutral-900">Reminder schedule</h2>
+        <h2 className="mb-1 text-sm font-semibold text-neutral-900">Class settings</h2>
         <p className="mb-3 text-xs text-neutral-500">
-          A reminder email (Zoom link + PDF) goes out on each selected day of the class&apos;s week,
-          from the chosen local hour.
+          The reminder email template and send days/times are set per cohort (on the{' '}
+          <Link href={`/webinars/cohorts/${detail.cohortId}`} className="text-primary-700 hover:underline">
+            cohort page
+          </Link>
+          ).
         </p>
         <form
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
-            update.mutate({
-              id: detail.id,
-              sendDaysOfWeek: sendDays,
-              sendHourLocal: sendHour,
-              zoomRotateEveryWeeks: rotate,
-              active,
-            })
+            update.mutate({ id: detail.id, zoomRotateEveryWeeks: rotate, active })
           }}
         >
-          <Field label="Send on these days" htmlFor="send-days">
-            <SendDaysPicker value={sendDays} onChange={setSendDays} />
-          </Field>
-          <div className="grid gap-3 md:grid-cols-3">
-            <Field label="Send from (local hour)" htmlFor="send-hour">
-              <Input
-                id="send-hour"
-                type="number"
-                min={0}
-                max={23}
-                value={sendHour}
-                onChange={(e) => setSendHour(Number(e.target.value))}
-              />
-            </Field>
+          <div className="grid gap-3 md:grid-cols-2">
             <Field label="Rotate Zoom link every (weeks)" htmlFor="rotate">
               <Input
                 id="rotate"
@@ -580,26 +562,56 @@ function EnrollmentsCard({
   )
 }
 
-function ImportScheduleCard({ classId }: { classId: string }) {
+interface DetectedHoliday {
+  name: string
+  startsOn: string
+  endsOn: string
+  keep: boolean
+}
+
+function ImportScheduleCard({ classId, cohortId }: { classId: string; cohortId: string }) {
   const utils = trpc.useUtils()
   const router = useRouter()
   const [kind, setKind] = useState<'text' | 'csv' | 'pdf'>('text')
   const [text, setText] = useState('')
   const [rows, setRows] = useState<Array<{ weekNumber: number; topic: string }>>([])
+  const [holidays, setHolidays] = useState<DetectedHoliday[]>([])
   const [note, setNote] = useState<string>('')
+
+  const addHoliday = trpc.webinar.cohort.addHoliday.useMutation()
 
   const preview = trpc.webinar.syllabus.importPreview.useMutation({
     onSuccess: (r) => {
       setRows(r.weeks)
+      setHolidays(r.holidays.map((h) => ({ ...h, keep: true })))
       setNote(r.note)
-      if (r.weeks.length === 0) toast.error(r.note)
+      if (r.weeks.length === 0 && r.holidays.length === 0) toast.error(r.note)
     },
     onError: (e) => toast.error(e.message),
   })
   const save = trpc.webinar.syllabus.set.useMutation({
-    onSuccess: () => {
-      toast.success('Schedule saved to the syllabus')
+    onSuccess: async () => {
+      // After saving the weeks, persist any confirmed holidays to the cohort.
+      const keep = holidays.filter((h) => h.keep)
+      for (const h of keep) {
+        try {
+          await addHoliday.mutateAsync({
+            cohortId,
+            name: h.name,
+            startsOn: h.startsOn,
+            endsOn: h.endsOn,
+          })
+        } catch {
+          // best-effort; a bad date just won't be added
+        }
+      }
+      toast.success(
+        keep.length > 0
+          ? `Schedule saved · ${keep.length} holiday${keep.length === 1 ? '' : 's'} added`
+          : 'Schedule saved to the syllabus',
+      )
       setRows([])
+      setHolidays([])
       setText('')
       void utils.webinar.class.get.invalidate({ id: classId })
       router.refresh()
@@ -628,7 +640,9 @@ function ImportScheduleCard({ classId }: { classId: string }) {
         <h2 className="text-sm font-semibold text-neutral-900">Import schedule (AI)</h2>
         <p className="mt-1 text-xs text-neutral-500">
           Paste your schedule, or upload a CSV or PDF. The app uses AI to pull out the weekly topics
-          — review and save. The uploaded PDF (if any) is still attached to every email.
+          <strong> and any holidays/breaks</strong> — review and save. Holidays are added to the
+          cohort so no emails go out on those dates. The uploaded PDF (if any) is still attached to
+          every email.
         </p>
 
         <div className="mt-3 flex gap-1">
@@ -681,36 +695,106 @@ function ImportScheduleCard({ classId }: { classId: string }) {
           </div>
         )}
 
-        {rows.length > 0 ? (
-          <div className="mt-4 space-y-1.5">
+        {rows.length > 0 || holidays.length > 0 ? (
+          <div className="mt-4 space-y-2">
             <p className="text-xs text-neutral-500">{note}</p>
-            {rows.map((r, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="w-12 shrink-0 text-xs text-neutral-500">W{r.weekNumber}</span>
-                <Input
-                  value={r.topic}
-                  onChange={(e) => {
-                    const next = [...rows]
-                    next[i] = { ...r, topic: e.target.value }
-                    setRows(next)
-                  }}
-                />
+
+            {rows.length > 0 ? (
+              <div className="space-y-1.5">
+                {rows.map((r, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="w-12 shrink-0 text-xs text-neutral-500">W{r.weekNumber}</span>
+                    <Input
+                      value={r.topic}
+                      onChange={(e) => {
+                        const next = [...rows]
+                        next[i] = { ...r, topic: e.target.value }
+                        setRows(next)
+                      }}
+                    />
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : null}
+
+            {holidays.length > 0 ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50/50 p-3">
+                <p className="text-xs font-medium text-amber-900">
+                  Holidays detected in the timetable — these are added to the cohort (no emails on
+                  these dates):
+                </p>
+                <div className="mt-2 space-y-1">
+                  {holidays.map((h, i) => (
+                    <label key={i} className="flex items-center gap-2 text-sm text-neutral-700">
+                      <input
+                        type="checkbox"
+                        checked={h.keep}
+                        onChange={(e) => {
+                          const next = [...holidays]
+                          next[i] = { ...h, keep: e.target.checked }
+                          setHolidays(next)
+                        }}
+                      />
+                      <span className="font-medium">{h.name}</span>
+                      <span className="text-neutral-500">
+                        {h.startsOn} → {h.endsOn}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div className="flex items-center gap-2 pt-1">
               <Button
                 size="sm"
-                disabled={save.isPending}
-                onClick={() =>
-                  save.mutate({
-                    classId,
-                    weeks: rows.filter((r) => r.topic.trim().length > 0),
-                  })
-                }
+                disabled={save.isPending || addHoliday.isPending}
+                onClick={async () => {
+                  const weeks = rows.filter((r) => r.topic.trim().length > 0)
+                  if (weeks.length > 0) {
+                    // Saves weeks, then adds confirmed holidays in onSuccess.
+                    save.mutate({ classId, weeks })
+                    return
+                  }
+                  // Holidays only — don't wipe the syllabus with an empty set.
+                  const keep = holidays.filter((h) => h.keep)
+                  if (keep.length === 0) {
+                    toast.error('Nothing selected to save')
+                    return
+                  }
+                  for (const h of keep) {
+                    try {
+                      await addHoliday.mutateAsync({
+                        cohortId,
+                        name: h.name,
+                        startsOn: h.startsOn,
+                        endsOn: h.endsOn,
+                      })
+                    } catch {
+                      /* skip bad date */
+                    }
+                  }
+                  toast.success(`${keep.length} holiday${keep.length === 1 ? '' : 's'} added`)
+                  setHolidays([])
+                  setRows([])
+                  setText('')
+                  router.refresh()
+                }}
               >
-                {save.isPending ? 'Saving…' : `Save ${rows.length} weeks to syllabus`}
+                {save.isPending || addHoliday.isPending
+                  ? 'Saving…'
+                  : rows.length > 0
+                    ? `Save ${rows.length} weeks${holidays.some((h) => h.keep) ? ' + holidays' : ''}`
+                    : 'Add holidays'}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setRows([])}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setRows([])
+                  setHolidays([])
+                }}
+              >
                 Discard
               </Button>
             </div>

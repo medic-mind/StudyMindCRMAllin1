@@ -1,12 +1,15 @@
 // Weekly-class email rendering. Pure string templating with a fixed, documented
-// set of {{placeholders}} so the copy stays fully customisable by staff without
-// code changes (CLAUDE.md §4 — warm, specific, action-oriented).
+// set of {{placeholders}} so the copy stays fully customisable per cohort
+// without code changes (CLAUDE.md §4 — warm, specific, action-oriented).
 
 export interface WebinarEmailVars {
   studentName: string
   className: string
   subject: string
   level: string
+  cohortName: string
+  /** Localised weekday, e.g. "Tuesday". */
+  weekday: string
   /** Localised date, e.g. "Tuesday 9 September 2026". */
   dateLabel: string
   /** Localised time, e.g. "18:00 BST". */
@@ -22,6 +25,8 @@ export const WEBINAR_PLACEHOLDERS: ReadonlyArray<keyof WebinarEmailVars> = [
   'className',
   'subject',
   'level',
+  'cohortName',
+  'weekday',
   'dateLabel',
   'timeLabel',
   'zoomLink',
@@ -62,15 +67,19 @@ export function renderTemplate(template: string, vars: WebinarEmailVars): string
 export interface RenderedWebinarEmail {
   subject: string
   text: string
+  /** Rendered HTML body when the cohort supplies an HTML template. */
+  html?: string
 }
 
 export function renderWebinarEmail(
   subjectTemplate: string,
   bodyTemplate: string,
   vars: WebinarEmailVars,
+  htmlTemplate?: string | null,
 ): RenderedWebinarEmail {
   return {
     subject: renderTemplate(subjectTemplate, vars),
     text: renderTemplate(bodyTemplate, vars),
+    ...(htmlTemplate ? { html: renderTemplate(htmlTemplate, vars) } : {}),
   }
 }

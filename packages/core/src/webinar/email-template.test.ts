@@ -13,6 +13,8 @@ const vars: WebinarEmailVars = {
   className: 'Biology A-Level',
   subject: 'Biology',
   level: 'A-Level',
+  cohortName: '2026/2027',
+  weekday: 'Tuesday',
   dateLabel: 'Tuesday 9 September 2026',
   timeLabel: '18:00 BST',
   zoomLink: 'https://zoom.us/j/123',

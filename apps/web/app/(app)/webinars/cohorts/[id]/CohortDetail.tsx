@@ -8,12 +8,30 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
+import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
 import { NewClassForm } from '../../NewClassForm'
+import { SendDaysPicker } from '../../SendDaysPicker'
 import type { CohortDetail as CohortDetailView } from '../../types'
+
+const PLACEHOLDERS = [
+  'studentName',
+  'className',
+  'subject',
+  'level',
+  'cohortName',
+  'weekday',
+  'dateLabel',
+  'timeLabel',
+  'zoomLink',
+  'weekNumber',
+  'weekTopic',
+  'fromName',
+]
 
 export function CohortDetail({
   cohort,
@@ -111,9 +129,132 @@ export function CohortDetail({
         )}
       </section>
 
+      {/* Per-cohort emails */}
+      <EmailSettings cohort={cohort} canManage={canManage} />
+
       {/* Holidays */}
       <Holidays cohortId={cohort.id} holidays={cohort.holidays} canManage={canManage} onChange={refresh} />
     </div>
+  )
+}
+
+function EmailSettings({
+  cohort,
+  canManage,
+}: {
+  cohort: CohortDetailView
+  canManage: boolean
+}) {
+  const [fromName, setFromName] = useState(cohort.fromName)
+  const [subjectTpl, setSubjectTpl] = useState(cohort.emailSubjectTemplate)
+  const [bodyTpl, setBodyTpl] = useState(cohort.emailBodyTemplate)
+  const [html, setHtml] = useState(cohort.emailBodyHtml)
+  const [sendDays, setSendDays] = useState<number[]>(cohort.sendDaysOfWeek)
+  const [sendHour, setSendHour] = useState(cohort.sendHourLocal)
+  const [showHtml, setShowHtml] = useState(Boolean(cohort.emailBodyHtml))
+
+  const save = trpc.webinar.cohort.update.useMutation({
+    onSuccess: () => toast.success('Email settings saved for this cohort'),
+    onError: (e) => toast.error(e.message),
+  })
+
+  return (
+    <Card>
+      <CardBody className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-900">Weekly email for this cohort</h2>
+          <p className="mt-1 text-xs text-neutral-500">
+            This template is used for every class in <strong>{cohort.name}</strong>. Reminders go out
+            on the chosen days from info@studymind.co.uk with the Zoom link + PDF schedule attached.
+            Placeholders:{' '}
+            {PLACEHOLDERS.map((p) => (
+              <code key={p} className="mr-1 rounded bg-neutral-100 px-1 py-0.5 text-[11px]">
+                {'{{' + p + '}}'}
+              </code>
+            ))}
+          </p>
+        </div>
+
+        {canManage ? (
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              save.mutate({
+                id: cohort.id,
+                fromName,
+                emailSubjectTemplate: subjectTpl,
+                emailBodyTemplate: bodyTpl,
+                emailBodyHtml: showHtml ? html : '',
+                sendDaysOfWeek: sendDays,
+                sendHourLocal: sendHour,
+              })
+            }}
+          >
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="From name" htmlFor="from">
+                <Input
+                  id="from"
+                  placeholder="The StudyMind team"
+                  value={fromName}
+                  onChange={(e) => setFromName(e.target.value)}
+                />
+              </Field>
+              <Field label="Send hour (local, 0-23)" htmlFor="hour">
+                <Input
+                  id="hour"
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={sendHour}
+                  onChange={(e) => setSendHour(Number(e.target.value))}
+                />
+              </Field>
+            </div>
+            <Field label="Send days" htmlFor="days">
+              <SendDaysPicker value={sendDays} onChange={setSendDays} />
+            </Field>
+            <Field label="Subject line" htmlFor="subj">
+              <Input
+                id="subj"
+                placeholder="{{className}} — this week's class ({{dateLabel}})"
+                value={subjectTpl}
+                onChange={(e) => setSubjectTpl(e.target.value)}
+              />
+            </Field>
+            <Field label="Body (plain text)" htmlFor="body">
+              <Textarea
+                id="body"
+                rows={10}
+                placeholder="Hi {{studentName}}, here are this week's details…"
+                value={bodyTpl}
+                onChange={(e) => setBodyTpl(e.target.value)}
+              />
+            </Field>
+            <label className="flex items-center gap-2 text-sm text-neutral-700">
+              <input type="checkbox" checked={showHtml} onChange={(e) => setShowHtml(e.target.checked)} />
+              Add a rich HTML version (for branded formatting)
+            </label>
+            {showHtml ? (
+              <Field label="Body (HTML)" htmlFor="html" hint="Sent alongside the plain-text body.">
+                <Textarea
+                  id="html"
+                  rows={10}
+                  placeholder="<p>Hi {{studentName}}, …</p>"
+                  value={html}
+                  onChange={(e) => setHtml(e.target.value)}
+                />
+              </Field>
+            ) : null}
+            <Button type="submit" disabled={save.isPending}>
+              {save.isPending ? 'Saving…' : 'Save email settings'}
+            </Button>
+          </form>
+        ) : (
+          <p className="text-sm text-neutral-500">Manager access required to edit.</p>
+        )}
+      </CardBody>
+    </Card>
   )
 }
 

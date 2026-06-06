@@ -112,6 +112,12 @@ const cohortRouter = router({
       status: c.status,
       timezone: c.timezone,
       notes: c.notes,
+      emailSubjectTemplate: c.emailSubjectTemplate ?? '',
+      emailBodyTemplate: c.emailBodyTemplate ?? '',
+      emailBodyHtml: c.emailBodyHtml ?? '',
+      fromName: c.fromName ?? '',
+      sendDaysOfWeek: c.sendDaysOfWeek,
+      sendHourLocal: c.sendHourLocal,
       holidays: c.holidays.map((h) => ({
         id: h.id,
         name: h.name,
@@ -196,6 +202,55 @@ const cohortRouter = router({
         target: { type: 'WebinarCohort', id: input.id },
         before,
         after: { status: input.status },
+      })
+      return { id: input.id }
+    }),
+
+  /** Per-cohort email template + reminder schedule (CLAUDE.md §47). */
+  update: auditedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        notes: z.string().trim().max(1000).nullish(),
+        emailSubjectTemplate: z.string().trim().max(300).optional(),
+        emailBodyTemplate: z.string().trim().max(8000).optional(),
+        emailBodyHtml: z.string().trim().max(20_000).optional(),
+        fromName: z.string().trim().max(120).optional(),
+        sendDaysOfWeek: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+        sendHourLocal: z.number().int().min(0).max(23).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const before = await ctx.db.webinarCohort.findUnique({
+        where: { id: input.id },
+        select: { id: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      const sendDays =
+        input.sendDaysOfWeek !== undefined ? [...new Set(input.sendDaysOfWeek)].sort() : undefined
+      await ctx.db.webinarCohort.update({
+        where: { id: input.id },
+        data: {
+          ...(input.notes !== undefined ? { notes: input.notes } : {}),
+          ...(input.emailSubjectTemplate !== undefined
+            ? { emailSubjectTemplate: input.emailSubjectTemplate }
+            : {}),
+          ...(input.emailBodyTemplate !== undefined
+            ? { emailBodyTemplate: input.emailBodyTemplate }
+            : {}),
+          ...(input.emailBodyHtml !== undefined ? { emailBodyHtml: input.emailBodyHtml } : {}),
+          ...(input.fromName !== undefined ? { fromName: input.fromName } : {}),
+          ...(sendDays !== undefined ? { sendDaysOfWeek: sendDays } : {}),
+          ...(input.sendHourLocal !== undefined ? { sendHourLocal: input.sendHourLocal } : {}),
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'webinar.cohort_updated',
+        target: { type: 'WebinarCohort', id: input.id },
+        after: { emails: input.emailSubjectTemplate !== undefined || input.emailBodyTemplate !== undefined },
       })
       return { id: input.id }
     }),
@@ -928,13 +983,18 @@ const syllabusRouter = router({
         cl.cohort.holidays.map((h) => ({ startsOn: h.startsOn, endsOn: h.endsOn })),
       ).length
 
+      type Holiday = { name: string; startsOn: string; endsOn: string }
+      const empty: Holiday[] = []
+
       const text = importToText(input.kind as ImportKind, {
         base64: input.dataBase64,
         text: input.text,
       })
       if (text.trim().length === 0) {
         return {
+          cohortId: cl.cohortId,
           weeks: [] as Array<{ weekNumber: number; topic: string }>,
+          holidays: empty,
           note:
             input.kind === 'pdf'
               ? 'Could not read text from that PDF (it may be scanned). Paste the schedule or upload a CSV instead.'
@@ -946,7 +1006,12 @@ const syllabusRouter = router({
       // AI-structure first; fall back to a deterministic parse on any failure
       // (budget exhausted, provider error, empty result).
       try {
-        const prompt = buildScheduleImportPrompt({ text, totalWeeks: totalWeeks || 52 })
+        const prompt = buildScheduleImportPrompt({
+          text,
+          totalWeeks: totalWeeks || 52,
+          cohortStartsOn: cl.cohort.startsOn.toISOString().slice(0, 10),
+          cohortEndsOn: cl.cohort.endsOn.toISOString().slice(0, 10),
+        })
         const out = await runStructured({
           task: 'webinar_schedule_import',
           promptVersion: WEBINAR_SCHEDULE_IMPORT_PROMPT_VERSION,
@@ -956,15 +1021,24 @@ const syllabusRouter = router({
           model: 'gpt-4o-mini',
           ctx: { requestId: ctx.requestId, source: 'webinar.import' },
         })
-        if (out.weeks.length > 0) {
-          return { weeks: out.weeks, note: out.note || 'Parsed with AI.', source: 'ai' as const }
+        const aiHolidays = (out.holidays ?? []) as Holiday[]
+        if (out.weeks.length > 0 || aiHolidays.length > 0) {
+          return {
+            cohortId: cl.cohortId,
+            weeks: out.weeks,
+            holidays: aiHolidays,
+            note: out.note || 'Parsed with AI.',
+            source: 'ai' as const,
+          }
         }
       } catch {
         // fall through to deterministic parse
       }
       const fallback = parseScheduleFallback(text, totalWeeks || 52)
       return {
+        cohortId: cl.cohortId,
         weeks: fallback,
+        holidays: empty,
         note:
           fallback.length > 0
             ? 'Parsed without AI (rule-based). Please check the weeks below.'

@@ -82,7 +82,6 @@ function buildNav(role: Role): NavItem[] {
       children: [
         { href: '/webinars', label: 'Overview' },
         { href: '/webinars/cohorts', label: 'Cohorts' },
-        { href: '/webinars/classes', label: 'All classes' },
         { href: '/webinars/enrollments', label: 'Enrolments' },
         { href: '/webinars/settings', label: 'Settings' },
       ],

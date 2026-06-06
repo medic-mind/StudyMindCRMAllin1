@@ -19,6 +19,7 @@ import {
   reminderDayNow,
   sessionForLocalWeek,
   sessionStartInstant,
+  WEEKDAY_LABEL,
 } from '@studymind/core/webinar'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 
@@ -37,26 +38,10 @@ export interface DispatchResult {
   errors: string[]
 }
 
-interface ResolvedSettings {
-  subjectTemplate: string
-  bodyTemplate: string
-  fromName: string
-  senderMailboxUserId: string | null
-}
-
-async function resolveSettings(db: PrismaClient): Promise<ResolvedSettings> {
-  const row = await db.webinarSettings.findUnique({ where: { id: 'webinar' } })
-  return {
-    subjectTemplate: row?.emailSubjectTemplate || DEFAULT_EMAIL_SUBJECT_TEMPLATE,
-    bodyTemplate: row?.emailBodyTemplate || DEFAULT_EMAIL_BODY_TEMPLATE,
-    fromName: row?.fromName || 'The StudyMind team',
-    senderMailboxUserId: row?.senderMailboxUserId ?? null,
-  }
-}
-
 /**
- * Send all reminder emails due at `now`. Pass `now` so the cron and tests are
- * deterministic.
+ * Send all reminder emails due at `now`. The template, send schedule and
+ * from-name come from each class's COHORT (CLAUDE.md §47); the sending mailbox
+ * is the one global setting. Pass `now` so the cron and tests are deterministic.
  */
 export async function dispatchDueWebinarEmails(
   db: PrismaClient,
@@ -71,25 +56,43 @@ export async function dispatchDueWebinarEmails(
     failed: 0,
     errors: [],
   }
-  const settings = await resolveSettings(db)
+  const globalSettings = await db.webinarSettings.findUnique({
+    where: { id: 'webinar' },
+    select: { senderMailboxUserId: true },
+  })
+  const senderMailboxUserId = globalSettings?.senderMailboxUserId ?? null
 
   const classes = await db.webinarClass.findMany({
     where: { active: true, deletedAt: null, cohort: { status: 'active' } },
     select: {
       id: true,
+      dayOfWeek: true,
       sendDaysOfWeek: true,
       sendHourLocal: true,
       timezone: true,
       emailSubjectTemplate: true,
       emailBodyTemplate: true,
+      cohort: {
+        select: {
+          name: true,
+          emailSubjectTemplate: true,
+          emailBodyTemplate: true,
+          emailBodyHtml: true,
+          fromName: true,
+          sendDaysOfWeek: true,
+          sendHourLocal: true,
+        },
+      },
     },
   })
 
   for (const cls of classes) {
     result.classesChecked += 1
 
-    // Is today a reminder day for this class, at/after its send hour?
-    const reminderDay = reminderDayNow(now, cls.timezone, cls.sendDaysOfWeek, cls.sendHourLocal)
+    // Reminder schedule comes from the cohort (class still overrides if set).
+    const sendDays = cls.cohort.sendDaysOfWeek ?? cls.sendDaysOfWeek
+    const sendHour = cls.cohort.sendHourLocal ?? cls.sendHourLocal
+    const reminderDay = reminderDayNow(now, cls.timezone, sendDays, sendHour)
     if (reminderDay === null) continue
 
     const schedule = await loadClassSchedule(db, cls.id)
@@ -107,8 +110,13 @@ export async function dispatchDueWebinarEmails(
     const topic = schedule.topics.get(session.weekNumber) ?? 'This week’s topic'
 
     const pdf = await classAttachment(db, cls.id, schedule)
-    const subjectTemplate = cls.emailSubjectTemplate || settings.subjectTemplate
-    const bodyTemplate = cls.emailBodyTemplate || settings.bodyTemplate
+    // Template resolution: cohort → class override → built-in default.
+    const subjectTemplate =
+      cls.cohort.emailSubjectTemplate || cls.emailSubjectTemplate || DEFAULT_EMAIL_SUBJECT_TEMPLATE
+    const bodyTemplate =
+      cls.cohort.emailBodyTemplate || cls.emailBodyTemplate || DEFAULT_EMAIL_BODY_TEMPLATE
+    const htmlTemplate = cls.cohort.emailBodyHtml || null
+    const fromName = cls.cohort.fromName || 'The StudyMind team'
 
     const enrollments = await db.webinarEnrollment.findMany({
       where: { classId: cls.id, status: 'active', deletedAt: null },
@@ -139,28 +147,36 @@ export async function dispatchDueWebinarEmails(
         continue
       }
 
-      const rendered = renderWebinarEmail(subjectTemplate, bodyTemplate, {
-        studentName: enr.contact.firstName || 'there',
-        className: `${schedule.subjectLabel} ${schedule.levelLabel}`,
-        subject: schedule.subjectLabel,
-        level: schedule.levelLabel,
-        dateLabel,
-        timeLabel,
-        zoomLink: schedule.zoomLink || '(link to be confirmed)',
-        weekNumber: session.weekNumber,
-        weekTopic: topic,
-        fromName: settings.fromName,
-      })
+      const rendered = renderWebinarEmail(
+        subjectTemplate,
+        bodyTemplate,
+        {
+          studentName: enr.contact.firstName || 'there',
+          className: `${schedule.subjectLabel} ${schedule.levelLabel}`,
+          subject: schedule.subjectLabel,
+          level: schedule.levelLabel,
+          cohortName: cls.cohort.name,
+          weekday: WEEKDAY_LABEL[cls.dayOfWeek] ?? '',
+          dateLabel,
+          timeLabel,
+          zoomLink: schedule.zoomLink || '(link to be confirmed)',
+          weekNumber: session.weekNumber,
+          weekTopic: topic,
+          fromName,
+        },
+        htmlTemplate,
+      )
 
       try {
         const send = await sendSystemEmail({
           to: email,
           subject: rendered.subject,
           text: rendered.text,
+          html: rendered.html,
           attachments: pdf
             ? [{ filename: pdf.filename, content: pdf.content, contentType: 'application/pdf' }]
             : undefined,
-          fromAgentId: settings.senderMailboxUserId ?? undefined,
+          fromAgentId: senderMailboxUserId ?? undefined,
           requestId,
         })
         await db.webinarEmailDispatch.update({

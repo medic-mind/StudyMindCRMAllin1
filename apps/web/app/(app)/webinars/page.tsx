@@ -83,8 +83,8 @@ export default async function WebinarsOverviewPage() {
         )}
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-          <Stat label="Active classes" value={o.classCount} href="/webinars/classes" />
-          <Stat label="Sessions this week" value={o.sessionsThisWeek} href="/webinars/classes" />
+          <Stat label="Active classes" value={o.classCount} href="/webinars/cohorts" />
+          <Stat label="Sessions this week" value={o.sessionsThisWeek} href="/webinars/cohorts" />
           <Stat label="Active enrolments" value={o.activeEnrollments} href="/webinars/enrollments" />
           <Stat
             label="Awaiting review"
@@ -100,7 +100,7 @@ export default async function WebinarsOverviewPage() {
           <Stat
             label="Zoom links to rotate"
             value={o.zoomRotationDue}
-            href="/webinars/classes"
+            href="/webinars/cohorts"
             tone={o.zoomRotationDue > 0 ? 'danger' : undefined}
           />
           <Stat label="Emails sent (7 days)" value={o.emailsSentLast7Days} />

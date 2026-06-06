@@ -419,6 +419,7 @@ export const EVENT_NAMES = [
   // Weekly-webinar auto-enrollment system.
   'webinar.cohort_created',
   'webinar.cohort_status_changed',
+  'webinar.cohort_updated',
   'webinar.holiday_added',
   'webinar.holiday_removed',
   'webinar.class_created',
