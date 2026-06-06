@@ -47,6 +47,20 @@ const PROVIDERS = [
 
 export type Provider = (typeof PROVIDERS)[number]
 
+// Grouping for the Integrations index so the catalog reads by purpose rather
+// than as one flat grid (UI organising only — no behaviour change).
+const PROVIDER_CATEGORY: Record<Provider, string> = {
+  stripe: 'Payments & finance',
+  gocardless: 'Payments & finance',
+  aircall: 'Communications',
+  trengo: 'Communications',
+  slack: 'Communications',
+  gmail: 'Communications',
+  asana: 'Productivity',
+  booking: 'Booking & data',
+  lead: 'Lead capture',
+}
+
 interface ProviderConfig {
   /** Human-readable label for the UI. */
   label: string
@@ -337,6 +351,7 @@ export const adminIntegrationsRouter = router({
       providers: lastEvents.map((p) => ({
         provider: p.provider,
         label: PROVIDER_CONFIG[p.provider].label,
+        category: PROVIDER_CATEGORY[p.provider],
         description: PROVIDER_CONFIG[p.provider].description,
         lastReceivedAt: p.last?.receivedAt ?? null,
         lastEventType: p.last?.type ?? null,

@@ -15,7 +15,8 @@ const CONFIG_ROLES = new Set(['ceo', 'senior_manager'])
 
 const BREADCRUMBS = [
   { label: 'Settings', href: '/settings' },
-  { label: 'Invoicing', href: '/settings/invoicing' },
+  { label: 'Integrations', href: '/settings/integrations' },
+  { label: 'B2B Invoicing', href: '/settings/invoicing' },
 ]
 
 export default async function InvoicingSettingsPage() {

@@ -128,8 +128,10 @@ function buildNav(role: Role): NavItem[] {
         { href: '/settings/teams', label: 'Teams' },
         { href: '/settings/companies', label: 'Companies' },
         { href: '/settings/branding', label: 'Branding' },
+        // Integrations is the single hub for every external service — B2B
+        // invoicing, email accounts and Slack routing are reached from there
+        // (no separate top-level entries).
         { href: '/settings/integrations', label: 'Integrations' },
-        { href: '/settings/invoicing', label: 'Invoicing' },
         { href: '/settings/flags', label: 'Feature flags' },
       ],
     },

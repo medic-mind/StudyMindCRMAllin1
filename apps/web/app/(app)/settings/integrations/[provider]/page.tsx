@@ -377,13 +377,32 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
 
           {detail.perAgent ? (
             <section>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
-                Per-agent connections
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
+                  Per-agent connections
+                </h2>
+                {provider === 'trengo' ? (
+                  <Link
+                    href="/account/trengo/connect"
+                    className="rounded-md bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700"
+                  >
+                    Connect your Trengo API token →
+                  </Link>
+                ) : provider === 'gmail' ? (
+                  <Link
+                    href="/settings/email-accounts"
+                    className="rounded-md bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700"
+                  >
+                    Connect a mailbox →
+                  </Link>
+                ) : null}
+              </div>
               <p className="mt-1 text-xs text-neutral-500">
-                {detail.perAgent.length === 0
-                  ? `No agents have connected ${detail.label} yet.`
-                  : `${detail.perAgent.length} agent${detail.perAgent.length === 1 ? '' : 's'} connected.`}
+                {provider === 'trengo'
+                  ? 'Trengo uses a per-agent API token so outbound messages keep each agent’s identity. Each agent connects their own token (rotates every 90 days).'
+                  : detail.perAgent.length === 0
+                    ? `No agents have connected ${detail.label} yet.`
+                    : `${detail.perAgent.length} agent${detail.perAgent.length === 1 ? '' : 's'} connected.`}
               </p>
               {detail.perAgent.length > 0 ? (
                 <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">

@@ -139,18 +139,11 @@ const GROUPS: Group[] = [
       },
       {
         href: '/settings/integrations',
-        title: 'Integrations status',
-        description: 'Webhook recency, Gmail watch expiry, Asana webhook health.',
-        roles: 'CEO · Senior Manager',
-        icon: <BarChartIcon size={16} />,
-      },
-      {
-        href: '/settings/invoicing',
-        title: 'Invoicing platform',
+        title: 'Integrations',
         description:
-          'Connect the B2B Invoices Platform for live two-way customer, invoice, and payment sync.',
-        roles: 'CEO · Senior Manager',
-        icon: <CoinsIcon size={16} />,
+          'The hub for every external service — webhook status, plus B2B invoicing, email accounts and Slack routing.',
+        roles: 'CEO · Senior Manager · Manager',
+        icon: <BarChartIcon size={16} />,
       },
       {
         href: '/settings/flags',
