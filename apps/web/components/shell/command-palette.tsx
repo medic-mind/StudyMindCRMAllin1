@@ -84,7 +84,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       { kind: 'Go', id: 'nav-dashboard', label: 'Dashboard', onSelect: () => go('/') },
       { kind: 'Go', id: 'nav-inbox', label: 'Inbox', onSelect: () => go('/inbox') },
       { kind: 'Go', id: 'nav-mail', label: 'Mail', onSelect: () => go('/mail') },
-      { kind: 'Go', id: 'nav-leads', label: 'Leads', onSelect: () => go('/leads') },
+      { kind: 'Go', id: 'nav-leads', label: 'Leads Triage', onSelect: () => go('/leads') },
       { kind: 'Go', id: 'nav-contacts', label: 'Customers', onSelect: () => go('/contacts') },
       { kind: 'Go', id: 'nav-accounts', label: 'Accounts', onSelect: () => go('/accounts') },
       { kind: 'Go', id: 'nav-boards', label: 'Boards', onSelect: () => go('/boards') },

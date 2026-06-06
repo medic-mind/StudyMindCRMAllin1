@@ -27,60 +27,17 @@ export function BrandLogo({
   customLogoVersion = null,
 }: Props) {
   if (customLogoVersion != null) {
-    // Permanent-fix attempt: render the uploaded logo as a CSS
-    // background-image on a strictly-sized block element AND wrap that
-    // in an outer span with the same constraints. Every previous attempt
-    // (object-fit / max-height / overflow-hidden / minHeight + maxHeight)
-    // lost to flex stretch or some Tailwind preflight rule somewhere.
-    //
-    // Background images CAN NOT overflow their element — that's a CSS
-    // axiom, not a layout rule. So if the element is constrained, the
-    // visible image is constrained. We pin the element with:
-    //   - inline width / height / minWidth / minHeight / maxWidth /
-    //     maxHeight (six constraints, all the same)
-    //   - display: block (avoid any baseline-related inline quirks)
-    //   - contain: strict (browser-enforced layout / paint isolation)
-    //   - clipPath: inset(0) (last-resort hard clip, costs nothing
-    //     visually because the image already fits)
-    // and we ALSO wrap that span in a second span with the same fixed
-    // size so even a flex parent can't grab the inner one.
-    //
-    // CLAUDE.md §4 (brand identity). This is the fourth attempt — if
-    // anything still grows the logo, the fault is downstream caching,
-    // not this component.
-    const boxHeight = `${size}px`
-    const boxWidth = `${size * 6}px`
-    const fixedBox: React.CSSProperties = {
-      display: 'block',
-      width: boxWidth,
-      height: boxHeight,
-      minWidth: boxWidth,
-      minHeight: boxHeight,
-      maxWidth: boxWidth,
-      maxHeight: boxHeight,
-      boxSizing: 'border-box',
-      overflow: 'hidden',
-      flex: '0 0 auto',
-    }
+    // Render the uploaded logo as a normal <img> with an explicit height so
+    // the browser reserves the right space before the image loads (no flash to
+    // natural size) and scales the width by aspect ratio. object-contain + a
+    // max-width stop a wide wordmark from stretching the top bar. CLAUDE.md §4.
     return (
-      <span
-        className={`shrink-0 align-middle ${className ?? ''}`}
-        style={fixedBox}
-      >
-        <span
-          role="img"
-          aria-label="StudyMind"
-          style={{
-            ...fixedBox,
-            backgroundImage: `url("/api/branding/logo?v=${customLogoVersion}")`,
-            backgroundRepeat: 'no-repeat',
-            backgroundSize: 'contain',
-            backgroundPosition: 'left center',
-            contain: 'strict',
-            clipPath: 'inset(0)',
-          }}
-        />
-      </span>
+      <img
+        src={`/api/branding/logo?v=${customLogoVersion}`}
+        alt="StudyMind"
+        className={`block w-auto shrink-0 object-contain ${className ?? ''}`}
+        style={{ height: size, maxHeight: size, maxWidth: size * 7 }}
+      />
     )
   }
   return (

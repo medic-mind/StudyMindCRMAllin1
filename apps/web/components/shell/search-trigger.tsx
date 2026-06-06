@@ -40,7 +40,7 @@ export function SearchTrigger() {
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Open global search"
-        className="group inline-flex h-10 w-full max-w-lg cursor-text items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3.5 text-sm text-neutral-500 shadow-card transition-all hover:border-primary-300 hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        className="group inline-flex h-9 w-full max-w-md cursor-text items-center gap-2.5 rounded-lg border border-neutral-200 bg-neutral-100/70 px-3 text-sm text-neutral-500 transition-colors hover:bg-white hover:text-neutral-700 focus-visible:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
       >
         <SearchIcon size={16} className="text-neutral-400 transition-colors group-hover:text-primary-600" />
         <span className="flex-1 text-left">Search contacts, families, tasks…</span>

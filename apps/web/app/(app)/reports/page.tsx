@@ -6,6 +6,12 @@ import { PageHeader } from '@/components/shell/page-header'
 
 const reports = [
   {
+    href: '/reports/aircall',
+    title: 'Aircall',
+    description:
+      'Call volume, peak times and agent performance — inbound/outbound, missed and voicemail. Export to PDF.',
+  },
+  {
     href: '/reports/finance',
     title: 'Finance',
     description:

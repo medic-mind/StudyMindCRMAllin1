@@ -8,6 +8,8 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { ProfileForm } from './ProfileForm'
+
 const BREADCRUMBS = [{ label: 'Account', href: '/account' }]
 
 export const dynamic = 'force-dynamic'
@@ -39,14 +41,10 @@ export default async function AccountPage() {
       <PageBody>
         <div className="max-w-2xl space-y-6">
       <section className="rounded-md border border-neutral-200 bg-white p-4 shadow-card">
-        <dl className="grid grid-cols-3 gap-2 text-sm">
-          <dt className="text-neutral-500">Name</dt>
-          <dd className="col-span-2 text-neutral-900">{me.name ?? '—'}</dd>
-          <dt className="text-neutral-500">Email</dt>
-          <dd className="col-span-2 text-neutral-900">{me.email}</dd>
-          <dt className="text-neutral-500">Last sign-in</dt>
-          <dd className="col-span-2 text-neutral-900">{fmt(me.lastSignInAt)}</dd>
-        </dl>
+        <ProfileForm initialName={me.name ?? null} initialEmail={me.email} />
+        <p className="mt-4 border-t border-neutral-100 pt-3 text-xs text-neutral-500">
+          Last sign-in: {fmt(me.lastSignInAt)}
+        </p>
       </section>
 
       <section className="space-y-2">

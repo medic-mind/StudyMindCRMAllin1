@@ -50,6 +50,50 @@ export const accountRouter = router({
     return row
   }),
 
+  /** Update the signed-in user's own display name + sign-in email. */
+  updateProfile: auditedProcedure
+    .input(
+      z.object({
+        name: z.string().trim().max(120).optional(),
+        email: z.string().trim().toLowerCase().email(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      const current = await ctx.db.user.findUnique({
+        where: { id: actor.id },
+        select: { name: true, email: true },
+      })
+      if (!current) throw new TRPCError({ code: 'NOT_FOUND' })
+
+      // Email is the sign-in identifier — must stay unique across users.
+      if (input.email !== current.email) {
+        const clash = await ctx.db.user.findFirst({
+          where: { email: input.email, NOT: { id: actor.id } },
+          select: { id: true },
+        })
+        if (clash) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'That email is already used by another account.',
+          })
+        }
+      }
+
+      const name = input.name && input.name.length > 0 ? input.name : null
+      await ctx.db.user.update({
+        where: { id: actor.id },
+        data: { name, email: input.email },
+      })
+      await ctx.audit({
+        action: 'account.profile_updated',
+        target: { type: 'User', id: actor.id },
+        before: { name: current.name, email: current.email },
+        after: { name, email: input.email },
+      })
+      return { name, email: input.email }
+    }),
+
   changePassword: auditedProcedureBypassMustReset
     .input(
       z.object({
