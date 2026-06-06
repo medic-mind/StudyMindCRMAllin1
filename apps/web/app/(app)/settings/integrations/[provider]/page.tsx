@@ -116,6 +116,34 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
   const pill = statusPill(detail.status)
   const canTest = TEST_ROLES.has(me.role)
 
+  // Background-job (Inngest) health. A backfill stuck `pending` or no cron ever
+  // running, despite keys being set, means the app isn't synced to Inngest.
+  const bj = detail.backgroundJobs
+  const bjKeysSet = bj.inngestEventKeySet && bj.inngestSigningKeySet
+  const bjStatus: { tone: 'success' | 'warn' | 'danger'; title: string; body: string } =
+    !bjKeysSet
+      ? {
+          tone: 'danger',
+          title: 'Not connected — jobs cannot run',
+          body: 'Set INNGEST_EVENT_KEY and INNGEST_SIGNING_KEY on the web service in Railway, then in Inngest Cloud → Apps → Sync new app → https://<your-host>/api/inngest. Until then no background job runs: backfills stay pending, the 10-minute sync never fires, and webhook events are never processed.',
+        }
+      : bj.stuckBackfills > 0 || !bj.lastCronRunAt
+        ? {
+            tone: 'warn',
+            title: 'Keys set, but jobs are not running',
+            body: 'Inngest keys are present but no job has executed yet. In Inngest Cloud → Apps → Sync new app → https://<your-host>/api/inngest, then redeploy. Backfills stay pending until the worker picks them up.',
+          }
+        : {
+            tone: 'success',
+            title: 'Connected — background jobs are running',
+            body: 'Inngest is invoking functions. Backfills and the 10-minute sync run normally.',
+          }
+  const bjTone: Record<'success' | 'warn' | 'danger', string> = {
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-900',
+    warn: 'border-amber-200 bg-amber-50 text-amber-900',
+    danger: 'border-red-200 bg-red-50 text-red-900',
+  }
+
   // ADR 0017: backfill history for the four backfillable providers.
   const isBackfillable = BACKFILL_PROVIDERS.has(provider)
   const backfillRuns = isBackfillable
@@ -189,6 +217,75 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                     </dd>
                   </div>
                 ))}
+              </dl>
+            </section>
+          ) : null}
+
+          {provider === 'aircall' ? (
+            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
+                Background jobs (Inngest)
+              </h2>
+              <p className="mt-1 max-w-xl text-xs text-neutral-500">
+                Importing runs as background jobs through Inngest. If this is not
+                connected, the “Test connection” above can still pass (it’s a
+                direct call) while backfills stay pending and nothing imports.
+              </p>
+
+              <div className={`mt-3 rounded-lg border px-3 py-2.5 text-sm ${bjTone[bjStatus.tone]}`}>
+                <div className="font-semibold">{bjStatus.title}</div>
+                <p className="mt-0.5 text-xs leading-relaxed">{bjStatus.body}</p>
+              </div>
+
+              {bj.stuckBackfills > 0 ? (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  {bj.stuckBackfills} backfill
+                  {bj.stuckBackfills === 1 ? '' : 's'} stuck on{' '}
+                  <span className="font-mono">pending</span> for over 3 minutes —
+                  the worker is not picking jobs up. Connect Inngest (above), then
+                  cancel the stuck job{bj.stuckBackfills === 1 ? '' : 's'} and start
+                  a fresh backfill.
+                </div>
+              ) : null}
+
+              <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+                  <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                    INNGEST_EVENT_KEY
+                  </dt>
+                  <dd className="mt-1">
+                    {bj.inngestEventKeySet ? (
+                      <Badge tone="success">set</Badge>
+                    ) : (
+                      <Badge tone="danger">missing</Badge>
+                    )}
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+                  <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                    INNGEST_SIGNING_KEY
+                  </dt>
+                  <dd className="mt-1">
+                    {bj.inngestSigningKeySet ? (
+                      <Badge tone="success">set</Badge>
+                    ) : (
+                      <Badge tone="danger">missing</Badge>
+                    )}
+                  </dd>
+                </div>
+                <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2">
+                  <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                    Last cron run
+                  </dt>
+                  <dd className="mt-1 font-mono text-xs tabular-nums text-neutral-900">
+                    {formatDateTime(bj.lastCronRunAt)}
+                    {bj.lastCronFunctionId ? (
+                      <span className="block text-[10px] text-neutral-500">
+                        {bj.lastCronFunctionId}
+                      </span>
+                    ) : null}
+                  </dd>
+                </div>
               </dl>
             </section>
           ) : null}

@@ -9,6 +9,7 @@
 // fine before Aircall is wired up. Deep history is handled by the on-demand
 // admin backfill; this job covers the live/recent window going forward.
 
+import { recordCronRun } from '@studymind/core/observability/cron-heartbeat'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -34,6 +35,7 @@ export const aircallSyncCalls = inngest.createFunction(
     if (!process.env['AIRCALL_API_ID'] || !process.env['AIRCALL_API_TOKEN']) {
       return { skipped: 'no-credentials' }
     }
+    const startedAt = Date.now()
 
     // Cursor without a dedicated table: resume from just before our newest
     // stored call (minus an overlap so nothing slips between runs); if we have
@@ -76,6 +78,16 @@ export const aircallSyncCalls = inngest.createFunction(
       keepPaging = res.hasNext
       page += 1
     }
+
+    // Heartbeat so "Background jobs" diagnostics + the cron watchdog can see
+    // this cron is actually being invoked (proves Inngest is connected).
+    await step.run('heartbeat', () =>
+      recordCronRun(db, {
+        functionId: 'aircall/sync-calls',
+        success: true,
+        durationMs: Date.now() - startedAt,
+      }),
+    )
 
     logger.info({ processed, stored, since }, 'aircall.sync_calls.completed')
     return { processed, stored, pages: page - 1, cappedAtMaxPages: keepPaging }
