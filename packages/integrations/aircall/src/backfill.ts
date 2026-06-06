@@ -69,12 +69,21 @@ export const aircallBackfillRequested = inngest.createFunction(
         })
 
         for (const call of calls.rows) {
-          const result = await step.run(`call-${call.id}`, async () =>
-            processBackfillCall(call),
-          )
-          processed += 1
-          if (result.matched) matched += 1
-          else skipped += 1
+          try {
+            const result = await step.run(`call-${call.id}`, async () =>
+              processBackfillCall(call),
+            )
+            processed += 1
+            if (result.matched) matched += 1
+            else skipped += 1
+          } catch (err) {
+            // Belt-and-braces: one call that still fails (e.g. the Interaction
+            // write itself) must not abort the rest of the import. Skip it and
+            // carry on so the mirror gets everything it can.
+            processed += 1
+            skipped += 1
+            logger.warn({ callId: call.id, err }, 'aircall backfill: skipped a call that failed to import')
+          }
         }
         await step.run(`progress-${page}`, async () =>
           incrementBackfillProgress(db, jobId, {
@@ -143,20 +152,32 @@ export async function processBackfillCall(
   let familyId: string | null = null
   let triageRequired = false
   if (phone && phone.startsWith('+')) {
-    const name = extractBackfillCallName(call)
-    const resolved = await resolveOrCreateContactForCall(
-      db,
-      {
-        phoneE164: phone,
-        firstName: name?.firstName ?? null,
-        lastName: name?.lastName ?? null,
-        email: call.contact?.emails?.find((e) => e.value)?.value?.trim() || null,
-      },
-      { referralSource: 'Aircall', actorId: null, requestId: `aircall-import:${call.id}` },
-    )
-    contactId = resolved.contactId
-    familyId = resolved.familyId
-    triageRequired = resolved.triageRequired
+    try {
+      const name = extractBackfillCallName(call)
+      const resolved = await resolveOrCreateContactForCall(
+        db,
+        {
+          phoneE164: phone,
+          firstName: name?.firstName ?? null,
+          lastName: name?.lastName ?? null,
+          email: call.contact?.emails?.find((e) => e.value)?.value?.trim() || null,
+        },
+        { referralSource: 'Aircall', actorId: null, requestId: `aircall-import:${call.id}` },
+      )
+      contactId = resolved.contactId
+      familyId = resolved.familyId
+      triageRequired = resolved.triageRequired
+    } catch {
+      // A single contact-resolution failure (e.g. a unique-constraint clash
+      // while auto-creating a lightweight contact) must NEVER abort the import:
+      // that previously stranded the whole mirror after the last good call and
+      // the 10-min sync then retried the same poison call forever. Persist the
+      // call UNMATCHED instead — the mirror stays complete (§10) and the
+      // missed-calls workspace surfaces it by rawDigits for manual linking.
+      contactId = null
+      familyId = null
+      triageRequired = false
+    }
   }
 
   // Stream recording to S3 if present and we don't already have it.
