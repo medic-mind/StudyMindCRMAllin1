@@ -1,12 +1,14 @@
 // Compose modal for emailing an invoice or a payment reminder from the CRM.
-// Lets the user edit to / cc / subject / body (all optional overrides — blank
-// falls back to the platform's defaults: the customer's contact email + the
-// standard template) before POSTing to /invoices/:id/send or /send-reminder.
+//
+// The platform's own email template is fetched (invoicing.invoices.emailPreview)
+// and prefilled so staff never retype — and the format matches the B2B site
+// exactly: any field the user does NOT edit is omitted from the request, so the
+// platform sends its template verbatim. Edited fields are sent as overrides.
 // Both attach the same PDF the preview shows (ADR 0036).
 
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -17,6 +19,17 @@ import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
 export type ComposeMode = 'send' | 'reminder'
+
+interface EmailTemplate {
+  to: string
+  cc: string
+  subject: string
+  body: string
+  fromEmail: string
+  fromName: string
+}
+
+const EMPTY: EmailTemplate = { to: '', cc: '', subject: '', body: '', fromEmail: '', fromName: '' }
 
 export function InvoiceComposeModal({
   mode,
@@ -34,6 +47,16 @@ export function InvoiceComposeModal({
   const send = trpc.invoicing.invoices.send.useMutation()
   const reminder = trpc.invoicing.invoices.sendReminder.useMutation()
 
+  const open = mode !== null && invoicingId !== null
+  const isReminder = mode === 'reminder'
+  const pending = send.isPending || reminder.isPending
+
+  // Pull the platform's rendered template for this invoice + kind.
+  const preview = trpc.invoicing.invoices.emailPreview.useQuery(
+    { invoicingId: invoicingId ?? '', kind: (mode ?? 'send') as ComposeMode },
+    { enabled: open, retry: false, staleTime: 60_000 },
+  )
+
   const [to, setTo] = useState('')
   const [cc, setCc] = useState('')
   const [subject, setSubject] = useState('')
@@ -41,12 +64,11 @@ export function InvoiceComposeModal({
   const [fromEmail, setFromEmail] = useState('')
   const [fromName, setFromName] = useState('')
   const [attachPdf, setAttachPdf] = useState(true)
+  const [template, setTemplate] = useState<EmailTemplate>(EMPTY)
+  const [applied, setApplied] = useState(false)
 
-  const open = mode !== null && invoicingId !== null
-  const isReminder = mode === 'reminder'
-  const pending = send.isPending || reminder.isPending
-
-  function reset() {
+  // Reset whenever the target (invoice or kind) changes.
+  useEffect(() => {
     setTo('')
     setCc('')
     setSubject('')
@@ -54,36 +76,76 @@ export function InvoiceComposeModal({
     setFromEmail('')
     setFromName('')
     setAttachPdf(true)
-  }
+    setTemplate(EMPTY)
+    setApplied(false)
+  }, [mode, invoicingId])
+
+  // Prefill from the platform template once it resolves for this open session.
+  useEffect(() => {
+    if (!open || applied) return
+    const d = preview.data
+    if (!d) return
+    const t: EmailTemplate = {
+      to: d.to ?? '',
+      cc: d.cc ?? '',
+      subject: d.subject ?? '',
+      body: d.body ?? '',
+      fromEmail: d.fromEmail ?? '',
+      fromName: d.fromName ?? '',
+    }
+    setTo(t.to)
+    setCc(t.cc)
+    setSubject(t.subject)
+    setBody(t.body)
+    setFromEmail(t.fromEmail)
+    setFromName(t.fromName)
+    setTemplate(t)
+    setApplied(true)
+  }, [open, applied, preview.data])
 
   function close() {
-    reset()
     onClose()
+  }
+
+  /** Include a field only when the user actually edited it (non-empty and
+   *  different from the prefilled template) — so an unchanged send goes out as
+   *  the platform's exact template. */
+  function override(current: string, key: keyof EmailTemplate): string | undefined {
+    const v = current.trim()
+    return v && v !== template[key].trim() ? v : undefined
+  }
+
+  function compact<T extends Record<string, unknown>>(obj: T): T {
+    return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T
   }
 
   async function submit() {
     if (!invoicingId) return
     try {
       if (isReminder) {
-        const res = await reminder.mutateAsync({
-          invoicingId,
-          ...(to.trim() ? { to: to.trim() } : {}),
-          ...(cc.trim() ? { cc: cc.trim() } : {}),
-          ...(subject.trim() ? { subject: subject.trim() } : {}),
-          ...(body.trim() ? { body: body.trim() } : {}),
-          attachPdf,
-        })
+        const res = await reminder.mutateAsync(
+          compact({
+            invoicingId,
+            to: override(to, 'to'),
+            cc: override(cc, 'cc'),
+            subject: override(subject, 'subject'),
+            body: override(body, 'body'),
+            attachPdf,
+          }),
+        )
         toast.success(`Reminder sent to ${res.to}`)
       } else {
-        const res = await send.mutateAsync({
-          invoicingId,
-          ...(to.trim() ? { to: to.trim() } : {}),
-          ...(cc.trim() ? { cc: cc.trim() } : {}),
-          ...(subject.trim() ? { subject: subject.trim() } : {}),
-          ...(body.trim() ? { body: body.trim() } : {}),
-          ...(fromEmail.trim() ? { fromEmail: fromEmail.trim() } : {}),
-          ...(fromName.trim() ? { fromName: fromName.trim() } : {}),
-        })
+        const res = await send.mutateAsync(
+          compact({
+            invoicingId,
+            to: override(to, 'to'),
+            cc: override(cc, 'cc'),
+            subject: override(subject, 'subject'),
+            body: override(body, 'body'),
+            fromEmail: override(fromEmail, 'fromEmail'),
+            fromName: override(fromName, 'fromName'),
+          }),
+        )
         toast.success(`Sent to ${res.to}`)
       }
       onSent()
@@ -92,6 +154,12 @@ export function InvoiceComposeModal({
       toast.error(e instanceof Error ? e.message : 'Could not send')
     }
   }
+
+  const templateStatus = preview.isLoading
+    ? 'Loading the platform’s template…'
+    : preview.data
+      ? 'Loaded the platform’s template — send as-is for the exact format, or edit any field.'
+      : 'No template preview available — leave fields blank to use the platform’s default.'
 
   return (
     <Modal
@@ -116,9 +184,8 @@ export function InvoiceComposeModal({
       }
     >
       <div className="space-y-3 p-4">
-        <p className="text-xs text-neutral-500">
-          Leave any field blank to use the platform default ({isReminder ? 'chaser' : 'invoice'}{' '}
-          template, sent to the customer’s contact email). The PDF is attached automatically.
+        <p className="rounded-md bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+          {templateStatus} The PDF is attached automatically.
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="To" hint="Blank = customer’s contact email.">
@@ -129,10 +196,10 @@ export function InvoiceComposeModal({
           </Field>
         </div>
         <Field label="Subject">
-          <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="(default subject)" />
+          <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="(platform default)" />
         </Field>
         <Field label="Message">
-          <Textarea rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="(default message)" />
+          <Textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} placeholder="(platform default)" />
         </Field>
         {isReminder ? (
           <label className="flex items-center gap-2 text-xs text-neutral-600">

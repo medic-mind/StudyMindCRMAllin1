@@ -18,6 +18,7 @@ import { useConfirm } from '@/components/ui/confirm'
 import { Modal } from '@/components/ui/modal'
 import { trpc, type RouterOutputs } from '@/lib/trpc/client'
 
+import { InvoiceActivityModal } from './InvoiceActivityModal'
 import { InvoiceComposeModal, type ComposeMode } from './InvoiceComposeModal'
 import { InvoicePdfPreview, invoicePdfUrl } from './InvoicePdfPreview'
 import {
@@ -115,6 +116,7 @@ export function AccountInvoicingPanel({
     invoicingId: string
     invoiceNumber: string | null
   } | null>(null)
+  const [activityInv, setActivityInv] = useState<InvoiceRow | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   function toggleExpanded(id: string) {
@@ -382,6 +384,14 @@ export function AccountInvoicingPanel({
                     )}
 
                     <div className="flex flex-wrap items-center gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setActivityInv(inv)}
+                      >
+                        Email history
+                      </Button>
                       <a
                         href={invoicePdfUrl(inv.invoicingId, true)}
                         className="rounded-md px-2 py-1 text-xs text-primary-700 hover:bg-white hover:underline"
@@ -525,6 +535,15 @@ export function AccountInvoicingPanel({
         invoiceNumber={compose?.invoiceNumber ?? null}
         onClose={() => setCompose(null)}
         onSent={() => void invoicesQuery.refetch()}
+      />
+
+      {/* Email & activity history */}
+      <InvoiceActivityModal
+        invoicingId={activityInv?.invoicingId ?? null}
+        invoiceNumber={activityInv?.invoiceNumber ?? null}
+        lastEmailedAt={activityInv?.lastEmailedAt ?? null}
+        lastReminderAt={activityInv?.lastReminderAt ?? null}
+        onClose={() => setActivityInv(null)}
       />
     </div>
   )

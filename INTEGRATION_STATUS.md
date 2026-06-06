@@ -162,6 +162,19 @@ site's raise screen and fixed the preview:
   "Emailed …".
 - **alt_provision client type** added to the `InvoicingClientType` enum (+ migration)
   so an AP-billed invoice keeps full mirror fidelity.
+- **Email & activity history** (`InvoiceActivityModal.tsx`): a per-invoice "Email
+  history" view of the platform's full timeline (`GET /invoices/:id/activity`) —
+  every send, reminder, payment, and status change with its time — plus the
+  mirrored `lastEmailedAt` / `lastReminderAt`.
+- **Templates pulled from the platform**: the compose box prefills the rendered
+  template (`getInvoiceEmailPreview` → `GET /invoices/:id/email-preview?type=…`) so
+  staff never retype; any **un-edited** field is omitted from the send request, so
+  the platform's exact template goes out (only edited fields override). Fails soft
+  to the platform default if the endpoint isn't present (assumed endpoint — see the
+  package README).
+- **Read access widened** to all staff (Sales Executives can raise/send, so they
+  must be able to read the list / activity / templates; the panel is shown on the
+  account page every role can view).
 
 ## Acceptance tests
 
@@ -181,8 +194,9 @@ site's raise screen and fixed the preview:
 
 ## Tests
 
-- `client.test.ts` (19) — every new endpoint hits the right path/method, unwraps
-  the `{ data }` envelope, maps 401/403, PDF bytes + filename, SSE parse + stream.
+- `client.test.ts` (22) — every new endpoint hits the right path/method, unwraps
+  the `{ data }` envelope, maps 401/403, PDF bytes + filename, SSE parse + stream,
+  email-preview (path / 404→null / auth propagation).
 - `outbound.test.ts` (5) — payment-reference default on raise, full field
   pass-through (incl. International VAT-free lines), `payment_date` on an
   adjustment, and the `lastReminderAt` stamp on reminder.
@@ -195,7 +209,7 @@ site's raise screen and fixed the preview:
   double-payment**, skip-when-not-mirrored, **remove-payment recompute**,
   soft-delete.
 
-Full repo suite green: **1107 tests / 152 files**, plus `tsc` + ESLint clean
+Full repo suite green: **1110 tests / 152 files**, plus `tsc` + ESLint clean
 across the integration package, `apps/web`, and `packages/core`.
 
 ---

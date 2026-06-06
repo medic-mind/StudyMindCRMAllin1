@@ -110,3 +110,11 @@ A second pass brought the CRM's raise/edit screen to parity with the B2B site:
   admits it. The key never reaches the browser.
 - **Reminder timestamp**: `lastReminderAt` (new column) is stamped on send and
   surfaced on the row, mirroring `lastEmailedAt`.
+- **Email & activity history**: `GET /invoices/:id/activity` is surfaced per
+  invoice (every send/reminder/payment/status change + timestamp).
+- **Templates from the platform**: the compose box prefills the rendered template
+  via an assumed `GET /invoices/:id/email-preview?type=send|reminder` (fails soft
+  to null). Un-edited fields are omitted from `/send` · `/send-reminder` so the
+  platform's template goes out verbatim — staff never retype and the format is
+  identical. Invoice **reads** were widened to all staff (the write-capable Sales
+  Executive must be able to read the list/activity/templates).

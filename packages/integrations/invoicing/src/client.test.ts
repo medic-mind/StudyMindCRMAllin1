@@ -142,6 +142,29 @@ describe('PDF', () => {
   })
 })
 
+describe('email template preview', () => {
+  it('fetches the rendered template for the given kind', async () => {
+    const { client, calls } = makeClient(() =>
+      json({ data: { subject: 'Your invoice INV-1', body: 'Hello…', to: 'client@x.test' } }),
+    )
+    const preview = await client.getInvoiceEmailPreview('inv1', 'reminder')
+    expect(preview?.subject).toBe('Your invoice INV-1')
+    expect(calls[0]?.url).toBe(`${API}/invoices/inv1/email-preview?type=reminder`)
+  })
+
+  it('returns null when the platform has no preview (404)', async () => {
+    const { client } = makeClient(() => new Response('not found', { status: 404 }))
+    await expect(client.getInvoiceEmailPreview('inv1', 'send')).resolves.toBeNull()
+  })
+
+  it('still surfaces an auth failure (401)', async () => {
+    const { client } = makeClient(() => new Response('no', { status: 401 }))
+    await expect(client.getInvoiceEmailPreview('inv1', 'send')).rejects.toBeInstanceOf(
+      InvoicingUnauthorizedError,
+    )
+  })
+})
+
 describe('reference data', () => {
   it('billingCompanies unwraps { data: [...] }', async () => {
     const { client } = makeClient(() => json({ data: [{ id: 'bc1', name: 'StudyMind Ltd' }] }))

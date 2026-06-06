@@ -80,6 +80,26 @@ directly; a blob carries no such headers and `frame-src 'self' blob:` (csp.ts)
 admits it. `?download=1` forces a download. International invoices render
 VAT-free.
 
+## Email history + templates
+
+- **History.** `GET /invoices/:id/activity` (`invoicing.invoices.activity`) is the
+  platform's full timeline — every send, reminder, payment, and status change with
+  its timestamp. Surfaced per-invoice via `InvoiceActivityModal.tsx` ("Email
+  history"), alongside the mirrored `lastEmailedAt` / `lastReminderAt`.
+- **Templates.** So staff never retype and the wording matches the B2B site
+  exactly, the compose box prefills the platform's rendered template via
+  `getInvoiceEmailPreview(id, kind)` → **`GET /invoices/:id/email-preview?type=send|reminder`**
+  (`invoicing.invoices.emailPreview`). Any field the user does **not** edit is
+  omitted from the `/send` · `/send-reminder` request, so the platform sends its
+  template verbatim; only edited fields go as overrides.
+
+  > **Assumed endpoint.** `email-preview` is not in the original API contract; it
+  > is the natural GET counterpart to the documented `/send` + `/send-reminder`
+  > POSTs and is pinned by `client.test.ts`. It **fails soft** — a non-200 (e.g.
+  > 404 if the path differs) returns `null` and the compose box simply falls back
+  > to the platform's own default on send. If the platform exposes templates under
+  > a different path, change the one URL in `client.getInvoiceEmailPreview`.
+
 ## Reference data (read-only)
 
 `getBillingCompanies` / `getBankAccounts` / `getCompanySettings` back the

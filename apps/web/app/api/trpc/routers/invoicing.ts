@@ -55,10 +55,18 @@ import {
   type UserRole,
 } from '@/lib/trpc/builders'
 
-// Roles. Reads: Manager+. Secrets: CEO / Senior Manager (settings.write tier).
-// Raise/send/record payment: Sales Executive+ (mirrors charge.create_link).
-// Mark paid: Manager+ (mirrors charge.refund finance tier).
-const READ_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
+// Roles. Reads: all staff (the invoicing panel is shown on the account page,
+// which every role can view; Sales Executives can raise/send so they MUST be
+// able to read the list/activity/templates). Secrets: CEO / Senior Manager
+// (settings.write tier). Raise/send/record payment: Sales Executive+ (mirrors
+// charge.create_link). Mark paid / cancel / remove payment: Manager+ (finance).
+const READ_ROLES: ReadonlySet<UserRole> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 const CONFIG_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager'])
 const WRITE_ROLES: ReadonlySet<UserRole> = new Set([
   'ceo',
@@ -851,7 +859,8 @@ const invoicesRouter = router({
       }
     }),
 
-  /** The platform's activity timeline for an invoice. Manager+ read. */
+  /** The platform's activity timeline for an invoice (sends, reminders,
+   *  payments, status changes) — the full email/audit history. All staff read. */
   activity: protectedProcedure
     .input(z.object({ invoicingId: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -870,6 +879,34 @@ const invoicesRouter = router({
         }))
       } catch (err) {
         mapApiError(err)
+      }
+    }),
+
+  /** The platform's rendered email template for an invoice (initial send or
+   *  reminder), so the compose box prefills the exact wording. Best-effort —
+   *  returns null when the platform exposes no preview (the modal then falls
+   *  back to the platform default on send). All staff read. */
+  emailPreview: protectedProcedure
+    .input(z.object({ invoicingId: z.string(), kind: z.enum(['send', 'reminder']) }))
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertRead(user.role)
+      try {
+        const client = await clientFromConfigOrThrow()
+        const p = await client.getInvoiceEmailPreview(input.invoicingId, input.kind)
+        if (!p) return null
+        return {
+          to: p.to ?? null,
+          cc: p.cc ?? null,
+          subject: p.subject ?? null,
+          body: p.body ?? p.html ?? null,
+          fromEmail: p.from_email ?? null,
+          fromName: p.from_name ?? null,
+        }
+      } catch {
+        // Template preview is a convenience — never fail the modal over it. The
+        // actual send/reminder will surface any real auth/config error.
+        return null
       }
     }),
 })

@@ -153,6 +153,20 @@ export interface InvoicePdfBytes {
   filename: string
 }
 
+/** The platform's rendered email for an invoice (initial send or reminder), so
+ *  the CRM can prefill the compose box with the exact wording — staff never
+ *  retype, and an un-edited send goes out byte-for-byte as the platform's
+ *  template. Shape is permissive; the platform owns the fields. */
+export interface InvoiceEmailPreview {
+  to?: string
+  cc?: string
+  subject?: string
+  body?: string
+  html?: string
+  from_email?: string
+  from_name?: string
+}
+
 export interface RegisterWebhookPayload {
   url: string
   event_types: string[]
@@ -214,6 +228,13 @@ export interface InvoicingClient {
   markPaid(invoiceId: string): Promise<RawInvoice>
   sendInvoice(invoiceId: string, payload?: SendInvoicePayload): Promise<SendInvoiceResult>
   sendReminder(invoiceId: string, payload?: SendReminderPayload): Promise<SendReminderResult>
+  /** The platform's rendered email template for this invoice. `kind` selects the
+   *  initial send vs the reminder copy. Returns null when the platform exposes
+   *  no preview (so the compose box falls back to its own defaults). */
+  getInvoiceEmailPreview(
+    invoiceId: string,
+    kind: 'send' | 'reminder',
+  ): Promise<InvoiceEmailPreview | null>
   getInvoicePdfJson(invoiceId: string): Promise<InvoicePdfJson>
   getInvoicePdfBytes(
     invoiceId: string,
@@ -446,6 +467,28 @@ export function createClient(opts: InvoicingClientOptions): InvoicingClient {
       return unwrap<SendReminderResult>(
         await request('POST', `/invoices/${invoiceId}/send-reminder`, payload),
       )
+    },
+
+    async getInvoiceEmailPreview(invoiceId, kind) {
+      // Assumed endpoint (documented in the README); the platform renders the
+      // same template Send/Reminder use. Fail SOFT — a missing/!=200 preview
+      // returns null so the compose box just falls back to the platform default
+      // on send (never breaks the modal). Auth errors (401/403) still surface.
+      try {
+        const qs = buildQuery({ type: kind })
+        return unwrap<InvoiceEmailPreview>(
+          await request('GET', `/invoices/${invoiceId}/email-preview${qs}`),
+        )
+      } catch (err) {
+        if (
+          err instanceof InvoicingApiError &&
+          !(err instanceof InvoicingUnauthorizedError) &&
+          !(err instanceof InvoicingReadOnlyError)
+        ) {
+          return null
+        }
+        throw err
+      }
     },
 
     async getInvoicePdfJson(invoiceId) {
