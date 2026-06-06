@@ -438,6 +438,7 @@ export const EVENT_NAMES = [
   'webinar.zoom_meeting_deleted',
   'webinar.recording_sent',
   'webinar.recording_trashed',
+  'webinar.broadcast_sent',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

@@ -45,7 +45,77 @@ export function ClassDetail({
       {canManage ? <ImportScheduleCard classId={detail.id} /> : null}
       <SettingsCard detail={detail} canManage={canManage} />
       <EnrollmentsCard classId={detail.id} initial={enrollments} canManage={canManage} />
+      {canManage ? <BroadcastCard classId={detail.id} /> : null}
     </div>
+  )
+}
+
+function BroadcastCard({ classId }: { classId: string }) {
+  const [channel, setChannel] = useState<'email' | 'whatsapp' | 'sms'>('email')
+  const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
+  const broadcast = trpc.webinar.class.broadcast.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Sent to ${r.sent} · ${r.failed} failed · ${r.skipped} skipped`)
+      setBody('')
+      setSubject('')
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  return (
+    <Card>
+      <CardBody>
+        <h2 className="text-sm font-semibold text-neutral-900">Message everyone on this list</h2>
+        <p className="mt-1 text-xs text-neutral-500">
+          A one-off message to all active enrolments — e.g. a time change. Use{' '}
+          <code className="rounded bg-neutral-100 px-1">{'{{first_name}}'}</code> to personalise.
+          WhatsApp/SMS go via Trengo under your connected token.
+        </p>
+        <form
+          className="mt-3 space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            broadcast.mutate({
+              id: classId,
+              channel,
+              subject: channel === 'email' ? subject || undefined : undefined,
+              body,
+            })
+          }}
+        >
+          <div className="flex gap-1">
+            {(['email', 'whatsapp', 'sms'] as const).map((ch) => (
+              <button
+                key={ch}
+                type="button"
+                onClick={() => setChannel(ch)}
+                className={
+                  'rounded-md px-3 py-1.5 text-sm ' +
+                  (channel === ch
+                    ? 'bg-primary-50 font-medium text-primary-800'
+                    : 'text-neutral-600 hover:bg-neutral-100')
+                }
+              >
+                {ch === 'email' ? 'Email' : ch === 'whatsapp' ? 'WhatsApp' : 'SMS'}
+              </button>
+            ))}
+          </div>
+          {channel === 'email' ? (
+            <Input placeholder="Subject (optional)" value={subject} onChange={(e) => setSubject(e.target.value)} />
+          ) : null}
+          <Textarea
+            rows={4}
+            placeholder="Hi {{first_name}}, a quick update about this week's class…"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            required
+          />
+          <Button type="submit" disabled={broadcast.isPending || body.trim().length === 0}>
+            {broadcast.isPending ? 'Sending…' : 'Send to everyone'}
+          </Button>
+        </form>
+      </CardBody>
+    </Card>
   )
 }
 

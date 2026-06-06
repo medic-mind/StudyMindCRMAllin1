@@ -1398,7 +1398,7 @@ Quarterly DR rehearsal restores production into a sandbox account and runs a smo
 
 ## 47. Weekly webinars (live classes) — auto-enrollment system
 
-Families pay weekly via Stripe for live online classes — **Biology, Chemistry, Physics, Maths** at **GCSE** and **A-Level**. The CRM detects those payers, organises them into the right class, emails the Zoom link + a PDF schedule each week, and stops when a subscription lapses. UI lives under `/webinars` (Operations). ADR 0031 records the design.
+Families pay weekly via Stripe for live online classes — **Biology, Chemistry, Physics, Maths** at **GCSE** and **A-Level** (subjects + levels are extensible — UCAT, GAMSAT, 11+, …). The CRM detects those payers, organises them into the right class, emails the Zoom link + a PDF schedule each week, and stops when a subscription lapses. The UI under `/webinars` (Operations) is **cohort-centric**: `Cohorts → a cohort (its classes + holidays) → a class`, where each class page is the single workspace (This-week, Zoom + generate, syllabus with AI/CSV/PDF import, reminder settings, mailing list with manual add + Stripe auto, and a **broadcast** to email/WhatsApp/SMS everyone — `webinar.class.broadcast`). Subjects/levels are created inline from the New-class form (no separate setup); `/webinars/classes` is a flat "all classes" view. ADR 0031 records the design.
 
 ### 47.1 Domain model
 

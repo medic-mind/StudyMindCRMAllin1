@@ -37,7 +37,8 @@ export default async function ClassDetailPage({
         subtitle={`${detail.cohortName} · ${detail.title}`}
         breadcrumbs={[
           { label: 'Webinars', href: '/webinars' },
-          { label: 'Classes', href: '/webinars/classes' },
+          { label: 'Cohorts', href: '/webinars/cohorts' },
+          { label: detail.cohortName, href: `/webinars/cohorts/${detail.cohortId}` },
           { label: `${detail.subjectLabel} ${detail.levelLabel}`, href: `/webinars/classes/${id}` },
         ]}
       />

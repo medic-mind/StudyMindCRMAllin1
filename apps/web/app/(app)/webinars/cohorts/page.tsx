@@ -20,8 +20,8 @@ export default async function CohortsPage() {
   return (
     <>
       <PageHeader
-        title="Cohorts & holidays"
-        subtitle="Each cohort is an academic year. Holidays inside a cohort pause the weekly emails."
+        title="Cohorts"
+        subtitle="An academic year. Open one to manage its classes, holidays, Zoom links, enrolments and emails."
         breadcrumbs={[
           { label: 'Webinars', href: '/webinars' },
           { label: 'Cohorts', href: '/webinars/cohorts' },

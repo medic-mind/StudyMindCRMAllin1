@@ -37,6 +37,8 @@ import {
   router,
   type UserRole,
 } from '@/lib/trpc/builders'
+import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
+import { outbound as trengoOutbound } from '@studymind/integration-trengo'
 import { client as zoomClient } from '@studymind/integration-zoom'
 
 import { detectEnrollmentsFromStripe } from '@/lib/webinar/enrollment-service'
@@ -635,6 +637,87 @@ const classRouter = router({
       assertCanManage(user.role)
       const result = await sendRecordingsForClassId(ctx.db, input.id, ctx.requestId, { force: true })
       return result
+    }),
+
+  /**
+   * One-off broadcast to everyone on a class's mailing list — e.g. to announce a
+   * time change. Email goes via the system mailbox; whatsapp/sms start a Trengo
+   * conversation per contact under the acting agent's token. Best-effort per
+   * recipient. `{{first_name}}` is substituted.
+   */
+  broadcast: auditedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        channel: z.enum(['email', 'whatsapp', 'sms']),
+        subject: z.string().trim().max(200).optional(),
+        body: z.string().trim().min(1).max(5000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const cls = await ctx.db.webinarClass.findFirst({
+        where: { id: input.id, deletedAt: null },
+        select: { id: true, subject: true, level: true },
+      })
+      if (!cls) throw new TRPCError({ code: 'NOT_FOUND' })
+      const settings = await ctx.db.webinarSettings.findUnique({
+        where: { id: 'webinar' },
+        select: { senderMailboxUserId: true },
+      })
+      const enrollments = await ctx.db.webinarEnrollment.findMany({
+        where: { classId: cls.id, status: 'active', deletedAt: null },
+        include: { contact: { select: { id: true, firstName: true, email: true, phoneE164: true } } },
+      })
+
+      let sent = 0
+      let failed = 0
+      let skipped = 0
+      const fallbackSubject = `Update — ${subjectLabel(cls.subject)} ${levelLabel(cls.level)}`
+      for (const e of enrollments) {
+        const c = e.contact
+        const body = input.body.replace(/\{\{\s*first_name\s*\}\}/gi, c.firstName || 'there')
+        try {
+          if (input.channel === 'email') {
+            if (!c.email) {
+              skipped += 1
+              continue
+            }
+            const r = await sendSystemEmail({
+              to: c.email,
+              subject: input.subject || fallbackSubject,
+              text: body,
+              fromAgentId: settings?.senderMailboxUserId ?? undefined,
+              requestId: `${ctx.requestId}:${c.id}`,
+            })
+            if (r.status === 'sent') sent += 1
+            else failed += 1
+          } else {
+            if (!c.phoneE164) {
+              skipped += 1
+              continue
+            }
+            await trengoOutbound.startConversation({
+              contactId: c.id,
+              agentId: user.id,
+              channel: input.channel,
+              recipient: c.phoneE164,
+              body,
+              requestId: `${ctx.requestId}:${c.id}`,
+            })
+            sent += 1
+          }
+        } catch {
+          failed += 1
+        }
+      }
+      await ctx.audit({
+        action: 'webinar.broadcast_sent',
+        target: { type: 'WebinarClass', id: cls.id },
+        after: { channel: input.channel, sent, failed, skipped },
+      })
+      return { sent, failed, skipped }
     }),
 
   archive: auditedProcedure
