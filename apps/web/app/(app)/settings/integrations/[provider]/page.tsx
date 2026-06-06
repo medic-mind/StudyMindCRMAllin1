@@ -19,6 +19,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { IntegrationTestButton } from '../IntegrationTestButton'
 
+import { AircallProbeButton } from './AircallProbeButton'
 import { BackfillButton } from './BackfillButton'
 import { TrengoImportButton } from './TrengoImportButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
@@ -150,6 +151,47 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
       <PageBody>
         <div className="space-y-8">
           {provider === 'lead' ? <LeadIngestionPanel /> : null}
+
+          {provider === 'aircall' && detail.importStats ? (
+            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
+                    Call import health
+                  </h2>
+                  <p className="mt-1 max-w-xl text-xs text-neutral-500">
+                    Calls mirrored from Aircall (live webhooks + the 10-minute
+                    sync). If these stay at 0 or look stale, all three env vars
+                    below must be set, the Aircall webhook must point at{' '}
+                    <code className="font-mono">/api/webhooks/aircall</code>, and
+                    the worker must be deployed. Use “Test Aircall connection” to
+                    check the API keys directly.
+                  </p>
+                </div>
+                {canTest ? <AircallProbeButton /> : null}
+              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  { label: 'Total calls', value: String(detail.importStats.totalCalls) },
+                  { label: 'Last 7 days', value: String(detail.importStats.last7dCalls) },
+                  { label: 'Last 24 hours', value: String(detail.importStats.last24hCalls) },
+                  { label: 'Most recent call', value: formatDateTime(detail.importStats.lastCallAt) },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2"
+                  >
+                    <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                      {s.label}
+                    </dt>
+                    <dd className="mt-0.5 font-mono text-sm tabular-nums text-neutral-900">
+                      {s.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
 
           {detail.status === 'not_configured' ? (
             <section>
