@@ -29,6 +29,8 @@ import type { BackfillJob, BackfillProvider, PrismaClient } from '@prisma/client
 
 import { writeAuditLogEntry, type DbClient } from '@studymind/audit'
 
+import { logger } from '../logger'
+
 export type { BackfillJob, BackfillProvider } from '@prisma/client'
 
 /** Minimal interface a job-event sender (the Inngest client) must satisfy. */
@@ -164,10 +166,28 @@ export async function startBackfill(
 // we do NOT audit per write).
 // -----------------------------------------------------------------------------
 
+/**
+ * A backfill event arriving with no jobId is malformed or stale (e.g. an event
+ * queued before a deploy/sync). Rather than crash on
+ * `update({ where: { id: undefined } })` — which throws and triggers an Inngest
+ * retry storm that blocks the queue — we log and skip the tracking write. The
+ * worker's own (idempotent) data import still runs; fresh triggers always carry
+ * a jobId. This also closes a latent bug where `markBackfillRunning`'s
+ * `updateMany({ where: { id: undefined } })` would have matched ALL pending rows.
+ */
+function ensureJobId(jobId: string | undefined, op: string): jobId is string {
+  if (!jobId) {
+    logger.error({ op }, 'backfill: event missing jobId — skipping tracking write')
+    return false
+  }
+  return true
+}
+
 export async function markBackfillRunning(
   db: DbClient,
-  jobId: string,
+  jobId: string | undefined,
 ): Promise<void> {
+  if (!ensureJobId(jobId, 'markBackfillRunning')) return
   await db.backfillJob.updateMany({
     where: { id: jobId, status: 'pending' },
     data: { status: 'running', startedAt: new Date() },
@@ -184,9 +204,10 @@ export interface BackfillCounts {
 
 export async function incrementBackfillProgress(
   db: DbClient,
-  jobId: string,
+  jobId: string | undefined,
   counts: BackfillCounts,
 ): Promise<void> {
+  if (!ensureJobId(jobId, 'incrementBackfillProgress')) return
   await db.backfillJob.update({
     where: { id: jobId },
     data: {
@@ -212,9 +233,10 @@ export interface CompleteBackfillInput {
 
 export async function markBackfillCompleted(
   db: DbClient,
-  jobId: string,
+  jobId: string | undefined,
   input: CompleteBackfillInput,
 ): Promise<void> {
+  if (!ensureJobId(jobId, 'markBackfillCompleted')) return
   const row = await db.backfillJob.update({
     where: { id: jobId },
     data: {
@@ -245,10 +267,11 @@ export async function markBackfillCompleted(
 
 export async function markBackfillFailed(
   db: DbClient,
-  jobId: string,
+  jobId: string | undefined,
   error: string,
   requestId: string,
 ): Promise<void> {
+  if (!ensureJobId(jobId, 'markBackfillFailed')) return
   const row = await db.backfillJob.update({
     where: { id: jobId },
     data: {
@@ -269,9 +292,10 @@ export async function markBackfillFailed(
 
 export async function markBackfillCancelled(
   db: DbClient,
-  jobId: string,
+  jobId: string | undefined,
   ctx: BackfillCtx,
 ): Promise<void> {
+  if (!ensureJobId(jobId, 'markBackfillCancelled')) return
   const row = await db.backfillJob.update({
     where: { id: jobId },
     data: {
