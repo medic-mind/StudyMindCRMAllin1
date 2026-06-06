@@ -57,7 +57,7 @@ function buildNav(role: Role): NavItem[] {
     // (the sidebar said "Messages" for staff chat while the inbox said
     // "Messages" for customer messages).
     { href: '/messages', label: 'Team chat' },
-    { href: '/leads', label: 'Leads' },
+    { href: '/leads', label: 'Leads Triage' },
     {
       href: '/contacts',
       label: 'B2C Customers',
