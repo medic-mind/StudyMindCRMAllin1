@@ -15,7 +15,9 @@ import {
 } from '@studymind/ai'
 import {
   addContactCallSummary,
+  addContactInternalNote,
   sendContactCallSummary,
+  type ChannelResult,
 } from '@studymind/core/contact/call-summary'
 import {
   addContactDocument,
@@ -771,12 +773,15 @@ export const contactRouter = router({
       .input(
         z.object({
           summaryInteractionId: z.string(),
+          // Customer-facing channels only. Slack moved to the internal step
+          // (callSummary.logInternal). "trengo" is retained as an optional
+          // back-compat alias for the contact's most-recent conversation.
           channels: z.object({
-            slack: z.boolean().optional(),
+            whatsapp: z.boolean().optional(),
+            sms: z.boolean().optional(),
             trengo: z.boolean().optional(),
             email: z.boolean().optional(),
           }),
-          slackChannelId: z.string().optional(),
           emailAttachments: z
             .array(
               z.discriminatedUnion('kind', [
@@ -842,7 +847,6 @@ export const contactRouter = router({
             {
               summaryInteractionId: input.summaryInteractionId,
               channels: input.channels,
-              slackChannelId: input.slackChannelId,
               emailAttachments,
               senders,
             },
@@ -850,6 +854,63 @@ export const contactRouter = router({
           )
           ctx.audit.called = true
           return results
+        } catch (err) {
+          if (err instanceof BusinessError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+          }
+          throw err
+        }
+      }),
+
+    // Two-step flow, step 2: after the customer-facing summary is sent, the
+    // agent logs an INTERNAL note (next steps / VA instructions) the customer
+    // never sees, optionally posting it to a chosen Slack channel. The
+    // follow-up VA task is created separately via task.create.
+    logInternal: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string(),
+          note: z.string().trim().min(1).max(8000),
+          postToSlack: z.boolean().optional(),
+          slackChannelId: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        try {
+          const created = await addContactInternalNote(
+            ctx.db,
+            { contactId: input.contactId, note: input.note },
+            { actorId: user.id, requestId: ctx.requestId },
+          )
+          // Core writer audits via writeAuditLogEntry — satisfy the
+          // auditedProcedure runtime check.
+          ctx.audit.called = true
+
+          let slack: ChannelResult | undefined
+          if (input.postToSlack) {
+            const senders = buildCallSummarySenders({
+              agentId: user.id,
+              requestId: ctx.requestId,
+            })
+            const contact = await ctx.db.contact.findFirst({
+              where: { id: input.contactId, deletedAt: null },
+              select: { firstName: true, lastName: true },
+            })
+            const contactName =
+              [contact?.firstName, contact?.lastName].filter(Boolean).join(' ').trim() ||
+              'this contact'
+            slack = senders.slack
+              ? await senders.slack({
+                  body: input.note,
+                  contactName,
+                  contactId: input.contactId,
+                  slackChannelId: input.slackChannelId,
+                })
+              : { status: 'skipped', detail: 'Slack sender not configured' }
+          }
+
+          return { noteInteractionId: created.id, slack }
         } catch (err) {
           if (err instanceof BusinessError) {
             throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })

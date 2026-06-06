@@ -35,6 +35,61 @@ function appUrl(): string {
  * `skipped` with a reason rather than silently dropped.
  */
 export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): CallSummarySenders {
+  // Explicit WhatsApp / SMS send via Trengo: continue the contact's existing
+  // thread on that channel if one exists, else start a new one to their E.164
+  // number. Fail-soft (skipped/failed) like every other sender.
+  async function sendViaTrengoChannel(
+    channel: 'whatsapp' | 'sms',
+    contactId: string,
+    body: string,
+  ): Promise<ChannelResult> {
+    const { resolveActiveTrengoConversation } = await import(
+      '@studymind/integration-trengo/conversations'
+    )
+    const { sendMessage, startConversation } = await import(
+      '@studymind/integration-trengo/outbound'
+    )
+    try {
+      const conv = await resolveActiveTrengoConversation(db, contactId, channel)
+      if (conv) {
+        const r = await sendMessage({
+          contactId,
+          agentId,
+          ticketId: conv.ticketId,
+          channel,
+          body,
+          requestId,
+        })
+        return { status: 'sent', ref: String(r.trengoMessageId) }
+      }
+      const contact = await db.contact.findFirst({
+        where: { id: contactId, deletedAt: null },
+        select: { phoneE164: true },
+      })
+      const phone = contact?.phoneE164?.trim()
+      if (!phone || !phone.startsWith('+')) {
+        return { status: 'skipped', detail: 'Contact has no E.164 phone number' }
+      }
+      const r = await startConversation({
+        contactId,
+        agentId,
+        channel,
+        recipient: phone,
+        body,
+        requestId,
+      })
+      return {
+        status: 'sent',
+        ref: r.trengoMessageId != null ? String(r.trengoMessageId) : String(r.ticketId),
+      }
+    } catch (err) {
+      if (err instanceof BusinessError) {
+        return { status: 'failed', detail: `${err.code}: ${err.message}` }
+      }
+      return { status: 'failed', detail: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   return {
     async slack({ body, contactName, contactId, slackChannelId }): Promise<ChannelResult> {
       // Resolve the target channel + its deep-link action buttons. Order:
@@ -102,6 +157,14 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
         }
         return { status: 'failed', detail: err instanceof Error ? err.message : String(err) }
       }
+    },
+
+    async whatsapp({ body, contactId }): Promise<ChannelResult> {
+      return sendViaTrengoChannel('whatsapp', contactId, body)
+    },
+
+    async sms({ body, contactId }): Promise<ChannelResult> {
+      return sendViaTrengoChannel('sms', contactId, body)
     },
 
     async email({ body, contactId, attachments }): Promise<ChannelResult> {

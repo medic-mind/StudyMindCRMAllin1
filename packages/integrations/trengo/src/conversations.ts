@@ -35,6 +35,11 @@ export type ConversationDb = Pick<PrismaClient, 'interaction'>
 export async function resolveActiveTrengoConversation(
   db: ConversationDb,
   contactId: string,
+  /** Optional channel filter — when set, only a conversation running on this
+   *  channel is returned (used by the explicit WhatsApp / SMS senders so a
+   *  WhatsApp send never lands on the contact's SMS thread, or vice-versa).
+   *  Omit for "the most recent conversation on any channel". */
+  channel?: TrengoChannel,
 ): Promise<ActiveTrengoConversation | null> {
   const rows = await db.interaction.findMany({
     where: { contactId, type: 'message', deletedAt: null },
@@ -48,6 +53,7 @@ export async function resolveActiveTrengoConversation(
     const ticketId = typeof payload['ticketId'] === 'number' ? payload['ticketId'] : null
     const channelRaw = typeof payload['channel'] === 'string' ? payload['channel'] : null
     if (ticketId !== null && channelRaw && isTrengoChannel(channelRaw)) {
+      if (channel && channelRaw !== channel) continue
       return { ticketId, channel: channelRaw }
     }
   }

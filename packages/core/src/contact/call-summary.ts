@@ -28,7 +28,7 @@ export interface ChannelResult {
   ref?: string
 }
 
-export type ChannelKey = 'slack' | 'trengo' | 'email'
+export type ChannelKey = 'slack' | 'trengo' | 'whatsapp' | 'sms' | 'email'
 export type SendResults = Partial<Record<ChannelKey, ChannelResult>>
 
 export interface CallSummarySenders {
@@ -39,6 +39,8 @@ export interface CallSummarySenders {
     slackChannelId?: string
   }) => Promise<ChannelResult>
   trengo?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
+  whatsapp?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
+  sms?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
   email?: (args: {
     body: string
     contactId: string
@@ -111,6 +113,59 @@ export async function addContactCallSummary(
   }
 }
 
+/**
+ * Log the INTERNAL call note (step 2 of the two-step flow): what happened plus
+ * next steps / instructions for the VA team. Persists as a staff-only `note`
+ * Interaction on the contact (never sent to the customer) and audits. The
+ * optional Slack post + follow-up task are wired by the tRPC layer.
+ */
+export async function addContactInternalNote(
+  db: Db,
+  input: { contactId: string; note: string },
+  ctx: ActorCtx,
+): Promise<{ id: string }> {
+  const note = input.note.trim()
+  if (note.length === 0) {
+    throw new BusinessError('CALL_SUMMARY_EMPTY', 'An internal note cannot be empty')
+  }
+  const contact = await db.contact.findFirst({
+    where: { id: input.contactId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!contact) throw new BusinessError('CONTACT_NOT_FOUND', 'Contact not found')
+
+  const id = createId()
+  await db.interaction.create({
+    data: {
+      id,
+      type: 'note',
+      contactId: contact.id,
+      occurredAt: new Date(),
+      summary: note.length > 120 ? `${note.slice(0, 117)}…` : note,
+      payload: {
+        event: 'contact.call_summary_internal_note',
+        internal: true,
+        kind: 'call_followup',
+        body: note,
+        authorId: ctx.actorId,
+      } satisfies Prisma.InputJsonObject,
+      createdById: ctx.actorId,
+      updatedById: ctx.actorId,
+    },
+  })
+
+  await writeAuditLogEntry(db, {
+    actorId: ctx.actorId,
+    requestId: ctx.requestId,
+    action: 'contact.call_summary_internal_note',
+    target: { type: 'Contact', id: contact.id },
+    before: null,
+    after: { interactionId: id, internal: true },
+  })
+
+  return { id }
+}
+
 async function runChannel(
   sender: (() => Promise<ChannelResult>) | undefined,
 ): Promise<ChannelResult> {
@@ -130,7 +185,7 @@ async function runChannel(
 
 function describeResults(r: SendResults): string {
   const parts: string[] = []
-  for (const k of ['slack', 'trengo', 'email'] as ChannelKey[]) {
+  for (const k of ['slack', 'trengo', 'whatsapp', 'sms', 'email'] as ChannelKey[]) {
     const v = r[k]
     if (!v) continue
     parts.push(`${k}: ${v.status}`)
@@ -140,7 +195,7 @@ function describeResults(r: SendResults): string {
 
 function toJsonResults(r: SendResults): Prisma.InputJsonObject {
   const out: Record<string, unknown> = {}
-  for (const k of ['slack', 'trengo', 'email'] as ChannelKey[]) {
+  for (const k of ['slack', 'trengo', 'whatsapp', 'sms', 'email'] as ChannelKey[]) {
     const v = r[k]
     if (!v) continue
     out[k] = {
@@ -156,7 +211,7 @@ export async function sendContactCallSummary(
   db: Db,
   input: {
     summaryInteractionId: string
-    channels: { slack?: boolean; trengo?: boolean; email?: boolean }
+    channels: { slack?: boolean; trengo?: boolean; whatsapp?: boolean; sms?: boolean; email?: boolean }
     slackChannelId?: string
     /** Optional pre-resolved attachments for the email channel. */
     emailAttachments?: ReadonlyArray<{
@@ -206,6 +261,16 @@ export async function sendContactCallSummary(
       input.senders.trengo ? () => input.senders.trengo!({ body, contactId }) : undefined,
     )
   }
+  if (input.channels.whatsapp) {
+    results.whatsapp = await runChannel(
+      input.senders.whatsapp ? () => input.senders.whatsapp!({ body, contactId }) : undefined,
+    )
+  }
+  if (input.channels.sms) {
+    results.sms = await runChannel(
+      input.senders.sms ? () => input.senders.sms!({ body, contactId }) : undefined,
+    )
+  }
   if (input.channels.email) {
     results.email = await runChannel(
       input.senders.email
@@ -234,6 +299,8 @@ export async function sendContactCallSummary(
         channels: {
           slack: Boolean(input.channels.slack),
           trengo: Boolean(input.channels.trengo),
+          whatsapp: Boolean(input.channels.whatsapp),
+          sms: Boolean(input.channels.sms),
           email: Boolean(input.channels.email),
         },
         results: resultsJson,

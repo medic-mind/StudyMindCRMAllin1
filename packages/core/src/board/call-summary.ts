@@ -40,7 +40,7 @@ export interface ChannelResult {
   ref?: string
 }
 
-export type ChannelKey = 'slack' | 'trengo' | 'email'
+export type ChannelKey = 'slack' | 'trengo' | 'whatsapp' | 'sms' | 'email'
 
 export type SendResults = Partial<Record<ChannelKey, ChannelResult>>
 
@@ -67,6 +67,19 @@ export interface CallSummarySenders {
     slackChannelId?: string
   }) => Promise<ChannelResult>
   trengo?: (args: {
+    body: string
+    contactId: string
+  }) => Promise<ChannelResult>
+  /** Explicit WhatsApp send via Trengo (continues the WhatsApp thread if one
+   *  exists, else starts one). Distinct from `trengo` which uses whatever the
+   *  contact's most-recent conversation channel happens to be. */
+  whatsapp?: (args: {
+    body: string
+    contactId: string
+  }) => Promise<ChannelResult>
+  /** Explicit SMS send via Trengo (continues the SMS thread if one exists,
+   *  else starts one to the contact's E.164 number). */
+  sms?: (args: {
     body: string
     contactId: string
   }) => Promise<ChannelResult>
@@ -164,7 +177,7 @@ export async function sendCallSummary(
   db: Db,
   input: {
     summaryInteractionId: string
-    channels: { slack?: boolean; trengo?: boolean; email?: boolean }
+    channels: { slack?: boolean; trengo?: boolean; whatsapp?: boolean; sms?: boolean; email?: boolean }
     slackChannelId?: string
     /** Optional pre-resolved attachments for the email channel. */
     emailAttachments?: ReadonlyArray<ResolvedAttachment>
@@ -210,6 +223,16 @@ export async function sendCallSummary(
       input.senders.trengo ? () => input.senders.trengo!({ body, contactId }) : undefined,
     )
   }
+  if (input.channels.whatsapp) {
+    results.whatsapp = await runChannel(
+      input.senders.whatsapp ? () => input.senders.whatsapp!({ body, contactId }) : undefined,
+    )
+  }
+  if (input.channels.sms) {
+    results.sms = await runChannel(
+      input.senders.sms ? () => input.senders.sms!({ body, contactId }) : undefined,
+    )
+  }
   if (input.channels.email) {
     results.email = await runChannel(
       input.senders.email
@@ -238,6 +261,8 @@ export async function sendCallSummary(
         channels: {
           slack: Boolean(input.channels.slack),
           trengo: Boolean(input.channels.trengo),
+          whatsapp: Boolean(input.channels.whatsapp),
+          sms: Boolean(input.channels.sms),
           email: Boolean(input.channels.email),
         },
         results: resultsJson,

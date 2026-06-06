@@ -68,6 +68,9 @@ export const EVENT_NAMES = [
   // Call summary on a contact (not a card) + multi-channel fan-out.
   'contact.call_summary_added',
   'contact.call_summary_sent',
+  // Two-step flow: the internal note (next steps / VA instructions) logged
+  // after the customer-facing summary is sent. Never shown to the customer.
+  'contact.call_summary_internal_note',
   // Mailchimp audience push (CLAUDE.md §16).
   'contact.mailchimp_pushed',
 
