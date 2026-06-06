@@ -13,6 +13,10 @@ import {
   markBackfillFailed,
   markBackfillRunning,
 } from '@studymind/core/backfill'
+import {
+  resolveOrCreateContactForCall,
+  splitDisplayName,
+} from '@studymind/core/contact/from-call'
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
@@ -126,34 +130,33 @@ export async function processBackfillCall(
   })
   if (existing) return { created: false, matched: true }
 
-  // E.164 match (CLAUDE.md §10) — but persist the call regardless of whether a
-  // Contact matches, so the mirror is COMPLETE (all Aircall calls reflected,
-  // not just known numbers). Unmatched calls keep contactId null and surface in
-  // the missed-calls workspace by their raw number. This mirrors the live
-  // webhook path, which already stores unmatched calls.
-  const phone = call.raw_digits?.trim()
+  // Resolve OR create the Contact for this call's counterparty — the SAME path
+  // the live webhook uses (CLAUDE.md §10), so an imported missed call from an
+  // unknown number becomes a lightweight Contact too (not an orphaned row), and
+  // a known number links to its existing Contact. Shared lines (>1 match)
+  // return triageRequired and are never auto-merged (§41.1). The call
+  // Interaction is still persisted regardless (the mirror stays COMPLETE);
+  // calls with no E.164 number keep contactId null and surface in the
+  // missed-calls workspace by their raw number.
+  const phone = call.raw_digits?.trim() ?? null
   let contactId: string | null = null
   let familyId: string | null = null
   let triageRequired = false
   if (phone && phone.startsWith('+')) {
-    const contacts = await db.contact.findMany({
-      where: { phoneE164: phone, deletedAt: null },
-      select: {
-        id: true,
-        familyMembers: { select: { familyId: true } },
-        billingForFamily: { select: { id: true } },
+    const name = extractBackfillCallName(call)
+    const resolved = await resolveOrCreateContactForCall(
+      db,
+      {
+        phoneE164: phone,
+        firstName: name?.firstName ?? null,
+        lastName: name?.lastName ?? null,
+        email: call.contact?.emails?.find((e) => e.value)?.value?.trim() || null,
       },
-    })
-    if (contacts.length > 0) {
-      const familyIds = new Set<string>()
-      for (const c of contacts) {
-        for (const m of c.familyMembers) familyIds.add(m.familyId)
-        for (const f of c.billingForFamily) familyIds.add(f.id)
-      }
-      familyId = familyIds.size === 1 ? [...familyIds][0] ?? null : null
-      contactId = contacts.length === 1 ? contacts[0]?.id ?? null : null
-      triageRequired = contacts.length > 1
-    }
+      { referralSource: 'Aircall', actorId: null, requestId: `aircall-import:${call.id}` },
+    )
+    contactId = resolved.contactId
+    familyId = resolved.familyId
+    triageRequired = resolved.triageRequired
   }
 
   // Stream recording to S3 if present and we don't already have it.
@@ -202,6 +205,25 @@ export async function processBackfillCall(
     },
   })
   return { created: true, matched: contactId != null }
+}
+
+/** Counterparty name from the Aircall-attached contact, when present. Mirrors
+ *  the live webhook's extractor (kept local — jobs.ts imports this module, so a
+ *  shared import would cycle). */
+function extractBackfillCallName(
+  call: AircallCallResource,
+): { firstName: string | null; lastName: string | null } | null {
+  const c = call.contact
+  if (!c) return null
+  const first = c.first_name?.trim()
+  const last = c.last_name?.trim()
+  if (first || last) return { firstName: first || null, lastName: last || null }
+  const full = c.full_name?.trim()
+  if (full) {
+    const split = splitDisplayName(full)
+    return { firstName: split.firstName || null, lastName: split.lastName }
+  }
+  return null
 }
 
 export const BACKFILL_FUNCTIONS = [aircallBackfillRequested] as const
