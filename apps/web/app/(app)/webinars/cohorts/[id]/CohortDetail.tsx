@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -10,28 +10,43 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { RichTextEditor, type RichTextField } from '@/components/ui/rich-text-editor'
 import { Select } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+import { htmlToPlainText, textToHtml } from '@/lib/html-text'
 import { trpc } from '@/lib/trpc/client'
 
 import { NewClassForm } from '../../NewClassForm'
 import { SendDaysPicker } from '../../SendDaysPicker'
 import type { CohortDetail as CohortDetailView } from '../../types'
 
-const PLACEHOLDERS = [
-  'studentName',
-  'className',
-  'subject',
-  'level',
-  'cohortName',
-  'weekday',
-  'dateLabel',
-  'timeLabel',
-  'zoomLink',
-  'weekNumber',
-  'weekTopic',
-  'fromName',
+const EMAIL_FIELDS: RichTextField[] = [
+  { token: '{{studentName}}', label: 'Student name' },
+  { token: '{{className}}', label: 'Class name' },
+  { token: '{{subject}}', label: 'Subject' },
+  { token: '{{level}}', label: 'Level' },
+  { token: '{{cohortName}}', label: 'Cohort name' },
+  { token: '{{weekday}}', label: 'Weekday' },
+  { token: '{{dateLabel}}', label: 'Date' },
+  { token: '{{timeLabel}}', label: 'Time' },
+  { token: '{{zoomLink}}', label: 'Zoom link' },
+  { token: '{{weekNumber}}', label: 'Week number' },
+  { token: '{{weekTopic}}', label: 'This week’s topic' },
+  { token: '{{fromName}}', label: 'From name' },
 ]
+
+const DEFAULT_SUBJECT = "{{className}} — this week's class ({{dateLabel}})"
+const DEFAULT_BODY = `Hi {{studentName}},
+
+Here are the details for this week's {{className}} session:
+
+  • When: {{dateLabel}} at {{timeLabel}}
+  • Week {{weekNumber}}: {{weekTopic}}
+  • Join here: {{zoomLink}}
+
+The full term schedule is attached as a PDF. Save the join link — it is the same each week unless we tell you otherwise.
+
+See you there,
+{{fromName}}`
 
 export function CohortDetail({
   cohort,
@@ -146,12 +161,14 @@ function EmailSettings({
   canManage: boolean
 }) {
   const [fromName, setFromName] = useState(cohort.fromName)
-  const [subjectTpl, setSubjectTpl] = useState(cohort.emailSubjectTemplate)
-  const [bodyTpl, setBodyTpl] = useState(cohort.emailBodyTemplate)
-  const [html, setHtml] = useState(cohort.emailBodyHtml)
+  const [subjectTpl, setSubjectTpl] = useState(cohort.emailSubjectTemplate || DEFAULT_SUBJECT)
+  // The editor works in HTML. Seed from the saved HTML, else convert the saved
+  // plain text, else a friendly default — so a layman never sees raw markup.
+  const initialHtml =
+    cohort.emailBodyHtml || textToHtml(cohort.emailBodyTemplate || DEFAULT_BODY)
+  const bodyHtmlRef = useRef(initialHtml)
   const [sendDays, setSendDays] = useState<number[]>(cohort.sendDaysOfWeek)
   const [sendHour, setSendHour] = useState(cohort.sendHourLocal)
-  const [showHtml, setShowHtml] = useState(Boolean(cohort.emailBodyHtml))
 
   const save = trpc.webinar.cohort.update.useMutation({
     onSuccess: () => toast.success('Email settings saved for this cohort'),
@@ -164,14 +181,10 @@ function EmailSettings({
         <div>
           <h2 className="text-sm font-semibold text-neutral-900">Weekly email for this cohort</h2>
           <p className="mt-1 text-xs text-neutral-500">
-            This template is used for every class in <strong>{cohort.name}</strong>. Reminders go out
-            on the chosen days from info@studymind.co.uk with the Zoom link + PDF schedule attached.
-            Placeholders:{' '}
-            {PLACEHOLDERS.map((p) => (
-              <code key={p} className="mr-1 rounded bg-neutral-100 px-1 py-0.5 text-[11px]">
-                {'{{' + p + '}}'}
-              </code>
-            ))}
+            Used for every class in <strong>{cohort.name}</strong>. Reminders go out on the chosen
+            days from info@studymind.co.uk with the Zoom link + PDF schedule attached. Use the
+            <strong> Insert field</strong> button to drop in things like the student&apos;s name or
+            the Zoom link.
           </p>
         </div>
 
@@ -180,12 +193,13 @@ function EmailSettings({
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault()
+              const html = bodyHtmlRef.current
               save.mutate({
                 id: cohort.id,
                 fromName,
                 emailSubjectTemplate: subjectTpl,
-                emailBodyTemplate: bodyTpl,
-                emailBodyHtml: showHtml ? html : '',
+                emailBodyTemplate: htmlToPlainText(html),
+                emailBodyHtml: html,
                 sendDaysOfWeek: sendDays,
                 sendHourLocal: sendHour,
               })
@@ -222,30 +236,15 @@ function EmailSettings({
                 onChange={(e) => setSubjectTpl(e.target.value)}
               />
             </Field>
-            <Field label="Body (plain text)" htmlFor="body">
-              <Textarea
-                id="body"
-                rows={10}
-                placeholder="Hi {{studentName}}, here are this week's details…"
-                value={bodyTpl}
-                onChange={(e) => setBodyTpl(e.target.value)}
+            <Field label="Email body" htmlFor="body">
+              <RichTextEditor
+                initialHtml={initialHtml}
+                onChange={(html) => {
+                  bodyHtmlRef.current = html
+                }}
+                fields={EMAIL_FIELDS}
               />
             </Field>
-            <label className="flex items-center gap-2 text-sm text-neutral-700">
-              <input type="checkbox" checked={showHtml} onChange={(e) => setShowHtml(e.target.checked)} />
-              Add a rich HTML version (for branded formatting)
-            </label>
-            {showHtml ? (
-              <Field label="Body (HTML)" htmlFor="html" hint="Sent alongside the plain-text body.">
-                <Textarea
-                  id="html"
-                  rows={10}
-                  placeholder="<p>Hi {{studentName}}, …</p>"
-                  value={html}
-                  onChange={(e) => setHtml(e.target.value)}
-                />
-              </Field>
-            ) : null}
             <Button type="submit" disabled={save.isPending}>
               {save.isPending ? 'Saving…' : 'Save email settings'}
             </Button>
