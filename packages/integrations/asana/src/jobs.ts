@@ -27,7 +27,7 @@ export const asanaEventReceived = inngest.createFunction(
   {
     id: 'asana/event.received',
     name: 'Process an Asana task event from ProviderEvent',
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     retries: 6,
   },
   { event: 'asana/event.received' },

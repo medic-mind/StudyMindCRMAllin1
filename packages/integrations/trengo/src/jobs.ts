@@ -33,7 +33,7 @@ export const trengoEventReceived = inngest.createFunction(
   {
     id: 'trengo/event.received',
     name: 'Process Trengo webhook event',
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     retries: 6,
   },
   { event: 'trengo/event.received' },

@@ -75,7 +75,7 @@ export const stripeEventReceived = inngest.createFunction(
   {
     id: 'stripe/event.received',
     name: 'Process Stripe webhook event',
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     retries: 6,
   },
   { event: 'stripe/event.received' },

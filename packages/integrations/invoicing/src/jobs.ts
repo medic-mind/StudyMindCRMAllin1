@@ -101,7 +101,7 @@ export const invoicingEventReceived = inngest.createFunction(
   {
     id: 'invoicing/event.received',
     name: 'Process B2B invoicing webhook event',
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     retries: 6,
   },
   { event: 'invoicing/event.received' },

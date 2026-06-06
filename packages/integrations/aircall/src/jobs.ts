@@ -54,7 +54,7 @@ export const aircallEventReceived = inngest.createFunction(
   {
     id: 'aircall/event.received',
     name: 'Process Aircall webhook event',
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     retries: 6,
   },
   { event: 'aircall/event.received' },

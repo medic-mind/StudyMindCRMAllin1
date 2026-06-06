@@ -487,7 +487,7 @@ Every async unit of work is an Inngest function. Conventions:
 - Function ID is `<domain>/<action>` (e.g. `finance/reconcile-family`, `ai/classify-call-outcome`).
 - Use `step.run` for each external call so retries are granular.
 - Use `step.sleep` for delays, never `setTimeout`.
-- Concurrency limits per function. Default `{ limit: 10 }`. AI heavy: `{ limit: 3 }` to respect rate limits.
+- Concurrency limits per function. Default `{ limit: 5 }` (Inngest plan caps per-function concurrency at 5; bump back up if the plan is upgraded). AI heavy: `{ limit: 3 }` to respect rate limits.
 - Idempotency key: every external mutation (refund, send message, create payment link) carries a key derived from `(domain entity id, action, day)` so retries do not double-act.
 - Every step that calls an external service tags the OpenTelemetry span with `provider`, `endpoint`, `entity_id`. Sentry breadcrumbs read those tags on error.
 - **Where functions live.** Integration-specific Inngest functions live in `packages/integrations/<service>/jobs.ts` (close to the webhook that triggers them). Cross-cutting and recurring functions (reconciliation, retention, churn scoring) live in `packages/jobs/`. Section 37 reflects the cross-cutting case.

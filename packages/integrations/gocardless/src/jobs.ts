@@ -41,7 +41,7 @@ export const gocardlessEventReceived = inngest.createFunction(
   {
     id: 'gocardless/event.received',
     name: 'Process GoCardless webhook event',
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     retries: 6,
   },
   { event: 'gocardless/event.received' },
