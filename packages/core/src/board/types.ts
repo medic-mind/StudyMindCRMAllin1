@@ -122,6 +122,8 @@ export const CallSummarySendInput = z.object({
   channels: z.object({
     slack: z.boolean().optional(),
     trengo: z.boolean().optional(),
+    whatsapp: z.boolean().optional(),
+    sms: z.boolean().optional(),
     email: z.boolean().optional(),
   }),
   slackChannelId: z.string().trim().min(1).max(64).optional(),

@@ -873,7 +873,9 @@ const cardRouter = router({
         )
         ctx.audit.called = true
         // Return a plain per-channel result map for the UI toasts.
-        const out: Partial<Record<'slack' | 'trengo' | 'email', ChannelResult>> = results
+        const out: Partial<
+          Record<'slack' | 'trengo' | 'whatsapp' | 'sms' | 'email', ChannelResult>
+        > = results
         return out
       } catch (err) {
         mapBusinessError(err)
