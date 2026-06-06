@@ -1,13 +1,18 @@
 // Trengo webhook signature verification.
-// CLAUDE.md §7.1, §11: verify HMAC-SHA-256 of the raw body using
-// TRENGO_WEBHOOK_SECRET, constant-time compare, reject 400 on mismatch.
-// Never log the raw body of an unverified event — it may be hostile.
+// CLAUDE.md §7.1, §11. Trengo sends `Trengo-Signature: <timestamp>;<hash>`,
+// where <hash> is the lowercase hex HMAC-SHA256 of `<timestamp>.<rawBody>`
+// keyed with TRENGO_WEBHOOK_SECRET. The timestamp is part of the signed
+// material, so we split it out and feed it back into the HMAC. Constant-time
+// compare, reject 400 on mismatch. Never log the raw body of an unverified
+// event — it may be hostile.
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 import type { TrengoWebhookEnvelope } from './types'
 
-export const SIGNATURE_HEADER = 'x-trengo-signature' as const
+// `Headers.get` matches header names case-insensitively, so this lowercase
+// key resolves Trengo's canonical `Trengo-Signature` header.
+export const SIGNATURE_HEADER = 'trengo-signature' as const
 
 export interface VerifyOptions {
   webhookSecret?: string
@@ -41,8 +46,20 @@ export function verifyAndParse(
   const secret = opts.webhookSecret ?? process.env['TRENGO_WEBHOOK_SECRET']
   if (!secret) return { ok: false, reason: 'missing_secret' }
 
-  const computed = createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
-  if (!safeHexEqual(computed, signature.toLowerCase())) {
+  // Trengo's header value is `<timestamp>;<hash>`. The timestamp is part of
+  // the signed material, so split on the first ';' and feed it back in. A
+  // value without a non-empty timestamp AND hash can never be valid.
+  const sepIndex = signature.indexOf(';')
+  if (sepIndex <= 0 || sepIndex >= signature.length - 1) {
+    return { ok: false, reason: 'signature_mismatch' }
+  }
+  const timestamp = signature.slice(0, sepIndex)
+  const providedHash = signature.slice(sepIndex + 1)
+
+  const computed = createHmac('sha256', secret)
+    .update(`${timestamp}.${rawBody}`, 'utf8')
+    .digest('hex')
+  if (!safeHexEqual(computed, providedHash.toLowerCase())) {
     return { ok: false, reason: 'signature_mismatch' }
   }
 

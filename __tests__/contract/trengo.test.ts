@@ -44,13 +44,20 @@ function loadFixture(name: string): { raw: string; envelope: TrengoEnvelope } {
   return { raw, envelope: JSON.parse(raw) as TrengoEnvelope }
 }
 
+// Trengo signs `<timestamp>;<hash>`, where <hash> is the lowercase hex
+// HMAC-SHA256 of `<timestamp>.<rawBody>`. Mirror the real wire format so the
+// contract test would catch a regression to the old "hash of body only" shape.
+const SIGN_TIMESTAMP = '1700000000'
 function sign(rawBody: string, secret: string = WEBHOOK_SECRET): string {
-  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex')
+  const hash = createHmac('sha256', secret)
+    .update(`${SIGN_TIMESTAMP}.${rawBody}`, 'utf8')
+    .digest('hex')
+  return `${SIGN_TIMESTAMP};${hash}`
 }
 
 function buildRequest(rawBody: string, signature: string | null): Request {
   const headers = new Headers({ 'content-type': 'application/json' })
-  if (signature) headers.set('x-trengo-signature', signature)
+  if (signature) headers.set('trengo-signature', signature)
   return new Request('http://localhost/api/webhooks/trengo', {
     method: 'POST',
     body: rawBody,
@@ -165,6 +172,17 @@ describe('POST /api/webhooks/trengo — invalid signature', () => {
     expect(res.status).toBe(400)
     expect(providerEventFindUnique).not.toHaveBeenCalled()
     expect(providerEventCreate).not.toHaveBeenCalled()
+    expect(inngestSend).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 for a bare hash with no `<timestamp>;` prefix (legacy shape)', async () => {
+    // The pre-fix code signed the body alone; that shape must now be rejected.
+    const { raw } = loadFixture('message.inbound.whatsapp.json')
+    const bareHash = createHmac('sha256', WEBHOOK_SECRET)
+      .update(raw, 'utf8')
+      .digest('hex')
+    const res = await ROUTE.POST(buildRequest(raw, bareHash))
+    expect(res.status).toBe(400)
     expect(inngestSend).not.toHaveBeenCalled()
   })
 })
