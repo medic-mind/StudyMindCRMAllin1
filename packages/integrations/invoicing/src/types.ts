@@ -232,3 +232,64 @@ export function mapEntityType(value: string | null | undefined): InvoicingEntity
       return 'unknown'
   }
 }
+
+// -----------------------------------------------------------------------------
+// Reference data (read-only) — used to build / preview invoices with the right
+// letterhead + bank details. Permissive passthrough: we only name the fields
+// the CRM displays and pass the rest through untouched.
+// -----------------------------------------------------------------------------
+
+export const RawBillingCompany = z
+  .object({
+    id: z.string(),
+    name: z.string().nullish(),
+    address: z.string().nullish(),
+    vat_number: z.string().nullish(),
+    logo: z.string().nullish(),
+    prefix: z.string().nullish(),
+    is_default: z.boolean().nullish(),
+  })
+  .passthrough()
+export type RawBillingCompany = z.infer<typeof RawBillingCompany>
+
+export const RawBankAccount = z
+  .object({
+    id: z.string(),
+    name: z.string().nullish(),
+    sort_code: z.string().nullish(),
+    account_number: z.string().nullish(),
+    iban: z.string().nullish(),
+    is_default: z.boolean().nullish(),
+  })
+  .passthrough()
+export type RawBankAccount = z.infer<typeof RawBankAccount>
+
+export const RawCompanySettings = z.object({}).passthrough()
+export type RawCompanySettings = z.infer<typeof RawCompanySettings>
+
+/** One entry from `GET /invoices/:id/activity` (the platform's timeline). */
+export const RawInvoiceActivity = z
+  .object({
+    id: z.union([z.string(), z.number()]).nullish(),
+    type: z.string().nullish(),
+    action: z.string().nullish(),
+    message: z.string().nullish(),
+    description: z.string().nullish(),
+    source: z.string().nullish(),
+    actor: z.string().nullish(),
+    created_at: z.string().nullish(),
+  })
+  .passthrough()
+export type RawInvoiceActivity = z.infer<typeof RawInvoiceActivity>
+
+/** Extra named contact attached to a customer (`GET /customers/:id/contacts`). */
+export const RawCustomerContact = z
+  .object({
+    id: z.union([z.string(), z.number()]).nullish(),
+    name: z.string().nullish(),
+    email: z.string().nullish(),
+    phone: z.string().nullish(),
+    role: z.string().nullish(),
+  })
+  .passthrough()
+export type RawCustomerContact = z.infer<typeof RawCustomerContact>

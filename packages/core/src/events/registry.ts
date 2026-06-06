@@ -174,6 +174,14 @@ export const EVENT_NAMES = [
   'invoicing.payment_recorded',
   'invoicing.payment_synced',
   'invoicing.invoice_marked_paid',
+  'invoicing.invoice_issued',
+  'invoicing.invoice_edited',
+  'invoicing.invoice_cancelled',
+  'invoicing.invoice_reissued',
+  'invoicing.invoice_duplicated',
+  'invoicing.reminder_sent',
+  'invoicing.payment_removed',
+  'invoicing.pdf_viewed',
   // Backfill → real School / B2B Partner accounts, auto-classification, and the
   // Unsorted tray (one-click classify). CLAUDE.md §2 (idempotent), §6.
   'invoicing.accounts_imported',

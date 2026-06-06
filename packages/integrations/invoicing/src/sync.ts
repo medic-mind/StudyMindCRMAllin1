@@ -257,6 +257,50 @@ export async function upsertPaymentFromRecord(
   return { id: after?.id ?? '', created: !before }
 }
 
+/**
+ * Remove a mirrored payment by its invoicing-side id and recompute the parent
+ * invoice's paid total. No-op if we never mirrored it. Used by the outbound
+ * remove-payment flow and the inbound `payment.deleted` event so a payment
+ * removed on either side disappears from the mirror (no stale row).
+ */
+export async function deletePaymentByInvoicingId(
+  db: DbClient,
+  paymentInvoicingId: string,
+): Promise<{ deleted: boolean }> {
+  const row = await db.invoicingPayment.findUnique({
+    where: { invoicingId: paymentInvoicingId },
+    select: { id: true, invoiceId: true },
+  })
+  if (!row) return { deleted: false }
+  await db.invoicingPayment.delete({ where: { id: row.id } })
+  await recomputeInvoicePaid(db, row.invoiceId)
+  return { deleted: true }
+}
+
+/** Soft-delete a mirrored invoice (a human deleted it on the platform). We
+ *  keep the row (CLAUDE.md soft-delete) but stamp `deletedAt` so it drops out
+ *  of the CRM's lists. */
+export async function softDeleteInvoiceByInvoicingId(
+  db: DbClient,
+  invoicingId: string,
+): Promise<void> {
+  await db.invoicingInvoice.updateMany({
+    where: { invoicingId, deletedAt: null },
+    data: { deletedAt: new Date(), lastSyncedAt: new Date() },
+  })
+}
+
+/** Soft-delete a mirrored customer (a human deleted it on the platform). */
+export async function softDeleteCustomerByInvoicingId(
+  db: DbClient,
+  invoicingId: string,
+): Promise<void> {
+  await db.invoicingCustomer.updateMany({
+    where: { invoicingId, deletedAt: null },
+    data: { deletedAt: new Date(), lastSyncedAt: new Date() },
+  })
+}
+
 /** Sum payments → invoice.paidMinor. Cheap and order-independent. */
 export async function recomputeInvoicePaid(db: DbClient, invoiceRowId: string): Promise<void> {
   const rows = await db.invoicingPayment.findMany({

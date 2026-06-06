@@ -22,6 +22,8 @@ import {
   InvoicingReadOnlyError,
   InvoicingUnauthorizedError,
   createClient,
+  createClientFromConfig,
+  type InvoicingClient,
 } from '@studymind/integration-invoicing/client'
 import {
   loadInvoicingConfig,
@@ -30,12 +32,19 @@ import {
 } from '@studymind/integration-invoicing/config'
 import { importBusinessAccountsFromInvoicing } from '@studymind/integration-invoicing/import-accounts'
 import {
+  cancelInvoice,
+  duplicateInvoice,
+  editInvoice,
   ensureCustomerForBusinessAccount,
   ensureCustomerForContact,
+  issueInvoice,
   markPaid,
   raiseInvoice,
   recordPayment,
+  reissueInvoice,
+  removePayment,
   sendInvoice,
+  sendReminder,
 } from '@studymind/integration-invoicing/outbound'
 
 import {
@@ -122,6 +131,12 @@ function mapApiError(err: unknown): never {
     })
   }
   throw err
+}
+
+/** Build a client from the stored (encrypted) config. Throws when unconfigured
+ *  or undecryptable; both are mapped to friendly errors by `mapApiError`. */
+function clientFromConfigOrThrow(): Promise<InvoicingClient> {
+  return createClientFromConfig()
 }
 
 const LineItemInput = z.object({
@@ -409,6 +424,7 @@ const invoicesRouter = router({
         })),
         payments: r.payments.map((p) => ({
           id: p.id,
+          invoicingId: p.invoicingId,
           amountMinor: p.amountMinor,
           method: p.method,
           reference: p.reference,
@@ -600,10 +616,248 @@ const invoicesRouter = router({
         mapApiError(err)
       }
     }),
+
+  /** draft → issued. Sales Executive+. */
+  issue: auditedProcedure
+    .input(z.object({ invoicingId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertWrite(user.role)
+      try {
+        await issueInvoice(ctx.db, {
+          invoicingId: input.invoicingId,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        ctx.audit.called = true
+        return { ok: true }
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+
+  /** Edit an invoice. `lineItems`, when given, REPLACES every row. Sales Exec+. */
+  edit: auditedProcedure
+    .input(
+      z.object({
+        invoicingId: z.string(),
+        lineItems: z.array(LineItemInput).min(1).max(100).optional(),
+        dueDate: z.string().trim().optional(),
+        poNumber: z.string().trim().max(120).optional(),
+        notes: z.string().trim().max(8000).optional(),
+        internalNotes: z.string().trim().max(8000).optional(),
+        clientType: z.enum(['uk_b2b', 'school', 'summer_school', 'international']).optional(),
+        pricesIncludeVat: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertWrite(user.role)
+      try {
+        await editInvoice(ctx.db, {
+          invoicingId: input.invoicingId,
+          lineItems: input.lineItems,
+          dueDate: input.dueDate,
+          poNumber: input.poNumber,
+          notes: input.notes,
+          internalNotes: input.internalNotes,
+          clientType: input.clientType,
+          pricesIncludeVat: input.pricesIncludeVat,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        ctx.audit.called = true
+        return { ok: true }
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+
+  /** Send a "still unpaid" reminder with the PDF re-attached. Sales Exec+. */
+  sendReminder: auditedProcedure
+    .input(
+      z.object({
+        invoicingId: z.string(),
+        to: z.string().trim().optional(),
+        cc: z.string().trim().optional(),
+        subject: z.string().trim().max(300).optional(),
+        body: z.string().trim().max(20000).optional(),
+        attachPdf: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertWrite(user.role)
+      try {
+        const res = await sendReminder(ctx.db, {
+          invoicingId: input.invoicingId,
+          to: input.to,
+          cc: input.cc,
+          subject: input.subject,
+          body: input.body,
+          attachPdf: input.attachPdf,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        ctx.audit.called = true
+        return res
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+
+  /** Reissue with a fresh issue/due date. Sales Exec+. */
+  reissue: auditedProcedure
+    .input(z.object({ invoicingId: z.string(), issueDate: z.string().trim().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertWrite(user.role)
+      try {
+        await reissueInvoice(ctx.db, {
+          invoicingId: input.invoicingId,
+          issueDate: input.issueDate,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        ctx.audit.called = true
+        return { ok: true }
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+
+  /** Duplicate → new DRAFT copy with a new number. Sales Exec+. */
+  duplicate: auditedProcedure
+    .input(z.object({ invoicingId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertWrite(user.role)
+      try {
+        const res = await duplicateInvoice(ctx.db, {
+          invoicingId: input.invoicingId,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        ctx.audit.called = true
+        return res
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+
+  /** Void an invoice (status → cancelled). Manager+ (finance tier). */
+  cancel: auditedProcedure
+    .input(z.object({ invoicingId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertMarkPaid(user.role)
+      try {
+        await cancelInvoice(ctx.db, {
+          invoicingId: input.invoicingId,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        ctx.audit.called = true
+        return { ok: true }
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+
+  /** Remove a recorded payment. Manager+ (finance tier — undoes money state). */
+  removePayment: auditedProcedure
+    .input(z.object({ invoicingId: z.string(), paymentInvoicingId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertMarkPaid(user.role)
+      try {
+        await removePayment(ctx.db, {
+          invoicingId: input.invoicingId,
+          paymentInvoicingId: input.paymentInvoicingId,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        ctx.audit.called = true
+        return { ok: true }
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+
+  /** The platform's activity timeline for an invoice. Manager+ read. */
+  activity: protectedProcedure
+    .input(z.object({ invoicingId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertRead(user.role)
+      try {
+        const client = await clientFromConfigOrThrow()
+        const rows = await client.getInvoiceActivity(input.invoicingId)
+        return rows.map((r) => ({
+          id: r.id != null ? String(r.id) : null,
+          type: r.type ?? r.action ?? null,
+          message: r.message ?? r.description ?? null,
+          source: r.source ?? null,
+          actor: r.actor ?? null,
+          createdAt: r.created_at ?? null,
+        }))
+      } catch (err) {
+        mapApiError(err)
+      }
+    }),
+})
+
+// -----------------------------------------------------------------------------
+// reference subrouter — billing companies / bank accounts / company settings.
+// Read-only data used to pick the letterhead + bank details when raising an
+// invoice. Manager+ (same tier as the other reads).
+// -----------------------------------------------------------------------------
+
+const referenceRouter = router({
+  billingCompanies: protectedProcedure.query(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertRead(user.role)
+    try {
+      const client = await clientFromConfigOrThrow()
+      const rows = await client.getBillingCompanies()
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name ?? null,
+        vatNumber: r.vat_number ?? null,
+        prefix: r.prefix ?? null,
+        isDefault: r.is_default ?? false,
+      }))
+    } catch (err) {
+      mapApiError(err)
+    }
+  }),
+
+  bankAccounts: protectedProcedure.query(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertRead(user.role)
+    try {
+      const client = await clientFromConfigOrThrow()
+      const rows = await client.getBankAccounts()
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name ?? null,
+        sortCode: r.sort_code ?? null,
+        iban: r.iban ?? null,
+        isDefault: r.is_default ?? false,
+      }))
+    } catch (err) {
+      mapApiError(err)
+    }
+  }),
+
+  companySettings: protectedProcedure.query(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertRead(user.role)
+    try {
+      const client = await clientFromConfigOrThrow()
+      return await client.getCompanySettings()
+    } catch (err) {
+      mapApiError(err)
+    }
+  }),
 })
 
 export const invoicingRouter = router({
   config: configRouter,
   customers: customersRouter,
   invoices: invoicesRouter,
+  reference: referenceRouter,
 })

@@ -24,7 +24,12 @@ import {
   type CrmLineItem,
 } from './adapter'
 import { createClientFromConfig, type InvoiceWritePayload, type InvoicingClient } from './client'
-import { upsertCustomerFromRecord, upsertInvoiceFromRecord, type DbClient } from './sync'
+import {
+  deletePaymentByInvoicingId,
+  upsertCustomerFromRecord,
+  upsertInvoiceFromRecord,
+  type DbClient,
+} from './sync'
 
 export interface OutboundContext {
   actorId: string
@@ -358,5 +363,203 @@ export async function markPaid(db: FullDb, input: MarkPaidInput): Promise<void> 
     target: { type: 'InvoicingInvoice', id: input.invoicingId },
     requestId: input.ctx.requestId,
     after: { invoicingId: input.invoicingId, status: updated.status ?? null },
+  })
+}
+
+// -----------------------------------------------------------------------------
+// Lifecycle actions: issue / edit / cancel / reissue / duplicate. Each mirrors
+// a button in the platform UI; every one re-syncs the canonical response into
+// our mirror (source 'api') and writes an audit row.
+// -----------------------------------------------------------------------------
+
+interface InvoiceActionInput {
+  invoicingId: string
+  ctx: OutboundContext
+  client?: InvoicingClient
+}
+
+/** draft → issued. */
+export async function issueInvoice(db: FullDb, input: InvoiceActionInput): Promise<void> {
+  const client = input.client ?? (await createClientFromConfig())
+  const updated = await client.issueInvoice(input.invoicingId)
+  await upsertInvoiceFromRecord(db, updated, 'api')
+  await writeAuditLogEntry(db, {
+    actorId: input.ctx.actorId,
+    action: 'invoicing.invoice_issued',
+    target: { type: 'InvoicingInvoice', id: input.invoicingId },
+    requestId: input.ctx.requestId,
+    after: { invoicingId: input.invoicingId, status: updated.status ?? null },
+  })
+}
+
+export interface EditInvoiceInput extends InvoiceActionInput {
+  /** When set, REPLACES every line item (the platform's PATCH semantics). */
+  lineItems?: CrmLineItem[]
+  dueDate?: string
+  poNumber?: string
+  notes?: string
+  internalNotes?: string
+  clientType?: InvoiceWritePayload['client_type']
+  pricesIncludeVat?: boolean
+}
+
+/** Edit an invoice (PATCH). `lineItems`, when given, replaces all rows. */
+export async function editInvoice(db: FullDb, input: EditInvoiceInput): Promise<void> {
+  const client = input.client ?? (await createClientFromConfig())
+  const patch: Partial<InvoiceWritePayload> = {
+    ...(input.lineItems ? { line_items: input.lineItems.map(lineItemToPayload) } : {}),
+    ...(input.dueDate ? { due_date: input.dueDate } : {}),
+    ...(input.poNumber !== undefined ? { po_number: input.poNumber } : {}),
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.internalNotes !== undefined ? { internal_notes: input.internalNotes } : {}),
+    ...(input.clientType ? { client_type: input.clientType } : {}),
+    ...(input.pricesIncludeVat !== undefined ? { prices_include_vat: input.pricesIncludeVat } : {}),
+  }
+  const updated = await client.updateInvoice(input.invoicingId, patch)
+  await upsertInvoiceFromRecord(db, updated, 'api')
+  await writeAuditLogEntry(db, {
+    actorId: input.ctx.actorId,
+    action: 'invoicing.invoice_edited',
+    target: { type: 'InvoicingInvoice', id: input.invoicingId },
+    requestId: input.ctx.requestId,
+    after: { invoicingId: input.invoicingId, fields: Object.keys(patch) },
+  })
+}
+
+/** Void an invoice (status → cancelled). */
+export async function cancelInvoice(db: FullDb, input: InvoiceActionInput): Promise<void> {
+  const client = input.client ?? (await createClientFromConfig())
+  const updated = await client.cancelInvoice(input.invoicingId)
+  await upsertInvoiceFromRecord(db, updated, 'api')
+  await writeAuditLogEntry(db, {
+    actorId: input.ctx.actorId,
+    action: 'invoicing.invoice_cancelled',
+    target: { type: 'InvoicingInvoice', id: input.invoicingId },
+    requestId: input.ctx.requestId,
+    after: { invoicingId: input.invoicingId, status: updated.status ?? null },
+  })
+}
+
+export interface ReissueInvoiceInput extends InvoiceActionInput {
+  issueDate?: string
+}
+
+/** Fresh issue/due date, clears last-emailed. */
+export async function reissueInvoice(db: FullDb, input: ReissueInvoiceInput): Promise<void> {
+  const client = input.client ?? (await createClientFromConfig())
+  const updated = await client.reissueInvoice(
+    input.invoicingId,
+    input.issueDate ? { issue_date: input.issueDate } : {},
+  )
+  await upsertInvoiceFromRecord(db, updated, 'api')
+  await writeAuditLogEntry(db, {
+    actorId: input.ctx.actorId,
+    action: 'invoicing.invoice_reissued',
+    target: { type: 'InvoicingInvoice', id: input.invoicingId },
+    requestId: input.ctx.requestId,
+    after: { invoicingId: input.invoicingId, issueDate: input.issueDate ?? null },
+  })
+}
+
+export interface DuplicateInvoiceResult {
+  invoicingId: string
+  invoiceNumber: string | null
+}
+
+/** Duplicate → a new DRAFT copy with a new number. Returns the new invoice. */
+export async function duplicateInvoice(
+  db: FullDb,
+  input: InvoiceActionInput,
+): Promise<DuplicateInvoiceResult> {
+  const client = input.client ?? (await createClientFromConfig())
+  const created = await client.duplicateInvoice(input.invoicingId)
+  await upsertInvoiceFromRecord(db, created, 'api')
+  await writeAuditLogEntry(db, {
+    actorId: input.ctx.actorId,
+    action: 'invoicing.invoice_duplicated',
+    target: { type: 'InvoicingInvoice', id: created.id },
+    requestId: input.ctx.requestId,
+    after: {
+      sourceInvoicingId: input.invoicingId,
+      invoicingId: created.id,
+      invoiceNumber: created.invoice_number ?? null,
+    },
+  })
+  return { invoicingId: created.id, invoiceNumber: created.invoice_number ?? null }
+}
+
+// -----------------------------------------------------------------------------
+// Send a payment reminder (chaser email + PDF re-attached, server-side).
+// -----------------------------------------------------------------------------
+
+export interface SendReminderInput {
+  invoicingId: string
+  to?: string
+  cc?: string
+  subject?: string
+  body?: string
+  attachPdf?: boolean
+  ctx: OutboundContext
+  client?: InvoicingClient
+}
+
+export interface SendReminderOutboundResult {
+  sent: boolean
+  to: string
+  logId: string | null
+}
+
+export async function sendReminder(
+  db: FullDb,
+  input: SendReminderInput,
+): Promise<SendReminderOutboundResult> {
+  const client = input.client ?? (await createClientFromConfig())
+  const res = await client.sendReminder(input.invoicingId, {
+    ...(input.to ? { to: input.to } : {}),
+    ...(input.cc ? { cc: input.cc } : {}),
+    ...(input.subject ? { subject: input.subject } : {}),
+    ...(input.body ? { body: input.body } : {}),
+    ...(input.attachPdf !== undefined ? { attach_pdf: input.attachPdf } : {}),
+  })
+  await writeAuditLogEntry(db, {
+    actorId: input.ctx.actorId,
+    action: 'invoicing.reminder_sent',
+    target: { type: 'InvoicingInvoice', id: input.invoicingId },
+    requestId: input.ctx.requestId,
+    after: { invoicingId: input.invoicingId, to: res.to, logId: res.log_id ?? null },
+  })
+  return { sent: res.sent, to: res.to, logId: res.log_id ?? null }
+}
+
+// -----------------------------------------------------------------------------
+// Remove a payment (DELETE …/payments/:id). Refetch the canonical invoice so
+// status recomputes, then drop the stale local payment row.
+// -----------------------------------------------------------------------------
+
+export interface RemovePaymentInput {
+  invoicingId: string
+  /** The platform payment id to remove. */
+  paymentInvoicingId: string
+  ctx: OutboundContext
+  client?: InvoicingClient
+}
+
+export async function removePayment(db: FullDb, input: RemovePaymentInput): Promise<void> {
+  const client = input.client ?? (await createClientFromConfig())
+  await client.deletePayment(input.invoicingId, input.paymentInvoicingId)
+
+  // Refetch the canonical invoice (status recomputed by the platform) and
+  // re-sync, then remove the local payment row the refetched set no longer
+  // carries (upsertInvoiceFromRecord never prunes payments).
+  const fresh = await client.getInvoice(input.invoicingId)
+  await upsertInvoiceFromRecord(db, fresh, 'api')
+  await deletePaymentByInvoicingId(db, input.paymentInvoicingId)
+
+  await writeAuditLogEntry(db, {
+    actorId: input.ctx.actorId,
+    action: 'invoicing.payment_removed',
+    target: { type: 'InvoicingInvoice', id: input.invoicingId },
+    requestId: input.ctx.requestId,
+    after: { invoicingId: input.invoicingId, paymentInvoicingId: input.paymentInvoicingId },
   })
 }

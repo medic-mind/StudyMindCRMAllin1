@@ -7,7 +7,19 @@
 
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
 
-import { EventsFeedResponse, RawCustomer, RawInvoice, type ListResponse } from './types'
+import {
+  EventsFeedResponse,
+  RawBankAccount,
+  RawBillingCompany,
+  RawCompanySettings,
+  RawCustomer,
+  RawCustomerContact,
+  RawEvent,
+  RawInvoice,
+  RawInvoiceActivity,
+  RawPayment,
+  type ListResponse,
+} from './types'
 
 export class InvoicingApiError extends Error {
   override readonly name: string = 'InvoicingApiError'
@@ -104,6 +116,41 @@ export interface SendInvoiceResult {
   message_id: string
 }
 
+export interface SendReminderPayload {
+  to?: string
+  cc?: string
+  subject?: string
+  body?: string
+  attach_pdf?: boolean
+}
+
+export interface SendReminderResult {
+  sent: boolean
+  to: string
+  log_id?: string
+}
+
+export interface ReissuePayload {
+  /** Fresh issue date (YYYY-MM-DD). Omit to use today on the platform. */
+  issue_date?: string
+}
+
+/** `GET /invoices/:id/pdf` JSON form — base64-encoded PDF + metadata. */
+export interface InvoicePdfJson {
+  invoice_number: string
+  filename: string
+  content_type: string
+  base64: string
+}
+
+/** `GET /invoices/:id/pdf?format=pdf` binary form — the raw bytes for an
+ *  inline preview / download proxy. */
+export interface InvoicePdfBytes {
+  bytes: ArrayBuffer
+  contentType: string
+  filename: string
+}
+
 export interface RegisterWebhookPayload {
   url: string
   event_types: string[]
@@ -146,6 +193,7 @@ export interface InvoicingClient {
   root(): Promise<RootInfo>
   listCustomers(query?: ListCustomersQuery): Promise<ListResponse<RawCustomer>>
   getCustomer(id: string): Promise<RawCustomer>
+  getCustomerContacts(id: string): Promise<RawCustomerContact[]>
   createCustomer(payload: CustomerWritePayload): Promise<RawCustomer>
   updateCustomer(id: string, payload: CustomerWritePayload): Promise<RawCustomer>
   archiveCustomer(id: string): Promise<void>
@@ -154,11 +202,51 @@ export interface InvoicingClient {
   createInvoice(payload: InvoiceWritePayload): Promise<RawInvoice>
   updateInvoice(id: string, payload: Partial<InvoiceWritePayload>): Promise<RawInvoice>
   issueInvoice(id: string): Promise<RawInvoice>
+  cancelInvoice(id: string): Promise<RawInvoice>
+  reissueInvoice(id: string, payload?: ReissuePayload): Promise<RawInvoice>
+  duplicateInvoice(id: string): Promise<RawInvoice>
+  getInvoiceActivity(id: string): Promise<RawInvoiceActivity[]>
+  listPayments(invoiceId: string): Promise<RawPayment[]>
   recordPayment(invoiceId: string, payload: PaymentWritePayload): Promise<unknown>
+  deletePayment(invoiceId: string, paymentId: string): Promise<void>
   markPaid(invoiceId: string): Promise<RawInvoice>
   sendInvoice(invoiceId: string, payload?: SendInvoicePayload): Promise<SendInvoiceResult>
+  sendReminder(invoiceId: string, payload?: SendReminderPayload): Promise<SendReminderResult>
+  getInvoicePdfJson(invoiceId: string): Promise<InvoicePdfJson>
+  getInvoicePdfBytes(
+    invoiceId: string,
+    opts?: { disposition?: 'inline' | 'attachment' },
+  ): Promise<InvoicePdfBytes>
+  getBillingCompanies(): Promise<RawBillingCompany[]>
+  getBankAccounts(): Promise<RawBankAccount[]>
+  getCompanySettings(): Promise<RawCompanySettings>
   getEvents(since: string, opts?: { limit?: number; type?: string }): Promise<EventsFeedResponse>
+  /** Long-lived SSE stream of events. Yields each event as it arrives. The
+   *  caller owns the loop + reconnect; pass an AbortSignal to stop. */
+  streamEvents(opts?: { since?: string; signal?: AbortSignal }): AsyncGenerator<RawEvent>
   registerWebhook(payload: RegisterWebhookPayload): Promise<RegisterWebhookResult>
+  listWebhooks(): Promise<RegisterWebhookResult[]>
+  deleteWebhook(id: string): Promise<void>
+}
+
+/**
+ * Parse one SSE frame ("event: …\nid: …\ndata: {json}") into a RawEvent. The
+ * platform sends the same envelope shape as the webhook + events feed, so we
+ * reuse RawEvent. Returns null for heartbeats (": hb") and unparseable frames.
+ */
+export function parseSseEvent(block: string): RawEvent | null {
+  const dataLines: string[] = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith(':')) continue // comment / heartbeat
+    if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trimStart())
+  }
+  if (dataLines.length === 0) return null
+  try {
+    const parsed = RawEvent.safeParse(JSON.parse(dataLines.join('\n')))
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -193,6 +281,19 @@ export function createClient(opts: InvoicingClientOptions): InvoicingClient {
     return parsed as T
   }
 
+  /** Raw request that returns the Response untouched — used for binary bodies
+   *  (the invoice PDF) where we must not JSON-parse. Same auth + error mapping. */
+  async function requestRaw(method: string, path: string, accept: string): Promise<Response> {
+    const res = await fetchImpl(`${apiBase}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${opts.apiKey}`, Accept: accept },
+    })
+    if (res.status === 401) throw new InvoicingUnauthorizedError(401, path, null)
+    if (res.status === 403) throw new InvoicingReadOnlyError(403, path, null)
+    if (!res.ok) throw new InvoicingApiError(res.status, path, null)
+    return res
+  }
+
   function buildQuery(params: Record<string, string | number | undefined>): string {
     const usp = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) {
@@ -208,6 +309,25 @@ export function createClient(opts: InvoicingClientOptions): InvoicingClient {
       return (value as { data: T }).data
     }
     return value as T
+  }
+
+  /** Unwrap a list payload that may be a bare array or a `{ data: [...] }`
+   *  envelope, and validate each row with the given Zod schema. */
+  function unwrapArray<T>(value: unknown, schema: { parse(v: unknown): T }): T[] {
+    const arr = Array.isArray(value)
+      ? value
+      : value && typeof value === 'object' && Array.isArray((value as { data?: unknown }).data)
+        ? ((value as { data: unknown[] }).data)
+        : []
+    return arr.map((row) => schema.parse(row))
+  }
+
+  function filenameFromDisposition(header: string | null, fallback: string): string {
+    if (!header) return fallback
+    const star = /filename\*=(?:UTF-8'')?"?([^";]+)"?/i.exec(header)
+    if (star?.[1]) return decodeURIComponent(star[1])
+    const plain = /filename="?([^";]+)"?/i.exec(header)
+    return plain?.[1] ?? fallback
   }
 
   return {
@@ -231,6 +351,10 @@ export function createClient(opts: InvoicingClientOptions): InvoicingClient {
 
     async getCustomer(id) {
       return unwrap<RawCustomer>(await request('GET', `/customers/${id}`))
+    },
+
+    async getCustomerContacts(id) {
+      return unwrapArray(await request('GET', `/customers/${id}/contacts`), RawCustomerContact)
     },
 
     async createCustomer(payload) {
@@ -272,8 +396,38 @@ export function createClient(opts: InvoicingClientOptions): InvoicingClient {
       return unwrap<RawInvoice>(await request('POST', `/invoices/${id}/issue`))
     },
 
+    async cancelInvoice(id) {
+      return unwrap<RawInvoice>(await request('POST', `/invoices/${id}/cancel`))
+    },
+
+    async reissueInvoice(id, payload = {}) {
+      return unwrap<RawInvoice>(
+        await request(
+          'POST',
+          `/invoices/${id}/reissue`,
+          payload.issue_date ? { issue_date: payload.issue_date } : {},
+        ),
+      )
+    },
+
+    async duplicateInvoice(id) {
+      return unwrap<RawInvoice>(await request('POST', `/invoices/${id}/duplicate`))
+    },
+
+    async getInvoiceActivity(id) {
+      return unwrapArray(await request('GET', `/invoices/${id}/activity`), RawInvoiceActivity)
+    },
+
+    async listPayments(invoiceId) {
+      return unwrapArray(await request('GET', `/invoices/${invoiceId}/payments`), RawPayment)
+    },
+
     async recordPayment(invoiceId, payload) {
       return request('POST', `/invoices/${invoiceId}/payments`, payload)
+    },
+
+    async deletePayment(invoiceId, paymentId) {
+      await request('DELETE', `/invoices/${invoiceId}/payments/${paymentId}`)
     },
 
     async markPaid(invoiceId) {
@@ -286,6 +440,42 @@ export function createClient(opts: InvoicingClientOptions): InvoicingClient {
       )
     },
 
+    async sendReminder(invoiceId, payload = {}) {
+      return unwrap<SendReminderResult>(
+        await request('POST', `/invoices/${invoiceId}/send-reminder`, payload),
+      )
+    },
+
+    async getInvoicePdfJson(invoiceId) {
+      return unwrap<InvoicePdfJson>(await request('GET', `/invoices/${invoiceId}/pdf`))
+    },
+
+    async getInvoicePdfBytes(invoiceId, opts2 = {}) {
+      const qs = buildQuery({ format: 'pdf', disposition: opts2.disposition })
+      const res = await requestRaw('GET', `/invoices/${invoiceId}/pdf${qs}`, 'application/pdf')
+      const bytes = await res.arrayBuffer()
+      return {
+        bytes,
+        contentType: res.headers.get('content-type') ?? 'application/pdf',
+        filename: filenameFromDisposition(
+          res.headers.get('content-disposition'),
+          `invoice-${invoiceId}.pdf`,
+        ),
+      }
+    },
+
+    async getBillingCompanies() {
+      return unwrapArray(await request('GET', '/billing-companies'), RawBillingCompany)
+    },
+
+    async getBankAccounts() {
+      return unwrapArray(await request('GET', '/bank-accounts'), RawBankAccount)
+    },
+
+    async getCompanySettings() {
+      return unwrap<RawCompanySettings>(await request('GET', '/company-settings'))
+    },
+
     async getEvents(since, opts2 = {}) {
       const qs = buildQuery({
         since,
@@ -296,8 +486,49 @@ export function createClient(opts: InvoicingClientOptions): InvoicingClient {
       return EventsFeedResponse.parse(raw)
     },
 
+    async *streamEvents(opts2 = {}) {
+      const qs = buildQuery({ since: opts2.since })
+      const res = await fetchImpl(`${apiBase}/stream${qs}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${opts.apiKey}`, Accept: 'text/event-stream' },
+        ...(opts2.signal ? { signal: opts2.signal } : {}),
+      })
+      if (res.status === 401) throw new InvoicingUnauthorizedError(401, '/stream', null)
+      if (!res.ok || !res.body) throw new InvoicingApiError(res.status, '/stream', null)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        // Frames are separated by a blank line.
+        let idx: number
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          const event = parseSseEvent(block)
+          if (event) yield event
+        }
+      }
+    },
+
     async registerWebhook(payload) {
       return unwrap<RegisterWebhookResult>(await request('POST', '/webhooks', payload))
+    },
+
+    async listWebhooks() {
+      const raw = await request('GET', '/webhooks')
+      if (Array.isArray(raw)) return raw as RegisterWebhookResult[]
+      if (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+        return (raw as { data: RegisterWebhookResult[] }).data
+      }
+      return []
+    },
+
+    async deleteWebhook(id) {
+      await request('DELETE', `/webhooks/${id}`)
     },
   }
 }

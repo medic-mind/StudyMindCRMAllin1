@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useConfirm } from '@/components/ui/confirm'
 import { Input } from '@/components/ui/input'
+import { Modal } from '@/components/ui/modal'
 import { trpc } from '@/lib/trpc/client'
 
 type Target =
@@ -64,6 +65,27 @@ export function AccountInvoicingPanel({
   const send = trpc.invoicing.invoices.send.useMutation()
   const recordPayment = trpc.invoicing.invoices.recordPayment.useMutation()
   const markPaid = trpc.invoicing.invoices.markPaid.useMutation()
+  const issue = trpc.invoicing.invoices.issue.useMutation()
+  const sendReminder = trpc.invoicing.invoices.sendReminder.useMutation()
+  const reissue = trpc.invoicing.invoices.reissue.useMutation()
+  const duplicate = trpc.invoicing.invoices.duplicate.useMutation()
+  const cancel = trpc.invoicing.invoices.cancel.useMutation()
+  const removePayment = trpc.invoicing.invoices.removePayment.useMutation()
+
+  const [previewId, setPreviewId] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  function toggleExpanded(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  function pdfUrl(invoicingId: string, download = false): string {
+    const base = `/api/internal/invoicing/invoices/${encodeURIComponent(invoicingId)}/pdf`
+    return download ? `${base}?download=1` : base
+  }
 
   const [showRaise, setShowRaise] = useState(false)
   const [poNumber, setPoNumber] = useState('')
@@ -161,6 +183,90 @@ export function AccountInvoicingPanel({
       router.refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not mark paid')
+    }
+  }
+
+  async function handleIssue(invoicingId: string) {
+    try {
+      await issue.mutateAsync({ invoicingId })
+      toast.success('Invoice issued')
+      await invoicesQuery.refetch()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not issue invoice')
+    }
+  }
+
+  async function handleReminder(invoicingId: string) {
+    try {
+      const res = await sendReminder.mutateAsync({ invoicingId })
+      toast.success(`Reminder sent to ${res.to}`)
+      await invoicesQuery.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send reminder')
+    }
+  }
+
+  async function handleReissue(invoicingId: string) {
+    if (!(await confirm({ title: 'Reissue with today’s date?', confirmLabel: 'Reissue' }))) return
+    try {
+      await reissue.mutateAsync({ invoicingId })
+      toast.success('Invoice reissued')
+      await invoicesQuery.refetch()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not reissue')
+    }
+  }
+
+  async function handleDuplicate(invoicingId: string) {
+    try {
+      const res = await duplicate.mutateAsync({ invoicingId })
+      toast.success(`Duplicated as ${res.invoiceNumber ?? 'new draft'}`)
+      await invoicesQuery.refetch()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not duplicate')
+    }
+  }
+
+  async function handleCancel(invoicingId: string) {
+    if (
+      !(await confirm({
+        title: 'Cancel (void) this invoice?',
+        body: 'This voids the invoice on the platform. It cannot be un-cancelled.',
+        confirmLabel: 'Cancel invoice',
+        tone: 'danger',
+      }))
+    )
+      return
+    try {
+      await cancel.mutateAsync({ invoicingId })
+      toast.success('Invoice cancelled')
+      await invoicesQuery.refetch()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not cancel')
+    }
+  }
+
+  async function handleRemovePayment(invoicingId: string, paymentInvoicingId: string) {
+    if (
+      !(await confirm({
+        title: 'Remove this payment?',
+        body: 'The invoice status will be recomputed on the platform.',
+        confirmLabel: 'Remove payment',
+        tone: 'danger',
+      }))
+    )
+      return
+    try {
+      await removePayment.mutateAsync({ invoicingId, paymentInvoicingId })
+      toast.success('Payment removed')
+      await invoicesQuery.refetch()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not remove payment')
     }
   }
 
@@ -263,65 +369,223 @@ export function AccountInvoicingPanel({
         <ul className="divide-y divide-neutral-100 rounded-lg border border-neutral-200">
           {invoices.map((inv) => {
             const outstanding = Math.max(0, inv.grandTotalMinor - inv.paidMinor)
+            const isOpen = expanded.has(inv.id)
+            const isDraft = inv.status === 'draft'
+            const isCancelled = inv.status === 'cancelled'
             return (
-              <li key={inv.id} className="flex flex-wrap items-center justify-between gap-3 p-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-neutral-900">
-                      {inv.invoiceNumber ?? 'draft'}
-                    </span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_TONE[inv.status] ?? STATUS_TONE['unknown']}`}
-                    >
-                      {inv.status.replace('_', ' ')}
-                    </span>
+              <li key={inv.id} className="p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm text-neutral-900">
+                        {inv.invoiceNumber ?? 'draft'}
+                      </span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_TONE[inv.status] ?? STATUS_TONE['unknown']}`}
+                      >
+                        {inv.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-neutral-500">
+                      {money(inv.grandTotalMinor)} total
+                      {inv.paidMinor > 0 && ` · ${money(inv.paidMinor)} paid`}
+                      {outstanding > 0 && ` · ${money(outstanding)} due`}
+                    </div>
                   </div>
-                  <div className="mt-0.5 text-xs text-neutral-500">
-                    {money(inv.grandTotalMinor)} total
-                    {inv.paidMinor > 0 && ` · ${money(inv.paidMinor)} paid`}
-                    {outstanding > 0 && ` · ${money(outstanding)} due`}
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setPreviewId(inv.invoicingId)}
+                    >
+                      Preview PDF
+                    </Button>
+                    {canWrite && !isCancelled && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={send.isPending}
+                        onClick={() => handleSend(inv.invoicingId)}
+                      >
+                        Send
+                      </Button>
+                    )}
+                    {canWrite && inv.status !== 'paid' && !isCancelled && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={recordPayment.isPending}
+                        onClick={() => handleRecordPayment(inv.invoicingId, outstanding)}
+                      >
+                        Record payment
+                      </Button>
+                    )}
+                    {canMarkPaid && inv.status !== 'paid' && !isCancelled && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={markPaid.isPending}
+                        onClick={() => handleMarkPaid(inv.invoicingId)}
+                      >
+                        Mark paid
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      aria-expanded={isOpen}
+                      onClick={() => toggleExpanded(inv.id)}
+                    >
+                      {isOpen ? 'Less' : 'More'}
+                    </Button>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {canWrite && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={send.isPending}
-                      onClick={() => handleSend(inv.invoicingId)}
-                    >
-                      Send
-                    </Button>
-                  )}
-                  {canWrite && inv.status !== 'paid' && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={recordPayment.isPending}
-                      onClick={() => handleRecordPayment(inv.invoicingId, outstanding)}
-                    >
-                      Record payment
-                    </Button>
-                  )}
-                  {canMarkPaid && inv.status !== 'paid' && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={markPaid.isPending}
-                      onClick={() => handleMarkPaid(inv.invoicingId)}
-                    >
-                      Mark paid
-                    </Button>
-                  )}
-                </div>
+
+                {isOpen && (
+                  <div className="mt-3 space-y-3 rounded-md bg-neutral-50 p-3">
+                    {/* Recorded payments + per-payment remove */}
+                    {inv.payments.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+                          Payments
+                        </p>
+                        <ul className="mt-1 space-y-1">
+                          {inv.payments.map((p) => (
+                            <li
+                              key={p.id}
+                              className="flex items-center justify-between gap-2 text-xs text-neutral-700"
+                            >
+                              <span>
+                                {money(p.amountMinor)}
+                                {p.method ? ` · ${p.method.replace('_', ' ')}` : ''}
+                                {p.reference ? ` · ${p.reference}` : ''}
+                              </span>
+                              {canMarkPaid && (
+                                <button
+                                  type="button"
+                                  className="text-neutral-400 hover:text-red-600"
+                                  disabled={removePayment.isPending}
+                                  onClick={() => handleRemovePayment(inv.invoicingId, p.invoicingId)}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Secondary actions */}
+                    <div className="flex flex-wrap items-center gap-1">
+                      <a
+                        href={pdfUrl(inv.invoicingId, true)}
+                        className="rounded-md px-2 py-1 text-xs text-primary-700 hover:bg-white hover:underline"
+                      >
+                        Download PDF
+                      </a>
+                      {canWrite && isDraft && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={issue.isPending}
+                          onClick={() => handleIssue(inv.invoicingId)}
+                        >
+                          Issue
+                        </Button>
+                      )}
+                      {canWrite && !isDraft && !isCancelled && inv.status !== 'paid' && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={sendReminder.isPending}
+                          onClick={() => handleReminder(inv.invoicingId)}
+                        >
+                          Send reminder
+                        </Button>
+                      )}
+                      {canWrite && !isCancelled && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={reissue.isPending}
+                          onClick={() => handleReissue(inv.invoicingId)}
+                        >
+                          Reissue
+                        </Button>
+                      )}
+                      {canWrite && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={duplicate.isPending}
+                          onClick={() => handleDuplicate(inv.invoicingId)}
+                        >
+                          Duplicate
+                        </Button>
+                      )}
+                      {canMarkPaid && !isCancelled && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-red-50"
+                          disabled={cancel.isPending}
+                          onClick={() => handleCancel(inv.invoicingId)}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </li>
             )
           })}
         </ul>
       )}
+
+      {/* Inline PDF preview — byte-identical to what the client receives. The
+          iframe points at the server-side proxy so the API key stays on the
+          backend. */}
+      <Modal
+        open={previewId !== null}
+        onClose={() => setPreviewId(null)}
+        size="xl"
+        title="Invoice PDF"
+        footer={
+          previewId ? (
+            <>
+              <a
+                href={pdfUrl(previewId, true)}
+                className="rounded-md px-3 py-1.5 text-sm font-medium text-primary-700 hover:underline"
+              >
+                Download
+              </a>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewId(null)}>
+                Close
+              </Button>
+            </>
+          ) : null
+        }
+      >
+        {previewId && (
+          <iframe
+            title="Invoice PDF preview"
+            src={pdfUrl(previewId)}
+            className="h-[70vh] w-full border-0"
+          />
+        )}
+      </Modal>
     </div>
   )
 }

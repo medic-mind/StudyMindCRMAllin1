@@ -43,16 +43,58 @@ the UI.
 | B2C individual (Contact)               | `b2c`           | `uk_b2b`    |
 | AP / council (BusinessAccount flagged) | `alt_provision` | —           |
 
+## Invoice actions (all doable from the CRM, mirrored on the platform)
+
+`raise` · `edit` (PATCH; `line_items` replaces all rows) · `issue` · `send`
+(email + PDF) · `send reminder` (chaser + PDF) · `record payment` · `remove
+payment` · `mark paid` · `cancel` (void) · `reissue` · `duplicate`. Every one
+re-syncs the platform's canonical response into the mirror (`source:'api'`) and
+writes an `AuditLogEntry`. Roles: raise/edit/issue/send/reminder/record/reissue/
+duplicate = Sales Executive+; cancel/remove-payment/mark-paid = Manager+
+(finance tier).
+
+## PDF preview / download (no email)
+
+`client.getInvoicePdfBytes(id)` fetches `GET /invoices/:id/pdf?format=pdf` — the
+same renderer Send uses, so it is byte-identical to what the client receives.
+Served through the backend proxy
+`apps/web/app/api/internal/invoicing/invoices/[invoicingId]/pdf/route.ts` (staff-
+gated, audited) so the API key never reaches the browser. The account panel shows
+it inline in an `<iframe>` (`?download=1` forces a download). International
+invoices render VAT-free.
+
+## Reference data (read-only)
+
+`getBillingCompanies` / `getBankAccounts` / `getCompanySettings` back the
+`invoicing.reference.*` tRPC reads — used to pick the letterhead + bank details
+(`billing_company_id` / `bank_account_id`) when raising an invoice.
+
 ## Files
 
-- `client.ts` — typed REST client (verbatim field names), 401/403 surfaced distinctly.
+- `client.ts` — typed REST client (verbatim field names), 401/403 surfaced
+  distinctly. Full surface: customers (+contacts), invoices CRUD + lifecycle
+  (issue/cancel/reissue/duplicate/activity), payments (list/record/delete),
+  send/reminder, PDF (json + bytes), billing-companies/bank-accounts/company-
+  settings, events feed, SSE `streamEvents`, webhooks (register/list/delete).
 - `types.ts` — raw Zod shapes, domain enums (fail-closed `unknown`), money helpers.
 - `webhook.ts` — HMAC verify over the RAW body (`t=,v1=`), replay window.
 - `config.ts` — encrypted API key + webhook secret + cursors.
 - `adapter.ts` — pure CRM→payload mappers.
-- `sync.ts` — idempotent inbound upserts (customer / invoice / line items / payment).
-- `outbound.ts` — raise / send / record-payment / mark-paid (audited).
-- `jobs.ts` — `invoicing/event.received` + nightly `invoicing/reconcile`.
+- `sync.ts` — idempotent inbound upserts + deletes (customer / invoice / line
+  items / payment; `payment.deleted` and soft-delete of invoice/customer).
+- `outbound.ts` — every audited write listed above.
+- `jobs.ts` — `invoicing/event.received` (skips `source:'api'`; handles
+  `*.deleted`) + `invoicing/reconcile` (events-feed cursor heal, every 2 min).
+
+## SSE vs webhooks (the third channel)
+
+Webhooks give instant push; the `invoicing/reconcile` cron (every 2 min) walks
+the `/events?since=<cursor>` feed as the durable, idempotent backstop that heals
+any dropped webhook. `client.streamEvents()` (async generator over
+`GET /api/v1/stream`) is implemented for completeness/parity; a boot-time
+long-lived consumer belongs in the always-on `worker` process and is the one
+deferred piece — webhooks + the 2-min reconcile already satisfy the sync
+contract (and acceptance test 5).
 
 ## Setup
 

@@ -14,7 +14,14 @@ import { inngest } from '@studymind/jobs'
 import { createClientFromConfig } from './client'
 import { loadInvoicingConfig, saveEventsCursor } from './config'
 import { importBusinessAccountsFromInvoicing } from './import-accounts'
-import { upsertCustomerFromRecord, upsertInvoiceFromRecord, upsertPaymentFromRecord } from './sync'
+import {
+  deletePaymentByInvoicingId,
+  softDeleteCustomerByInvoicingId,
+  softDeleteInvoiceByInvoicingId,
+  upsertCustomerFromRecord,
+  upsertInvoiceFromRecord,
+  upsertPaymentFromRecord,
+} from './sync'
 import { mapCustomerCategory, mapEntityType, mapEventSource, RawCustomer, RawEvent } from './types'
 
 interface EventReceivedData {
@@ -52,6 +59,8 @@ async function applyEvent(raw: unknown): Promise<{ applied: boolean; reason: str
   const entityType = mapEntityType(
     event.entity_type ?? dataObj?.entity_type ?? typeFromTopic(event.type),
   )
+  const action = actionFromTopic(event.action ?? dataObj?.action ?? event.type)
+  const recordId = recordIdOf(record)
 
   switch (entityType) {
     case 'partner': {
@@ -62,14 +71,26 @@ async function applyEvent(raw: unknown): Promise<{ applied: boolean; reason: str
       if (cat === 'alt_provision') {
         return { applied: false, reason: 'acknowledged_not_mirrored:alt_provision' }
       }
+      if (action === 'deleted' && recordId) {
+        await softDeleteCustomerByInvoicingId(db, recordId)
+        return { applied: true, reason: 'partner_deleted' }
+      }
       await upsertCustomerFromRecord(db, record, source)
       return { applied: true, reason: 'partner' }
     }
     case 'invoice':
     case 'invoice_line_item':
+      if (action === 'deleted' && entityType === 'invoice' && recordId) {
+        await softDeleteInvoiceByInvoicingId(db, recordId)
+        return { applied: true, reason: 'invoice_deleted' }
+      }
       await upsertInvoiceFromRecord(db, record, source)
       return { applied: true, reason: 'invoice' }
     case 'payment':
+      if (action === 'deleted' && recordId) {
+        const r = await deletePaymentByInvoicingId(db, recordId)
+        return { applied: r.deleted, reason: r.deleted ? 'payment_deleted' : 'payment_not_mirrored' }
+      }
       await upsertPaymentFromRecord(db, record, source)
       return { applied: true, reason: 'payment' }
     case 'task':
@@ -95,6 +116,23 @@ async function applyEvent(raw: unknown): Promise<{ applied: boolean; reason: str
 function typeFromTopic(type: string | null | undefined): string | undefined {
   if (!type) return undefined
   return type.split('.')[0]
+}
+
+/** Derive the action from an `entity.action` topic or a bare action string. */
+function actionFromTopic(value: string | null | undefined): string | undefined {
+  if (!value) return undefined
+  return value.includes('.') ? value.split('.').slice(1).join('.') : value
+}
+
+/** Pull the platform id out of a record for delete events (the record may be a
+ *  full row or a stub like `{ id }`). */
+function recordIdOf(record: unknown): string | null {
+  if (record && typeof record === 'object' && 'id' in record) {
+    const id = (record as { id: unknown }).id
+    if (typeof id === 'string' && id) return id
+    if (typeof id === 'number') return String(id)
+  }
+  return null
 }
 
 export const invoicingEventReceived = inngest.createFunction(

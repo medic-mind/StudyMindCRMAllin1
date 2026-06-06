@@ -11,6 +11,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  deletePaymentByInvoicingId,
+  softDeleteInvoiceByInvoicingId,
   upsertCustomerFromRecord,
   upsertInvoiceFromRecord,
   upsertPaymentFromRecord,
@@ -97,6 +99,27 @@ function makeTable() {
         }
       }
       return { count: 0 }
+    },
+    async delete({ where }: { where: { id: string } }) {
+      const row = byId.get(where.id)
+      byId.delete(where.id)
+      return row ?? null
+    },
+    async updateMany({
+      where,
+      data,
+    }: {
+      where: { invoicingId?: string; deletedAt?: null }
+      data: Record<string, unknown>
+    }) {
+      let count = 0
+      for (const row of byId.values()) {
+        if (where.invoicingId && row.invoicingId !== where.invoicingId) continue
+        if (where.deletedAt === null && row['deletedAt'] != null) continue
+        Object.assign(row, data)
+        count += 1
+      }
+      return { count }
     },
   }
 }
@@ -211,5 +234,46 @@ describe('invoicing inbound sync (idempotent mirror)', () => {
     )
     expect(result).toEqual({ skipped: true, reason: 'invoice_not_mirrored' })
     expect(db.invoicingPayment.byId.size).toBe(0)
+  })
+
+  it('removes a payment and recomputes paidMinor (remove-payment / payment.deleted)', async () => {
+    const db = makeDb()
+    await upsertInvoiceFromRecord(
+      asDb(db),
+      {
+        id: 'inv_1',
+        partner_id: 'ptn_1',
+        status: 'partially_paid',
+        grand_total: '720.00',
+        payments: [
+          { id: 'pay_1', amount: '200.00' },
+          { id: 'pay_2', amount: '100.00' },
+        ],
+      },
+      'app',
+    )
+    expect(db.invoicingPayment.byId.size).toBe(2)
+
+    const removed = await deletePaymentByInvoicingId(asDb(db), 'pay_1')
+    expect(removed).toEqual({ deleted: true })
+    expect(db.invoicingPayment.byId.size).toBe(1)
+    const inv = [...db.invoicingInvoice.byId.values()][0]
+    expect(inv['paidMinor']).toBe(10000) // only pay_2 (£100) remains
+
+    // Removing one we never mirrored is a no-op.
+    const noop = await deletePaymentByInvoicingId(asDb(db), 'pay_missing')
+    expect(noop).toEqual({ deleted: false })
+  })
+
+  it('soft-deletes a mirrored invoice on a platform delete', async () => {
+    const db = makeDb()
+    await upsertInvoiceFromRecord(
+      asDb(db),
+      { id: 'inv_1', partner_id: 'ptn_1', status: 'issued', grand_total: '100.00' },
+      'app',
+    )
+    await softDeleteInvoiceByInvoicingId(asDb(db), 'inv_1')
+    const inv = [...db.invoicingInvoice.byId.values()][0]
+    expect(inv['deletedAt']).not.toBeNull()
   })
 })
