@@ -30,6 +30,12 @@ const PUBLIC_PATH_PREFIXES = [
   '/auth/error',
   '/api/auth',
   '/api/webhooks',
+  // Inngest serve/sync endpoint. Inngest authenticates its requests with the
+  // INNGEST_SIGNING_KEY signature the serve handler verifies — not a session
+  // — exactly like the webhooks above. It MUST bypass the auth gate, or
+  // Inngest's sync + function invocations get 307-redirected to /sign-in and
+  // the dashboard reports "We could not reach your URL".
+  '/api/inngest',
   // Universal lead ingestion (ADR 0020) — authenticated by a per-source API
   // key, not a session, so WordPress / Contact-Form-7 sites can POST to it.
   '/api/leads',
