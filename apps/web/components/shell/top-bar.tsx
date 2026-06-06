@@ -22,7 +22,7 @@ interface Props {
   logoVersion?: number | null
 }
 
-export function TopBar({ user, logoVersion = null }: Props) {
+export function TopBar({ user }: Props) {
   return (
     <header
       role="banner"
@@ -37,23 +37,18 @@ export function TopBar({ user, logoVersion = null }: Props) {
         Skip to content
       </a>
 
-      {/* The logo Link is hard-pinned to the top-bar height so even a
-          rogue logo upload can never blow out the bar. The BrandLogo
-          itself is also pinned (CSS background, fixed size, contained),
-          but defence in depth costs nothing. */}
+      {/* Fixed inline SVG mark + wordmark only. We deliberately do NOT render
+          the uploaded custom logo here — a wide/tall upload kept enlarging and
+          blowing out the bar, so the top bar always uses the crisp, fixed-size
+          brand mark. The uploaded logo still lives on Settings → Branding. */}
       <Link
         href="/"
-        className="flex shrink-0 items-center gap-2 overflow-hidden tracking-tight"
-        style={{ height: '40px', maxHeight: '40px' }}
+        className="flex shrink-0 items-center gap-2 tracking-tight"
         aria-label="StudyMind CRM home"
       >
-        <BrandLogo size={26} markOnly customLogoVersion={logoVersion} />
-        {logoVersion == null ? (
-          <>
-            <span className="text-base font-semibold text-primary-700">StudyMind</span>
-            <span className="text-base font-medium text-neutral-500">CRM</span>
-          </>
-        ) : null}
+        <BrandLogo size={26} markOnly />
+        <span className="text-base font-semibold text-primary-700">StudyMind</span>
+        <span className="text-base font-medium text-neutral-500">CRM</span>
       </Link>
 
       <div className="flex flex-1 justify-center">
