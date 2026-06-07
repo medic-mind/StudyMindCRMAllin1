@@ -11,6 +11,7 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { createCard } from '@studymind/core/board'
+import { INVERSE_RELATION } from '@studymind/core/contact'
 import type { PrismaClient } from '@studymind/db'
 
 import type { BookingEventEnvelope, BookingResource } from './types'
@@ -130,17 +131,33 @@ async function upsertContact(db: PrismaClient, input: UpsertPersonInput): Promis
 
 async function linkParentStudent(db: PrismaClient, parentId: string, studentId: string): Promise<void> {
   if (parentId === studentId) return
-  const existing = await db.contactLink.findFirst({
-    where: { fromContactId: parentId, toContactId: studentId, relation: 'parent_of' },
-    select: { id: true },
-  })
-  if (existing) return
-  try {
-    await db.contactLink.create({
-      data: { id: createId(), fromContactId: parentId, toContactId: studentId, relation: 'parent_of' },
+  // Write BOTH directions, like the framework's contact.links.add: the
+  // forward `parent_of` (parent → student) and the reciprocal `child_of`
+  // (student → parent). `links.list` only reads the forward direction per
+  // contact, so without the reciprocal the relationship would show on the
+  // parent's page but not the student's. Idempotent via the compound unique key.
+  const edges = [
+    { from: parentId, to: studentId, relation: 'parent_of' as const },
+    { from: studentId, to: parentId, relation: INVERSE_RELATION['parent_of'] },
+  ]
+  for (const edge of edges) {
+    await db.contactLink.upsert({
+      where: {
+        fromContactId_toContactId_relation: {
+          fromContactId: edge.from,
+          toContactId: edge.to,
+          relation: edge.relation,
+        },
+      },
+      create: {
+        id: createId(),
+        fromContactId: edge.from,
+        toContactId: edge.to,
+        relation: edge.relation,
+        createdById: ACTOR_ID,
+      },
+      update: {},
     })
-  } catch {
-    // Unique race (parent_of already linked) — idempotent no-op.
   }
 }
 
