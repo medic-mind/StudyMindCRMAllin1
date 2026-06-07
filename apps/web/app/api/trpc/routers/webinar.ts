@@ -12,11 +12,15 @@ import {
   AUTO_ENROLL_CONFIDENCE,
   computeSessions,
   currentWeekInfo,
+  DEFAULT_EMAIL_BODY_TEMPLATE,
+  DEFAULT_EMAIL_SUBJECT_TEMPLATE,
   formatSessionDateShort,
   formatSessionTime,
   levelLabel,
+  renderTemplate,
   sessionStartInstant,
   subjectLabel,
+  type WebinarEmailVars,
   webinarLevelSchema,
   webinarSubjectSchema,
   WEEKDAY_LABEL,
@@ -66,6 +70,24 @@ const dateSchema = z
   .transform((s) => new Date(`${s}T00:00:00.000Z`))
 
 const MAX_PDF_BYTES = 8 * 1024 * 1024
+
+/** Sample values used to render an email preview / test send. */
+function sampleEmailVars(fromName?: string): WebinarEmailVars {
+  return {
+    studentName: 'Sam',
+    className: 'Biology A-Level',
+    subject: 'Biology',
+    level: 'A-Level',
+    cohortName: '2026/2027',
+    weekday: 'Saturday',
+    dateLabel: 'Saturday 13 September 2026',
+    timeLabel: '18:00 BST',
+    zoomLink: 'https://zoom.us/j/123456789',
+    weekNumber: 3,
+    weekTopic: 'Cell division',
+    fromName: fromName?.trim() || 'The StudyMind team',
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /* Cohorts + holidays                                                          */
@@ -253,6 +275,36 @@ const cohortRouter = router({
         after: { emails: input.emailSubjectTemplate !== undefined || input.emailBodyTemplate !== undefined },
       })
       return { id: input.id }
+    }),
+
+  /** Send the draft weekly email (with sample data) to the acting user. */
+  sendTestEmail: protectedProcedure
+    .input(
+      z.object({
+        subjectTemplate: z.string().trim().max(300),
+        bodyText: z.string().max(20_000),
+        bodyHtml: z.string().max(40_000).optional(),
+        fromName: z.string().trim().max(120).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      if (!user.email) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Your account has no email address.' })
+      }
+      const vars = sampleEmailVars(input.fromName)
+      const subject = renderTemplate(input.subjectTemplate || DEFAULT_EMAIL_SUBJECT_TEMPLATE, vars)
+      const text = renderTemplate(input.bodyText || DEFAULT_EMAIL_BODY_TEMPLATE, vars)
+      const html = input.bodyHtml ? renderTemplate(input.bodyHtml, vars) : undefined
+      const res = await sendSystemEmail({
+        to: user.email,
+        subject: `[Test] ${subject}`,
+        text,
+        html,
+        requestId: ctx.requestId,
+      })
+      return { status: res.status, to: user.email, detail: res.detail ?? null }
     }),
 
   addHoliday: auditedProcedure
@@ -707,6 +759,8 @@ const classRouter = router({
         channel: z.enum(['email', 'whatsapp', 'sms']),
         subject: z.string().trim().max(200).optional(),
         body: z.string().trim().min(1).max(5000),
+        /** Optional rich HTML body for the email channel. */
+        html: z.string().max(40_000).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -730,9 +784,12 @@ const classRouter = router({
       let failed = 0
       let skipped = 0
       const fallbackSubject = `Update — ${subjectLabel(cls.subject)} ${levelLabel(cls.level)}`
+      const firstName = (s: string, name: string | null) =>
+        s.replace(/\{\{\s*first_name\s*\}\}/gi, name || 'there')
       for (const e of enrollments) {
         const c = e.contact
-        const body = input.body.replace(/\{\{\s*first_name\s*\}\}/gi, c.firstName || 'there')
+        const body = firstName(input.body, c.firstName)
+        const html = input.html ? firstName(input.html, c.firstName) : undefined
         try {
           if (input.channel === 'email') {
             if (!c.email) {
@@ -743,6 +800,7 @@ const classRouter = router({
               to: c.email,
               subject: input.subject || fallbackSubject,
               text: body,
+              html,
               fromAgentId: settings?.senderMailboxUserId ?? undefined,
               requestId: `${ctx.requestId}:${c.id}`,
             })

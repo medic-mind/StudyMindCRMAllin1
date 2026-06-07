@@ -34,6 +34,28 @@ const EMAIL_FIELDS: RichTextField[] = [
   { token: '{{fromName}}', label: 'From name' },
 ]
 
+// Sample values for the live preview + test send (mirrors the server).
+const SAMPLE_VARS: Record<string, string | number> = {
+  studentName: 'Sam',
+  className: 'Biology A-Level',
+  subject: 'Biology',
+  level: 'A-Level',
+  cohortName: '2026/2027',
+  weekday: 'Saturday',
+  dateLabel: 'Saturday 13 September 2026',
+  timeLabel: '18:00 BST',
+  zoomLink: 'https://zoom.us/j/123456789',
+  weekNumber: 3,
+  weekTopic: 'Cell division',
+  fromName: 'The StudyMind team',
+}
+
+function renderTokens(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (whole, key: string) =>
+    key in vars ? String(vars[key]) : whole,
+  )
+}
+
 const DEFAULT_SUBJECT = "{{className}} — this week's class ({{dateLabel}})"
 const DEFAULT_BODY = `Hi {{studentName}},
 
@@ -169,11 +191,28 @@ function EmailSettings({
   const bodyHtmlRef = useRef(initialHtml)
   const [sendDays, setSendDays] = useState<number[]>(cohort.sendDaysOfWeek)
   const [sendHour, setSendHour] = useState(cohort.sendHourLocal)
+  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null)
 
   const save = trpc.webinar.cohort.update.useMutation({
     onSuccess: () => toast.success('Email settings saved for this cohort'),
     onError: (e) => toast.error(e.message),
   })
+  const sendTest = trpc.webinar.cohort.sendTestEmail.useMutation({
+    onSuccess: (r) => {
+      if (r.status === 'sent') toast.success(`Test email sent to ${r.to}`)
+      else if (r.status === 'skipped') toast.error('No mailbox connected to send from yet.')
+      else toast.error(r.detail || 'Could not send the test email.')
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  function showPreview(): void {
+    const vars = { ...SAMPLE_VARS, fromName: fromName || 'The StudyMind team' }
+    setPreview({
+      subject: renderTokens(subjectTpl || DEFAULT_SUBJECT, vars),
+      html: renderTokens(bodyHtmlRef.current, vars),
+    })
+  }
 
   return (
     <Card>
@@ -245,13 +284,55 @@ function EmailSettings({
                 fields={EMAIL_FIELDS}
               />
             </Field>
-            <Button type="submit" disabled={save.isPending}>
-              {save.isPending ? 'Saving…' : 'Save email settings'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="submit" disabled={save.isPending}>
+                {save.isPending ? 'Saving…' : 'Save email settings'}
+              </Button>
+              <Button type="button" variant="secondary" onClick={showPreview}>
+                Preview
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={sendTest.isPending}
+                onClick={() =>
+                  sendTest.mutate({
+                    subjectTemplate: subjectTpl,
+                    bodyText: htmlToPlainText(bodyHtmlRef.current),
+                    bodyHtml: bodyHtmlRef.current,
+                    fromName,
+                  })
+                }
+              >
+                {sendTest.isPending ? 'Sending…' : 'Send test to me'}
+              </Button>
+            </div>
           </form>
         ) : (
           <p className="text-sm text-neutral-500">Manager access required to edit.</p>
         )}
+
+        {preview ? (
+          <div className="mt-2 rounded-md border border-neutral-200">
+            <div className="flex items-center justify-between border-b border-neutral-100 bg-neutral-50 px-3 py-2">
+              <div className="text-xs text-neutral-500">
+                Preview (sample data) · <span className="font-medium text-neutral-800">{preview.subject}</span>
+              </div>
+              <button
+                type="button"
+                className="text-xs text-neutral-500 hover:text-neutral-800"
+                onClick={() => setPreview(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div
+              className="prose-sm max-w-none px-4 py-3 text-sm text-neutral-800 [&_a]:text-primary-700 [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5"
+              // Staff-authored content rendered for the author's own preview.
+              dangerouslySetInnerHTML={{ __html: preview.html }}
+            />
+          </div>
+        ) : null}
       </CardBody>
     </Card>
   )

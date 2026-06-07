@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -10,8 +10,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { RichTextEditor, type RichTextField } from '@/components/ui/rich-text-editor'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { htmlToPlainText } from '@/lib/html-text'
 import { trpc } from '@/lib/trpc/client'
 
 import type { ClassDetailView as Detail, EnrollmentRow } from '../../types'
@@ -50,15 +52,21 @@ export function ClassDetail({
   )
 }
 
+const BROADCAST_FIELDS: RichTextField[] = [{ token: '{{first_name}}', label: 'First name' }]
+
 function BroadcastCard({ classId }: { classId: string }) {
   const [channel, setChannel] = useState<'email' | 'whatsapp' | 'sms'>('email')
   const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
+  const [text, setText] = useState('')
+  const htmlRef = useRef('')
+  const [editorKey, setEditorKey] = useState(0)
   const broadcast = trpc.webinar.class.broadcast.useMutation({
     onSuccess: (r) => {
       toast.success(`Sent to ${r.sent} · ${r.failed} failed · ${r.skipped} skipped`)
-      setBody('')
+      setText('')
       setSubject('')
+      htmlRef.current = ''
+      setEditorKey((k) => k + 1) // clear the rich editor
     },
     onError: (e) => toast.error(e.message),
   })
@@ -67,20 +75,27 @@ function BroadcastCard({ classId }: { classId: string }) {
       <CardBody>
         <h2 className="text-sm font-semibold text-neutral-900">Message everyone on this list</h2>
         <p className="mt-1 text-xs text-neutral-500">
-          A one-off message to all active enrolments — e.g. a time change. Use{' '}
-          <code className="rounded bg-neutral-100 px-1">{'{{first_name}}'}</code> to personalise.
+          A one-off message to all active enrolments — e.g. a time change. Use the{' '}
+          <strong>Insert field</strong> button (or{' '}
+          <code className="rounded bg-neutral-100 px-1">{'{{first_name}}'}</code>) to personalise.
           WhatsApp/SMS go via Trengo under your connected token.
         </p>
         <form
           className="mt-3 space-y-2"
           onSubmit={(e) => {
             e.preventDefault()
-            broadcast.mutate({
-              id: classId,
-              channel,
-              subject: channel === 'email' ? subject || undefined : undefined,
-              body,
-            })
+            if (channel === 'email') {
+              const html = htmlRef.current
+              broadcast.mutate({
+                id: classId,
+                channel,
+                subject: subject || undefined,
+                body: htmlToPlainText(html),
+                html,
+              })
+            } else {
+              broadcast.mutate({ id: classId, channel, body: text })
+            }
           }}
         >
           <div className="flex gap-1">
@@ -101,16 +116,37 @@ function BroadcastCard({ classId }: { classId: string }) {
             ))}
           </div>
           {channel === 'email' ? (
-            <Input placeholder="Subject (optional)" value={subject} onChange={(e) => setSubject(e.target.value)} />
-          ) : null}
-          <Textarea
-            rows={4}
-            placeholder="Hi {{first_name}}, a quick update about this week's class…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            required
-          />
-          <Button type="submit" disabled={broadcast.isPending || body.trim().length === 0}>
+            <>
+              <Input
+                placeholder="Subject (optional)"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+              />
+              <RichTextEditor
+                initialHtml=""
+                resetKey={editorKey}
+                onChange={(html) => {
+                  htmlRef.current = html
+                }}
+                fields={BROADCAST_FIELDS}
+              />
+            </>
+          ) : (
+            <Textarea
+              rows={4}
+              placeholder="Hi {{first_name}}, a quick update about this week's class…"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              required
+            />
+          )}
+          <Button
+            type="submit"
+            disabled={
+              broadcast.isPending ||
+              (channel !== 'email' && text.trim().length === 0)
+            }
+          >
             {broadcast.isPending ? 'Sending…' : 'Send to everyone'}
           </Button>
         </form>
