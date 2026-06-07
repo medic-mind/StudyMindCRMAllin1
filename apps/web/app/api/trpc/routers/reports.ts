@@ -403,6 +403,8 @@ export const reportsRouter = router({
           durationSec: number
           isVoicemail: boolean
           provider: 'aircall' | 'google_voice' | 'manual'
+          /** Counterparty E.164, used as the tray label when no Contact. */
+          rawDigits: string | null
         }
 
         async function loadCalls(from: Date, to: Date): Promise<NormalisedCall[]> {
@@ -435,6 +437,10 @@ export const reportsRouter = router({
             const isVoicemail =
               event === 'call.voicemail_left' ||
               (typeof p['voicemailUrl'] === 'string' && p['voicemailUrl'].length > 0)
+            const rawDigits =
+              typeof p['rawDigits'] === 'string' && p['rawDigits'].length > 0
+                ? (p['rawDigits'] as string)
+                : null
             const prev = byCall.get(callId)
             if (!prev) {
               byCall.set(callId, {
@@ -445,11 +451,13 @@ export const reportsRouter = router({
                 durationSec,
                 isVoicemail,
                 provider,
+                rawDigits,
               })
             } else {
               if (durationSec > prev.durationSec) prev.durationSec = durationSec
               if (prev.direction == null && direction != null) prev.direction = direction
               if (isVoicemail) prev.isVoicemail = true
+              if (!prev.rawDigits && rawDigits) prev.rawDigits = rawDigits
               if (r.occurredAt < prev.occurredAt) prev.occurredAt = r.occurredAt
             }
           }
@@ -693,14 +701,14 @@ export const reportsRouter = router({
         const missedTray = missedRecent.map((c) => ({
           callId: c.callId,
           contactId: c.contactId,
-          name: fmtTrayName(c.contactId, c.callId),
+          name: fmtTrayName(c.contactId, c.rawDigits ?? c.callId),
           direction: c.direction,
           occurredAt: c.occurredAt,
         }))
         const voicemailTray = voicemailRecent.map((c) => ({
           callId: c.callId,
           contactId: c.contactId,
-          name: fmtTrayName(c.contactId, c.callId),
+          name: fmtTrayName(c.contactId, c.rawDigits ?? c.callId),
           direction: c.direction,
           occurredAt: c.occurredAt,
         }))
