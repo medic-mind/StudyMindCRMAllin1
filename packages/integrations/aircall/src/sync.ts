@@ -71,9 +71,20 @@ export const aircallSyncCalls = inngest.createFunction(
       })
 
       for (const call of res.rows) {
-        const result = await step.run(`call-${call.id}`, async () => processBackfillCall(call))
-        processed += 1
-        if (result.created) stored += 1
+        try {
+          const result = await step.run(`call-${call.id}`, async () => processBackfillCall(call))
+          processed += 1
+          if (result.created) stored += 1
+        } catch (err) {
+          // Critical: one poison call must not fail the whole sync. Before this
+          // guard, a single call that threw (e.g. a contact unique-constraint
+          // clash) failed the run, and because `since` resumes from the newest
+          // STORED call, every subsequent 10-min tick re-hit the same call and
+          // re-failed — permanently stranding the mirror at the last good call.
+          // Skip it and keep paging.
+          processed += 1
+          logger.warn({ callId: call.id, err }, 'aircall sync: skipped a call that failed to import')
+        }
       }
       keepPaging = res.hasNext
       page += 1

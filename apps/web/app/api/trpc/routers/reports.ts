@@ -6,6 +6,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  classifyStoredCall,
   describePeakWindow,
   instantMatchesWindow,
   isPeakInstant,
@@ -109,12 +110,25 @@ function weekLabel(d: Date): string {
   return `${m}/${day}`
 }
 
+/**
+ * Inclusive end of the `to` day. The report period presets pass the to-date at
+ * 00:00 UTC, so a raw `lte: to` silently drops everything that happened on that
+ * date itself — most visibly today's data, and it makes counts jump between the
+ * default view (which uses `now`) and a clicked preset. Snap to end-of-day UTC.
+ */
+function endOfUtcDay(d: Date): Date {
+  const out = new Date(d)
+  out.setUTCHours(23, 59, 59, 999)
+  return out
+}
+
 export const reportsRouter = router({
   finance: router({
     summary: protectedProcedure
       .input(PeriodInput)
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
+        const periodTo = endOfUtcDay(input.to)
 
         const [openDiscrepancies, payments] = await Promise.all([
           ctx.db.reconciliationDiscrepancy.groupBy({
@@ -124,7 +138,7 @@ export const reportsRouter = router({
           }),
           ctx.db.payment.findMany({
             where: {
-              receivedAt: { gte: input.from, lte: input.to },
+              receivedAt: { gte: input.from, lte: periodTo },
               deletedAt: null,
             },
             select: {
@@ -154,7 +168,7 @@ export const reportsRouter = router({
         // this would be precomputed nightly.
         const recent = await ctx.db.payment.findMany({
           where: {
-            receivedAt: { gte: input.from, lte: input.to },
+            receivedAt: { gte: input.from, lte: periodTo },
             deletedAt: null,
           },
           select: {
@@ -182,13 +196,13 @@ export const reportsRouter = router({
         // We bucket the *same* payments[] used above; reconciliation only
         // counts a payment as allocated once it has at least one
         // Allocation row, so we mirror that here.
-        const weekStarts = isoWeekStarts(input.from, input.to)
+        const weekStarts = isoWeekStarts(input.from, periodTo)
         const moneyInByWeek = new Array(weekStarts.length).fill(0) as number[]
         const revertedByWeek = new Array(weekStarts.length).fill(0) as number[]
         const unallocatedByWeek = new Array(weekStarts.length).fill(0) as number[]
         const paymentsWithAlloc = await ctx.db.payment.findMany({
           where: {
-            receivedAt: { gte: input.from, lte: input.to },
+            receivedAt: { gte: input.from, lte: periodTo },
             deletedAt: null,
           },
           select: {
@@ -242,10 +256,11 @@ export const reportsRouter = router({
       .input(PeriodInput)
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
+        const periodTo = endOfUtcDay(input.to)
 
         const sessions = await ctx.db.bookingSession.findMany({
           where: {
-            scheduledAt: { gte: input.from, lte: input.to },
+            scheduledAt: { gte: input.from, lte: periodTo },
             deletedAt: null,
           },
           select: {
@@ -257,7 +272,7 @@ export const reportsRouter = router({
           take: 5000,
         })
 
-        const weekStarts = isoWeekStarts(input.from, input.to)
+        const weekStarts = isoWeekStarts(input.from, periodTo)
         const deliveredHoursByWeek = new Array(weekStarts.length).fill(0) as number[]
         const deliveredSessionsByWeek = new Array(weekStarts.length).fill(0) as number[]
         for (const s of sessions) {
@@ -325,6 +340,7 @@ export const reportsRouter = router({
       .input(PeriodInput)
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
+        const periodTo = endOfUtcDay(input.to)
 
         const [families, churnScores, churnedThisPeriod] = await Promise.all([
           ctx.db.family.groupBy({
@@ -334,7 +350,7 @@ export const reportsRouter = router({
           }),
           ctx.db.churnScore.findMany({
             where: {
-              scoredAt: { gte: input.from, lte: input.to },
+              scoredAt: { gte: input.from, lte: periodTo },
             },
             orderBy: { scoredAt: 'desc' },
             select: { score: true, familyId: true, scoredAt: true },
@@ -343,7 +359,7 @@ export const reportsRouter = router({
           ctx.db.interaction.count({
             where: {
               type: 'family_state_changed',
-              occurredAt: { gte: input.from, lte: input.to },
+              occurredAt: { gte: input.from, lte: periodTo },
             },
           }),
         ])
@@ -386,6 +402,10 @@ export const reportsRouter = router({
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
 
+        // Include the whole of the `to` day (endOfUtcDay) for every window
+        // below, otherwise today's calls drop out and counts jump vs default.
+        const periodTo = endOfUtcDay(input.to)
+
         interface NormalisedCall {
           callId: string
           contactId: string | null
@@ -394,6 +414,8 @@ export const reportsRouter = router({
           durationSec: number
           isVoicemail: boolean
           provider: 'aircall' | 'google_voice' | 'manual'
+          /** Counterparty E.164, used as the tray label when no Contact. */
+          rawDigits: string | null
         }
 
         async function loadCalls(from: Date, to: Date): Promise<NormalisedCall[]> {
@@ -409,18 +431,12 @@ export const reportsRouter = router({
           const byCall = new Map<string, NormalisedCall>()
           for (const r of rows) {
             const p = (r.payload ?? {}) as Record<string, unknown>
-            const aircallId =
-              typeof p['aircallCallId'] === 'string' ? (p['aircallCallId'] as string) : null
-            const providerRaw = typeof p['provider'] === 'string' ? (p['provider'] as string) : null
-            const provider: 'aircall' | 'google_voice' | 'manual' =
-              providerRaw === 'google_voice'
-                ? 'google_voice'
-                : providerRaw === 'manual'
-                  ? 'manual'
-                  : aircallId
-                    ? 'aircall'
-                    : 'manual'
-            const callId = aircallId ?? `${provider}:${r.occurredAt.toISOString()}`
+            // Stable provider + dedupe key. Aircall ids are numeric, so this
+            // collapses the several lifecycle-event rows (and the backfill/sync
+            // row) for one call into a single call — otherwise one call is
+            // counted many times and its duration-0 events distort missed vs
+            // answered. CLAUDE.md §10.
+            const { provider, callId } = classifyStoredCall(p, r.occurredAt)
             const directionRaw = p['direction']
             const direction =
               directionRaw === 'inbound' || directionRaw === 'outbound'
@@ -432,6 +448,10 @@ export const reportsRouter = router({
             const isVoicemail =
               event === 'call.voicemail_left' ||
               (typeof p['voicemailUrl'] === 'string' && p['voicemailUrl'].length > 0)
+            const rawDigits =
+              typeof p['rawDigits'] === 'string' && p['rawDigits'].length > 0
+                ? (p['rawDigits'] as string)
+                : null
             const prev = byCall.get(callId)
             if (!prev) {
               byCall.set(callId, {
@@ -442,11 +462,13 @@ export const reportsRouter = router({
                 durationSec,
                 isVoicemail,
                 provider,
+                rawDigits,
               })
             } else {
               if (durationSec > prev.durationSec) prev.durationSec = durationSec
               if (prev.direction == null && direction != null) prev.direction = direction
               if (isVoicemail) prev.isVoicemail = true
+              if (!prev.rawDigits && rawDigits) prev.rawDigits = rawDigits
               if (r.occurredAt < prev.occurredAt) prev.occurredAt = r.occurredAt
             }
           }
@@ -499,12 +521,12 @@ export const reportsRouter = router({
         }
 
         // Period-over-period: same-length window immediately before.
-        const periodMs = input.to.getTime() - input.from.getTime()
+        const periodMs = periodTo.getTime() - input.from.getTime()
         const prevFrom = new Date(input.from.getTime() - periodMs)
         const prevTo = new Date(input.from.getTime() - 1)
 
         const [calls, prevCalls] = await Promise.all([
-          loadCalls(input.from, input.to),
+          loadCalls(input.from, periodTo),
           loadCalls(prevFrom, prevTo),
         ])
         const kpis = aggregate(calls)
@@ -520,7 +542,7 @@ export const reportsRouter = router({
         const days: string[] = []
         const cursor = new Date(input.from)
         cursor.setUTCHours(0, 0, 0, 0)
-        while (cursor <= input.to) {
+        while (cursor <= periodTo) {
           days.push(isoDay(cursor))
           cursor.setUTCDate(cursor.getUTCDate() + 1)
         }
@@ -690,14 +712,14 @@ export const reportsRouter = router({
         const missedTray = missedRecent.map((c) => ({
           callId: c.callId,
           contactId: c.contactId,
-          name: fmtTrayName(c.contactId, c.callId),
+          name: fmtTrayName(c.contactId, c.rawDigits ?? c.callId),
           direction: c.direction,
           occurredAt: c.occurredAt,
         }))
         const voicemailTray = voicemailRecent.map((c) => ({
           callId: c.callId,
           contactId: c.contactId,
-          name: fmtTrayName(c.contactId, c.callId),
+          name: fmtTrayName(c.contactId, c.rawDigits ?? c.callId),
           direction: c.direction,
           occurredAt: c.occurredAt,
         }))
@@ -720,7 +742,7 @@ export const reportsRouter = router({
         wCursor.setUTCHours(0, 0, 0, 0)
         const wDow = wCursor.getUTCDay()
         wCursor.setUTCDate(wCursor.getUTCDate() + (wDow === 0 ? -6 : 1 - wDow))
-        while (wCursor <= input.to) {
+        while (wCursor <= periodTo) {
           weekStarts.push(isoDay(wCursor))
           wCursor.setUTCDate(wCursor.getUTCDate() + 7)
         }

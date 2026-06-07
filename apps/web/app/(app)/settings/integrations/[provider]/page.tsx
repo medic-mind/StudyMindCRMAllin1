@@ -21,6 +21,7 @@ import { IntegrationTestButton } from '../IntegrationTestButton'
 
 import { AircallProbeButton } from './AircallProbeButton'
 import { BackfillButton } from './BackfillButton'
+import { CancelBackfillButton } from './CancelBackfillButton'
 import { TrengoImportButton } from './TrengoImportButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
 
@@ -221,15 +222,16 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
             </section>
           ) : null}
 
-          {provider === 'aircall' ? (
+          {isBackfillable ? (
             <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
                 Background jobs (Inngest)
               </h2>
               <p className="mt-1 max-w-xl text-xs text-neutral-500">
                 Importing runs as background jobs through Inngest. If this is not
-                connected, the “Test connection” above can still pass (it’s a
-                direct call) while backfills stay pending and nothing imports.
+                connected, the “Test connection” / token check can still pass
+                (it’s a direct call) while backfills stay pending and nothing
+                imports.
               </p>
 
               <div className={`mt-3 rounded-lg border px-3 py-2.5 text-sm ${bjTone[bjStatus.tone]}`}>
@@ -240,11 +242,12 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
               {bj.stuckBackfills > 0 ? (
                 <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   {bj.stuckBackfills} backfill
-                  {bj.stuckBackfills === 1 ? '' : 's'} stuck on{' '}
-                  <span className="font-mono">pending</span> for over 3 minutes —
-                  the worker is not picking jobs up. Connect Inngest (above), then
-                  cancel the stuck job{bj.stuckBackfills === 1 ? '' : 's'} and start
-                  a fresh backfill.
+                  {bj.stuckBackfills === 1 ? '' : 's'} stalled (no progress for
+                  over 15 minutes) — the worker restarted mid-run or isn’t
+                  picking jobs up. Use <span className="font-medium">Cancel</span>{' '}
+                  in the history below, or just start a fresh import: a stalled
+                  run is now auto-superseded. If imports keep stalling, connect
+                  Inngest (above).
                 </div>
               ) : null}
 
@@ -550,6 +553,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                         <Th>Processed</Th>
                         <Th>Matched</Th>
                         <Th>Skipped</Th>
+                        {canTest ? <Th>Action</Th> : null}
                       </Tr>
                     </Thead>
                     <Tbody>
@@ -568,6 +572,11 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                             ) : (
                               <Badge tone="neutral">{b.status}</Badge>
                             )}
+                            {b.status === 'failed' && b.error ? (
+                              <p className="mt-1 max-w-xs text-[11px] leading-snug text-red-700">
+                                {b.error}
+                              </p>
+                            ) : null}
                           </Td>
                           <Td className="font-mono text-xs tabular-nums">
                             {b.processedCount}
@@ -578,6 +587,13 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                           <Td className="font-mono text-xs tabular-nums">
                             {b.skippedCount}
                           </Td>
+                          {canTest ? (
+                            <Td>
+                              {b.status === 'pending' || b.status === 'running' ? (
+                                <CancelBackfillButton jobId={b.id} />
+                              ) : null}
+                            </Td>
+                          ) : null}
                         </Tr>
                       ))}
                     </Tbody>

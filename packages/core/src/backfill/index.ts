@@ -33,6 +33,18 @@ import { logger } from '../logger'
 
 export type { BackfillJob, BackfillProvider } from '@prisma/client'
 
+/**
+ * A pending/running backfill whose progress has not advanced for this long is
+ * treated as orphaned: the web service that serves Inngest was almost always
+ * redeployed mid-run, so the Inngest run was abandoned and the row would sit
+ * `running`/`pending` forever — blocking every retry via
+ * `BackfillAlreadyRunningError` and showing "Importing 0 items…" indefinitely.
+ * `startBackfill` supersedes such a job instead of blocking, so an operator can
+ * always re-trigger an import; the integrations diagnostics reuse this window
+ * to flag stalled jobs.
+ */
+export const STALE_BACKFILL_MS = 15 * 60 * 1000
+
 /** Minimal interface a job-event sender (the Inngest client) must satisfy. */
 export interface BackfillEventSender {
   send(event: { name: string; data: Record<string, unknown> }): Promise<unknown>
@@ -104,16 +116,35 @@ export async function startBackfill(
   const windowFrom = new Date(windowTo.getTime() - windowDays * 24 * 60 * 60 * 1000)
   const agentId = input.agentId ?? null
 
+  // A genuinely in-flight job blocks a duplicate (idempotent). But an orphaned
+  // job — one whose progress has not advanced for STALE_BACKFILL_MS — is
+  // superseded (marked failed) so the operator is never deadlocked behind a
+  // run the worker abandoned. `updatedAt` advances on every progress write, so
+  // a healthy import is never mistaken for stale.
   const existing = await db.backfillJob.findFirst({
     where: {
       provider: input.provider,
       agentId,
       status: { in: ['pending', 'running'] },
     },
-    select: { id: true },
+    select: { id: true, updatedAt: true },
+    orderBy: { createdAt: 'desc' },
   })
   if (existing) {
-    throw new BackfillAlreadyRunningError(input.provider, agentId, existing.id)
+    const stale = Date.now() - existing.updatedAt.getTime() > STALE_BACKFILL_MS
+    if (!stale) {
+      throw new BackfillAlreadyRunningError(input.provider, agentId, existing.id)
+    }
+    await markBackfillFailed(
+      db,
+      existing.id,
+      'Superseded — the previous run stalled (the worker restarted mid-import or never picked it up).',
+      input.ctx.requestId,
+    )
+    logger.warn(
+      { provider: input.provider, agentId, supersededJobId: existing.id },
+      'backfill: superseding a stalled job and starting a fresh one',
+    )
   }
 
   const jobId = createId()
@@ -288,6 +319,45 @@ export async function markBackfillFailed(
     requestId,
     after: { provider: row.provider, agentId: row.agentId, error: error.slice(0, 500) },
   })
+}
+
+/**
+ * Mark every backfill that has been pending/running with no progress for
+ * longer than {@link STALE_BACKFILL_MS} as failed. An abandoned run — the web
+ * service was redeployed mid-import, or Inngest never picked the job up —
+ * otherwise sits `running` forever: a permanent "Importing 0 items…" banner
+ * and a perpetual "stuck backfills" count in the integrations diagnostics,
+ * with no way to clear it short of starting another import. `startBackfill`
+ * already supersedes one such row when an operator re-triggers the same
+ * provider; this self-heals them on a schedule with no operator action.
+ *
+ * Idempotent and safe to run often: a healthy job advances `updatedAt` on
+ * every progress write, so it is never reaped; an already-failed row drops out
+ * of the query. Returns the ids it reaped.
+ */
+export async function reapStaleBackfills(
+  db: PrismaClient,
+  opts: { now?: Date; requestId?: string } = {},
+): Promise<string[]> {
+  const now = opts.now ?? new Date()
+  const cutoff = new Date(now.getTime() - STALE_BACKFILL_MS)
+  const stale = await db.backfillJob.findMany({
+    where: {
+      status: { in: ['pending', 'running'] },
+      updatedAt: { lt: cutoff },
+    },
+    select: { id: true },
+  })
+  const requestId = opts.requestId ?? `backfill-reaper:${now.toISOString().slice(0, 10)}`
+  for (const row of stale) {
+    await markBackfillFailed(
+      db,
+      row.id,
+      'Reaped — the import stalled (the worker restarted mid-run or never picked it up). Re-trigger the import to retry.',
+      requestId,
+    )
+  }
+  return stale.map((r) => r.id)
 }
 
 export async function markBackfillCancelled(

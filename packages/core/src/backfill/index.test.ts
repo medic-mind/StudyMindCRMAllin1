@@ -12,6 +12,7 @@ import {
   markBackfillCompleted,
   markBackfillFailed,
   markBackfillRunning,
+  reapStaleBackfills,
   startBackfill,
 } from './index'
 
@@ -22,7 +23,7 @@ interface Recorded {
   sent: { name: string; data: Record<string, unknown> }[]
 }
 
-function makeStubs(existingJob: { id: string } | null = null) {
+function makeStubs(existingJob: { id: string; updatedAt?: Date } | null = null) {
   const rec: Recorded = {
     backfillJobCreate: [],
     backfillJobUpdate: [],
@@ -37,7 +38,10 @@ function makeStubs(existingJob: { id: string } | null = null) {
         rec.backfillJobCreate.push(args)
         return { id: 'x' }
       }),
-      update: vi.fn(async () => ({ provider: 'gmail', agentId: 'u1' })),
+      update: vi.fn(async (args: unknown) => {
+        rec.backfillJobUpdate.push(args)
+        return { provider: 'gmail', agentId: 'u1' }
+      }),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     auditLogEntry: {
@@ -73,8 +77,8 @@ describe('startBackfill', () => {
     expect(rec.auditCreate).toHaveLength(1)
   })
 
-  it('throws when an active job already exists for (provider, agentId)', async () => {
-    const { db, sender } = makeStubs({ id: 'existing' })
+  it('throws when an active, recently-progressing job already exists', async () => {
+    const { db, sender } = makeStubs({ id: 'existing', updatedAt: new Date() })
     await expect(
       startBackfill(db, sender, {
         provider: 'gmail',
@@ -82,6 +86,26 @@ describe('startBackfill', () => {
         ctx: { actorId: 'agent_1', requestId: 'req_2' },
       }),
     ).rejects.toBeInstanceOf(BackfillAlreadyRunningError)
+  })
+
+  it('supersedes a stalled job and starts a fresh one', async () => {
+    // An orphaned run (no progress for >15 min) must not deadlock retries.
+    const { db, sender, rec } = makeStubs({
+      id: 'orphaned',
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000),
+    })
+    const res = await startBackfill(db, sender, {
+      provider: 'aircall',
+      agentId: null,
+      ctx: { actorId: 'agent_1', requestId: 'req_stale' },
+    })
+    expect(res.status).toBe('pending')
+    // The stale row was marked failed (superseded) ...
+    expect(rec.backfillJobUpdate).toHaveLength(1)
+    // ... and a brand-new job + event were created.
+    expect(rec.backfillJobCreate).toHaveLength(1)
+    expect(rec.sent).toHaveLength(1)
+    expect(rec.sent[0]?.name).toBe('backfill/aircall.requested')
   })
 
   it('honours a custom windowDays', async () => {
@@ -150,5 +174,55 @@ describe('progress helpers', () => {
     const audit = rec.auditCreate[0] as { data: { action: string; actorId: string } }
     expect(audit.data.action).toBe('backfill.cancelled')
     expect(audit.data.actorId).toBe('u_admin')
+  })
+})
+
+describe('reapStaleBackfills', () => {
+  function makeReaperDb(staleRows: { id: string }[]) {
+    const rec = { update: [] as unknown[], audit: [] as unknown[] }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db: any = {
+      backfillJob: {
+        findMany: vi.fn(async () => staleRows),
+        update: vi.fn(async (args: unknown) => {
+          rec.update.push(args)
+          return { provider: 'aircall', agentId: null }
+        }),
+      },
+      auditLogEntry: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(async (args: unknown) => {
+          rec.audit.push(args)
+          return { id: 'a' }
+        }),
+      },
+    }
+    return { db, rec }
+  }
+
+  it('fails every stale job and returns their ids', async () => {
+    const { db, rec } = makeReaperDb([{ id: 'stale1' }, { id: 'stale2' }])
+    const ids = await reapStaleBackfills(db, { now: new Date('2026-06-07T00:00:00Z') })
+    expect(ids).toEqual(['stale1', 'stale2'])
+    // Each reap marks the row failed (status update) + writes a failed audit.
+    expect(rec.update).toHaveLength(2)
+    expect(rec.audit).toHaveLength(2)
+    expect((rec.audit[0] as { data: { action: string } }).data.action).toBe('backfill.failed')
+  })
+
+  it('queries only pending/running rows older than the stale window', async () => {
+    const { db } = makeReaperDb([])
+    const now = new Date('2026-06-07T12:00:00Z')
+    await reapStaleBackfills(db, { now })
+    const where = db.backfillJob.findMany.mock.calls[0][0].where
+    expect(where.status).toEqual({ in: ['pending', 'running'] })
+    expect(where.updatedAt.lt.getTime()).toBe(now.getTime() - 15 * 60 * 1000)
+  })
+
+  it('does nothing when no jobs are stale', async () => {
+    const { db, rec } = makeReaperDb([])
+    const ids = await reapStaleBackfills(db)
+    expect(ids).toEqual([])
+    expect(rec.update).toHaveLength(0)
   })
 })

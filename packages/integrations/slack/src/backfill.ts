@@ -92,12 +92,20 @@ export const slackBackfillRequested = inngest.createFunction(
             fetchHistory(token, channelId, oldest, cursor),
           )
           for (const m of res.messages ?? []) {
-            const result = await step.run(`msg-${channelId}-${m.ts}`, async () =>
-              processSlackMessage({ message: m, channelId, requestId: jobId }),
-            )
-            processed += 1
-            if (result.matched) matched += 1
-            else skipped += 1
+            try {
+              const result = await step.run(`msg-${channelId}-${m.ts}`, async () =>
+                processSlackMessage({ message: m, channelId, requestId: jobId }),
+              )
+              processed += 1
+              if (result.matched) matched += 1
+              else skipped += 1
+            } catch (err) {
+              // One message that fails AI parsing/persist must not abort the
+              // whole channel import. Skip it and keep going.
+              processed += 1
+              skipped += 1
+              logger.warn({ jobId, channelId, ts: m.ts, err }, 'slack backfill: skipped a message that failed to import')
+            }
           }
           await step.run(`progress-${channelId}-${pageNum}`, async () =>
             incrementBackfillProgress(db, jobId, {

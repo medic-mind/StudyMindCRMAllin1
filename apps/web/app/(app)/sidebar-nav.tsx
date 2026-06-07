@@ -151,24 +151,23 @@ export function SidebarNav({ items }: Props) {
               const Icon = ICONS[item.href]
               return (
                 <div key={item.href} className="flex flex-col">
-                  {/* Active state uses a small left accent bar + tinted bg
-                      instead of the previous ring+shadow combo, which read as
-                      "selected button" rather than "active nav row". The bar
-                      anchors the eye and is consistent with the section
-                      divider below. */}
+                  {/* Modern active state: a filled primary pill with a soft
+                      shadow — reads unambiguously as "you are here" and matches
+                      the refreshed login + top-bar look. Inactive rows stay
+                      quiet until hover. */}
                   <Link
                     href={item.href}
                     aria-current={active ? 'page' : undefined}
                     className={
                       active
-                        ? 'relative flex items-center gap-2.5 rounded-md bg-primary-50 px-3 py-2 font-medium text-primary-800 before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-r before:bg-primary-600'
-                        : 'flex items-center gap-2.5 rounded-md px-3 py-2 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900'
+                        ? 'flex items-center gap-2.5 rounded-lg bg-primary-600 px-3 py-2 font-medium text-white shadow-sm shadow-primary-600/25'
+                        : 'flex items-center gap-2.5 rounded-lg px-3 py-2 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900'
                     }
                   >
                     {Icon ? (
                       <Icon
                         size={16}
-                        className={active ? 'text-primary-700' : 'text-neutral-400'}
+                        className={active ? 'text-white' : 'text-neutral-400'}
                       />
                     ) : null}
                     <span>{item.label}</span>
