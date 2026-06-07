@@ -53,14 +53,20 @@ function shortDayLabel(iso: string): string {
 
 function fmtDuration(sec: number): string {
   if (!sec) return '0:00'
-  const m = Math.floor(sec / 60)
-  const s = Math.abs(sec) % 60
+  // Compute on the magnitude, prepend the sign once. The deltas ("vs prev")
+  // are routinely negative; the old version produced "--2:30" (double sign)
+  // and, because a negative `m` never reached the `m >= 60` branch, dropped
+  // the hours unit for negative durations too.
+  const sign = sec < 0 ? '-' : ''
+  const abs = Math.abs(sec)
+  const m = Math.floor(abs / 60)
+  const s = abs % 60
   if (m >= 60) {
     const h = Math.floor(m / 60)
     const remM = m % 60
-    return `${sec < 0 ? '-' : ''}${h}h ${remM}m`
+    return `${sign}${h}h ${remM}m`
   }
-  return `${sec < 0 ? '-' : ''}${m}:${String(s).padStart(2, '0')}`
+  return `${sign}${m}:${String(s).padStart(2, '0')}`
 }
 
 function fmtPct(n: number): string {

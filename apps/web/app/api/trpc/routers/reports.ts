@@ -387,6 +387,14 @@ export const reportsRouter = router({
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
 
+        // Include the whole of the `to` day. The preset links pass the to-date
+        // at 00:00 UTC, so a raw `lte: input.to` silently drops everything that
+        // happened on that date itself — most visibly today's calls, making the
+        // counts jump when you click a preset vs the default view. Snap to the
+        // end of the UTC day for every window below.
+        const periodTo = new Date(input.to)
+        periodTo.setUTCHours(23, 59, 59, 999)
+
         interface NormalisedCall {
           callId: string
           contactId: string | null
@@ -494,12 +502,12 @@ export const reportsRouter = router({
         }
 
         // Period-over-period: same-length window immediately before.
-        const periodMs = input.to.getTime() - input.from.getTime()
+        const periodMs = periodTo.getTime() - input.from.getTime()
         const prevFrom = new Date(input.from.getTime() - periodMs)
         const prevTo = new Date(input.from.getTime() - 1)
 
         const [calls, prevCalls] = await Promise.all([
-          loadCalls(input.from, input.to),
+          loadCalls(input.from, periodTo),
           loadCalls(prevFrom, prevTo),
         ])
         const kpis = aggregate(calls)
@@ -515,7 +523,7 @@ export const reportsRouter = router({
         const days: string[] = []
         const cursor = new Date(input.from)
         cursor.setUTCHours(0, 0, 0, 0)
-        while (cursor <= input.to) {
+        while (cursor <= periodTo) {
           days.push(isoDay(cursor))
           cursor.setUTCDate(cursor.getUTCDate() + 1)
         }
@@ -715,7 +723,7 @@ export const reportsRouter = router({
         wCursor.setUTCHours(0, 0, 0, 0)
         const wDow = wCursor.getUTCDay()
         wCursor.setUTCDate(wCursor.getUTCDate() + (wDow === 0 ? -6 : 1 - wDow))
-        while (wCursor <= input.to) {
+        while (wCursor <= periodTo) {
           weekStarts.push(isoDay(wCursor))
           wCursor.setUTCDate(wCursor.getUTCDate() + 7)
         }
