@@ -10,6 +10,7 @@
 import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
+import { createCard } from '@studymind/core/board'
 import type { PrismaClient } from '@studymind/db'
 
 import type { BookingEventEnvelope, BookingResource } from './types'
@@ -21,6 +22,7 @@ export interface ApplyResult {
   primaryContactId: string | null
   guardianContactId: string | null
   studentContactId: string | null
+  cardId: string | null
   action: 'applied' | 'skipped'
   reason?: string
 }
@@ -142,6 +144,64 @@ async function linkParentStudent(db: PrismaClient, parentId: string, studentId: 
   }
 }
 
+/** Resolve where a camp customer lands on the pipeline: the default board's
+ *  intake stage ("New leads" if present, else the first stage). Mirrors the
+ *  web-lead funnel's destination logic. Returns null if no board exists. */
+async function resolveCampDestination(
+  db: PrismaClient,
+): Promise<{ boardId: string; stageId: string } | null> {
+  const board =
+    (await db.board.findFirst({
+      where: { isDefault: true, archivedAt: null },
+      orderBy: { position: 'asc' },
+      select: { id: true },
+    })) ??
+    (await db.board.findFirst({
+      where: { archivedAt: null },
+      orderBy: { position: 'asc' },
+      select: { id: true },
+    }))
+  if (!board) return null
+
+  const stage =
+    (await db.pipelineStage.findFirst({
+      where: { boardId: board.id, archivedAt: null, name: { equals: 'New leads', mode: 'insensitive' } },
+      select: { id: true },
+    })) ??
+    (await db.pipelineStage.findFirst({
+      where: { boardId: board.id, archivedAt: null },
+      orderBy: { position: 'asc' },
+      select: { id: true },
+    }))
+  if (!stage) return null
+  return { boardId: board.id, stageId: stage.id }
+}
+
+/** Put the camp customer on the sales pipeline so the team works it like any
+ *  lead. Deduped: skips when the contact already sits on the board (incl. a
+ *  card from the web-lead funnel), so repeat bookings never spam the board. */
+async function ensurePipelineCard(
+  db: PrismaClient,
+  contactId: string,
+  envelope: BookingEventEnvelope,
+): Promise<string | null> {
+  const destination = await resolveCampDestination(db)
+  if (!destination) return null
+
+  const existing = await db.card.findFirst({
+    where: { contactId, boardId: destination.boardId, archivedAt: null },
+    select: { id: true },
+  })
+  if (existing) return existing.id
+
+  const card = await createCard(
+    db,
+    { boardId: destination.boardId, stageId: destination.stageId, contact: { contactId } },
+    { actorId: ACTOR_ID, requestId: `summer-camp:${envelope.booking.id}` },
+  )
+  return card.id
+}
+
 function buildSummary(b: BookingResource): string {
   const parts = [
     b.camp_name ?? 'Summer camp',
@@ -226,7 +286,7 @@ export async function applyBookingEvent(
   const hasStudent = Boolean(student.firstName || student.lastName || studentEmail || studentPhone)
 
   if (!hasGuardian && !hasStudent) {
-    return { primaryContactId: null, guardianContactId: null, studentContactId: null, action: 'skipped', reason: 'no_identifiable_person' }
+    return { primaryContactId: null, guardianContactId: null, studentContactId: null, cardId: null, action: 'skipped', reason: 'no_identifiable_person' }
   }
 
   const campNote = b.camp_name ? `Summer camp booking: ${b.camp_name}` : 'Summer camp booking'
@@ -267,15 +327,22 @@ export async function applyBookingEvent(
     await writeBookingInteraction(db, contactId, envelope)
   }
 
+  // Surface the customer on the sales pipeline (like a lead) — but never for a
+  // cancellation, and deduped so it's at most one card per contact per board.
+  let cardId: string | null = null
+  if (primaryContactId && envelope.type !== 'summer_camp.booking.cancelled') {
+    cardId = await ensurePipelineCard(db, primaryContactId, envelope)
+  }
+
   if (primaryContactId) {
     await writeAuditLogEntry(db, {
       actorId: ACTOR_ID,
       action: envelope.type,
       target: { type: 'contact', id: primaryContactId },
       requestId: envelope.id,
-      after: { externalBookingId: b.id, status: b.status, campName: b.camp_name },
+      after: { externalBookingId: b.id, status: b.status, campName: b.camp_name, cardId },
     })
   }
 
-  return { primaryContactId, guardianContactId, studentContactId, action: 'applied' }
+  return { primaryContactId, guardianContactId, studentContactId, cardId, action: 'applied' }
 }

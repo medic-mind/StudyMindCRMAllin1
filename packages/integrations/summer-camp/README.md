@@ -20,6 +20,9 @@ Flow (CLAUDE.md §7.1): verify → `upsertProviderEvent` (idempotent on
 - links them with a `parent_of` `ContactLink`;
 - writes a `booking` `Interaction` on each timeline (idempotent on
   `payload.externalBookingId`, so updates patch rather than duplicate);
+- drops the customer onto the **sales pipeline** (default board's intake stage)
+  so the team works it like a lead — deduped to at most one card per contact
+  per board, and skipped on cancellations;
 - audits the lifecycle event (`summer_camp.booking.*`, deduped on the event id).
 
 Never auto-merges (§3): a single unambiguous email/phone match adopts the
