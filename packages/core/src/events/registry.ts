@@ -189,6 +189,9 @@ export const EVENT_NAMES = [
   // Unsorted tray (one-click classify). CLAUDE.md §2 (idempotent), §6.
   'invoicing.accounts_imported',
   'invoicing.account_classified',
+  // One-click heal: re-pull every invoice from the platform into the mirror
+  // (clears stale paid-but-outstanding rows). CLAUDE.md §2 (idempotent).
+  'invoicing.invoices_resynced',
 
   // Interactions
   'interaction.created',

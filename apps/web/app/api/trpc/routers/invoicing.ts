@@ -30,7 +30,10 @@ import {
   loadInvoicingConfigStatus,
   saveInvoicingConfig,
 } from '@studymind/integration-invoicing/config'
-import { importBusinessAccountsFromInvoicing } from '@studymind/integration-invoicing/import-accounts'
+import {
+  importBusinessAccountsFromInvoicing,
+  resyncInvoicesFromInvoicing,
+} from '@studymind/integration-invoicing/import-accounts'
 import {
   cancelInvoice,
   duplicateInvoice,
@@ -327,6 +330,47 @@ const configRouter = router({
 
     await ctx.audit({
       action: 'invoicing.accounts_imported',
+      target: { type: 'InvoicingSetting', id: 'default' },
+      after: result,
+    })
+
+    return { ok: true as const, ...result }
+  }),
+
+  /**
+   * One-click heal: re-pull every invoice from the platform and re-apply it to
+   * the mirror. Clears stale state written before a sync bugfix — e.g. paid
+   * invoices that showed their full amount as still outstanding. Idempotent
+   * (dedups on invoicingId); archived invoices stay excluded so it never
+   * resurrects a deleted one. CEO / Senior Manager only.
+   */
+  resyncInvoices: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertConfig(user.role)
+    const cfg = await loadInvoicingConfigStatus()
+    if (!cfg.configured) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Connect the invoicing API key first.',
+      })
+    }
+
+    let result
+    try {
+      result = await resyncInvoicesFromInvoicing(ctx.db, {
+        ctx: { actorId: user.id, requestId: ctx.requestId },
+      })
+    } catch (err) {
+      await ctx.audit({
+        action: 'invoicing.invoices_resynced',
+        target: { type: 'InvoicingSetting', id: 'default' },
+        after: { ok: false },
+      })
+      mapApiError(err)
+    }
+
+    await ctx.audit({
+      action: 'invoicing.invoices_resynced',
       target: { type: 'InvoicingSetting', id: 'default' },
       after: result,
     })

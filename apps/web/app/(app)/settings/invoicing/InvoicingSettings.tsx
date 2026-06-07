@@ -49,6 +49,7 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
   const save = trpc.invoicing.config.save.useMutation()
   const test = trpc.invoicing.config.test.useMutation()
   const importAccounts = trpc.invoicing.config.importAccounts.useMutation()
+  const resyncInvoices = trpc.invoicing.config.resyncInvoices.useMutation()
 
   const [testResult, setTestResult] = useState<string | null>(null)
 
@@ -76,6 +77,22 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
       router.refresh()
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Could not import'
+      setImportResult(msg)
+      toast.error(msg)
+    }
+  }
+
+  async function handleResyncInvoices() {
+    setImportResult(null)
+    try {
+      const r = await resyncInvoices.mutateAsync()
+      const msg = `Re-synced ${r.scanned ?? 0} invoice${(r.scanned ?? 0) === 1 ? '' : 's'} — paid invoices now show the correct outstanding balance.`
+      setImportResult(msg)
+      toast.success(msg)
+      await status.refetch()
+      router.refresh()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not re-sync invoices'
       setImportResult(msg)
       toast.error(msg)
     }
@@ -192,6 +209,14 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
             onClick={handleImport}
           >
             {importAccounts.isPending ? 'Starting…' : 'Pull historic data'}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={resyncInvoices.isPending || !data.configured}
+            onClick={handleResyncInvoices}
+          >
+            {resyncInvoices.isPending ? 'Re-syncing…' : 'Re-sync invoices'}
           </Button>
           {testResult && (
             <span className="font-mono text-[11px] text-neutral-600">{testResult}</span>

@@ -320,3 +320,57 @@ export async function importBusinessAccountsFromInvoicing(
 
   return result
 }
+
+export interface ResyncInvoicesResult {
+  /** Invoices pulled from the platform and re-applied to the mirror. */
+  scanned: number
+  pages: number
+}
+
+/**
+ * Heal pass: re-pull every invoice from the platform and re-apply it through
+ * the same idempotent `upsertInvoiceFromRecord` the webhook/reconcile use. Used
+ * to retro-fix mirror rows written before a sync bugfix — e.g. paid invoices
+ * that were showing their full amount outstanding because a payments-less
+ * `invoice.updated` had reset paidMinor to 0. Dedups on invoicingId; safe to
+ * run any time. Archived invoices are excluded by the list endpoint, so this
+ * never resurrects a deleted one.
+ */
+export async function resyncInvoicesFromInvoicing(
+  db: DbClient,
+  opts: { ctx: ImportAccountsContext; client?: InvoicingClient; pageSize?: number; maxPages?: number },
+): Promise<ResyncInvoicesResult> {
+  const client = opts.client ?? (await createClientFromConfig())
+  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 100))
+  const maxPages = Math.max(1, opts.maxPages ?? 100)
+
+  let page = 1
+  let scanned = 0
+  while (page <= maxPages) {
+    const batch = await client.listInvoices({ page, page_size: pageSize })
+    if (batch.data.length === 0) break
+    for (const raw of batch.data) {
+      try {
+        await upsertInvoiceFromRecord(db, raw, 'system')
+        scanned += 1
+      } catch {
+        // One malformed invoice shouldn't abort the whole heal; the nightly
+        // reconcile will retry it from the feed.
+      }
+    }
+    const total = typeof batch.total === 'number' ? batch.total : null
+    if (total !== null && page * pageSize >= total) break
+    if (batch.data.length < pageSize) break
+    page += 1
+  }
+
+  await writeAuditLogEntry(db, {
+    actorId: opts.ctx.actorId,
+    action: 'invoicing.invoices_resynced',
+    target: { type: 'InvoicingSetting', id: 'default' },
+    requestId: opts.ctx.requestId,
+    after: { scanned, pages: page },
+  })
+
+  return { scanned, pages: page }
+}
