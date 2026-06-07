@@ -238,6 +238,44 @@ function occurredAt(b: BookingResource): Date {
   return new Date()
 }
 
+/** Mirror the booking's camp notes onto the customer timeline as `note`
+ *  Interactions. Idempotent on the camp note id; skips notes the CRM itself
+ *  pushed (source:'crm') so a round-tripped note never duplicates. */
+async function writeCampNotes(
+  db: PrismaClient,
+  contactId: string,
+  envelope: BookingEventEnvelope,
+): Promise<void> {
+  const notes = envelope.booking.notes_log ?? []
+  for (const note of notes) {
+    if (note.source === 'crm') continue // our own echo
+    if (!note.body) continue
+    const existing = await db.interaction.findFirst({
+      where: { contactId, type: 'note', payload: { path: ['campNoteId'], equals: note.id } },
+      select: { id: true },
+    })
+    if (existing) continue
+    const occurredAt = note.created_at ? new Date(note.created_at) : new Date()
+    await db.interaction.create({
+      data: {
+        id: createId(),
+        type: 'note',
+        contactId,
+        occurredAt: Number.isNaN(occurredAt.getTime()) ? new Date() : occurredAt,
+        summary: note.body.slice(0, 280),
+        payload: {
+          kind: 'summer_camp.note',
+          campNoteId: note.id,
+          author: note.author,
+          source: 'summer_camp',
+          externalBookingId: envelope.booking.id,
+          body: note.body,
+        },
+      },
+    })
+  }
+}
+
 async function writeBookingInteraction(
   db: PrismaClient,
   contactId: string,
@@ -371,6 +409,11 @@ export async function applyBookingEvent(
   const targets = [guardianContactId, studentContactId].filter((id): id is string => Boolean(id))
   for (const contactId of targets) {
     await writeBookingInteraction(db, contactId, envelope)
+  }
+
+  // Mirror camp notes onto the primary (customer) timeline.
+  if (primaryContactId) {
+    await writeCampNotes(db, primaryContactId, envelope)
   }
 
   // Surface the customer on the sales pipeline (like a lead) — but never for a

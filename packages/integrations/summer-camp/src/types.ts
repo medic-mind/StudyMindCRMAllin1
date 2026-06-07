@@ -41,6 +41,17 @@ export const BookingPayment = z.object({
   reference: nullableString,
 })
 
+/** A note authored on the camp booking. `source:'crm'` marks notes the CRM
+ *  itself pushed (so we skip re-importing our own echo). */
+export const BookingNote = z.object({
+  id: z.string().min(1),
+  author: nullableString,
+  body: nullableString,
+  created_at: nullableString,
+  source: nullableString,
+})
+export type BookingNote = z.infer<typeof BookingNote>
+
 export const BookingResource = z.object({
   id: z.string().min(1),
   status: nullableString,
@@ -68,6 +79,7 @@ export const BookingResource = z.object({
   notes: nullableString,
   created_at: nullableString,
   updated_at: nullableString,
+  notes_log: z.array(BookingNote).nullable().optional(),
 })
 export type BookingResource = z.infer<typeof BookingResource>
 
