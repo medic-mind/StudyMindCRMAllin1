@@ -14,8 +14,9 @@ import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
-import { MailIcon, PhoneIcon, XIcon } from '@/components/ui/icon'
+import { MailIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
+import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
 import { trpc } from '@/lib/trpc/client'
 
@@ -124,17 +125,8 @@ function QuickAddModal({ onClose }: { onClose: () => void }) {
                 />
               </span>
             </Field>
-            <Field label="Phone (E.164)" htmlFor="qa-phone" hint="+447700900123" className="col-span-2">
-              <span className="relative block">
-                <PhoneIcon size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
-                <Input
-                  id="qa-phone"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="pl-7"
-                  placeholder="+447700900123"
-                />
-              </span>
+            <Field label="Phone" htmlFor="qa-phone" className="col-span-2">
+              <PhoneInput id="qa-phone" value={phone} onChange={setPhone} />
             </Field>
           </div>
         </div>

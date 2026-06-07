@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { CountrySelect } from '@/components/ui/country-select'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { XIcon } from '@/components/ui/icon'
@@ -367,12 +368,11 @@ export function EditContactForm({
             <Input id="email" type="email" value={form.email} onChange={set('email')} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="phoneE164">Phone (E.164)</Label>
-            <Input
+            <Label htmlFor="phoneE164">Phone</Label>
+            <PhoneInput
               id="phoneE164"
               value={form.phoneE164}
-              onChange={set('phoneE164')}
-              placeholder="+447700900123"
+              onChange={(v) => setForm((f) => ({ ...f, phoneE164: v }))}
             />
           </div>
           <div className="space-y-1.5">

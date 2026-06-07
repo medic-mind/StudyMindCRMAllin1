@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
 import { PlusIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
+import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
@@ -362,11 +363,7 @@ export function AddCardButton({
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                       />
-                      <Input
-                        placeholder="Phone (+447…)"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                      />
+                      <PhoneInput value={phone} onChange={setPhone} />
                       <Select value={kind} onChange={(e) => setKind(e.target.value as ContactRole)}>
                         <option value="parent">Parent</option>
                         <option value="student">Student</option>

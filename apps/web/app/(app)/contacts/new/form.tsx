@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card'
 import { CountrySelect } from '@/components/ui/country-select'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { XIcon } from '@/components/ui/icon'
@@ -347,11 +348,11 @@ export function NewContactForm() {
           <Field label="Email" htmlFor="email">
             <Input id="email" type="email" value={form.email} onChange={set('email')} />
           </Field>
-          <Field label="Phone (E.164)" htmlFor="phoneE164" hint="+447700900123">
-            <Input
+          <Field label="Phone" htmlFor="phoneE164" hint="Pick the country, then type the number">
+            <PhoneInput
               id="phoneE164"
               value={form.phoneE164}
-              onChange={set('phoneE164')}
+              onChange={(v) => setForm((f) => ({ ...f, phoneE164: v }))}
             />
           </Field>
           <Field label="Preferred channel" htmlFor="preferredContactMethod">
