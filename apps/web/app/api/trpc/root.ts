@@ -61,6 +61,7 @@ import { reportsRouter } from './routers/reports'
 import { searchRouter } from './routers/search'
 import { slackChannelRouter } from './routers/slackChannel'
 import { slackSummaryRouter } from './routers/slackSummary'
+import { summerCampRouter } from './routers/summerCamp'
 import { taskRouter } from './routers/task'
 import { teamRouter } from './routers/team'
 import { uploadedInvoiceRouter } from './routers/uploadedInvoice'
@@ -103,6 +104,7 @@ export const appRouter = router({
   search: searchRouter,
   slackChannel: slackChannelRouter,
   slackSummary: slackSummaryRouter,
+  summerCamp: summerCampRouter,
   task: taskRouter,
   team: teamRouter,
   uploadedInvoice: uploadedInvoiceRouter,

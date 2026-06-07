@@ -27,6 +27,7 @@
     "@studymind/integration-pagerduty": "workspace:*",
     "@studymind/integration-slack": "workspace:*",
     "@studymind/integration-stripe": "workspace:*",
+    "@studymind/integration-summer-camp": "workspace:*",
     "@studymind/integration-trengo": "workspace:*",
     "@studymind/integration-zoom": "workspace:*",
     "@studymind/jobs": "workspace:*",

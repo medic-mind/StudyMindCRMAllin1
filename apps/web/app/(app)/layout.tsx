@@ -76,6 +76,16 @@ function buildNav(role: Role): NavItem[] {
     },
     { href: '/boards', label: 'Boards' },
     { href: '/tasks', label: 'Tasks' },
+    // Read-only live view of the Summer Camp app: which camps are running, how
+    // full they are, and the weekly session timetables. For the sales team.
+    {
+      href: '/camps',
+      label: 'Summer Camps',
+      children: [
+        { href: '/camps', label: 'Camps & fill' },
+        { href: '/camps/timetable', label: 'Weekly timetable' },
+      ],
+    },
     {
       href: '/webinars',
       label: 'Webinars',

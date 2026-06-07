@@ -20,6 +20,7 @@ import { FUNCTIONS as GOCARDLESS_FUNCTIONS } from '@studymind/integration-gocard
 import { FUNCTIONS as INVOICING_FUNCTIONS } from '@studymind/integration-invoicing/jobs'
 import { FUNCTIONS as SLACK_FUNCTIONS } from '@studymind/integration-slack/jobs'
 import { FUNCTIONS as STRIPE_FUNCTIONS } from '@studymind/integration-stripe/jobs'
+import { FUNCTIONS as SUMMER_CAMP_FUNCTIONS } from '@studymind/integration-summer-camp/jobs'
 import { FUNCTIONS as TRENGO_FUNCTIONS } from '@studymind/integration-trengo/jobs'
 import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 
@@ -59,6 +60,7 @@ const handlers = serve({
     ...ASANA_FUNCTIONS,
     ...GMAIL_FUNCTIONS,
     ...INVOICING_FUNCTIONS,
+    ...SUMMER_CAMP_FUNCTIONS,
   ],
   signingKey: process.env['INNGEST_SIGNING_KEY'],
 })

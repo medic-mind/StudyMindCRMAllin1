@@ -141,6 +141,9 @@ importers:
       '@studymind/integration-stripe':
         specifier: workspace:*
         version: link:../../packages/integrations/stripe
+      '@studymind/integration-summer-camp':
+        specifier: workspace:*
+        version: link:../../packages/integrations/summer-camp
       '@studymind/integration-trengo':
         specifier: workspace:*
         version: link:../../packages/integrations/trengo
@@ -601,6 +604,34 @@ importers:
       stripe:
         specifier: ^17.4.0
         version: 17.7.0
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/integrations/summer-camp:
+    dependencies:
+      '@paralleldrive/cuid2':
+        specifier: ^3.3.0
+        version: 3.3.0
+      '@prisma/client':
+        specifier: ^5.22.0
+        version: 5.22.0(prisma@5.22.0)
+      '@studymind/audit':
+        specifier: workspace:*
+        version: link:../../audit
+      '@studymind/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@studymind/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@studymind/jobs':
+        specifier: workspace:*
+        version: link:../../jobs
       zod:
         specifier: ^3.23.8
         version: 3.25.76

@@ -451,6 +451,14 @@ export const EVENT_NAMES = [
   'webinar.recording_sent',
   'webinar.recording_trashed',
   'webinar.broadcast_sent',
+
+  // Summer Camp integration (camp.studymind.co.uk). Bookings pushed from the
+  // camp app are mirrored onto the customer (parent) timeline as `booking`
+  // interactions; the contact enrichment + booking lifecycle are audited.
+  'summer_camp.booking.created',
+  'summer_camp.booking.updated',
+  'summer_camp.booking.cancelled',
+  'summer_camp.contact_enriched',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
@@ -515,6 +523,9 @@ export const INNGEST_EVENT_NAMES = [
   // Zoom recording.completed webhook (ADR 0035): hands off async so the class
   // recording is emailed promptly instead of waiting for the hourly sweep.
   'webinar/recording.completed',
+  // Summer Camp booking webhook (camp.studymind.co.uk): one bus event per
+  // inbound booking create/update/cancel, processed async like every provider.
+  'summer-camp/event.received',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]
