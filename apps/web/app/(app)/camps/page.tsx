@@ -4,11 +4,16 @@
 // live from camp.studymind.co.uk via the summer-camp integration (no copy in
 // our DB). CLAUDE.md §26 (RSC by default; URL state for the year).
 
+import { getCurrentUser } from '@/lib/auth/server'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { BackfillButton } from './BackfillButton'
+
 export const dynamic = 'force-dynamic'
+
+const BACKFILL_ROLES = new Set(['ceo', 'senior_manager'])
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
@@ -50,8 +55,9 @@ export default async function CampsPage({
       ? parseInt(searchParams.year, 10)
       : new Date().getFullYear()
 
-  const caller = await createServerCaller()
+  const [me, caller] = await Promise.all([getCurrentUser(), createServerCaller()])
   const res = await caller.summerCamp.camps({ year })
+  const canBackfill = Boolean(me && BACKFILL_ROLES.has(me.role))
 
   return (
     <>
@@ -63,7 +69,7 @@ export default async function CampsPage({
         {!res.connected || !res.feed ? (
           <NotConnected />
         ) : (
-          <CampsContent feed={res.feed} year={year} />
+          <CampsContent feed={res.feed} year={year} canBackfill={canBackfill} />
         )}
       </PageBody>
     </>
@@ -72,7 +78,7 @@ export default async function CampsPage({
 
 type Feed = NonNullable<Awaited<ReturnType<Awaited<ReturnType<typeof createServerCaller>>['summerCamp']['camps']>>['feed']>
 
-function CampsContent({ feed, year }: { feed: Feed; year: number }) {
+function CampsContent({ feed, year, canBackfill }: { feed: Feed; year: number; canBackfill: boolean }) {
   const maxCell = Math.max(
     1,
     ...feed.subjects.flatMap((s) => feed.weeks.map((w) => feed.grid[s]?.[String(w.week_number)]?.total ?? 0)),
@@ -80,7 +86,7 @@ function CampsContent({ feed, year }: { feed: Feed; year: number }) {
 
   return (
     <div className="flex flex-col gap-8">
-      {/* Year switcher (URL state) */}
+      {/* Year switcher (URL state) + admin backfill */}
       <div className="flex items-center gap-2 text-sm">
         <span className="text-neutral-500">Year</span>
         {[year - 1, year, year + 1].map((y) => (
@@ -100,6 +106,7 @@ function CampsContent({ feed, year }: { feed: Feed; year: number }) {
           {feed.totals.grand} booking{feed.totals.grand === 1 ? '' : 's'} across {feed.camps.length} camp
           {feed.camps.length === 1 ? '' : 's'}
         </span>
+        {canBackfill ? <BackfillButton /> : null}
       </div>
 
       {/* Camps running */}

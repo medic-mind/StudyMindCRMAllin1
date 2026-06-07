@@ -90,6 +90,20 @@ export interface TimetableFeed {
   camps: TimetableCamp[]
 }
 
+export interface BookingsPage {
+  /** Each item is the normalised booking shape (parse with BookingResource). */
+  bookings: unknown[]
+  nextCursor: string | null
+}
+
+export interface GetBookingsOpts {
+  /** ISO timestamp — only bookings updated at/after this time (incremental). */
+  since?: string | null
+  /** Opaque keyset cursor from a previous page (full backfill walk). */
+  cursor?: string | null
+  limit?: number
+}
+
 /** Resolve config from env. Returns null when not configured. */
 export function loadSummerCampConfig(): SummerCampConfig | null {
   const baseUrl = process.env['SUMMER_CAMP_API_URL']
@@ -121,6 +135,16 @@ export class SummerCampClient {
   getTimetable(campId?: string | null): Promise<TimetableFeed> {
     const q = campId ? `?camp_id=${encodeURIComponent(campId)}` : ''
     return this.get<TimetableFeed>(`/api/external/timetable${q}`)
+  }
+
+  /** One keyset page of bookings for the CRM's backfill + periodic sync. */
+  getBookings(opts: GetBookingsOpts = {}): Promise<BookingsPage> {
+    const p = new URLSearchParams()
+    if (opts.since) p.set('since', opts.since)
+    if (opts.cursor) p.set('cursor', opts.cursor)
+    if (opts.limit) p.set('limit', String(opts.limit))
+    const qs = p.toString()
+    return this.get<BookingsPage>(`/api/external/bookings${qs ? `?${qs}` : ''}`)
   }
 }
 

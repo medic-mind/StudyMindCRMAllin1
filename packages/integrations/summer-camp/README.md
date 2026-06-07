@@ -28,13 +28,33 @@ Flow (CLAUDE.md §7.1): verify → `upsertProviderEvent` (idempotent on
 Never auto-merges (§3): a single unambiguous email/phone match adopts the
 contact (filling blanks only); anything ambiguous creates a fresh one.
 
+## Backfill + periodic sync (pull)
+
+So the CRM holds all *current* bookings (not just ones created after the
+webhook was wired) and self-heals any missed webhook, `jobs.ts` adds two pull
+jobs over `client.getBookings()` (the camp's keyset `GET /api/external/bookings`):
+
+- **`summer-camp/backfill-bookings`** — one-shot, admin-triggered
+  (`summerCamp.backfill`, CEO + Senior Manager; button on `/camps`). Walks every
+  booking page-by-page, self-rescheduling on the cursor. Writes one summary
+  audit on completion.
+- **`summer-camp/sync-bookings`** — cron (every 15 min). Re-pulls bookings
+  changed in the last `SUMMER_CAMP_SYNC_LOOKBACK_DAYS` (default 3) and applies
+  them. Safety net for missed webhooks; also imports new bookings if the push
+  isn't configured.
+
+Both apply via the same `applyBookingEvent` with `audit: false` (the live
+webhook is the per-booking audit source) and are fully idempotent, so a re-run
+or overlap is safe.
+
 ## Outbound: camp feeds → CRM (pull)
 
 `client.ts` reads the camp app's read-only feeds for the CRM's live, view-only
 "Summer Camps" page:
 
 - `getCamps(year)` → camps running + subject × week fill grid + per-camp counts;
-- `getTimetable(campId?)` → per-camp weekly session timetables.
+- `getTimetable(campId?)` → per-camp weekly session timetables;
+- `getBookings({ since?, cursor?, limit? })` → keyset booking feed (backfill + sync).
 
 Config is env-only: `SUMMER_CAMP_API_URL` + `SUMMER_CAMP_API_KEY`. Unset → the
 client is `null` and the page renders a "not connected" state.

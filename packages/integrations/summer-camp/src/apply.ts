@@ -281,6 +281,16 @@ async function writeBookingInteraction(
   })
 }
 
+export interface ApplyOptions {
+  /**
+   * Write the per-booking AuditLogEntry. True for the live webhook (each
+   * booking is a real-time enrichment event worth auditing). The pull jobs
+   * (backfill + periodic sync) pass false — they're reconciliation and write a
+   * single summary audit per run instead (CLAUDE.md §17 backfill convention).
+   */
+  audit?: boolean
+}
+
 /**
  * Apply one booking event. Idempotent: contacts match-or-create, the booking
  * interaction upserts on `payload.externalBookingId`, and the audit row dedupes
@@ -289,7 +299,9 @@ async function writeBookingInteraction(
 export async function applyBookingEvent(
   db: PrismaClient,
   envelope: BookingEventEnvelope,
+  opts: ApplyOptions = {},
 ): Promise<ApplyResult> {
+  const shouldAudit = opts.audit ?? true
   const b = envelope.booking
 
   const guardianEmail = cleanEmail(b.guardian?.email)
@@ -351,7 +363,7 @@ export async function applyBookingEvent(
     cardId = await ensurePipelineCard(db, primaryContactId, envelope)
   }
 
-  if (primaryContactId) {
+  if (primaryContactId && shouldAudit) {
     await writeAuditLogEntry(db, {
       actorId: ACTOR_ID,
       action: envelope.type,

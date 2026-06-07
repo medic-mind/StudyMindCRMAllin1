@@ -459,6 +459,10 @@ export const EVENT_NAMES = [
   'summer_camp.booking.updated',
   'summer_camp.booking.cancelled',
   'summer_camp.contact_enriched',
+  // Admin-triggered backfill of all current bookings + the per-run summary the
+  // backfill writes on completion (the recurring sync logs rather than audits).
+  'summer_camp.backfill_requested',
+  'summer_camp.bookings_synced',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]
@@ -526,6 +530,10 @@ export const INNGEST_EVENT_NAMES = [
   // Summer Camp booking webhook (camp.studymind.co.uk): one bus event per
   // inbound booking create/update/cancel, processed async like every provider.
   'summer-camp/event.received',
+  // Admin-triggered one-shot backfill of all current camp bookings, and the
+  // recurring safety-net sync that re-pulls recent changes.
+  'summer-camp/backfill-bookings.requested',
+  'summer-camp/sync-bookings.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]

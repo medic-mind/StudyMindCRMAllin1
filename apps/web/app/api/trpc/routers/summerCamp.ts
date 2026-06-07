@@ -7,7 +7,17 @@ import { z } from 'zod'
 
 import { createClientFromConfig } from '@studymind/integration-summer-camp/client'
 
-import { protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
+import {
+  auditedProcedure,
+  protectedProcedure,
+  requireUser,
+  router,
+  type SessionUser,
+} from '@/lib/trpc/builders'
+
+// Importing all current bookings creates Contacts — gate to the admin tier,
+// matching the other backfill triggers (ADR 0017 / conversation-head backfill).
+const BACKFILL_ROLES: ReadonlySet<SessionUser['role']> = new Set(['ceo', 'senior_manager'])
 
 export const summerCampRouter = router({
   // Whether the camp app feeds are configured, so the UI can render a clear
@@ -50,4 +60,24 @@ export const summerCampRouter = router({
         })
       }
     }),
+
+  // Import ALL current camp bookings into the CRM (one-shot, background).
+  // Fires the self-rescheduling Inngest backfill; the recurring sync then
+  // keeps the CRM in step. CEO + Senior Manager only.
+  backfill: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    if (!BACKFILL_ROLES.has(user.role)) throw new TRPCError({ code: 'FORBIDDEN' })
+    if (!createClientFromConfig()) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Summer Camp app is not connected.' })
+    }
+    const { inngest } = await import('@studymind/jobs')
+    const jobId = `scbf_${Date.now().toString(36)}_${user.id.slice(-6)}`
+    await inngest.send({ name: 'summer-camp/backfill-bookings.requested', data: { jobId } })
+    await ctx.audit({
+      action: 'summer_camp.backfill_requested',
+      target: { type: 'System', id: jobId },
+      after: { initiatedBy: user.id },
+    })
+    return { jobId }
+  }),
 })
