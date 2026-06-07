@@ -146,6 +146,38 @@ export class SummerCampClient {
     const qs = p.toString()
     return this.get<BookingsPage>(`/api/external/bookings${qs ? `?${qs}` : ''}`)
   }
+
+  private async write(path: string, method: 'POST' | 'PATCH', body: unknown): Promise<void> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 6000)
+    try {
+      const res = await fetch(`${this.config.baseUrl}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${this.config.apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error(`summer-camp ${method} ${path} failed: ${res.status}`)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** Write-back: add a note to a camp booking. */
+  postNote(bookingId: string, body: string, author?: string | null): Promise<void> {
+    return this.write(`/api/external/bookings/${encodeURIComponent(bookingId)}/notes`, 'POST', {
+      body,
+      author: author ?? null,
+    })
+  }
+
+  /** Write-back: update whitelisted fields on a camp booking. */
+  patchBooking(bookingId: string, fields: Record<string, unknown>): Promise<void> {
+    return this.write(`/api/external/bookings/${encodeURIComponent(bookingId)}`, 'PATCH', fields)
+  }
 }
 
 /** Build a client from env, or null when the integration is not configured. */

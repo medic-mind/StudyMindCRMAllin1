@@ -417,6 +417,22 @@ export const contactRouter = router({
         before,
         after,
       })
+
+      // Two-way sync: if an identity field changed on a Summer Camp-linked
+      // contact, push it back to the camp booking. Best-effort; a no-op for
+      // non-camp contacts (CLAUDE.md §15 summer-camp write-back).
+      const identityTouched =
+        input.firstName !== undefined ||
+        input.lastName !== undefined ||
+        input.email !== undefined ||
+        input.phoneE164 !== undefined
+      if (identityTouched) {
+        const { pushContactDetailsForContact } = await import(
+          '@studymind/integration-summer-camp/writeback'
+        )
+        await pushContactDetailsForContact(ctx.db, after.id).catch(() => null)
+      }
+
       return { id: after.id }
     }),
 

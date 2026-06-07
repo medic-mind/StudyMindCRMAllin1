@@ -10,6 +10,7 @@
     "./client": "./src/client.ts",
     "./jobs": "./src/jobs.ts",
     "./apply": "./src/apply.ts",
+    "./writeback": "./src/writeback.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {

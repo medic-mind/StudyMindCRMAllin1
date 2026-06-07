@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { decideMatch, normalisePhone } from './apply'
 import { verifyAndParse } from './webhook'
+import { mapContactToBookingFields } from './writeback'
 
 const SECRET = 'test-secret'
 
@@ -96,5 +97,29 @@ describe('decideMatch', () => {
   })
   it('creates (never merges) when ambiguous', () => {
     expect(decideMatch(['c1', 'c2'])).toEqual({ create: true })
+  })
+})
+
+describe('mapContactToBookingFields (write-back)', () => {
+  it('maps a student contact to student_* fields', () => {
+    expect(
+      mapContactToBookingFields({ kind: 'student', firstName: 'Sam', lastName: 'Doe', email: 's@x.com', phoneE164: '+44700' }),
+    ).toEqual({
+      student_first_name: 'Sam',
+      student_last_name: 'Doe',
+      student_email: 's@x.com',
+      student_mobile: '+44700',
+    })
+  })
+  it('maps a parent contact to guardian_* fields (name joined)', () => {
+    expect(
+      mapContactToBookingFields({ kind: 'parent', firstName: 'Jane', lastName: 'Doe', email: 'j@x.com', phoneE164: null }),
+    ).toEqual({
+      guardian_name: 'Jane Doe',
+      guardian_email: 'j@x.com',
+    })
+  })
+  it('omits empty fields', () => {
+    expect(mapContactToBookingFields({ kind: 'student', firstName: null, lastName: null, email: null, phoneE164: null })).toEqual({})
   })
 })

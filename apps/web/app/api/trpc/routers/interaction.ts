@@ -204,6 +204,15 @@ export const interactionRouter = router({
         before: null,
         after: { id: created.id, type: created.type, summary: created.summary },
       })
+
+      // Two-way sync: a note on a Summer Camp-linked contact is pushed back to
+      // the camp booking. Best-effort — never fails the note creation; a no-op
+      // for non-camp contacts (CLAUDE.md §15 summer-camp write-back).
+      if (input.contactId && input.body) {
+        const { pushNoteForContact } = await import('@studymind/integration-summer-camp/writeback')
+        await pushNoteForContact(ctx.db, input.contactId, input.body, user.email).catch(() => null)
+      }
+
       return { id: created.id }
     }),
 
