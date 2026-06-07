@@ -12,6 +12,7 @@ import {
   markBackfillCompleted,
   markBackfillFailed,
   markBackfillRunning,
+  reapStaleBackfills,
   startBackfill,
 } from './index'
 
@@ -173,5 +174,55 @@ describe('progress helpers', () => {
     const audit = rec.auditCreate[0] as { data: { action: string; actorId: string } }
     expect(audit.data.action).toBe('backfill.cancelled')
     expect(audit.data.actorId).toBe('u_admin')
+  })
+})
+
+describe('reapStaleBackfills', () => {
+  function makeReaperDb(staleRows: { id: string }[]) {
+    const rec = { update: [] as unknown[], audit: [] as unknown[] }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db: any = {
+      backfillJob: {
+        findMany: vi.fn(async () => staleRows),
+        update: vi.fn(async (args: unknown) => {
+          rec.update.push(args)
+          return { provider: 'aircall', agentId: null }
+        }),
+      },
+      auditLogEntry: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(async (args: unknown) => {
+          rec.audit.push(args)
+          return { id: 'a' }
+        }),
+      },
+    }
+    return { db, rec }
+  }
+
+  it('fails every stale job and returns their ids', async () => {
+    const { db, rec } = makeReaperDb([{ id: 'stale1' }, { id: 'stale2' }])
+    const ids = await reapStaleBackfills(db, { now: new Date('2026-06-07T00:00:00Z') })
+    expect(ids).toEqual(['stale1', 'stale2'])
+    // Each reap marks the row failed (status update) + writes a failed audit.
+    expect(rec.update).toHaveLength(2)
+    expect(rec.audit).toHaveLength(2)
+    expect((rec.audit[0] as { data: { action: string } }).data.action).toBe('backfill.failed')
+  })
+
+  it('queries only pending/running rows older than the stale window', async () => {
+    const { db } = makeReaperDb([])
+    const now = new Date('2026-06-07T12:00:00Z')
+    await reapStaleBackfills(db, { now })
+    const where = db.backfillJob.findMany.mock.calls[0][0].where
+    expect(where.status).toEqual({ in: ['pending', 'running'] })
+    expect(where.updatedAt.lt.getTime()).toBe(now.getTime() - 15 * 60 * 1000)
+  })
+
+  it('does nothing when no jobs are stale', async () => {
+    const { db, rec } = makeReaperDb([])
+    const ids = await reapStaleBackfills(db)
+    expect(ids).toEqual([])
+    expect(rec.update).toHaveLength(0)
   })
 })

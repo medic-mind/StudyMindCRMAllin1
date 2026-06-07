@@ -10,6 +10,7 @@ import { COST_SUMMARY_FUNCTIONS } from './cost-summary'
 import { AUDIT_LOG_ARCHIVE_FUNCTIONS } from './compliance/audit-log-archive'
 import { UEBA_FUNCTIONS } from './security/ueba'
 import { OBSERVABILITY_FUNCTIONS } from './observability'
+import { BACKFILL_REAPER_FUNCTIONS } from './backfill/reap-stale'
 
 export { inngest } from './client'
 
@@ -24,6 +25,7 @@ export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[
   ...AUDIT_LOG_ARCHIVE_FUNCTIONS,
   ...UEBA_FUNCTIONS,
   ...OBSERVABILITY_FUNCTIONS,
+  ...BACKFILL_REAPER_FUNCTIONS,
 ]
 
 export interface RecurringJobSpec {
@@ -88,6 +90,12 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     id: 'aircall/recover-disabled-webhook',
     cron: '0 * * * *',
     description: 'Re-enable Aircall webhook if it was disabled by failures',
+  },
+  {
+    id: 'backfill/reap-stale',
+    cron: '*/10 * * * *',
+    description:
+      'Fail backfill jobs stuck pending/running with no progress past the stale window, so an abandoned import self-heals instead of showing a permanent "Importing 0 items…" banner (ADR 0017)',
   },
   {
     id: 'gocardless/reconcile-late-failures',

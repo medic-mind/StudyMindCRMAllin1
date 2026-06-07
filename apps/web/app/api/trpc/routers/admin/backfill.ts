@@ -16,6 +16,7 @@ import { z } from 'zod'
 import {
   BackfillAlreadyRunningError,
   markBackfillCancelled,
+  STALE_BACKFILL_MS,
   startBackfill,
 } from '@studymind/core/backfill'
 
@@ -256,6 +257,12 @@ export const adminBackfillRouter = router({
     const rows = await ctx.db.backfillJob.findMany({
       where: {
         status: 'running',
+        // Only surface genuinely-live jobs. A worker that dies mid-run leaves
+        // the row `running` forever; a healthy run advances `updatedAt` on
+        // every progress write, so this window hides abandoned jobs that
+        // otherwise showed a permanent "Importing 0 items…" banner. The
+        // backfill/reap-stale cron then fails them for good. CLAUDE.md §17.
+        updatedAt: { gte: new Date(Date.now() - STALE_BACKFILL_MS) },
         OR: [{ agentId: user.id }, { agentId: null }],
       },
       orderBy: { startedAt: 'desc' },
