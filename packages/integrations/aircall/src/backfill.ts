@@ -212,6 +212,9 @@ export async function processBackfillCall(
       summary: `${call.direction === 'inbound' ? 'Inbound' : 'Outbound'} call`,
       payload: {
         backfill: true,
+        // Self-describing provider so the analytics classifier never has to
+        // infer it (CLAUDE.md §10). Aircall call ids are numeric.
+        provider: 'aircall',
         interactionType: call.duration > 0 ? 'call.answered' : 'call.ended',
         aircallCallId: call.id,
         direction: call.direction,

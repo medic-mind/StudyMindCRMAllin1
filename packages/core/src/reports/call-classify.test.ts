@@ -43,7 +43,8 @@ describe('classifyStoredCall', () => {
     expect(ended.callId).toBe('42')
   })
 
-  it('honours an explicit provider tag (google_voice / manual)', () => {
+  it('honours an explicit provider tag (aircall / google_voice / manual)', () => {
+    expect(classifyStoredCall({ provider: 'aircall' }, t).provider).toBe('aircall')
     expect(classifyStoredCall({ provider: 'google_voice' }, t).provider).toBe('google_voice')
     expect(classifyStoredCall({ provider: 'manual', aircallCallId: 7 }, t).provider).toBe('manual')
   })

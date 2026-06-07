@@ -41,13 +41,15 @@ export function classifyStoredCall(
   const aircallId = readAircallCallId(p['aircallCallId'])
   const providerRaw = typeof p['provider'] === 'string' ? p['provider'] : null
   const provider: CallProvider =
-    providerRaw === 'google_voice'
-      ? 'google_voice'
-      : providerRaw === 'manual'
-        ? 'manual'
-        : aircallId
-          ? 'aircall'
-          : 'manual'
+    providerRaw === 'aircall'
+      ? 'aircall'
+      : providerRaw === 'google_voice'
+        ? 'google_voice'
+        : providerRaw === 'manual'
+          ? 'manual'
+          : aircallId
+            ? 'aircall'
+            : 'manual'
   const callId = aircallId ?? `${provider}:${occurredAt.toISOString()}`
   return { aircallId, provider, callId }
 }

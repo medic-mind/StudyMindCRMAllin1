@@ -344,21 +344,30 @@ async function matchCallToContact(
   // triageRequired and are never auto-merged (§41.1). The caller's name + email
   // (when Aircall has them) are saved to the contact. Idempotent across the
   // several call.* events for one call: the first creates, the rest match.
-  const name = extractCounterpartyName(call)
-  const result = await resolveOrCreateContactForCall(
-    db,
-    {
-      phoneE164: phone,
-      firstName: name?.firstName ?? null,
-      lastName: name?.lastName ?? null,
-      email: extractCounterpartyEmail(call),
-    },
-    { referralSource: 'Aircall', actorId: null, requestId: eventId },
-  )
-  return {
-    familyId: result.familyId,
-    contactId: result.contactId,
-    triageRequired: result.triageRequired,
+  try {
+    const name = extractCounterpartyName(call)
+    const result = await resolveOrCreateContactForCall(
+      db,
+      {
+        phoneE164: phone,
+        firstName: name?.firstName ?? null,
+        lastName: name?.lastName ?? null,
+        email: extractCounterpartyEmail(call),
+      },
+      { referralSource: 'Aircall', actorId: null, requestId: eventId },
+    )
+    return {
+      familyId: result.familyId,
+      contactId: result.contactId,
+      triageRequired: result.triageRequired,
+    }
+  } catch {
+    // A contact-resolution failure (e.g. a unique-constraint clash while
+    // auto-creating a lightweight contact under concurrency) must NOT fail the
+    // whole webhook — that drops the call from the mirror and triggers a retry
+    // storm. Persist it UNMATCHED, exactly as the backfill does (§10); the
+    // missed-calls workspace surfaces it by rawDigits for manual linking.
+    return { familyId: null, contactId: null, triageRequired: false }
   }
 }
 
@@ -442,6 +451,9 @@ async function upsertCallInteraction(
       occurredAt: input.occurredAt,
       summary: buildCallSummary(input.eventName, input.call),
       payload: {
+        // Self-describing provider so the analytics classifier never has to
+        // infer it (CLAUDE.md §10). Aircall call ids are numeric.
+        provider: 'aircall',
         interactionType: input.type,
         aircallEvent: input.eventName,
         aircallCallId: input.aircallCallId,
