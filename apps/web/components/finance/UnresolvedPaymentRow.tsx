@@ -129,10 +129,10 @@ export function UnresolvedPaymentRow({ payment }: { payment: UnresolvedPayment }
                 setQuery(e.target.value)
               }}
               placeholder="Search family or billing contact…"
-              className="w-64 rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-sm sm:w-64"
             />
             {!picked && query.trim().length >= 2 && (
-              <div className="max-h-40 w-64 overflow-auto rounded border border-neutral-200 bg-white text-sm shadow-sm">
+              <div className="max-h-40 w-full overflow-auto rounded border border-neutral-200 bg-white text-sm shadow-sm sm:w-64">
                 {search.isLoading && <div className="px-2 py-1 text-neutral-500">Searching…</div>}
                 {search.data?.length === 0 && (
                   <div className="px-2 py-1 text-neutral-500">No matches</div>
@@ -186,7 +186,7 @@ export function UnresolvedPaymentRow({ payment }: { payment: UnresolvedPayment }
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Why dismiss? (e.g. test charge)"
-              className="w-64 rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-sm sm:w-64"
             />
             {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
             <div className="flex gap-2">

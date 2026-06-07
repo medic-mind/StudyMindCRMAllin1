@@ -287,7 +287,7 @@ export function Composer({
     <div className="relative">
       {/* Mention autocomplete */}
       {mentionQuery && (userSearch.data?.length ?? 0) > 0 ? (
-        <div className="absolute bottom-full left-0 z-30 mb-2 w-72 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg">
+        <div className="absolute bottom-full left-0 z-30 mb-2 w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg">
           <p className="border-b border-neutral-100 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
             Mention a teammate
           </p>
@@ -313,7 +313,7 @@ export function Composer({
 
       {/* Reference picker */}
       {refPickerOpen ? (
-        <div className="absolute bottom-full left-0 z-30 mb-2 w-80 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg">
+        <div className="absolute bottom-full left-0 z-30 mb-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg">
           <div className="border-b border-neutral-100 p-2">
             <input
               autoFocus

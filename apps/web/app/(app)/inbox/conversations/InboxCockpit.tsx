@@ -175,8 +175,11 @@ export function InboxCockpit({
         }}
       />
 
-      {/* Conversation list */}
-      <div className="flex w-[22rem] shrink-0 flex-col border-r border-neutral-200 bg-white">
+      {/* Conversation list — full-width on mobile; on a phone we show EITHER
+          the list or the open thread (master-detail), never both squeezed. */}
+      <div
+        className={`${selectedId ? 'hidden lg:flex' : 'flex'} w-full shrink-0 flex-col border-r border-neutral-200 bg-white lg:w-[22rem]`}
+      >
         <div className="border-b border-neutral-200 p-2">
           <div className="relative">
             <SearchIcon
@@ -251,8 +254,10 @@ export function InboxCockpit({
         </div>
       </div>
 
-      {/* Thread + composer */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-neutral-50/40">
+      {/* Thread + composer — hidden on mobile until a conversation is opened. */}
+      <div
+        className={`${selectedId ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col overflow-hidden bg-neutral-50/40`}
+      >
         {selectedId ? (
           <ThreadPane
             key={selectedId}

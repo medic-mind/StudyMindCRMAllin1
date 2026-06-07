@@ -92,7 +92,7 @@ export function UserMenu({ email, name, role, totpEnabled = false }: Props) {
           ref={panelRef}
           role="menu"
           aria-label="User menu"
-          className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
+          className="absolute right-0 z-40 mt-2 w-64 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg"
         >
           {/* Identity */}
           <div className="border-b border-neutral-100 px-4 py-3">
