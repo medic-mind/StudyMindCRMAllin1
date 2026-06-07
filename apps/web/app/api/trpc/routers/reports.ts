@@ -6,6 +6,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  classifyStoredCall,
   describePeakWindow,
   instantMatchesWindow,
   isPeakInstant,
@@ -409,18 +410,12 @@ export const reportsRouter = router({
           const byCall = new Map<string, NormalisedCall>()
           for (const r of rows) {
             const p = (r.payload ?? {}) as Record<string, unknown>
-            const aircallId =
-              typeof p['aircallCallId'] === 'string' ? (p['aircallCallId'] as string) : null
-            const providerRaw = typeof p['provider'] === 'string' ? (p['provider'] as string) : null
-            const provider: 'aircall' | 'google_voice' | 'manual' =
-              providerRaw === 'google_voice'
-                ? 'google_voice'
-                : providerRaw === 'manual'
-                  ? 'manual'
-                  : aircallId
-                    ? 'aircall'
-                    : 'manual'
-            const callId = aircallId ?? `${provider}:${r.occurredAt.toISOString()}`
+            // Stable provider + dedupe key. Aircall ids are numeric, so this
+            // collapses the several lifecycle-event rows (and the backfill/sync
+            // row) for one call into a single call — otherwise one call is
+            // counted many times and its duration-0 events distort missed vs
+            // answered. CLAUDE.md §10.
+            const { provider, callId } = classifyStoredCall(p, r.occurredAt)
             const directionRaw = p['direction']
             const direction =
               directionRaw === 'inbound' || directionRaw === 'outbound'

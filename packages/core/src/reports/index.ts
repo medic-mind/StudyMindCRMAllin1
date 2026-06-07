@@ -3,3 +3,4 @@
 
 export * from './peak-windows'
 export * from './aircall-pdf'
+export * from './call-classify'
