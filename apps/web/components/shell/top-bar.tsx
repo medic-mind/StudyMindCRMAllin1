@@ -5,6 +5,7 @@
 // leaves), §28 (skip-to-content link).
 
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 
 import { BrandLogo } from './brand-logo'
 import { NotificationsBell } from './notifications-bell'
@@ -20,13 +21,15 @@ interface Props {
   }
   /** Custom-logo version (epoch millis) or null to use the inline SVG mark. */
   logoVersion?: number | null
+  /** Far-left slot — the mobile nav hamburger (hidden on lg+). */
+  leading?: ReactNode
 }
 
-export function TopBar({ user }: Props) {
+export function TopBar({ user, leading }: Props) {
   return (
     <header
       role="banner"
-      className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-neutral-200/70 bg-white/85 px-4 backdrop-blur"
+      className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-neutral-200/70 bg-white/85 px-3 backdrop-blur sm:gap-4 sm:px-4"
       style={{ height: 'var(--shell-topbar-height)' }}
     >
       {/* Skip link — visible on focus only. CLAUDE.md §28. */}
@@ -37,25 +40,28 @@ export function TopBar({ user }: Props) {
         Skip to content
       </a>
 
-      {/* Fixed inline SVG mark + wordmark only. We deliberately do NOT render
-          the uploaded custom logo here — a wide/tall upload kept enlarging and
-          blowing out the bar, so the top bar always uses the crisp, fixed-size
-          brand mark. The uploaded logo still lives on Settings → Branding. */}
+      {/* Mobile-only nav trigger (collapses to nothing on lg+). */}
+      {leading}
+
+      {/* Fixed inline SVG mark + wordmark. The wordmark hides on the narrowest
+          screens so the search field keeps room; the mark always shows. We
+          deliberately do NOT render the uploaded custom logo here — a wide/tall
+          upload kept enlarging and blowing out the bar. */}
       <Link
         href="/"
         className="flex shrink-0 items-center gap-2 tracking-tight"
         aria-label="StudyMind CRM home"
       >
         <BrandLogo size={26} markOnly />
-        <span className="text-base font-semibold text-primary-700">StudyMind</span>
-        <span className="text-base font-medium text-neutral-500">CRM</span>
+        <span className="hidden text-base font-semibold text-primary-700 sm:inline">StudyMind</span>
+        <span className="hidden text-base font-medium text-neutral-500 sm:inline">CRM</span>
       </Link>
 
       <div className="flex flex-1 justify-center">
         <SearchTrigger />
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         <NotificationsBell />
         <UserMenu
           email={user.email}

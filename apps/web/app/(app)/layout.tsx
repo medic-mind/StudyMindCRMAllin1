@@ -11,6 +11,7 @@ import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
 import { TopBar } from '@/components/shell/top-bar'
 import { TrengoTokenBanner } from '@/components/shell/trengo-token-banner'
 
+import { MobileNav } from './mobile-nav'
 import { SidebarNav, type NavItem } from './sidebar-nav'
 
 // Authenticated CRM shell is always rendered per-request — never prerender.
@@ -186,20 +187,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               totpEnabled,
             }}
             logoVersion={branding.version}
+            leading={<MobileNav items={nav} />}
           />
           <div className="flex flex-1">
+            {/* Persistent sidebar on lg+; on smaller screens it collapses and
+                the MobileNav drawer (in the top bar) takes over. */}
             <aside
-              className="flex flex-col border-r border-neutral-200 bg-white px-3 py-4"
+              className="hidden shrink-0 flex-col border-r border-neutral-200 bg-white px-3 py-4 lg:flex"
               style={{ width: 'var(--shell-sidebar-width)' }}
               aria-label="Sidebar"
             >
               <SidebarNav items={nav} />
             </aside>
-            <main id="main" className="flex-1">
+            <main id="main" className="min-w-0 flex-1">
               <GmailReconnectBanner />
               <TrengoTokenBanner />
               <BackfillProgressBanner />
-              <div className="px-6 py-6">{children}</div>
+              <div className="px-4 py-4 sm:px-6 sm:py-6">{children}</div>
             </main>
           </div>
         </div>
