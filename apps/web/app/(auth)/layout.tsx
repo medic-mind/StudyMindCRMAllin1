@@ -12,7 +12,9 @@ export const revalidate = 0
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-neutral-50">
-      {/* Brand hero — abstract gradient, intentionally text-light. */}
+      {/* Brand hero — one cohesive deep-violet gradient (on-brand with the
+          primary scale), a soft top sheen for depth, intentionally text-light.
+          No busy dotted grid; the calm surface reads more premium. */}
       <aside
         className="relative hidden w-1/2 items-center justify-center overflow-hidden lg:flex"
         aria-hidden="true"
@@ -21,19 +23,17 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(150deg, #4c1d95 0%, #7c3aed 46%, #a21caf 100%)',
+              'linear-gradient(160deg, #3b0764 0%, #6b21a8 50%, #9333ea 100%)',
           }}
         />
-        {/* Soft depth glows */}
-        <div className="absolute -left-24 -top-28 size-96 rounded-full bg-white/20 blur-3xl" />
-        <div className="absolute -bottom-32 -right-20 size-[30rem] rounded-full bg-white/10 blur-3xl" />
-        {/* Dotted grid motif */}
+        {/* Soft depth glows + a broad light-from-above sheen. */}
+        <div className="absolute -left-28 -top-32 size-[28rem] rounded-full bg-white/15 blur-3xl" />
+        <div className="absolute -bottom-36 -right-24 size-[34rem] rounded-full bg-white/10 blur-3xl" />
         <div
-          className="absolute inset-0 opacity-[0.15]"
+          className="absolute inset-0"
           style={{
-            backgroundImage:
-              'radial-gradient(circle, #ffffff 1px, transparent 1px)',
-            backgroundSize: '22px 22px',
+            background:
+              'radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,0.18), transparent 60%)',
           }}
         />
         {/* Centre brand badge */}
@@ -56,11 +56,11 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
             StudyMind <span className="font-light text-neutral-400">CRM</span>
           </span>
         </div>
-        <main className="w-full max-w-md rounded-2xl border border-neutral-200/80 bg-white p-8 shadow-xl shadow-neutral-300/30">
+        <main className="w-full max-w-md rounded-2xl border border-neutral-200/70 bg-white p-8 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_16px_40px_-16px_rgba(16,24,40,0.18)] sm:p-9">
           {children}
         </main>
         <p className="mt-6 text-center text-xs text-neutral-400">
-          © {new Date().getFullYear()} StudyMind Ltd · Internal tool
+          © {new Date().getFullYear()} StudyMind
         </p>
       </div>
     </div>
