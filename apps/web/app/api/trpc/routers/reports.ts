@@ -110,12 +110,25 @@ function weekLabel(d: Date): string {
   return `${m}/${day}`
 }
 
+/**
+ * Inclusive end of the `to` day. The report period presets pass the to-date at
+ * 00:00 UTC, so a raw `lte: to` silently drops everything that happened on that
+ * date itself — most visibly today's data, and it makes counts jump between the
+ * default view (which uses `now`) and a clicked preset. Snap to end-of-day UTC.
+ */
+function endOfUtcDay(d: Date): Date {
+  const out = new Date(d)
+  out.setUTCHours(23, 59, 59, 999)
+  return out
+}
+
 export const reportsRouter = router({
   finance: router({
     summary: protectedProcedure
       .input(PeriodInput)
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
+        const periodTo = endOfUtcDay(input.to)
 
         const [openDiscrepancies, payments] = await Promise.all([
           ctx.db.reconciliationDiscrepancy.groupBy({
@@ -125,7 +138,7 @@ export const reportsRouter = router({
           }),
           ctx.db.payment.findMany({
             where: {
-              receivedAt: { gte: input.from, lte: input.to },
+              receivedAt: { gte: input.from, lte: periodTo },
               deletedAt: null,
             },
             select: {
@@ -155,7 +168,7 @@ export const reportsRouter = router({
         // this would be precomputed nightly.
         const recent = await ctx.db.payment.findMany({
           where: {
-            receivedAt: { gte: input.from, lte: input.to },
+            receivedAt: { gte: input.from, lte: periodTo },
             deletedAt: null,
           },
           select: {
@@ -183,13 +196,13 @@ export const reportsRouter = router({
         // We bucket the *same* payments[] used above; reconciliation only
         // counts a payment as allocated once it has at least one
         // Allocation row, so we mirror that here.
-        const weekStarts = isoWeekStarts(input.from, input.to)
+        const weekStarts = isoWeekStarts(input.from, periodTo)
         const moneyInByWeek = new Array(weekStarts.length).fill(0) as number[]
         const revertedByWeek = new Array(weekStarts.length).fill(0) as number[]
         const unallocatedByWeek = new Array(weekStarts.length).fill(0) as number[]
         const paymentsWithAlloc = await ctx.db.payment.findMany({
           where: {
-            receivedAt: { gte: input.from, lte: input.to },
+            receivedAt: { gte: input.from, lte: periodTo },
             deletedAt: null,
           },
           select: {
@@ -243,10 +256,11 @@ export const reportsRouter = router({
       .input(PeriodInput)
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
+        const periodTo = endOfUtcDay(input.to)
 
         const sessions = await ctx.db.bookingSession.findMany({
           where: {
-            scheduledAt: { gte: input.from, lte: input.to },
+            scheduledAt: { gte: input.from, lte: periodTo },
             deletedAt: null,
           },
           select: {
@@ -258,7 +272,7 @@ export const reportsRouter = router({
           take: 5000,
         })
 
-        const weekStarts = isoWeekStarts(input.from, input.to)
+        const weekStarts = isoWeekStarts(input.from, periodTo)
         const deliveredHoursByWeek = new Array(weekStarts.length).fill(0) as number[]
         const deliveredSessionsByWeek = new Array(weekStarts.length).fill(0) as number[]
         for (const s of sessions) {
@@ -326,6 +340,7 @@ export const reportsRouter = router({
       .input(PeriodInput)
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
+        const periodTo = endOfUtcDay(input.to)
 
         const [families, churnScores, churnedThisPeriod] = await Promise.all([
           ctx.db.family.groupBy({
@@ -335,7 +350,7 @@ export const reportsRouter = router({
           }),
           ctx.db.churnScore.findMany({
             where: {
-              scoredAt: { gte: input.from, lte: input.to },
+              scoredAt: { gte: input.from, lte: periodTo },
             },
             orderBy: { scoredAt: 'desc' },
             select: { score: true, familyId: true, scoredAt: true },
@@ -344,7 +359,7 @@ export const reportsRouter = router({
           ctx.db.interaction.count({
             where: {
               type: 'family_state_changed',
-              occurredAt: { gte: input.from, lte: input.to },
+              occurredAt: { gte: input.from, lte: periodTo },
             },
           }),
         ])
@@ -387,13 +402,9 @@ export const reportsRouter = router({
       .query(async ({ ctx, input }) => {
         assertReports(requireUser(ctx))
 
-        // Include the whole of the `to` day. The preset links pass the to-date
-        // at 00:00 UTC, so a raw `lte: input.to` silently drops everything that
-        // happened on that date itself — most visibly today's calls, making the
-        // counts jump when you click a preset vs the default view. Snap to the
-        // end of the UTC day for every window below.
-        const periodTo = new Date(input.to)
-        periodTo.setUTCHours(23, 59, 59, 999)
+        // Include the whole of the `to` day (endOfUtcDay) for every window
+        // below, otherwise today's calls drop out and counts jump vs default.
+        const periodTo = endOfUtcDay(input.to)
 
         interface NormalisedCall {
           callId: string
