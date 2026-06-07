@@ -10,6 +10,10 @@ export const InteractionType = z.enum([
   'family.state_changed',
   'family.billing_contact_changed',
   'safeguarding.concern_raised',
+  // Bookings: booking.studymind.co.uk lessons (§15) and Summer Camp bookings
+  // (camp.studymind.co.uk). Both are DB `booking` interactions, distinguished
+  // by `payload.kind`; the timeline chip reads "booking" rather than "note".
+  'booking',
   // Calls (Aircall — §10).
   'call.started',
   'call.answered',

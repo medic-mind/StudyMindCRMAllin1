@@ -1149,6 +1149,8 @@ function mapDbType(t: string): InteractionListItem['type'] {
       return 'email_received'
     case 'email_sent':
       return 'email_sent'
+    case 'booking':
+      return 'booking'
     case 'family_state_changed':
       return 'family.state_changed'
     case 'family_billing_contact_changed':
