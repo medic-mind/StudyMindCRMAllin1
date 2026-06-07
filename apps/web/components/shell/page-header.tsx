@@ -26,8 +26,10 @@ export function PageHeader({ title, subtitle, breadcrumbs, actions }: Props) {
       // Flat white surface + hairline divider — replaces the previous
       // gradient that competed with content cards below for visual weight.
       // Tighter padding (no minHeight) keeps the chrome out of the way on
-      // dense surfaces; subtitle still gets room when present.
-      className="-mx-6 -mt-6 mb-6 border-b border-neutral-200/80 bg-white px-6 pb-4 pt-4"
+      // dense surfaces; subtitle still gets room when present. The negative
+      // margins/padding track the shell's responsive content padding (px-4 on
+      // mobile, px-6 on sm+) so the header always runs flush to the surface.
+      className="-mx-4 -mt-4 mb-6 border-b border-neutral-200/80 bg-white px-4 pb-4 pt-4 sm:-mx-6 sm:-mt-6 sm:px-6"
     >
       {breadcrumbs && breadcrumbs.length > 0 ? (
         <nav aria-label="Breadcrumb" className="mb-2">

@@ -186,8 +186,11 @@ export function MailWorkspace({
         }}
       />
 
-      {/* Thread list */}
-      <div className="flex w-[22rem] shrink-0 flex-col border-r border-neutral-200">
+      {/* Thread list — full-width on mobile (master-detail with the reading
+          pane); fixed-width column on lg+. */}
+      <div
+        className={`${selectedId ? 'hidden lg:flex' : 'flex'} w-full shrink-0 flex-col border-r border-neutral-200 lg:w-[22rem]`}
+      >
         <div className="border-b border-neutral-200 p-2">
           <div className="relative">
             <SearchIcon
@@ -252,8 +255,10 @@ export function MailWorkspace({
         </div>
       </div>
 
-      {/* Reading pane */}
-      <div className="flex flex-1 flex-col overflow-hidden bg-neutral-50/40">
+      {/* Reading pane — hidden on mobile until a thread is opened. */}
+      <div
+        className={`${selectedId ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col overflow-hidden bg-neutral-50/40`}
+      >
         {selectedId ? (
           <ReadingPane
             conversationId={selectedId}

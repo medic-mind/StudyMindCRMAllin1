@@ -19,12 +19,9 @@ export default async function SignInPage({ searchParams }: PageProps) {
 
   return (
     <div>
-      <h1 className="mb-1.5 text-2xl font-semibold tracking-tight text-neutral-900">
+      <h1 className="mb-6 text-[1.7rem] font-semibold tracking-tight text-neutral-900">
         Welcome back
       </h1>
-      <p className="mb-6 text-sm text-neutral-500">
-        Sign in to your StudyMind CRM workspace.
-      </p>
       {verified && (
         <div
           className="mb-4 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"

@@ -132,7 +132,7 @@ export function NotificationsBell() {
           ref={panelRef}
           role="dialog"
           aria-label="Recent notifications"
-          className="absolute right-0 z-40 mt-2 w-80 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg"
+          className="absolute right-0 z-40 mt-2 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-lg"
         >
           <div className="border-b border-neutral-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
             Notifications

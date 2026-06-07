@@ -174,7 +174,7 @@ export function MoveCardMenu({
                 left: coords.left,
                 zIndex: 9999,
               }}
-              className="z-[9999] max-h-72 w-60 overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-xl"
+              className="z-[9999] max-h-72 w-60 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-xl"
             >
               {sameBoardTargets.length > 0 && (
                 <>
