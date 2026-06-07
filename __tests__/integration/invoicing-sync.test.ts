@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   deletePaymentByInvoicingId,
+  softDeleteCustomerByInvoicingId,
   softDeleteInvoiceByInvoicingId,
   upsertCustomerFromRecord,
   upsertInvoiceFromRecord,
@@ -275,5 +276,73 @@ describe('invoicing inbound sync (idempotent mirror)', () => {
     await softDeleteInvoiceByInvoicingId(asDb(db), 'inv_1')
     const inv = [...db.invoicingInvoice.byId.values()][0]
     expect(inv['deletedAt']).not.toBeNull()
+  })
+
+  it('re-surfaces a soft-deleted invoice when it is restored on the platform', async () => {
+    const db = makeDb()
+    const record = { id: 'inv_1', partner_id: 'ptn_1', status: 'issued', grand_total: '100.00' }
+    await upsertInvoiceFromRecord(asDb(db), record, 'app')
+    // Platform delete (archive) → soft-deleted here.
+    await softDeleteInvoiceByInvoicingId(asDb(db), 'inv_1')
+    expect([...db.invoicingInvoice.byId.values()][0]['deletedAt']).not.toBeNull()
+
+    // Platform restore (un-archive) arrives as a normal create/update event.
+    await upsertInvoiceFromRecord(asDb(db), record, 'app')
+
+    expect(db.invoicingInvoice.byId.size).toBe(1) // still one row, not a duplicate
+    expect([...db.invoicingInvoice.byId.values()][0]['deletedAt']).toBeNull()
+  })
+
+  it('re-surfaces a soft-deleted customer when it is restored on the platform', async () => {
+    const db = makeDb()
+    const record = { id: 'ptn_1', company_name: 'Oakwood', category: 'b2b', status: 'active' }
+    await upsertCustomerFromRecord(asDb(db), record, 'app')
+    await softDeleteCustomerByInvoicingId(asDb(db), 'ptn_1')
+    expect([...db.invoicingCustomer.byId.values()][0]['deletedAt']).not.toBeNull()
+
+    await upsertCustomerFromRecord(asDb(db), record, 'app')
+
+    expect(db.invoicingCustomer.byId.size).toBe(1)
+    expect([...db.invoicingCustomer.byId.values()][0]['deletedAt']).toBeNull()
+  })
+
+  it('shows nothing outstanding when the platform marks the invoice paid (no payments array)', async () => {
+    const db = makeDb()
+    // A bare invoice.updated record (status=paid) — webhook/events records carry
+    // the invoice row with NO payments[] (payments are a separate table).
+    await upsertInvoiceFromRecord(
+      asDb(db),
+      { id: 'inv_1', partner_id: 'ptn_1', status: 'paid', grand_total: '720.00' },
+      'app',
+    )
+    const inv = [...db.invoicingInvoice.byId.values()][0]
+    expect(inv['grandTotalMinor']).toBe(72000)
+    expect(inv['paidMinor']).toBe(72000) // outstanding = 0
+  })
+
+  it('does not reset an accumulated paidMinor when a payments-less update arrives', async () => {
+    const db = makeDb()
+    // Invoice first arrives carrying a £200 payment (partially paid).
+    await upsertInvoiceFromRecord(
+      asDb(db),
+      {
+        id: 'inv_1',
+        partner_id: 'ptn_1',
+        status: 'partially_paid',
+        grand_total: '720.00',
+        payments: [{ id: 'pay_1', amount: '200.00' }],
+      },
+      'app',
+    )
+    expect([...db.invoicingInvoice.byId.values()][0]['paidMinor']).toBe(20000)
+
+    // A later bare update (e.g. "reminder sent") with NO payments array must NOT
+    // clobber the £200 back to zero.
+    await upsertInvoiceFromRecord(
+      asDb(db),
+      { id: 'inv_1', partner_id: 'ptn_1', status: 'partially_paid', grand_total: '720.00' },
+      'app',
+    )
+    expect([...db.invoicingInvoice.byId.values()][0]['paidMinor']).toBe(20000)
   })
 })

@@ -66,6 +66,11 @@ export async function upsertCustomerFromRecord(
     service: parsed.service ?? null,
     tags: parsed.tags ?? [],
     notes: parsed.notes ?? null,
+    // A live record arriving as create/update means it is NOT deleted on the
+    // platform (archived rows arrive as `deleted` events, never upserts). So
+    // clear any prior soft-delete: this is how a platform restore (un-archive)
+    // re-surfaces a customer that was previously deleted here.
+    deletedAt: null,
     lastSyncedAt: new Date(),
     lastEventSource: source,
   }
@@ -105,19 +110,36 @@ export async function upsertInvoiceFromRecord(
   }
 
   const payments = parsed.payments ?? []
-  const paidMinor = payments.reduce((sum, p) => sum + toMinor(p.amount), 0)
+  const hasPaymentsArray = Array.isArray(parsed.payments)
+  const paidFromRecord = payments.reduce((sum, p) => sum + toMinor(p.amount), 0)
+
+  // paidMinor / outstanding are subtle. Inbound webhook/list/events records
+  // carry the BARE invoice row — no `payments` array (payments live in a
+  // separate table and arrive as their own payment.* events). Two rules keep
+  // "outstanding" honest so a paid invoice never shows as still due:
+  //   1. The platform `status` is authoritative — a `paid` invoice has nothing
+  //      outstanding even before we have received its discrete payment rows.
+  //   2. Never clobber an accumulated paidMinor back to 0 just because THIS
+  //      record omitted the payments array — only trust the array when present;
+  //      otherwise keep the total built up from payment.* events.
+  const mappedStatus = mapInvoiceStatus(parsed.status)
+  const grandTotalMinor = toMinor(parsed.grand_total)
+  const resolvePaidMinor = (existingPaid: number): number => {
+    if (mappedStatus === 'paid') return grandTotalMinor
+    if (hasPaymentsArray) return paidFromRecord
+    return existingPaid
+  }
 
   const data = {
     invoiceNumber: parsed.invoice_number ?? null,
     customerId,
     invoicingPartnerId: parsed.partner_id ?? null,
-    status: mapInvoiceStatus(parsed.status),
+    status: mappedStatus,
     clientType: mapClientType(parsed.client_type),
     currency: (parsed.currency ?? 'GBP').toUpperCase(),
     subtotalMinor: toMinor(parsed.subtotal),
     vatTotalMinor: toMinor(parsed.vat_total),
-    grandTotalMinor: toMinor(parsed.grand_total),
-    paidMinor,
+    grandTotalMinor,
     pricesIncludeVat: parsed.prices_include_vat ?? null,
     issueDate: parseDate(parsed.issue_date),
     dueDate: parseDate(parsed.due_date),
@@ -129,24 +151,30 @@ export async function upsertInvoiceFromRecord(
     notes: parsed.notes ?? null,
     internalNotes: parsed.internal_notes ?? null,
     lastEmailedAt: parseDate(parsed.last_emailed_at),
+    // See upsertCustomerFromRecord: a live upsert clears any prior soft-delete
+    // so a platform restore (un-archive) re-surfaces the invoice here.
+    deletedAt: null,
     lastSyncedAt: new Date(),
     lastEventSource: source,
   }
 
   const existing = await db.invoicingInvoice.findUnique({
     where: { invoicingId: parsed.id },
-    select: { id: true },
+    select: { id: true, paidMinor: true },
   })
 
   let invoiceRowId: string
   let created: boolean
   if (existing) {
-    await db.invoicingInvoice.update({ where: { id: existing.id }, data })
+    await db.invoicingInvoice.update({
+      where: { id: existing.id },
+      data: { ...data, paidMinor: resolvePaidMinor((existing.paidMinor as number | undefined) ?? 0) },
+    })
     invoiceRowId = existing.id
     created = false
   } else {
     const row = await db.invoicingInvoice.create({
-      data: { id: createId(), invoicingId: parsed.id, ...data },
+      data: { id: createId(), invoicingId: parsed.id, ...data, paidMinor: resolvePaidMinor(0) },
       select: { id: true },
     })
     invoiceRowId = row.id
