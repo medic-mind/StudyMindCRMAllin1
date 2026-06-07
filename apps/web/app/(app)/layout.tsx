@@ -82,8 +82,8 @@ function buildNav(role: Role): NavItem[] {
       href: '/camps',
       label: 'Summer Camps',
       children: [
-        { href: '/camps', label: 'Camps & fill' },
-        { href: '/camps/timetable', label: 'Weekly timetable' },
+        { href: '/camps', label: 'Camps running' },
+        { href: '/camps/timetable', label: 'Schedule' },
       ],
     },
     {

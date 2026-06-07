@@ -59,6 +59,9 @@ export interface TimetableEntry {
   room_number: string | null
   session_type: string | null
   session_colour: string | null
+  session_icon: string | null
+  is_field_trip: boolean
+  what_to_bring: string | null
 }
 
 export interface TimetableDay {
@@ -69,13 +72,6 @@ export interface TimetableDay {
   entries: TimetableEntry[]
 }
 
-export interface TimetableWeek {
-  week_number: number
-  start_date: string | null
-  end_date: string | null
-  days: TimetableDay[]
-}
-
 export interface TimetableCamp {
   id: string
   name: string
@@ -83,7 +79,11 @@ export interface TimetableCamp {
   start_date: string | null
   end_date: string | null
   status: string | null
-  weeks: TimetableWeek[]
+  arrival_location: string | null
+  arrival_time: string | null
+  arrival_notes: string | null
+  arrival_bring: string | null
+  days: TimetableDay[]
 }
 
 export interface TimetableFeed {

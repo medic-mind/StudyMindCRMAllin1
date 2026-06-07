@@ -35,16 +35,6 @@ function NotConnected() {
   )
 }
 
-// Heat tint by fill intensity relative to the busiest cell in the grid.
-function cellTint(total: number, max: number): string {
-  if (total === 0) return 'bg-white text-neutral-300'
-  const ratio = max > 0 ? total / max : 0
-  if (ratio > 0.75) return 'bg-primary-600 text-white'
-  if (ratio > 0.5) return 'bg-primary-400 text-white'
-  if (ratio > 0.25) return 'bg-primary-200 text-primary-900'
-  return 'bg-primary-50 text-primary-900'
-}
-
 export default async function CampsPage({
   searchParams,
 }: {
@@ -79,11 +69,6 @@ export default async function CampsPage({
 type Feed = NonNullable<Awaited<ReturnType<Awaited<ReturnType<typeof createServerCaller>>['summerCamp']['camps']>>['feed']>
 
 function CampsContent({ feed, year, canBackfill }: { feed: Feed; year: number; canBackfill: boolean }) {
-  const maxCell = Math.max(
-    1,
-    ...feed.subjects.flatMap((s) => feed.weeks.map((w) => feed.grid[s]?.[String(w.week_number)]?.total ?? 0)),
-  )
-
   return (
     <div className="flex flex-col gap-8">
       {/* Year switcher (URL state) + admin backfill */}
@@ -144,88 +129,14 @@ function CampsContent({ feed, year, canBackfill }: { feed: Feed; year: number; c
                 <div className="mt-1 text-[11px] text-neutral-400">
                   B2C {c.bookings.b2c} · B2B {c.bookings.b2b} · Agent {c.bookings.agent}
                 </div>
+                <a
+                  href={`/camps/timetable?camp_id=${encodeURIComponent(c.id)}`}
+                  className="mt-3 inline-block text-xs font-medium text-primary-700 hover:text-primary-800"
+                >
+                  View schedule →
+                </a>
               </div>
             ))}
-          </div>
-        )}
-      </section>
-
-      {/* Subject × week fill grid */}
-      <section>
-        <h2 className="mb-3 text-sm font-semibold text-neutral-800">Fill by subject &amp; week</h2>
-        {feed.subjects.length === 0 ? (
-          <p className="text-sm text-neutral-500">No bookings to chart for {year}.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
-            <table className="min-w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 bg-neutral-50">
-                  <th scope="col" className="px-3 py-2 text-left font-medium text-neutral-600">
-                    Subject
-                  </th>
-                  {feed.weeks.map((w) => (
-                    <th
-                      key={w.week_number}
-                      scope="col"
-                      className="px-2 py-2 text-center font-medium text-neutral-600"
-                    >
-                      <div>{w.week_label}</div>
-                      <div className="text-[10px] font-normal text-neutral-400">
-                        {fmtDate(w.start_date)}
-                      </div>
-                    </th>
-                  ))}
-                  <th scope="col" className="px-3 py-2 text-center font-medium text-neutral-600">
-                    Total
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {feed.subjects.map((subj) => (
-                  <tr key={subj} className="border-b border-neutral-100 last:border-0">
-                    <th scope="row" className="px-3 py-2 text-left font-medium text-neutral-800">
-                      {subj}
-                    </th>
-                    {feed.weeks.map((w) => {
-                      const cell = feed.grid[subj]?.[String(w.week_number)]
-                      const total = cell?.total ?? 0
-                      return (
-                        <td
-                          key={w.week_number}
-                          className={`px-2 py-2 text-center tabular-nums ${cellTint(total, maxCell)}`}
-                          title={
-                            cell
-                              ? `${cell.confirmed} confirmed, ${cell.pending} pending, ${cell.waitlist} waitlist`
-                              : 'No bookings'
-                          }
-                        >
-                          {total || ''}
-                        </td>
-                      )
-                    })}
-                    <td className="px-3 py-2 text-center font-semibold tabular-nums text-neutral-900">
-                      {feed.totals.bySubject[subj] ?? 0}
-                    </td>
-                  </tr>
-                ))}
-                <tr className="border-t border-neutral-200 bg-neutral-50">
-                  <th scope="row" className="px-3 py-2 text-left font-medium text-neutral-600">
-                    Total
-                  </th>
-                  {feed.weeks.map((w) => (
-                    <td
-                      key={w.week_number}
-                      className="px-2 py-2 text-center font-semibold tabular-nums text-neutral-700"
-                    >
-                      {feed.totals.byWeek[String(w.week_number)] ?? 0}
-                    </td>
-                  ))}
-                  <td className="px-3 py-2 text-center font-semibold tabular-nums text-neutral-900">
-                    {feed.totals.grand}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
           </div>
         )}
       </section>
