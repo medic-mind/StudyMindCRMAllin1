@@ -25,6 +25,15 @@ export const BookingPerson = z.object({
   mobile: nullableString,
 })
 
+/** The attendee carries richer per-student detail than a guardian. Sensitive
+ *  fields (medical, emergency) are flagged for careful handling (CLAUDE.md §21). */
+export const BookingStudent = BookingPerson.extend({
+  dietary_requirements: nullableString,
+  medical_notes: nullableString,
+  emergency_contact_name: nullableString,
+  emergency_contact_phone: nullableString,
+})
+
 export const BookingPayment = z.object({
   total_minor: z.number().int().nullable().optional(),
   paid_minor: z.number().int().nullable().optional(),
@@ -49,7 +58,10 @@ export const BookingResource = z.object({
   booked_weeks: z.array(z.unknown()).nullable().optional(),
   with_accommodation: z.boolean().nullable().optional(),
   with_transfer: z.boolean().nullable().optional(),
-  student: BookingPerson.nullable().optional(),
+  /** The camp's `students.id` for the attendee — the CRM stores this as the
+   *  write-back linkage so a CRM edit can target the right camp student. */
+  student_id: nullableString,
+  student: BookingStudent.nullable().optional(),
   guardian: BookingPerson.nullable().optional(),
   payment: BookingPayment.nullable().optional(),
   agent_name: nullableString,

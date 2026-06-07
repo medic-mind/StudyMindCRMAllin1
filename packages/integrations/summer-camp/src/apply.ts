@@ -248,21 +248,38 @@ async function writeBookingInteraction(
   const payload = {
     kind: 'summer_camp.booking',
     externalBookingId: b.id,
+    // Write-back linkage: the camp records this booking maps to.
+    campStudentId: b.student_id ?? null,
     lastEvent: envelope.type,
     status: b.status,
     bookingType: b.booking_type,
     campId: b.camp_id,
     campName: b.camp_name,
     subject: b.subject,
+    programmeType: b.programme_type ?? null,
     weekNumber: b.week_number ?? null,
     weekLabel: b.week_label,
     startDate: b.start_date,
     endDate: b.end_date,
+    daysBooked: b.days_booked ?? null,
+    multipleWeeks: b.multiple_weeks ?? false,
     withAccommodation: b.with_accommodation ?? false,
     withTransfer: b.with_transfer ?? false,
     totalMinor: b.payment?.total_minor ?? null,
     paidMinor: b.payment?.paid_minor ?? null,
+    paymentType: b.payment?.type ?? null,
     studentName: [b.student?.first_name, b.student?.last_name].filter(Boolean).join(' ') || null,
+    // Full attendee detail so the CRM shows the complete picture. Medical /
+    // emergency are sensitive (minors) — see CLAUDE.md §21; a follow-up moves
+    // medicalNotes into the encrypted-field store.
+    dietaryRequirements: b.student?.dietary_requirements ?? null,
+    medicalNotes: b.student?.medical_notes ?? null,
+    emergencyContactName: b.student?.emergency_contact_name ?? null,
+    emergencyContactPhone: b.student?.emergency_contact_phone ?? null,
+    guardianName: b.guardian?.name ?? null,
+    guardianEmail: b.guardian?.email ?? null,
+    guardianPhone: b.guardian?.mobile ?? null,
+    agentName: b.agent_name ?? null,
   }
 
   const existing = await db.interaction.findFirst({
