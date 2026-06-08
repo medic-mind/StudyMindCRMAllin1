@@ -44,6 +44,20 @@ interface Props {
   contactDisplayName: string
 }
 
+/** Read a File as a base64 string (no data-URL prefix) for the upload payload. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      const comma = result.indexOf(',')
+      resolve(comma >= 0 ? result.slice(comma + 1) : result)
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 export function CallSummarySection({ contactId, contactDisplayName }: Props) {
   const router = useRouter()
 
@@ -56,6 +70,11 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null)
   const [pickedAttachments, setPickedAttachments] = useState<
     Array<{ kind: AttachmentKind; id: string }>
+  >([])
+  // Files uploaded straight from the agent's device (base64) — separate from
+  // the saved library files above. Email channel only.
+  const [uploadedFiles, setUploadedFiles] = useState<
+    Array<{ filename: string; contentType: string; dataBase64: string; size: number }>
   >([])
   const [drafting, setDrafting] = useState(false)
 
@@ -139,6 +158,28 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
     })
   }
 
+  async function onPickFiles(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const next: Array<{ filename: string; contentType: string; dataBase64: string; size: number }> = []
+    for (const file of Array.from(files)) {
+      if (file.size > 8 * 1024 * 1024) {
+        toast.error(`"${file.name}" is over the 8 MB limit.`)
+        continue
+      }
+      const dataBase64 = await fileToBase64(file)
+      next.push({
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        dataBase64,
+        size: file.size,
+      })
+    }
+    if (next.length > 0) setUploadedFiles((prev) => [...prev, ...next].slice(0, 10))
+  }
+  function removeUpload(idx: number) {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== idx))
+  }
+
   function pickTemplate(t: DbTemplate) {
     setBody(t.body)
     setActiveTemplateId(t.id)
@@ -176,6 +217,7 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
     setEmail(false)
     setActiveTemplateId(null)
     setPickedAttachments([])
+    setUploadedFiles([])
     setSummaryId(null)
     setInternalNote('')
     setPostToSlack(false)
@@ -204,6 +246,14 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
           channels: { whatsapp, sms, email },
           emailAttachments:
             email && pickedAttachments.length > 0 ? pickedAttachments : undefined,
+          uploadedAttachments:
+            email && uploadedFiles.length > 0
+              ? uploadedFiles.map((f) => ({
+                  filename: f.filename,
+                  contentType: f.contentType,
+                  dataBase64: f.dataBase64,
+                }))
+              : undefined,
         })
         const parts: string[] = []
         for (const k of ['whatsapp', 'sms', 'email'] as const) {
@@ -550,34 +600,76 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
         {email ? (
           <div className="mt-3 border-t border-primary-200/60 pt-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-primary-900/80">
-              Attach to the email ({pickedAttachments.length})
+              Attach to the email ({pickedAttachments.length + uploadedFiles.length})
             </p>
-            {attachmentChoices.length === 0 ? (
-              <p className="mt-1 text-xs text-neutral-500">
-                No documents, invoices, or template PDFs available for this contact yet.
-              </p>
-            ) : (
-              <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto pr-1">
-                {attachmentChoices.map((c) => (
-                  <li key={`${c.kind}:${c.id}`}>
-                    <label className="flex items-start gap-2 text-xs text-neutral-700">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
-                        checked={isPicked(c)}
-                        onChange={(e) => toggleAttachment(c, e.target.checked)}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{c.label}</span>
-                        {c.hint && (
-                          <span className="block text-[10px] text-neutral-500">{c.hint}</span>
-                        )}
+
+            {/* Upload a file straight from your device — always available. */}
+            <div className="mt-1.5">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-primary-300 bg-white px-2.5 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-50">
+                <input
+                  type="file"
+                  multiple
+                  className="sr-only"
+                  onChange={(e) => {
+                    void onPickFiles(e.target.files)
+                    e.currentTarget.value = ''
+                  }}
+                />
+                Upload a file…
+              </label>
+              {uploadedFiles.length > 0 ? (
+                <ul className="mt-1.5 space-y-1">
+                  {uploadedFiles.map((f, i) => (
+                    <li
+                      key={`${f.filename}:${i}`}
+                      className="flex items-center gap-2 rounded border border-neutral-200 bg-white px-2 py-1 text-xs"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-neutral-700">{f.filename}</span>
+                      <span className="shrink-0 font-mono text-[10px] text-neutral-400">
+                        {Math.max(1, Math.round(f.size / 1024))} KB
                       </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            )}
+                      <button
+                        type="button"
+                        onClick={() => removeUpload(i)}
+                        aria-label={`Remove ${f.filename}`}
+                        className="shrink-0 px-1 text-neutral-400 hover:text-neutral-700"
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+
+            {/* Or pick a file already saved against this contact. */}
+            {attachmentChoices.length > 0 ? (
+              <>
+                <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+                  Or attach a saved file
+                </p>
+                <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto pr-1">
+                  {attachmentChoices.map((c) => (
+                    <li key={`${c.kind}:${c.id}`}>
+                      <label className="flex items-start gap-2 text-xs text-neutral-700">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                          checked={isPicked(c)}
+                          onChange={(e) => toggleAttachment(c, e.target.checked)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium">{c.label}</span>
+                          {c.hint && (
+                            <span className="block text-[10px] text-neutral-500">{c.hint}</span>
+                          )}
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>

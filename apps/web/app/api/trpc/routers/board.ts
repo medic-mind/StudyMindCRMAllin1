@@ -858,7 +858,24 @@ const cardRouter = router({
       // Postgres for all three (ContactDocument / UploadedInvoice /
       // CallSummaryTemplate). Cap on the input keeps the payload sane.
       const refs = input.channels.email ? (input.emailAttachments ?? []) : []
-      const emailAttachments = await resolveCallSummaryAttachments(ctx.db, refs)
+      const emailAttachments: Array<{ filename: string; contentType: string; data: Buffer }> = [
+        ...(await resolveCallSummaryAttachments(ctx.db, refs)),
+      ]
+      // Device uploads (base64 from the agent's machine) — attached alongside
+      // the resolved library files. ≤8 MB each.
+      if (input.channels.email) {
+        for (const f of input.uploadedAttachments ?? []) {
+          const data = Buffer.from(f.dataBase64, 'base64')
+          if (data.byteLength === 0) continue
+          if (data.byteLength > 8 * 1024 * 1024) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: `Attachment "${f.filename}" exceeds the 8 MB limit.`,
+            })
+          }
+          emailAttachments.push({ filename: f.filename, contentType: f.contentType, data })
+        }
+      }
       try {
         const results = await sendCallSummary(
           ctx.db,

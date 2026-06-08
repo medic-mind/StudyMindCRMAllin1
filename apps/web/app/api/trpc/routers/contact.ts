@@ -808,6 +808,18 @@ export const contactRouter = router({
             )
             .max(10)
             .optional(),
+          // Files the agent picked from their device (base64). Decoded and
+          // attached alongside the library files above. ≤8 MB each, ≤10.
+          uploadedAttachments: z
+            .array(
+              z.object({
+                filename: z.string().trim().min(1).max(255),
+                contentType: z.string().min(1).max(150),
+                dataBase64: z.string().min(1),
+              }),
+            )
+            .max(10)
+            .optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -855,6 +867,25 @@ export const contactRouter = router({
                 data: row.pdfData,
               })
             }
+          }
+        }
+        // Device uploads — raw files the agent picked from their machine,
+        // decoded to Buffers and attached alongside the resolved library files.
+        if (input.channels.email) {
+          for (const f of input.uploadedAttachments ?? []) {
+            const data = Buffer.from(f.dataBase64, 'base64')
+            if (data.byteLength === 0) continue
+            if (data.byteLength > 8 * 1024 * 1024) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: `Attachment "${f.filename}" exceeds the 8 MB limit.`,
+              })
+            }
+            emailAttachments.push({
+              filename: f.filename,
+              contentType: f.contentType,
+              data,
+            })
           }
         }
         try {

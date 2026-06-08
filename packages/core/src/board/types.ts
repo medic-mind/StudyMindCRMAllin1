@@ -130,6 +130,17 @@ export const CallSummarySendInput = z.object({
   /** Up to 10 attachments for the email channel. Ignored when email
    * isn't enabled. */
   emailAttachments: z.array(CallSummaryAttachmentRef).max(10).optional(),
+  /** Files uploaded straight from the agent's device (base64). ≤8 MB each, ≤10. */
+  uploadedAttachments: z
+    .array(
+      z.object({
+        filename: z.string().trim().min(1).max(255),
+        contentType: z.string().min(1).max(150),
+        dataBase64: z.string().min(1),
+      }),
+    )
+    .max(10)
+    .optional(),
 })
 export type CallSummarySendInput = z.infer<typeof CallSummarySendInput>
 
