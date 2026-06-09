@@ -70,7 +70,7 @@ interface Props {
 }
 
 type Mode = 'new' | 'existing'
-type ContactRole = 'parent' | 'student' | 'tutor' | 'other'
+type ContactRole = 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
 
 export function AddCardButton({
   boardId,
@@ -91,7 +91,7 @@ export function AddCardButton({
   const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
-  const [kind, setKind] = useState<ContactRole>('parent')
+  const [kind, setKind] = useState<ContactRole>('unclassified')
 
   // Existing-contact search.
   const [contactQuery, setContactQuery] = useState('')
@@ -365,6 +365,7 @@ export function AddCardButton({
                       />
                       <PhoneInput value={phone} onChange={setPhone} />
                       <Select value={kind} onChange={(e) => setKind(e.target.value as ContactRole)}>
+                        <option value="unclassified">Unclassified</option>
                         <option value="parent">Parent</option>
                         <option value="student">Student</option>
                         <option value="tutor">Tutor</option>

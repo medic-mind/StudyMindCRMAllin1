@@ -10,7 +10,17 @@ export const E164 = z
 
 export const Email = z.string().email().max(254)
 
-export const ContactKind = z.enum(['parent', 'student', 'tutor', 'la_caseworker', 'other'])
+// `unclassified` is the neutral default for auto-created contacts (calls, web
+// leads, Trengo imports, Stripe payers) and the create forms — a contact is
+// only a parent/student/tutor once a human classifies it (the type is editable).
+export const ContactKind = z.enum([
+  'parent',
+  'student',
+  'tutor',
+  'la_caseworker',
+  'other',
+  'unclassified',
+])
 export type ContactKind = z.infer<typeof ContactKind>
 
 /** Booking lifecycle relative to booking.studymind.co.uk (CLAUDE.md §15). */
@@ -183,6 +193,9 @@ export type ContactCreateInput = z.infer<typeof ContactCreateInput>
 
 export const ContactUpdateInput = z.object({
   id: z.string(),
+  /** Classification is editable so a contact can be reclassified after
+   *  creation (auto-created contacts start `unclassified`). */
+  kind: ContactKind.optional(),
   firstName: NameField.nullish(),
   lastName: NameField.nullish(),
   email: Email.nullish(),

@@ -16,7 +16,7 @@ import { XIcon } from '@/components/ui/icon'
 
 import { trpc } from '@/lib/trpc/client'
 
-type Kind = 'parent' | 'student' | 'tutor' | 'other'
+type Kind = 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
 type SendStatus = 'none' | 'send_support' | 'ehcp_in_place' | 'ehcp_in_progress' | 'other'
 type PreferredContact = 'email' | 'phone' | 'whatsapp' | 'any'
 
@@ -48,7 +48,7 @@ interface FormState {
 }
 
 const EMPTY: FormState = {
-  kind: 'parent',
+  kind: 'unclassified',
   companyIds: [],
   subjects: [],
   firstName: '',
@@ -200,6 +200,7 @@ export function NewContactForm() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Role" htmlFor="kind">
             <Select id="kind" value={form.kind} onChange={set('kind')}>
+              <option value="unclassified">Unclassified</option>
               <option value="parent">Parent</option>
               <option value="student">Student</option>
               <option value="tutor">Tutor</option>

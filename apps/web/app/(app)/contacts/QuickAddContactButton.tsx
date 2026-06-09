@@ -20,7 +20,7 @@ import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
 import { trpc } from '@/lib/trpc/client'
 
-type Kind = 'parent' | 'student' | 'tutor' | 'other'
+type Kind = 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
 
 function clean(s: string): string | undefined {
   const t = s.trim()
@@ -40,7 +40,7 @@ export function QuickAddContactButton() {
 function QuickAddModal({ onClose }: { onClose: () => void }) {
   const router = useRouter()
   const utils = trpc.useUtils()
-  const [kind, setKind] = useState<Kind>('parent')
+  const [kind, setKind] = useState<Kind>('unclassified')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
@@ -99,6 +99,7 @@ function QuickAddModal({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Role" htmlFor="qa-kind">
               <Select id="qa-kind" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
+                <option value="unclassified">Unclassified</option>
                 <option value="parent">Parent</option>
                 <option value="student">Student</option>
                 <option value="tutor">Tutor</option>

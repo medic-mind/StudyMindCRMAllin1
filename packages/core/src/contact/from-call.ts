@@ -20,9 +20,10 @@ import { writeAuditLogEntry } from '@studymind/audit'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
-/** Web enquirers / cold callers are most often parents in an education CRM;
- * agents recategorise. Mirrors the lead funnel's default (ADR 0023). */
-const DEFAULT_CALL_CONTACT_KIND = 'parent' as const
+/** Auto-created call contacts start `unclassified` — an agent classifies them
+ * (parent / student / …) rather than the system assuming. Mirrors the lead
+ * funnel's default (ADR 0023). */
+const DEFAULT_CALL_CONTACT_KIND = 'unclassified' as const
 
 export interface CallParty {
   /** E.164 counterparty number — the key we match + create on. */

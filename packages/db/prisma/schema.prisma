@@ -148,6 +148,7 @@ enum ContactKind {
   tutor
   la_caseworker
   other
+  unclassified
 }
 
 enum UserRole {

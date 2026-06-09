@@ -27,8 +27,9 @@ import {
 } from '@studymind/core/lead'
 
 const ACTOR_ID = 'system:lead-classify'
-/** Web enquirers are most often parents in an education CRM; agents recategorise. */
-const DEFAULT_LEAD_CONTACT_KIND = 'parent' as const
+/** Auto-created lead contacts start `unclassified` — a human classifies them
+ *  rather than the system assuming "parent". */
+const DEFAULT_LEAD_CONTACT_KIND = 'unclassified' as const
 
 export interface LeadAiEnrichment {
   summary: string
