@@ -41,12 +41,14 @@ export default async function EditContactPage({
         <EditContactForm
           contact={{
             id: contact.id,
-            // The legacy 'la_caseworker' enum value is retired from the UI;
-            // any stale row falls back to 'other' so the form still renders.
+            // 'unclassified' is the neutral default; the legacy 'la_caseworker'
+            // value is retired from the UI and falls back to 'other'.
             kind:
               contact.kind === 'parent' ||
               contact.kind === 'student' ||
-              contact.kind === 'tutor'
+              contact.kind === 'tutor' ||
+              contact.kind === 'unclassified' ||
+              contact.kind === 'other'
                 ? contact.kind
                 : 'other',
             companyIds: contact.companies.map((c) => c.id),

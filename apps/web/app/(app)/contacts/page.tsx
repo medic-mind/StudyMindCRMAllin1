@@ -125,6 +125,7 @@ export default async function ContactsPage({
             paramKey="kind"
             label="Type"
             options={[
+              { value: 'unclassified', label: 'Unclassified' },
               { value: 'parent', label: 'Parent' },
               { value: 'student', label: 'Student' },
               { value: 'tutor', label: 'Tutor' },

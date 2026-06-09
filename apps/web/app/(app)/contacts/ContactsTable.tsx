@@ -126,7 +126,9 @@ const BOOKING_STATUS: Record<
 }
 
 function formatKind(kind: string): string {
-  return kind.replace(/_/g, ' ')
+  if (kind === 'la_caseworker') return 'LA caseworker'
+  const s = kind.replace(/_/g, ' ')
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 const CAN_DELETE = new Set(['ceo', 'senior_manager', 'manager'])

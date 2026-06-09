@@ -285,7 +285,7 @@ async function createContactFromConversation(
   await db.contact.create({
     data: {
       id,
-      kind: 'parent',
+      kind: 'unclassified',
       firstName: split.firstName || null,
       lastName: split.lastName,
       email,

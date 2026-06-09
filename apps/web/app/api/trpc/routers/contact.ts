@@ -71,8 +71,8 @@ const ListInput = z.object({
   companyId: z.string().nullish(),
   /** Filter by Subject.id (m2m). */
   subjectId: z.string().nullish(),
-  /** Filter by contact kind (parent / student / tutor / other). */
-  kind: z.enum(['parent', 'student', 'tutor', 'other']).optional(),
+  /** Filter by contact kind. */
+  kind: z.enum(['unclassified', 'parent', 'student', 'tutor', 'other']).optional(),
   /** Filter by booking lifecycle (CLAUDE.md §15). */
   bookingStatus: z
     .enum(['lead', 'registered_no_hours', 'registered_with_hours'])
@@ -359,6 +359,9 @@ export const contactRouter = router({
       const after = await ctx.db.contact.update({
         where: { id: input.id },
         data: {
+          // Reclassification: undefined leaves the kind unchanged (Prisma
+          // ignores undefined), so existing callers that omit it are unaffected.
+          kind: input.kind,
           firstName: pass(input.firstName),
           lastName: pass(input.lastName),
           email: pass(input.email),

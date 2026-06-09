@@ -21,7 +21,7 @@ type PreferredContact = 'email' | 'phone' | 'whatsapp' | 'any'
 
 interface InitialContact {
   id: string
-  kind: 'parent' | 'student' | 'tutor' | 'other'
+  kind: 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
   companyIds: string[]
   subjectIds: string[]
   subjects: Array<{ id: string; name: string }>
@@ -49,6 +49,7 @@ interface InitialContact {
 }
 
 interface FormState {
+  kind: 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
   companyIds: string[]
   subjects: Array<{ id: string; name: string }>
   firstName: string
@@ -112,6 +113,7 @@ export function EditContactForm({
 }) {
   const router = useRouter()
   const [form, setForm] = useState<FormState>({
+    kind: contact.kind,
     companyIds: contact.companyIds,
     subjects: contact.subjects,
     firstName: contact.firstName ?? '',
@@ -198,6 +200,7 @@ export function EditContactForm({
     e.preventDefault()
     update.mutate({
       id: contact.id,
+      kind: form.kind,
       firstName: emptyToNull(form.firstName),
       lastName: emptyToNull(form.lastName),
       pronouns: emptyToNull(form.pronouns),
@@ -225,13 +228,23 @@ export function EditContactForm({
     })
   }
 
-  const showStudentFields = contact.kind === 'student'
-  const showJobTitle = contact.kind === 'tutor' || contact.kind === 'other'
+  const showStudentFields = form.kind === 'student'
+  const showJobTitle = form.kind === 'tutor' || form.kind === 'other'
 
   return (
     <form className="space-y-5" onSubmit={onSubmit}>
       <Section title="Identity">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="kind">Type</Label>
+            <Select id="kind" value={form.kind} onChange={set('kind')}>
+              <option value="unclassified">Unclassified</option>
+              <option value="parent">Parent</option>
+              <option value="student">Student</option>
+              <option value="tutor">Tutor</option>
+              <option value="other">Other</option>
+            </Select>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="firstName">First name</Label>
             <Input id="firstName" value={form.firstName} onChange={set('firstName')} />

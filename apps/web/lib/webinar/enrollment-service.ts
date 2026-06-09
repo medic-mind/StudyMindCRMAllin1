@@ -116,7 +116,7 @@ async function resolveContact(
   await db.contact.create({
     data: {
       id,
-      kind: 'parent',
+      kind: 'unclassified',
       firstName: firstName || null,
       lastName: rest.length > 0 ? rest.join(' ') : null,
       email,
