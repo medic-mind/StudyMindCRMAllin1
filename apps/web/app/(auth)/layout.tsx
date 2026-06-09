@@ -23,17 +23,18 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(160deg, #3b0764 0%, #6b21a8 50%, #9333ea 100%)',
+              'linear-gradient(160deg, #2e1065 0%, #4c1d95 55%, #6b21a8 100%)',
           }}
         />
-        {/* Soft depth glows + a broad light-from-above sheen. */}
-        <div className="absolute -left-28 -top-32 size-[28rem] rounded-full bg-white/15 blur-3xl" />
-        <div className="absolute -bottom-36 -right-24 size-[34rem] rounded-full bg-white/10 blur-3xl" />
+        {/* Subtle depth glows — kept low so the surface stays dark enough for
+            crisp white text (no washed light-on-light patches). */}
+        <div className="absolute -left-28 -top-32 size-[26rem] rounded-full bg-white/[0.08] blur-3xl" />
+        <div className="absolute -bottom-36 -right-24 size-[32rem] rounded-full bg-white/[0.06] blur-3xl" />
         <div
           className="absolute inset-0"
           style={{
             background:
-              'radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,0.18), transparent 60%)',
+              'radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,0.08), transparent 60%)',
           }}
         />
         {/* Centre brand badge */}
@@ -43,7 +44,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-semibold tracking-tight">StudyMind</span>
-            <span className="text-3xl font-light text-white/70">CRM</span>
+            <span className="text-3xl font-light text-white/80">CRM</span>
           </div>
         </div>
       </aside>
@@ -53,13 +54,13 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="mb-8 flex items-center gap-2 lg:hidden">
           <BrandLogo size={30} markOnly />
           <span className="text-lg font-semibold tracking-tight text-neutral-900">
-            StudyMind <span className="font-light text-neutral-400">CRM</span>
+            StudyMind <span className="font-light text-neutral-500">CRM</span>
           </span>
         </div>
         <main className="w-full max-w-md rounded-2xl border border-neutral-200/70 bg-white p-8 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_16px_40px_-16px_rgba(16,24,40,0.18)] sm:p-9">
           {children}
         </main>
-        <p className="mt-6 text-center text-xs text-neutral-400">
+        <p className="mt-6 text-center text-xs text-neutral-500">
           © {new Date().getFullYear()} StudyMind
         </p>
       </div>
