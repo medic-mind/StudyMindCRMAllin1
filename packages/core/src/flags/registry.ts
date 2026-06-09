@@ -38,6 +38,7 @@ export const FLAGS = {
     default: true,
     owner: 'dsl',
   },
+  // eslint-disable-next-line studymind/release-flag-staleness -- reviewed 2026-06-09: still pending launch; flag intentionally retained. Revisit to launch (default on + remove the gate) or drop.
   'ai.draft_replies_enabled': {
     description: 'Show AI-drafted reply suggestions in the inbox composer.',
     kind: 'release',
@@ -51,6 +52,7 @@ export const FLAGS = {
     default: false,
     owner: 'finance',
   },
+  // eslint-disable-next-line studymind/release-flag-staleness -- reviewed 2026-06-09: still pending launch; flag intentionally retained. Revisit to launch (default on + remove the gate) or drop.
   'ui.density_compact_default': {
     description: 'Default new users to compact density in CRM lists.',
     kind: 'release',
@@ -58,6 +60,7 @@ export const FLAGS = {
     owner: 'design',
     firstShippedAt: '2026-05-09',
   },
+  // eslint-disable-next-line studymind/release-flag-staleness -- reviewed 2026-06-09: still pending launch; flag intentionally retained. Revisit to launch (default on + remove the gate) or drop.
   'booking.push_webhook_enabled': {
     description:
       'Accept push webhooks from booking.studymind.co.uk in addition to scheduled pull.',
