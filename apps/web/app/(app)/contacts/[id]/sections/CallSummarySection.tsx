@@ -210,19 +210,13 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
     setDrafting(true)
     try {
       const result = await utils.contact.callSummary.draftFromCall.fetch({ contactId })
-      if (result.status === 'no_call') {
-        toast('No calls recorded for this contact yet.')
-        return
-      }
-      if (result.status === 'no_transcript') {
-        toast(
-          'Latest call has no transcript yet. Enable Aircall AI Assist or wait for Whisper to finish.',
-        )
-        return
-      }
       setBody(result.text)
       if (result.outcomeHint) setOutcome(result.outcomeHint as Outcome)
-      toast.success('AI draft ready — edit before sending.')
+      toast.success(
+        result.source === 'transcript'
+          ? 'AI draft ready — edit before sending.'
+          : 'Draft scaffold ready — fill in the blanks (no call transcript yet).',
+      )
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not draft from call')
     } finally {

@@ -108,12 +108,28 @@ export async function GET(
     return new NextResponse(stream as any, { status: 200, headers })
   }
 
+  // No durable S3 copy yet. Aircall's stored recording URL is short-lived, so
+  // when we know the Aircall call id we refetch the call to get a CURRENT URL
+  // (the stored one has usually expired — the likely reason playback failed).
+  // Fall back to whatever we stored (Google Voice voicemail, or if the refetch
+  // can't run because Aircall isn't configured).
+  let fetchUrl = providerUrl as string
+  if (aircallCallId != null) {
+    try {
+      const { createClient } = await import('@studymind/integration-aircall/client')
+      const fresh = await createClient().getCall(aircallCallId)
+      if (fresh.recording) fetchUrl = fresh.recording
+    } catch {
+      // Aircall env unset or API error — use the stored URL.
+    }
+  }
+
   // Live fallback — proxy the provider URL through our edge (bytes never leave
   // a long-lived URL with the caller; the access stays audited).
   let buf: Buffer
   let contentType = 'audio/mpeg'
   try {
-    const res = await safeFetch(providerUrl as string)
+    const res = await safeFetch(fetchUrl)
     if (!res.ok) return new NextResponse('recording fetch failed', { status: 502 })
     contentType = res.headers.get('content-type') ?? 'audio/mpeg'
     buf = Buffer.from(await res.arrayBuffer())

@@ -100,6 +100,7 @@ export {
 } from './prompts/reply-draft'
 export {
   buildCallSummaryDraftPrompt,
+  buildCallSummaryScaffold,
   CallSummaryDraftShape,
   VERSION as CALL_SUMMARY_DRAFT_PROMPT_VERSION,
   type CallSummaryDraftPromptInput,

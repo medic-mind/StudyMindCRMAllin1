@@ -38,6 +38,9 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   'api.openai.com',
   // AWS endpoints (KMS, S3 in eu-west-2)
   '*.amazonaws.com',
+  // CloudFront — Aircall serves call-recording media from its CDN; the URL
+  // comes from Aircall's trusted API response (never user input).
+  '*.cloudfront.net',
   // Booking site
   'booking.studymind.co.uk',
   // B2B Invoices Platform (CRM ↔ invoicing two-way sync)

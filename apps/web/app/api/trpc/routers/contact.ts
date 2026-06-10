@@ -10,6 +10,7 @@ import { BusinessError } from '@studymind/core/errors'
 
 import {
   buildCallSummaryDraftPrompt,
+  buildCallSummaryScaffold,
   CALL_SUMMARY_DRAFT_PROMPT_VERSION,
   CallSummaryDraftShape,
   runDraft,
@@ -1036,6 +1037,7 @@ export const contactRouter = router({
         }),
       )
       .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
         const call = await ctx.db.interaction.findFirst({
           where: input.callInteractionId
             ? { id: input.callInteractionId, type: 'call' as const, deletedAt: null }
@@ -1043,31 +1045,34 @@ export const contactRouter = router({
           orderBy: { occurredAt: 'desc' },
           select: { id: true, occurredAt: true, payload: true },
         })
-        if (!call) {
-          return { status: 'no_call' as const }
-        }
-        const payload = (call.payload ?? {}) as {
+        const payload = (call?.payload ?? {}) as {
           transcriptText?: unknown
           outcome?: unknown
         }
         const transcript =
           typeof payload.transcriptText === 'string' ? payload.transcriptText.trim() : ''
-        if (!transcript) {
-          return {
-            status: 'no_transcript' as const,
-            callInteractionId: call.id,
-            callOccurredAt: call.occurredAt,
-          }
-        }
 
-        const contact = await ctx.db.contact.findFirst({
-          where: { id: input.contactId, deletedAt: null },
-          select: { id: true, firstName: true, lastName: true, email: true },
-        })
+        // Context for a customer-facing draft: the contact's name + known
+        // interests (subjects) and the acting agent's name for the greeting.
+        const [contact, agent] = await Promise.all([
+          ctx.db.contact.findFirst({
+            where: { id: input.contactId, deletedAt: null },
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+              subjects: { include: { subject: { select: { name: true } } } },
+            },
+          }),
+          ctx.db.user.findUnique({ where: { id: user.id }, select: { name: true } }),
+        ])
         const contactName =
           [contact?.firstName, contact?.lastName].filter(Boolean).join(' ').trim() ||
           contact?.email ||
-          'this contact'
+          'there'
+        const interests = (contact?.subjects ?? [])
+          .map((s) => s.subject.name)
+          .filter((n): n is string => Boolean(n))
         const outcomeRaw = typeof payload.outcome === 'string' ? payload.outcome : undefined
         const outcomeHint =
           outcomeRaw === 'answered' || outcomeRaw === 'voicemail' || outcomeRaw === 'no_answer'
@@ -1077,8 +1082,12 @@ export const contactRouter = router({
         const prompt = buildCallSummaryDraftPrompt({
           transcript,
           contactName,
+          callerName: agent?.name ?? null,
+          interests,
           outcomeHint,
         })
+        // Always hand back usable text: try the model, and on any failure fall
+        // back to a deterministic scaffold so the button never "does nothing".
         try {
           const result = await runDraft({
             task: 'call_summary_draft',
@@ -1086,7 +1095,7 @@ export const contactRouter = router({
             system: prompt.system,
             user: prompt.user,
             model: 'gpt-4o-mini',
-            temperature: 0.2,
+            temperature: 0.4,
             contentShape: CallSummaryDraftShape,
             contactId: input.contactId,
             ctx: { source: 'contact.callSummary.draftFromCall' },
@@ -1094,15 +1103,20 @@ export const contactRouter = router({
           return {
             status: 'ok' as const,
             text: result.text,
+            source: (transcript ? 'transcript' : 'scaffold') as 'transcript' | 'scaffold',
             outcomeHint: outcomeHint ?? null,
-            callInteractionId: call.id,
-            callOccurredAt: call.occurredAt,
+            callInteractionId: call?.id ?? null,
+            callOccurredAt: call?.occurredAt ?? null,
           }
-        } catch (err) {
-          if (err instanceof BusinessError) {
-            throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+        } catch {
+          return {
+            status: 'ok' as const,
+            text: buildCallSummaryScaffold(contactName, agent?.name ?? null, interests),
+            source: 'scaffold' as const,
+            outcomeHint: outcomeHint ?? null,
+            callInteractionId: call?.id ?? null,
+            callOccurredAt: call?.occurredAt ?? null,
           }
-          throw err
         }
       }),
   }),
