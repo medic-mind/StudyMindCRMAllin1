@@ -45,3 +45,4 @@ prisma/migrations/dev.db*
 
 # Sentry
 .sentryclirc
+dump.rdb
