@@ -234,6 +234,92 @@ async function issueTemporaryCredentials(
   return { temporaryPassword, emailStatus: sendResult.status }
 }
 
+/* -------------------------------------------------------------------------- */
+/* shared account creation (used by create + bulkCreate)                       */
+/* -------------------------------------------------------------------------- */
+
+interface CreateArgs {
+  /** Already normalised: trimmed + lowercased. */
+  email: string
+  roles: Role[]
+  name?: string | null
+  /** Explicit password; omit to generate a strong temporary one. */
+  password?: string
+  requireChange: boolean
+}
+
+/**
+ * Create (or finish inviting) one staff account: upsert the User, attach the
+ * requested roles, issue a temporary password, email the branded welcome +
+ * credentials PDF, and write the `auth.user_created` audit row. Throws CONFLICT
+ * when a fully-provisioned user already owns the email. Shared by `create` (one
+ * account) and `bulkCreate` (many at once) so the invitation path is identical.
+ * Callers are responsible for the authorization checks (create rights + per-role
+ * grant) before calling.
+ */
+async function createUserWithCredentials(
+  ctx: { db: Db; audit: AuthedTrpcContext['audit'] },
+  actor: SessionUser,
+  args: CreateArgs,
+): Promise<{ userId: string; temporaryPassword: string; emailStatus: 'sent' | 'skipped' | 'failed' }> {
+  const existing = await ctx.db.user.findUnique({ where: { email: args.email } })
+  if (existing && existing.passwordHash) {
+    throw new TRPCError({ code: 'CONFLICT', message: 'A user with that email already exists.' })
+  }
+
+  const userId = existing?.id ?? createId()
+  if (!existing) {
+    await ctx.db.user.create({
+      data: {
+        id: userId,
+        email: args.email,
+        name: args.name ?? null,
+        passwordHash: null,
+        emailVerifiedAt: null,
+        mustResetPassword: false,
+        createdById: actor.id,
+        updatedById: actor.id,
+      },
+    })
+  } else if (args.name && !existing.name) {
+    await ctx.db.user.update({
+      where: { id: existing.id },
+      data: { name: args.name, updatedById: actor.id },
+    })
+  }
+
+  for (const role of args.roles) {
+    const present = await ctx.db.roleAssignment.findUnique({
+      where: { userId_role: { userId, role } },
+      select: { id: true },
+    })
+    if (!present) {
+      await ctx.db.roleAssignment.create({
+        data: { id: createId(), userId, role, createdById: actor.id, updatedById: actor.id },
+      })
+    }
+  }
+
+  const { temporaryPassword, emailStatus } = await issueTemporaryCredentials(ctx.db, actor, {
+    userId,
+    email: args.email,
+    name: args.name ?? existing?.name ?? null,
+    actorName: actor.email,
+    isReset: false,
+    invalidateSessions: false,
+    password: args.password,
+    requireChange: args.requireChange,
+  })
+
+  await ctx.audit({
+    action: 'auth.user_created',
+    target: { type: 'User', id: userId },
+    after: { email: args.email, roles: args.roles },
+  })
+
+  return { userId, temporaryPassword, emailStatus }
+}
+
 export const adminUsersRouter = router({
   /* ------------------------------------------------------------------ */
   /* myAccess — capabilities of the current caller (drives UI gating)    */
@@ -414,66 +500,106 @@ export const adminUsersRouter = router({
         }
       }
 
-      const existing = await ctx.db.user.findUnique({ where: { email } })
-      if (existing && existing.passwordHash) {
-        throw new TRPCError({ code: 'CONFLICT', message: 'A user with that email already exists.' })
-      }
-
-      const userId = existing?.id ?? createId()
-      if (!existing) {
-        await ctx.db.user.create({
-          data: {
-            id: userId,
-            email,
-            name: input.name ?? null,
-            passwordHash: null,
-            emailVerifiedAt: null,
-            mustResetPassword: false,
-            createdById: actor.id,
-            updatedById: actor.id,
-          },
-        })
-      } else if (input.name && !existing.name) {
-        await ctx.db.user.update({
-          where: { id: existing.id },
-          data: { name: input.name, updatedById: actor.id },
-        })
-      }
-
-      for (const role of input.roles) {
-        const present = await ctx.db.roleAssignment.findUnique({
-          where: { userId_role: { userId, role } },
-          select: { id: true },
-        })
-        if (!present) {
-          await ctx.db.roleAssignment.create({
-            data: { id: createId(), userId, role, createdById: actor.id, updatedById: actor.id },
-          })
-        }
-      }
-
-      const { temporaryPassword, emailStatus } = await issueTemporaryCredentials(
-        ctx.db,
+      const { userId, temporaryPassword, emailStatus } = await createUserWithCredentials(
+        ctx,
         actor,
         {
-          userId,
           email,
-          name: input.name ?? existing?.name ?? null,
-          actorName: actor.email,
-          isReset: false,
-          invalidateSessions: false,
+          roles: input.roles,
+          name: input.name,
           password: input.password,
           requireChange: input.requireChange,
         },
       )
 
+      return { userId, email, temporaryPassword, emailStatus }
+    }),
+
+  /* ------------------------------------------------------------------ */
+  /* bulkCreate — invite many at once from a list of emails             */
+  /* ------------------------------------------------------------------ */
+  // Paste/type a list of emails and grant them all the same role(s). Each
+  // address runs the exact same invitation path as `create` (temp password +
+  // welcome email + PDF, forced reset on first login). One bad/duplicate/
+  // already-existing address never aborts the batch — the result reports a
+  // per-email outcome. CEO + Senior Manager only, like single create.
+  bulkCreate: auditedProcedure
+    .input(
+      z.object({
+        emails: z.array(z.string()).min(1).max(200),
+        roles: z.array(RoleEnum).min(1),
+        requireChange: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      assertCanCreateUsers(actor)
+      for (const role of input.roles) {
+        if (!canGrantRole(actor.role, role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: `cannot grant role: ${role}` })
+        }
+      }
+
+      const emailSchema = z.string().email()
+      const seen = new Set<string>()
+      const results: Array<{
+        email: string
+        status: 'created' | 'skipped' | 'duplicate' | 'invalid' | 'failed'
+        emailStatus?: 'sent' | 'skipped' | 'failed'
+        userId?: string
+      }> = []
+
+      for (const raw of input.emails) {
+        const trimmed = raw.trim()
+        if (!trimmed) continue
+        const email = trimmed.toLowerCase()
+        if (!emailSchema.safeParse(email).success) {
+          results.push({ email: trimmed, status: 'invalid' })
+          continue
+        }
+        if (seen.has(email)) {
+          results.push({ email, status: 'duplicate' })
+          continue
+        }
+        seen.add(email)
+        try {
+          const r = await createUserWithCredentials(ctx, actor, {
+            email,
+            roles: input.roles,
+            requireChange: input.requireChange,
+          })
+          results.push({ email, status: 'created', userId: r.userId, emailStatus: r.emailStatus })
+        } catch (e) {
+          if (e instanceof TRPCError && e.code === 'CONFLICT') {
+            results.push({ email, status: 'skipped' })
+          } else {
+            logger.error(
+              { detail: e instanceof Error ? e.message : String(e) },
+              'admin.users.bulk_create.row_failed',
+            )
+            results.push({ email, status: 'failed' })
+          }
+        }
+      }
+
+      const summary = {
+        created: results.filter((r) => r.status === 'created').length,
+        skipped: results.filter((r) => r.status === 'skipped').length,
+        duplicate: results.filter((r) => r.status === 'duplicate').length,
+        invalid: results.filter((r) => r.status === 'invalid').length,
+        failed: results.filter((r) => r.status === 'failed').length,
+      }
+
+      // Always write a summary audit row — this is also the auditedProcedure
+      // backstop's required ctx.audit call when nothing was created (every
+      // address skipped/invalid). Per-account rows are written by the helper.
       await ctx.audit({
-        action: 'auth.user_created',
-        target: { type: 'User', id: userId },
-        after: { email, roles: input.roles },
+        action: 'auth.users_bulk_created',
+        target: { type: 'User', id: actor.id },
+        after: { roles: input.roles, ...summary },
       })
 
-      return { userId, email, temporaryPassword, emailStatus }
+      return { results, summary }
     }),
 
   /* ------------------------------------------------------------------ */

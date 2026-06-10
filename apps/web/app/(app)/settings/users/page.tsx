@@ -17,7 +17,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { formatRoleLabel } from '@/lib/format/role-label'
 
-import { CreateUserDialog, RowActions, type AccessFlags } from './controls'
+import { BulkInviteDialog, CreateUserDialog, RowActions, type AccessFlags } from './controls'
 
 export const dynamic = 'force-dynamic'
 
@@ -161,6 +161,7 @@ export default async function UsersSettingsPage({
         <div className="ml-auto">
           <SearchField placeholder="Search by email or name" />
         </div>
+        <BulkInviteDialog access={access} />
         <CreateUserDialog access={access} />
       </div>
 

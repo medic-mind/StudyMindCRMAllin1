@@ -323,6 +323,7 @@ export const EVENT_NAMES = [
   'auth.super_admin_seeded',
   // User management (admin-created accounts + grantable user.manage permission).
   'auth.user_created',
+  'auth.users_bulk_created',
   'auth.user_updated',
   'auth.password_reset_by_admin',
   'auth.permission_granted',

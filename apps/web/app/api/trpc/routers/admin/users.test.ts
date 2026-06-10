@@ -421,6 +421,34 @@ describe('admin.users router', () => {
     expect(auditCalls.some((a) => a.action === 'auth.user_created')).toBe(true)
   })
 
+  it('bulkCreate invites many, skipping existing and flagging invalid + duplicate', async () => {
+    const { ctx, auditCalls, users } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    const res = await caller.bulkCreate({
+      emails: [
+        'alex@example.com',
+        'sam@example.com',
+        'ALEX@example.com', // duplicate within the batch (case-insensitive)
+        'not-an-email', // invalid
+        'sales@example.com', // already a provisioned user
+      ],
+      roles: ['sales_executive'],
+    })
+    expect(res.summary).toMatchObject({ created: 2, duplicate: 1, invalid: 1, skipped: 1 })
+    expect(users.some((u) => u.email === 'alex@example.com')).toBe(true)
+    expect(users.some((u) => u.email === 'sam@example.com')).toBe(true)
+    expect(auditCalls.filter((a) => a.action === 'auth.user_created')).toHaveLength(2)
+    expect(auditCalls.some((a) => a.action === 'auth.users_bulk_created')).toBe(true)
+  })
+
+  it('bulkCreate refuses a role the actor cannot grant', async () => {
+    const { ctx } = makeCtx('senior_manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    await expect(
+      caller.bulkCreate({ emails: ['x@example.com'], roles: ['senior_manager'] }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
   it('create can set an admin-chosen password and skip the forced change', async () => {
     const { ctx, users } = makeCtx('senior_manager')
     const caller = adminUsersRouter.createCaller(ctx)

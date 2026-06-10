@@ -465,6 +465,197 @@ export function CreateUserDialog({ access }: { access: AccessFlags }) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* bulk invite (many emails at once)                                           */
+/* -------------------------------------------------------------------------- */
+
+interface BulkRow {
+  email: string
+  status: 'created' | 'skipped' | 'duplicate' | 'invalid' | 'failed'
+  emailStatus?: EmailStatus
+}
+
+const BULK_STATUS_META: Record<
+  BulkRow['status'],
+  { label: string; cls: string }
+> = {
+  created: { label: 'Invited', cls: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' },
+  skipped: { label: 'Already exists', cls: 'bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200' },
+  duplicate: { label: 'Duplicate', cls: 'bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200' },
+  invalid: { label: 'Invalid email', cls: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200' },
+  failed: { label: 'Failed', cls: 'bg-red-50 text-red-700 ring-1 ring-red-200' },
+}
+
+export function BulkInviteDialog({ access }: { access: AccessFlags }) {
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [raw, setRaw] = useState('')
+  const [roles, setRoles] = useState<Role[]>([])
+  const [requireChange, setRequireChange] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [results, setResults] = useState<BulkRow[] | null>(null)
+
+  const grantable = ROLES.filter((r) => canGrantRole(access.role, r))
+
+  // Split on whitespace, commas and semicolons so pasted lists in any shape
+  // (one per line, comma-separated, copied from a spreadsheet) all parse.
+  const tokens = raw.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean)
+  const uniqueCount = new Set(tokens.map((t) => t.toLowerCase())).size
+
+  const bulk = trpc.admin.users.bulkCreate.useMutation({
+    onSuccess: (res) => {
+      setResults(res.results)
+      const n = res.summary.created
+      toast.success(`Invited ${n} ${n === 1 ? 'account' : 'accounts'}`)
+      router.refresh()
+    },
+    onError: (e) => {
+      setError(e.message)
+      toast.error(e.message ?? 'Could not send the invitations')
+    },
+  })
+
+  const close = () => {
+    setOpen(false)
+    setRaw('')
+    setRoles([])
+    setRequireChange(true)
+    setError(null)
+    setResults(null)
+  }
+
+  if (!access.canCreate) return null
+  if (!open) {
+    return (
+      <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
+        Invite many
+      </Button>
+    )
+  }
+
+  return (
+    <ModalShell title={results ? 'Invitations sent' : 'Invite many users'} onClose={close}>
+      {results ? (
+        <div className="space-y-4">
+          <p className="text-sm text-neutral-600">
+            {results.filter((r) => r.status === 'created').length} invited
+            {results.some((r) => r.status === 'skipped') &&
+              ` · ${results.filter((r) => r.status === 'skipped').length} already existed`}
+            {results.some((r) => r.status === 'invalid' || r.status === 'duplicate') &&
+              ` · ${results.filter((r) => r.status === 'invalid' || r.status === 'duplicate').length} ignored`}
+            {results.some((r) => r.status === 'failed') &&
+              ` · ${results.filter((r) => r.status === 'failed').length} failed`}
+            .
+          </p>
+          <ul className="max-h-72 divide-y divide-neutral-100 overflow-y-auto rounded-md border border-neutral-200">
+            {results.map((r) => (
+              <li
+                key={`${r.email}-${r.status}`}
+                className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 truncate font-mono text-xs text-neutral-700">{r.email}</span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {r.status === 'created' && r.emailStatus && r.emailStatus !== 'sent' && (
+                    <span className="text-[11px] text-amber-600">
+                      {r.emailStatus === 'skipped' ? 'email not sent' : 'email failed'}
+                    </span>
+                  )}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${BULK_STATUS_META[r.status].cls}`}
+                  >
+                    {BULK_STATUS_META[r.status].label}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-end">
+            <Button type="button" onClick={close}>
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            setError(null)
+            if (tokens.length === 0) {
+              setError('Paste at least one email address.')
+              return
+            }
+            if (roles.length === 0) {
+              setError('Pick at least one role to grant everyone.')
+              return
+            }
+            bulk.mutate({ emails: tokens, roles, requireChange })
+          }}
+          className="space-y-3"
+        >
+          {error && (
+            <div
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="bulk-emails">Email addresses</Label>
+            <Textarea
+              id="bulk-emails"
+              rows={6}
+              value={raw}
+              onChange={(e) => setRaw(e.target.value)}
+              placeholder={'one per line, or comma-separated\nalex@studymind.co.uk, sam@studymind.co.uk'}
+            />
+            <p className="text-xs text-neutral-500">
+              {uniqueCount > 0
+                ? `${uniqueCount} unique address${uniqueCount === 1 ? '' : 'es'} — each gets a welcome email with a temporary password.`
+                : 'Paste a list — separate with new lines, commas or spaces.'}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Roles (applied to everyone)</Label>
+            <div className="flex flex-wrap gap-2">
+              {grantable.map((r) => (
+                <label key={r} className="flex items-center gap-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={roles.includes(r)}
+                    onChange={(e) =>
+                      setRoles((prev) =>
+                        e.target.checked ? [...prev, r] : prev.filter((x) => x !== r),
+                      )
+                    }
+                  />
+                  {formatRoleLabel(r)}
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={requireChange}
+              onChange={(e) => setRequireChange(e.target.checked)}
+            />
+            Require a password change on first sign-in
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={close}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={bulk.isPending}>
+              {bulk.isPending ? 'Inviting…' : `Invite ${uniqueCount || ''}`.trim()}
+            </Button>
+          </div>
+        </form>
+      )}
+    </ModalShell>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
 /* edit user (name + email)                                                    */
 /* -------------------------------------------------------------------------- */
 
