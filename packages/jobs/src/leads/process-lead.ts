@@ -79,6 +79,9 @@ function buildEnquirySummary(n: NormalisedLead, c: LeadClassification): string {
 
 function buildContactNotes(n: NormalisedLead, c: LeadClassification): string {
   const parts: string[] = []
+  // A number the strict E.164 rules rejected must never vanish — keep it
+  // visible on the contact so the agent can still dial it (live bug).
+  if (n.phone && !n.phoneE164) parts.push(`Phone (as typed): ${n.phone}`)
   if (c.categories.length) parts.push(`Interest: ${c.categories.join(', ')}`)
   if (c.productTags.length) parts.push(`Products: ${c.productTags.join(', ')}`)
   if (n.parentName) parts.push(`Parent: ${n.parentName}`)
@@ -332,6 +335,7 @@ export async function processLead(
             score: classification.score,
             landingUrl: normalised.landingUrl,
             aiSummary: ai?.summary ?? null,
+            phoneAsTyped: normalised.phoneE164 ? null : normalised.phone,
           } as Prisma.InputJsonValue,
         },
       })
@@ -425,6 +429,7 @@ export async function processLead(
           score: classification.score,
           landingUrl: normalised.landingUrl,
           aiSummary: ai?.summary ?? null,
+          phoneAsTyped: normalised.phoneE164 ? null : normalised.phone,
         } as Prisma.InputJsonValue,
       },
     })

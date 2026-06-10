@@ -15,6 +15,8 @@ import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
+import { resolveStageColor } from '../../../pipeline/stage-color'
+
 interface Stage {
   id: string
   name: string
@@ -69,14 +71,11 @@ export function BoardQuickActionsAdmin({ boardId, allStages }: Props) {
     <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-neutral-900">
-            Quick-action buttons
-          </h2>
+          <h2 className="text-sm font-semibold text-neutral-900">Quick-action buttons</h2>
           <p className="mt-1 text-xs text-neutral-500">
-            Each button appears on every card on this board. Click adds the
-            comment template and moves the card to the target stage — the
-            target can sit on a different board, useful for routing a
-            completed call into a follow-up pipeline.
+            Each button appears on every card on this board. Click adds the comment template and
+            moves the card to the target stage — the target can sit on a different board, useful for
+            routing a completed call into a follow-up pipeline.
           </p>
         </div>
         {!creating && (
@@ -104,8 +103,8 @@ export function BoardQuickActionsAdmin({ boardId, allStages }: Props) {
         <p className="text-sm text-neutral-500">Loading…</p>
       ) : actions.length === 0 ? (
         <p className="text-sm text-neutral-600">
-          No quick actions yet. Click <em>+ New action</em> to add one (e.g. Called
-          once → Called once stage).
+          No quick actions yet. Click <em>+ New action</em> to add one (e.g. Called once → Called
+          once stage).
         </p>
       ) : (
         <ul className="space-y-2">
@@ -126,10 +125,7 @@ export function BoardQuickActionsAdmin({ boardId, allStages }: Props) {
                 />
               </li>
             ) : (
-              <li
-                key={a.id}
-                className="rounded-md border border-neutral-200 bg-white p-3 text-sm"
-              >
+              <li key={a.id} className="rounded-md border border-neutral-200 bg-white p-3 text-sm">
                 <QuickActionRow
                   action={a}
                   onEdit={() => setEditingId(a.id)}
@@ -184,13 +180,12 @@ function QuickActionRow({
         <div className="flex flex-wrap items-center gap-2">
           <span
             className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold text-white"
-            style={{ backgroundColor: action.color ?? '#64748b' }}
+            style={{ backgroundColor: resolveStageColor(action.color ?? '#64748b') }}
           >
             {action.label}
           </span>
           <span className="text-xs text-neutral-600">
-            →{' '}
-            <strong className="text-neutral-800">{action.targetStageName}</strong>
+            → <strong className="text-neutral-800">{action.targetStageName}</strong>
             {action.targetBoardName ? (
               <span className="text-neutral-500"> on {action.targetBoardName}</span>
             ) : null}
@@ -203,8 +198,7 @@ function QuickActionRow({
         </div>
         {action.commentTemplate ? (
           <p className="mt-1 text-xs text-neutral-600">
-            <span className="font-medium text-neutral-700">Comment:</span>{' '}
-            {action.commentTemplate}
+            <span className="font-medium text-neutral-700">Comment:</span> {action.commentTemplate}
           </p>
         ) : null}
       </div>
@@ -340,10 +334,7 @@ function QuickActionEditor({
           </div>
         </Field>
         <Field label="Target stage (board)" wide>
-          <Select
-            value={targetStageId}
-            onChange={(e) => setTargetStageId(e.target.value)}
-          >
+          <Select value={targetStageId} onChange={(e) => setTargetStageId(e.target.value)}>
             <option value="">— Select stage —</option>
             {Array.from(groupedStages.values()).map((g) => (
               <optgroup key={g.boardName} label={g.boardName}>
@@ -375,11 +366,7 @@ function QuickActionEditor({
         />
       </Field>
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        <Button
-          type="button"
-          onClick={save}
-          disabled={busy || !label.trim() || !targetStageId}
-        >
+        <Button type="button" onClick={save} disabled={busy || !label.trim() || !targetStageId}>
           {busy ? 'Saving…' : 'Save'}
         </Button>
         <button

@@ -161,7 +161,14 @@ function roleForKey(key: string, type: string): Role | null {
   return null
 }
 
-/** Best-effort E.164. Confident only for +, 00, and UK 0-prefixed numbers. */
+/**
+ * Best-effort E.164. Confident for: `+…`, `00…` international, UK
+ * `0…`-prefixed (10–11 digits), bare `44…` country-coded, and bare UK
+ * mobiles typed without the leading 0 (`7xxx xxx xxx`). Anything else
+ * returns e164 null — the caller keeps the as-typed value so the number
+ * is never silently lost (live bug: a number the strict rules rejected
+ * vanished from the contact and the pipeline card entirely).
+ */
 export function normalisePhone(input: string): { e164: string | null; display: string } {
   const display = input.trim()
   const cleaned = display.replace(/[^\d+]/gu, '')
@@ -170,8 +177,19 @@ export function normalisePhone(input: string): { e164: string | null; display: s
     const candidate = '+' + cleaned.slice(2)
     if (E164_RE.test(candidate)) return { e164: candidate, display }
   }
-  if (cleaned.startsWith('0') && cleaned.length === 11) {
+  // UK national format: 0 + 9–10 digits (mobiles 11 total, some landlines 10).
+  if (cleaned.startsWith('0') && (cleaned.length === 10 || cleaned.length === 11)) {
     const candidate = '+44' + cleaned.slice(1)
+    if (E164_RE.test(candidate)) return { e164: candidate, display }
+  }
+  // Country code typed without the +/00 (e.g. "44 7700 900123").
+  if (cleaned.startsWith('44') && cleaned.length >= 11 && cleaned.length <= 13) {
+    const candidate = '+' + cleaned
+    if (E164_RE.test(candidate)) return { e164: candidate, display }
+  }
+  // UK mobile with the leading 0 dropped (e.g. "7700 900123").
+  if (cleaned.startsWith('7') && cleaned.length === 10) {
+    const candidate = '+44' + cleaned
     if (E164_RE.test(candidate)) return { e164: candidate, display }
   }
   return { e164: null, display }

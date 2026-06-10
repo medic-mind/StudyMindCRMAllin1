@@ -67,6 +67,7 @@ interface Props {
   canDeleteCard: boolean
   currentUserName: string
   onLocalMove?: (cardId: string, toStageId: string) => void
+  onLocalRevert?: () => void
 }
 
 export function SortableCard(props: Props) {
@@ -92,4 +93,3 @@ export function SortableCard(props: Props) {
     />
   )
 }
-

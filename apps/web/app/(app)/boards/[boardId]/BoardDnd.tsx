@@ -97,10 +97,7 @@ interface Props {
 }
 
 /** Resolve a drop target (a card id or a `stage:<id>` droppable) to a stage. */
-function stageIdOfDroppable(
-  overId: string,
-  cards: ReadonlyArray<CardData>,
-): string | null {
+function stageIdOfDroppable(overId: string, cards: ReadonlyArray<CardData>): string | null {
   if (overId.startsWith('stage:')) return overId.slice('stage:'.length)
   const card = cards.find((c) => c.id === overId)
   return card?.stageId ?? null
@@ -167,12 +164,37 @@ export function BoardDnd({
   /** Optimistic local move — used by quick actions + the move dropdown
    * so the card jumps columns the instant the user clicks. The actual
    * server mutation lives inside the component that called us; we just
-   * mutate local state here. If the server call fails the caller can
-   * revert by passing the previous stageId back through. */
+   * mutate local state here. A snapshot is taken first so the caller's
+   * onError can revert via `revertLocalMove` — without it a rejected
+   * move left the card stranded (or vanished) until a manual refresh. */
   function moveCardLocal(cardId: string, toStageId: string) {
-    setCards((prev) =>
-      prev.map((c) => (c.id === cardId ? { ...c, stageId: toStageId } : c)),
-    )
+    preMoveSnapshot.current = cards.map((c) => ({ ...c }))
+    const onThisBoard = stages.some((s) => s.id === toStageId)
+    if (onThisBoard) {
+      setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, stageId: toStageId } : c)))
+      // Bring the destination column into view so the card visibly lands
+      // somewhere — "Call completed" style targets live off-screen to the
+      // right and the move read as the card simply disappearing.
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-stage-col="${toStageId}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' })
+      })
+    } else {
+      // Cross-board target: the card genuinely leaves this board. Remove it
+      // locally (previously it was re-keyed onto a stage this board doesn't
+      // render, which silently dropped it from every column with no revert).
+      setCards((prev) => prev.filter((c) => c.id !== cardId))
+    }
+  }
+
+  /** Restore the snapshot taken by the last optimistic move. Called by
+   * quick actions / the move dropdown when their mutation fails. */
+  function revertLocalMove() {
+    if (preMoveSnapshot.current) {
+      setCards(preMoveSnapshot.current)
+      preMoveSnapshot.current = null
+    }
   }
 
   /** Optimistic insert — a per-column (or toolbar) add drops the new card in
@@ -211,7 +233,7 @@ export function BoardDnd({
     return map
   }, [cards, stages])
 
-  const activeCard = activeId ? cards.find((c) => c.id === activeId) ?? null : null
+  const activeCard = activeId ? (cards.find((c) => c.id === activeId) ?? null) : null
 
   function onDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id))
@@ -271,7 +293,11 @@ export function BoardDnd({
     >
       <div className="flex gap-4 overflow-x-auto pb-2">
         {stages.map((stage) => (
-          <div key={stage.id} className="min-w-[300px] max-w-[320px] flex-1">
+          <div
+            key={stage.id}
+            data-stage-col={stage.id}
+            className="min-w-[300px] max-w-[320px] flex-1"
+          >
             <BoardColumn
               boardId={boardId}
               stage={stage}
@@ -286,6 +312,7 @@ export function BoardDnd({
               canDeleteCard={canDeleteCard}
               currentUserName={currentUserName}
               onLocalMove={moveCardLocal}
+              onLocalRevert={revertLocalMove}
               onCardCreated={addCardLocal}
             />
           </div>

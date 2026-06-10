@@ -12,6 +12,17 @@ describe('normalisePhone', () => {
   it('converts a 00-prefixed international number', () => {
     expect(normalisePhone('0044 7700 900123').e164).toBe('+447700900123')
   })
+  it('converts a 44-prefixed number typed without the +', () => {
+    expect(normalisePhone('44 7700 900123').e164).toBe('+447700900123')
+  })
+  it('converts a UK mobile typed without the leading 0', () => {
+    expect(normalisePhone('7700 900123').e164).toBe('+447700900123')
+  })
+  it('keeps the as-typed display when E.164 cannot be derived', () => {
+    const r = normalisePhone('12345')
+    expect(r.e164).toBeNull()
+    expect(r.display).toBe('12345')
+  })
   it('returns null for an unconvertible value', () => {
     expect(normalisePhone('hello').e164).toBeNull()
   })

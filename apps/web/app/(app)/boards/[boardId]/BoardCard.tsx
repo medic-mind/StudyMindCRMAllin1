@@ -102,6 +102,8 @@ interface Props {
    * instantly. Optional — when missing the card still moves via the
    * server round-trip + router.refresh, just not instantly. */
   onLocalMove?: (cardId: string, toStageId: string) => void
+  /** Restores the pre-move snapshot when a server move is rejected. */
+  onLocalRevert?: () => void
   // Supplied by SortableCard (ADR 0019); undefined when DnD is not in play.
   dragRef?: Ref<HTMLLIElement>
   dragStyle?: CSSProperties
@@ -121,6 +123,7 @@ export function BoardCard({
   canDeleteCard,
   currentUserName,
   onLocalMove,
+  onLocalRevert,
   dragRef,
   dragStyle,
   dragHandleProps,
@@ -167,14 +170,14 @@ export function BoardCard({
           ) : null}
           {cardFaceHas(cardFields, 'labels') &&
             card.labels.map((l) => (
-            <span
-              key={l.id}
-              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
-              style={{ backgroundColor: resolveStageColor(l.color) }}
-            >
-              {l.name}
-            </span>
-          ))}
+              <span
+                key={l.id}
+                className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
+                style={{ backgroundColor: resolveStageColor(l.color) }}
+              >
+                {l.name}
+              </span>
+            ))}
         </div>
         {/* Contact preview — phone + email, directly clickable to dial / mail
             without opening the card. `pointer-events-auto` re-enables clicks
@@ -188,11 +191,13 @@ export function BoardCard({
         )}
         {/* Note preview — first 2 lines of the card description so the
             agent gets context at a glance. */}
-        {cardFaceHas(cardFields, 'description') && card.description && card.description.trim().length > 0 && (
-          <p className="mt-2 line-clamp-2 text-xs leading-snug text-neutral-600">
-            {card.description.trim()}
-          </p>
-        )}
+        {cardFaceHas(cardFields, 'description') &&
+          card.description &&
+          card.description.trim().length > 0 && (
+            <p className="mt-2 line-clamp-2 text-xs leading-snug text-neutral-600">
+              {card.description.trim()}
+            </p>
+          )}
         {/* Scheduled call is the headline metadata on these boards — give it
             its own row at a readable size (was lost in the meta strip
             previously). Past times go red; future times stay primary. */}
@@ -276,6 +281,7 @@ export function BoardCard({
             currentStageId={stageId}
             actions={quickActions}
             onLocalMove={onLocalMove}
+            onLocalRevert={onLocalRevert}
           />
         ) : null}
         {canWrite ? (
@@ -286,6 +292,7 @@ export function BoardCard({
               stages={stages}
               crossBoardStages={crossBoardStages}
               onLocalMove={onLocalMove}
+              onLocalRevert={onLocalRevert}
             />
           </div>
         ) : null}
