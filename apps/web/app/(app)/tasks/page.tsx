@@ -12,7 +12,7 @@ import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { FacetedFilter } from '@/components/ui/faceted-filter'
 import { ToggleFilter } from '@/components/ui/filter-bar'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
-import { dueAtLabel } from '@/lib/format/relative-time'
+import { dueAtLabel, formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { NewTaskDialog } from './NewTaskDialog'
@@ -43,10 +43,12 @@ const DUE_TONE_CLASS: Record<string, string> = {
 }
 
 type Scope = 'mine' | 'team' | 'all'
+type View = 'live' | 'completed'
 type StatusKey = 'open' | 'in_progress' | 'done'
 
 interface SP {
   scope?: string
+  view?: string
   status?: string
   overdue?: string
   teamId?: string
@@ -55,12 +57,15 @@ interface SP {
 export default async function TasksPage({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams
   const scope: Scope = sp.scope === 'mine' ? 'mine' : sp.scope === 'team' ? 'team' : 'all'
+  // Live is the working default: completed tasks leave this list the moment
+  // they're ticked and land in the Completed view instead.
+  const view: View = sp.view === 'completed' ? 'completed' : 'live'
   const status = (
     sp.status === 'open' || sp.status === 'in_progress' || sp.status === 'done'
       ? sp.status
       : undefined
   ) as StatusKey | undefined
-  const overdue = sp.overdue === '1'
+  const overdue = view === 'live' && sp.overdue === '1'
   const teamId = sp.teamId && sp.teamId.length > 0 ? sp.teamId : undefined
 
   const caller = await createServerCaller()
@@ -68,7 +73,10 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
     caller.task.list({
       scope: scope === 'mine' ? 'me' : scope === 'team' ? 'team' : 'all',
       teamId,
-      status,
+      view,
+      // An explicit status pick only applies in the live view (the Completed
+      // tab is already status-scoped to done/cancelled).
+      status: view === 'live' ? status : undefined,
       overdue: overdue || undefined,
       limit: 100,
     }),
@@ -77,17 +85,24 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
   const now = new Date()
 
   const scopeTabs: Array<{ key: Scope; label: string }> = [
-    { key: 'mine', label: 'Mine' },
-    { key: 'team', label: 'Team' },
-    { key: 'all', label: 'All' },
+    { key: 'mine', label: 'My tasks' },
+    { key: 'team', label: 'My teams' },
+    { key: 'all', label: 'Everyone' },
+  ]
+  const viewTabs: Array<{ key: View; label: string }> = [
+    { key: 'live', label: 'Live' },
+    { key: 'completed', label: 'Completed' },
   ]
 
-  // The scope segmented control carries the other filters across a scope change
-  // (status / team / overdue all live in the URL; the faceted filters own them).
-  function scopeQuery(nextScope: Scope) {
-    const q: Record<string, string> = { scope: nextScope }
-    if (status) q.status = status
-    if (overdue) q.overdue = '1'
+  // The segmented controls carry the other filters across a change (status /
+  // team / overdue all live in the URL; the faceted filters own them).
+  function buildQuery(next: { scope?: Scope; view?: View }) {
+    const s = next.scope ?? scope
+    const v = next.view ?? view
+    const q: Record<string, string> = { scope: s }
+    if (v === 'completed') q.view = 'completed'
+    if (status && v === 'live') q.status = status
+    if (overdue && v === 'live') q.overdue = '1'
     if (teamId) q.teamId = teamId
     return q
   }
@@ -102,7 +117,8 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
             <TasksExportButton
               scope={scope === 'mine' ? 'me' : scope === 'team' ? 'team' : 'all'}
               teamId={teamId}
-              status={status}
+              view={view}
+              status={view === 'live' ? status : undefined}
               overdue={overdue || undefined}
             />
             <NewTaskDialog />
@@ -110,8 +126,30 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
         }
       />
       <PageBody>
-        {/* Scope segmented control */}
+        {/* View + scope segmented controls */}
         <div className="flex flex-wrap items-center gap-3">
+          <div
+            role="tablist"
+            aria-label="Task view"
+            className="inline-flex items-center rounded-lg border border-neutral-200 bg-white p-0.5 shadow-card"
+          >
+            {viewTabs.map((t) => (
+              <Link
+                key={t.key}
+                role="tab"
+                aria-selected={view === t.key}
+                href={{ pathname: '/tasks', query: buildQuery({ view: t.key }) }}
+                className={
+                  view === t.key
+                    ? 'inline-flex items-center rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors'
+                    : 'inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900'
+                }
+              >
+                {t.label}
+              </Link>
+            ))}
+          </div>
+
           <div
             role="tablist"
             aria-label="Task scope"
@@ -122,7 +160,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                 key={t.key}
                 role="tab"
                 aria-selected={scope === t.key}
-                href={{ pathname: '/tasks', query: scopeQuery(t.key) }}
+                href={{ pathname: '/tasks', query: buildQuery({ scope: t.key }) }}
                 className={
                   scope === t.key
                     ? 'inline-flex items-center rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors'
@@ -134,16 +172,17 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
             ))}
           </div>
 
-          {/* Status filter */}
-          <FacetedFilter
-            paramKey="status"
-            label="Status"
-            options={[
-              { value: 'open', label: 'Open' },
-              { value: 'in_progress', label: 'In progress' },
-              { value: 'done', label: 'Done' },
-            ]}
-          />
+          {/* Status filter — live view only (Completed is already done/cancelled). */}
+          {view === 'live' ? (
+            <FacetedFilter
+              paramKey="status"
+              label="Status"
+              options={[
+                { value: 'open', label: 'Open' },
+                { value: 'in_progress', label: 'In progress' },
+              ]}
+            />
+          ) : null}
 
           {/* Team filter */}
           {teams.length > 0 ? (
@@ -158,16 +197,24 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
             />
           ) : null}
 
-          {/* Overdue toggle */}
-          <ToggleFilter paramKey="overdue" label="Overdue only" tone="danger" />
+          {/* Overdue toggle — meaningless for closed work. */}
+          {view === 'live' ? (
+            <ToggleFilter paramKey="overdue" label="Overdue only" tone="danger" />
+          ) : null}
         </div>
 
         <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
           {data.items.length === 0 ? (
             <div className="p-10 text-center">
-              <p className="text-sm font-medium text-neutral-700">No tasks match this filter.</p>
+              <p className="text-sm font-medium text-neutral-700">
+                {view === 'completed'
+                  ? 'Nothing completed in this view yet.'
+                  : 'No live tasks match this filter.'}
+              </p>
               <p className="mt-1 text-sm text-neutral-500">
-                Create a task with the New task button, or from a contact&apos;s timeline.
+                {view === 'completed'
+                  ? 'Tick a task done and it moves here, out of the live list.'
+                  : 'Create a task with the New task button, or from a contact’s timeline.'}
               </p>
             </div>
           ) : (
@@ -179,7 +226,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                   <Th>Task</Th>
                   <Th>Team</Th>
                   <Th>Contact</Th>
-                  <Th>Due</Th>
+                  <Th>{view === 'completed' ? 'Completed' : 'Due'}</Th>
                   <Th>Status</Th>
                 </Tr>
               </Thead>
@@ -253,7 +300,17 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
                         )}
                       </Td>
                       <Td className="font-mono text-xs tabular-nums">
-                        {due ? (
+                        {view === 'completed' ? (
+                          <span
+                            className="text-neutral-600"
+                            title={new Intl.DateTimeFormat('en-GB', {
+                              dateStyle: 'medium',
+                              timeStyle: 'short',
+                            }).format(new Date(t.updatedAt))}
+                          >
+                            {formatRelativeTime(t.updatedAt, now)}
+                          </span>
+                        ) : due ? (
                           <span className={DUE_TONE_CLASS[due.tone] ?? ''}>{due.label}</span>
                         ) : (
                           <span className="text-neutral-400">—</span>

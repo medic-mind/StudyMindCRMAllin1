@@ -57,6 +57,13 @@ const ListInput = z.object({
   teamId: z.string().nullish(),
   /** When true, only tasks with a dueAt in the past and not done/cancelled. */
   overdue: z.boolean().optional(),
+  /**
+   * "live" → working set only (excludes done/cancelled).
+   * "completed" → done/cancelled only, most recently finished first.
+   * "all" → everything (legacy default, keeps existing callers unchanged).
+   * An explicit `status` filter overrides the view's status clause.
+   */
+  view: z.enum(['live', 'completed', 'all']).default('all'),
 })
 
 const UpdateInput = z.object({
@@ -103,34 +110,58 @@ export const taskRouter = router({
       teamFilter = { teamId: { in: memberships.map((m) => m.teamId) } }
     }
 
+    // The completed view orders by updatedAt (≈ when the task was closed —
+    // most recently finished first) and its keyset cursor must follow that
+    // ordering: the cursor's `createdAt` slot carries the row's updatedAt.
+    const completed = input.view === 'completed'
+
     const rows = await ctx.db.task.findMany({
       where: {
         deletedAt: null,
         ...(input.scope === 'me' ? { assigneeId: user.id } : {}),
         ...(teamFilter ?? {}),
-        // Status: an explicit status filter wins. Otherwise, when "overdue" is
-        // set we exclude terminal statuses so closed work never shows as late.
+        // Status: an explicit status filter wins, then the view, then the
+        // overdue toggle's exclusion of terminal statuses so closed work
+        // never shows as late.
         ...(input.status
           ? { status: input.status }
-          : input.overdue
+          : input.view === 'live'
             ? { status: { notIn: ['done', 'cancelled'] as TaskStatus[] } }
-            : {}),
+            : completed
+              ? { status: { in: ['done', 'cancelled'] as TaskStatus[] } }
+              : input.overdue
+                ? { status: { notIn: ['done', 'cancelled'] as TaskStatus[] } }
+                : {}),
         ...(input.overdue ? { dueAt: { lt: new Date() } } : {}),
         ...(input.cursor
-          ? {
-              OR: [
-                { createdAt: { lt: input.cursor.createdAt } },
-                {
-                  AND: [
-                    { createdAt: input.cursor.createdAt },
-                    { id: { lt: input.cursor.id } },
-                  ],
-                },
-              ],
-            }
+          ? completed
+            ? {
+                OR: [
+                  { updatedAt: { lt: input.cursor.createdAt } },
+                  {
+                    AND: [
+                      { updatedAt: input.cursor.createdAt },
+                      { id: { lt: input.cursor.id } },
+                    ],
+                  },
+                ],
+              }
+            : {
+                OR: [
+                  { createdAt: { lt: input.cursor.createdAt } },
+                  {
+                    AND: [
+                      { createdAt: input.cursor.createdAt },
+                      { id: { lt: input.cursor.id } },
+                    ],
+                  },
+                ],
+              }
           : {}),
       },
-      orderBy: [{ dueAt: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: completed
+        ? [{ updatedAt: 'desc' }, { id: 'desc' }]
+        : [{ dueAt: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }],
       take: input.limit + 1,
       select: {
         id: true,
@@ -143,6 +174,7 @@ export const taskRouter = router({
         contactId: true,
         dueAt: true,
         createdAt: true,
+        updatedAt: true,
         family: { select: { name: true } },
         team: { select: { id: true, name: true, color: true } },
       },
@@ -175,6 +207,9 @@ export const taskRouter = router({
       contactId: r.contactId,
       dueAt: r.dueAt,
       createdAt: r.createdAt,
+      /** ≈ when the task was last touched; in the completed view this is the
+       *  close time (status flips are the last write in practice). */
+      updatedAt: r.updatedAt,
       assigneeEmail: r.assigneeId
         ? (assigneeMap.get(r.assigneeId)?.email ?? null)
         : null,
@@ -188,7 +223,12 @@ export const taskRouter = router({
 
     return {
       items,
-      nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
+      // Completed view paginates on updatedAt (see cursor note above); the
+      // cursor envelope keeps the `createdAt` field name for compatibility.
+      nextCursor:
+        hasMore && last
+          ? { id: last.id, createdAt: completed ? last.updatedAt : last.createdAt }
+          : null,
     }
   }),
 

@@ -36,13 +36,14 @@ const COLUMNS: CsvColumn<Row>[] = [
 interface Props {
   scope?: 'me' | 'team' | 'all'
   teamId?: string
+  view?: 'live' | 'completed' | 'all'
   status?: 'open' | 'in_progress' | 'blocked' | 'done' | 'cancelled'
   overdue?: boolean
 }
 
 const MAX_ROWS = 5000
 
-export function TasksExportButton({ scope, teamId, status, overdue }: Props) {
+export function TasksExportButton({ scope, teamId, view, status, overdue }: Props) {
   const utils = trpc.useUtils()
   async function getRows(): Promise<Row[]> {
     const all: Row[] = []
@@ -51,6 +52,7 @@ export function TasksExportButton({ scope, teamId, status, overdue }: Props) {
       const page = await utils.task.list.fetch({
         ...(scope ? { scope } : {}),
         ...(teamId ? { teamId } : {}),
+        ...(view ? { view } : {}),
         ...(status ? { status } : {}),
         ...(overdue ? { overdue } : {}),
         cursor,
