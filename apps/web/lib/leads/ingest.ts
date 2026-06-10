@@ -73,6 +73,7 @@ export async function ingestLead(args: IngestLeadArgs): Promise<IngestLeadResult
           formTitle: normalised.formTitle,
           formId: normalised.formId,
           referrer: normalised.referrer,
+          ip: rawInput.headers?.ip ?? null,
           utm: (normalised.utm ?? undefined) as object | undefined,
           status: 'received',
         },

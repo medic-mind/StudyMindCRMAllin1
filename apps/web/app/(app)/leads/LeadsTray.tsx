@@ -398,6 +398,18 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
                 </div>
               </div>
 
+              {d.ip ? (
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    IP / Country
+                  </div>
+                  <div className="mt-1 font-mono text-xs text-neutral-600">
+                    {d.ip}
+                    {d.countryCode ? ` · ${d.countryCode}` : ''}
+                  </div>
+                </div>
+              ) : null}
+
               <details className="rounded border border-neutral-200">
                 <summary className="cursor-pointer px-2 py-1 text-xs font-medium text-neutral-700">
                   Raw payload

@@ -77,6 +77,7 @@ function lead(partial: Partial<NormalisedLead>): NormalisedLead {
     parentName: null,
     preferredWhen: null,
     requestedSubject: null,
+    country: null,
     landingDomain: null,
     landingUrl: null,
     landingSlug: null,

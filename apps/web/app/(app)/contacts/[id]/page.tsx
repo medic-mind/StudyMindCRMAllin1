@@ -28,6 +28,7 @@ import {
   MailIcon,
   MessageSquareIcon,
   PhoneIcon,
+  InboxIcon,
   SmartphoneIcon,
   UsersIcon,
 } from '@/components/ui/icon'
@@ -45,6 +46,7 @@ import { ChannelTiles } from './sections/ChannelTiles'
 import { ComplaintsSection } from './sections/ComplaintsSection'
 import { ContactSearchBar } from './sections/ContactSearchBar'
 import { DocumentsSection } from './sections/DocumentsSection'
+import { EnquiriesSection } from './sections/EnquiriesSection'
 import { EmailSection } from './sections/EmailSection'
 import { ForwardingSection } from './sections/ForwardingSection'
 import { LinkedContactsSection } from './sections/LinkedContactsSection'
@@ -119,11 +121,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }):
   )
 }
 
-export default async function ContactDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
+export default async function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const caller = await createServerCaller()
 
@@ -171,6 +169,7 @@ export default async function ContactDetailPage({
     ['section-links', 'Linked'],
     ['section-booking', 'Booking'],
     ['section-complaints', 'Complaints'],
+    ['section-enquiries', 'Enquiries'],
     ['section-email', 'Email'],
     ['section-calls', 'Calls'],
     ['section-call-summary', 'Call summary'],
@@ -326,11 +325,7 @@ export default async function ContactDetailPage({
           </nav>
           <ContactSearchBar contactId={contact.id} />
 
-          <SectionCard
-            id="section-links"
-            title="Linked contacts"
-            icon={<UsersIcon size={16} />}
-          >
+          <SectionCard id="section-links" title="Linked contacts" icon={<UsersIcon size={16} />}>
             <LinkedContactsSection contactId={contact.id} />
           </SectionCard>
 
@@ -350,6 +345,10 @@ export default async function ContactDetailPage({
             <ComplaintsSection contactId={contact.id} />
           </SectionCard>
 
+          <SectionCard id="section-enquiries" title="Enquiries" icon={<InboxIcon size={16} />}>
+            <EnquiriesSection contactId={contact.id} />
+          </SectionCard>
+
           <SectionCard id="section-email" title="Email" icon={<MailIcon size={16} />}>
             <EmailSection threads={emailThreads.items} />
           </SectionCard>
@@ -366,15 +365,15 @@ export default async function ContactDetailPage({
             <CallSummarySection contactId={contact.id} contactDisplayName={contact.displayName} />
           </SectionCard>
 
-          <SectionCard
-            id="section-forward"
-            title="Forward to team"
-            icon={<MailIcon size={16} />}
-          >
+          <SectionCard id="section-forward" title="Forward to team" icon={<MailIcon size={16} />}>
             <ForwardingSection contactId={contact.id} />
           </SectionCard>
 
-          <SectionCard id="section-slack" title="Slack mentions" icon={<MessageSquareIcon size={16} />}>
+          <SectionCard
+            id="section-slack"
+            title="Slack mentions"
+            icon={<MessageSquareIcon size={16} />}
+          >
             <SlackSection mentions={slackMentions.items} />
           </SectionCard>
 
@@ -385,9 +384,7 @@ export default async function ContactDetailPage({
           >
             {trengoTags.length > 0 ? (
               <div className="mb-3 flex flex-wrap items-center gap-1.5">
-                <span className="text-xs uppercase tracking-wide text-neutral-500">
-                  Tags
-                </span>
+                <span className="text-xs uppercase tracking-wide text-neutral-500">Tags</span>
                 {trengoTags.map((t) => (
                   <span
                     key={t.name}
@@ -456,11 +453,7 @@ export default async function ContactDetailPage({
             </div>
           </SectionCard>
 
-          <SectionCard
-            id="section-documents"
-            title="Documents"
-            icon={<FileTextIcon size={16} />}
-          >
+          <SectionCard id="section-documents" title="Documents" icon={<FileTextIcon size={16} />}>
             <DocumentsSection contactId={contact.id} />
           </SectionCard>
 
@@ -525,9 +518,7 @@ export default async function ContactDetailPage({
                 {contact.dateOfBirth && (
                   <DetailRow label="DOB">{formatDate(contact.dateOfBirth)}</DetailRow>
                 )}
-                {contact.pronouns && (
-                  <DetailRow label="Pronouns">{contact.pronouns}</DetailRow>
-                )}
+                {contact.pronouns && <DetailRow label="Pronouns">{contact.pronouns}</DetailRow>}
                 {contact.preferredContactMethod && (
                   <DetailRow label="Preferred">
                     <span className="capitalize">
@@ -537,9 +528,7 @@ export default async function ContactDetailPage({
                     </span>
                   </DetailRow>
                 )}
-                {contact.timezone && (
-                  <DetailRow label="Time zone">{contact.timezone}</DetailRow>
-                )}
+                {contact.timezone && <DetailRow label="Time zone">{contact.timezone}</DetailRow>}
               </dl>
             </div>
 
@@ -555,7 +544,9 @@ export default async function ContactDetailPage({
                       <span className="text-right">
                         {contact.schoolName}
                         {contact.yearGroup ? (
-                          <span className="block text-xs text-neutral-500">{contact.yearGroup}</span>
+                          <span className="block text-xs text-neutral-500">
+                            {contact.yearGroup}
+                          </span>
                         ) : null}
                       </span>
                     </DetailRow>
@@ -594,7 +585,13 @@ export default async function ContactDetailPage({
                   Address
                 </h3>
                 <p className="text-sm text-neutral-700">
-                  {[contact.addressLine1, contact.addressLine2, contact.city, contact.postcode, contact.country]
+                  {[
+                    contact.addressLine1,
+                    contact.addressLine2,
+                    contact.city,
+                    contact.postcode,
+                    contact.country,
+                  ]
                     .filter(Boolean)
                     .map((part, i) => (
                       <span key={i} className="block">
@@ -640,9 +637,7 @@ export default async function ContactDetailPage({
               <dl className="space-y-3">
                 <DetailRow label="Added">{formatDate(contact.createdAt)}</DetailRow>
                 <DetailRow label="ID">
-                  <span className="break-all font-mono text-xs text-neutral-500">
-                    {contact.id}
-                  </span>
+                  <span className="break-all font-mono text-xs text-neutral-500">{contact.id}</span>
                 </DetailRow>
               </dl>
             </div>

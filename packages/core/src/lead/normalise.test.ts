@@ -153,3 +153,25 @@ describe('normaliseLead — preferred date/time + subject', () => {
     expect(out.preferredWhen).toBe('2026-06-12T16:00')
   })
 })
+
+describe('normaliseLead — country field + URL message guard', () => {
+  it('detects a country dropdown', () => {
+    const out = normaliseLead({
+      fields: { name: 'Enso T', email: 'e@example.test', country: 'Peru', phone: '928 812 118' },
+    })
+    expect(out.country).toBe('Peru')
+    expect(out.phoneE164).toBeNull() // 9 digits — not a UK shape; composed later via country
+    expect(out.phone).toBe('928 812 118')
+  })
+
+  it('never treats a bare URL value as the enquiry message', () => {
+    const out = normaliseLead({
+      fields: {
+        name: 'Enso T',
+        email: 'e@example.test',
+        'mystery-field': 'https://www.medicmind.co.uk',
+      },
+    })
+    expect(out.message).toBeNull()
+  })
+})

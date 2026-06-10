@@ -45,6 +45,9 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   'booking.studymind.co.uk',
   // B2B Invoices Platform (CRM ↔ invoicing two-way sync)
   'b2b.studymind.co.uk',
+  // IP geolocation (lead country derivation, ADR 0023). Best-effort; only
+  // ever sent an IP address, never PII.
+  'ipwho.is',
   // Axiom (log ingest)
   'api.axiom.co',
   // Sentry ingest
