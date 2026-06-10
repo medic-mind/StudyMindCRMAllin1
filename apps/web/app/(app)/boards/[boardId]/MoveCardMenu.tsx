@@ -56,7 +56,9 @@ export function MoveCardMenu({
   // per-stacking-context (@dnd-kit applies a CSS transform on every <li>
   // which creates one). Coordinates pin to the trigger's bounding rect.
   const [mounted, setMounted] = useState(false)
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
+  const [coords, setCoords] = useState<{ top: number; left: number; maxHeight: number } | null>(
+    null,
+  )
   useEffect(() => {
     setMounted(true)
   }, [])
@@ -66,7 +68,19 @@ export function MoveCardMenu({
     function place() {
       const rect = triggerRef.current?.getBoundingClientRect()
       if (!rect) return
-      setCoords({ top: rect.bottom + 4, left: rect.left })
+      // Viewport collision handling: open downward by default, but when the
+      // trigger sits near the bottom of the screen flip above (whichever side
+      // has more room), and clamp the menu height to the available space so
+      // every option stays reachable by scrolling inside the menu.
+      const margin = 12
+      const desired = 288 // matches max-h-72
+      const below = window.innerHeight - rect.bottom - 4 - margin
+      const above = rect.top - 4 - margin
+      const openUp = below < Math.min(desired, 160) && above > below
+      const maxHeight = Math.max(120, Math.min(desired, openUp ? above : below))
+      const top = openUp ? Math.max(margin, rect.top - 4 - maxHeight) : rect.bottom + 4
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 248))
+      setCoords({ top, left, maxHeight })
     }
     place()
     window.addEventListener('resize', place)
@@ -179,9 +193,10 @@ export function MoveCardMenu({
                 position: 'fixed',
                 top: coords.top,
                 left: coords.left,
+                maxHeight: coords.maxHeight,
                 zIndex: 9999,
               }}
-              className="z-[9999] max-h-72 w-60 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-xl"
+              className="z-[9999] w-60 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-neutral-200 bg-white py-1 shadow-xl"
             >
               {sameBoardTargets.length > 0 && (
                 <>

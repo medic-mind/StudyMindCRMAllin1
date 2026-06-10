@@ -178,10 +178,22 @@ export function classifyLead(
   // Routing: a "Free Resources" category (from a configurable URL rule, or a
   // form/slug that reads as a freebie/download) sends the lead to the Free
   // Resources board instead of the Sales Pipeline.
+  // Two signal tiers: the strong freebie words match ANYWHERE (slug, URL,
+  // form title, source, the product/subject the form carried, even the
+  // message body), while product-shaped words like "book(s)" only count on
+  // the product-ish signals — "please book me a call" in a message must not
+  // route a real enquiry off the Sales Pipeline.
+  const productSignals =
+    `${lead.landingSlug ?? ''} ${lead.formTitle ?? ''} ${prods.join(' ')} ${lead.requestedSubject ?? ''}`.toLowerCase()
+  const broadSignals =
+    `${productSignals} ${lead.landingUrl ?? ''} ${lead.source} ${lead.message ?? ''}`.toLowerCase()
   const looksFree =
     cats.includes(FREE_RESOURCES_CATEGORY) ||
-    /\b(free[- ]?resource|free[- ]?download|download|freebie|cheat[- ]?sheet|free[- ]?guide|free[- ]?ebook|free[- ]?e[- ]?book|lead[- ]?magnet|free[- ]?webinar|free[- ]?taster|sample[- ]?paper)\b/u.test(
-      `${lead.landingSlug ?? ''} ${lead.formTitle ?? ''} ${lead.source}`.toLowerCase(),
+    /\b(free[- ]?resource|free[- ]?download|download|freebie|cheat[- ]?sheet|free[- ]?guide|free[- ]?ebook|free[- ]?e[- ]?book|free[- ]?books?|lead[- ]?magnet|free[- ]?webinar|free[- ]?taster|sample[- ]?paper)\b/u.test(
+      broadSignals,
+    ) ||
+    /\b(books?|e-?books?|ebooks?|guidebooks?|revision[- ]?notes?|past[- ]?papers?)\b/u.test(
+      productSignals,
     )
   const destination: LeadClassification['destination'] = looksFree ? 'free_resources' : 'sales'
   if (looksFree) reasons.push('Routed to Free Resources board')

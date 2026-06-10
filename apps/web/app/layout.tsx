@@ -25,7 +25,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en-GB" className={inter.variable}>
       <body>
         <TrpcProvider>{children}</TrpcProvider>
-        <Toaster richColors position="top-right" />
+        {/* Top-centre, dismissable, 5s — action confirmations must be
+            impossible to miss while the agent's eyes are mid-page. */}
+        <Toaster richColors position="top-center" closeButton duration={5000} />
       </body>
     </html>
   )

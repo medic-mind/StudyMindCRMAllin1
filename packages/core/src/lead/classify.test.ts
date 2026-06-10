@@ -78,6 +78,7 @@ function lead(partial: Partial<NormalisedLead>): NormalisedLead {
     preferredWhen: null,
     requestedSubject: null,
     country: null,
+    clientIp: null,
     landingDomain: null,
     landingUrl: null,
     landingSlug: null,
@@ -210,5 +211,43 @@ describe('classifyLead — subject + board routing', () => {
       ruleset,
     )
     expect(c.subject).toBe('Medicine Interview')
+  })
+})
+
+describe('classifyLead — free-resource routing (destination)', () => {
+  it('routes a free-book / resource form to the Free Resources board', () => {
+    const c = classifyLead(
+      lead({ landingSlug: 'gamsat-books', formTitle: 'Get the GAMSAT Book' }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+  })
+
+  it('routes on a product field alone (hidden CF7 field, neutral slug/title)', () => {
+    const c = classifyLead(
+      lead({ landingSlug: 'gamsat-course', formTitle: 'Enquiry Form', requestedSubject: 'GAMSAT Book' }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+  })
+
+  it('catches freebie wording in the message body', () => {
+    const c = classifyLead(
+      lead({ landingSlug: 'contact', message: 'Please send me the free guide for UCAT' }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+  })
+
+  it('keeps "book a call" enquiries on the Sales Pipeline', () => {
+    const c = classifyLead(
+      lead({
+        landingSlug: 'ucat-tuition',
+        formTitle: 'Enquiry Form',
+        message: 'I would like to book a call about tutoring for my son',
+      }),
+      ruleset,
+    )
+    expect(c.destination).toBe('sales')
   })
 })
