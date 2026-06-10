@@ -16,6 +16,8 @@ import { getCurrentUser } from '@/lib/auth/server'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { NewComplaintDialog } from './NewComplaintDialog'
+
 type Filter = 'active' | 'mine' | 'resolved' | 'all'
 
 const FILTERS: ReadonlyArray<{ value: Filter; label: string }> = [
@@ -77,14 +79,17 @@ export default async function ComplaintsPage({
         title="Complaints"
         subtitle="The hub for complaints handling — live backlog, then every open complaint to work to zero."
         actions={
-          canSeeReport ? (
-            <Link
-              href="/reports/complaints"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-card transition-colors hover:bg-neutral-50"
-            >
-              Full analytics report →
-            </Link>
-          ) : null
+          <div className="flex items-center gap-2">
+            {canSeeReport ? (
+              <Link
+                href="/reports/complaints"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-card transition-colors hover:bg-neutral-50"
+              >
+                Full analytics report →
+              </Link>
+            ) : null}
+            <NewComplaintDialog />
+          </div>
         }
       />
       <PageBody>
@@ -146,7 +151,8 @@ export default async function ComplaintsPage({
           <Card className="px-10 py-14 text-center">
             <p className="text-sm font-medium text-neutral-800">No complaints here.</p>
             <p className="mt-1 text-xs text-neutral-500">
-              Log a complaint from any customer&apos;s page — it appears here while it&apos;s active.
+              Use the Log complaint button above (or any customer&apos;s page) — it appears here
+              while it&apos;s active and is stored on the customer&apos;s record.
             </p>
           </Card>
         ) : (
