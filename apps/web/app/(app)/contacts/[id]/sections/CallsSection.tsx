@@ -3,12 +3,64 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type { CallEntry } from '@/lib/view-models/contact-channels'
 
 interface Props {
   calls: CallEntry[]
+}
+
+const PLAYBACK_RATES = [1, 1.5, 2] as const
+
+/** Native audio player (accurate timer/seek now the stream supports Range)
+ *  plus a 1× / 1.5× / 2× speed selector for working through recordings fast. */
+function RecordingPlayer({ src }: { src: string }): JSX.Element {
+  const ref = useRef<HTMLAudioElement>(null)
+  const [rate, setRate] = useState<number>(1)
+
+  const apply = (r: number) => {
+    setRate(r)
+    if (ref.current) ref.current.playbackRate = r
+  }
+
+  return (
+    <div className="mt-2 space-y-1">
+      <audio
+        ref={ref}
+        controls
+        preload="metadata"
+        className="w-full"
+        src={src}
+        onLoadedMetadata={() => {
+          // Re-apply the chosen rate once the element (re)loads its media.
+          if (ref.current) ref.current.playbackRate = rate
+        }}
+      >
+        Your browser does not support inline audio playback.
+      </audio>
+      <div className="flex items-center gap-1">
+        <span className="mr-0.5 text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+          Speed
+        </span>
+        {PLAYBACK_RATES.map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() => apply(r)}
+            aria-pressed={rate === r}
+            className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
+              rate === r
+                ? 'bg-primary-600 text-white'
+                : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+            }`}
+          >
+            {r}×
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 const OUTCOME_STYLE: Record<CallEntry['outcome'], string> = {
@@ -49,16 +101,7 @@ function CallRow({ call }: { call: CallEntry }) {
           }).format(new Date(call.occurredAt))}
         </time>
       </div>
-      {call.hasRecording && (
-        <audio
-          controls
-          preload="none"
-          className="mt-2 w-full"
-          src={`/api/internal/audio/${call.id}`}
-        >
-          Your browser does not support inline audio playback.
-        </audio>
-      )}
+      {call.hasRecording && <RecordingPlayer src={`/api/internal/audio/${call.id}`} />}
       {call.aiOutcome && (
         <div className="mt-2 rounded-md border border-primary-100 bg-primary-50/60 p-2">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-primary-700">
