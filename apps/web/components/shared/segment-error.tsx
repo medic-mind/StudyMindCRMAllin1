@@ -19,6 +19,7 @@ export interface SegmentErrorProps {
 
 export function SegmentError({ error, reset, title = 'Something went wrong' }: SegmentErrorProps) {
   const [showDetails, setShowDetails] = useState(false)
+  const [autoReloading, setAutoReloading] = useState(false)
 
   useEffect(() => {
     // Surface to Sentry where available; never console.error in prod paths.
@@ -28,10 +29,36 @@ export function SegmentError({ error, reset, title = 'Something went wrong' }: S
     sentry?.captureException(error)
   }, [error])
 
+  useEffect(() => {
+    // Self-heal once per error: the most common cause of a production RSC
+    // render error here is deployment version skew — the click fetched a
+    // server payload from a build that was just replaced. A hard reload picks
+    // up the new build. Guarded per digest via sessionStorage so a genuinely
+    // broken view still shows the panel instead of reload-looping.
+    const key = `segment-error-reloaded:${error.digest ?? error.message ?? 'unknown'}`
+    try {
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, String(Date.now()))
+        setAutoReloading(true)
+        window.location.reload()
+      }
+    } catch {
+      // sessionStorage unavailable — leave the manual Retry button.
+    }
+  }, [error])
+
   const requestId = error.digest ?? 'unavailable'
   const errorName = error.name || 'Error'
   // Take the first line of the message only — keep multi-line stacks out of the DOM.
   const errorMessage = ((error.message ?? '').split('\n')[0] ?? '').slice(0, 300)
+
+  if (autoReloading) {
+    return (
+      <div className="rounded-lg border border-neutral-200 bg-white p-6">
+        <p className="text-sm text-neutral-600">Refreshing this view…</p>
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 p-6">

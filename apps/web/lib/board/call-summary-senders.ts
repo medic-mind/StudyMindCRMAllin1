@@ -167,7 +167,49 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       }
     },
 
-    async whatsapp({ body, contactId, attachments }): Promise<ChannelResult> {
+    async whatsapp({ body, contactId, attachments, trengoTemplate }): Promise<ChannelResult> {
+      // An approved Trengo WhatsApp template goes out via the template
+      // session (/wa_sessions) — the same thing the Trengo composer does, so
+      // it works outside the 24-hour window. Free text keeps the thread path.
+      if (trengoTemplate) {
+        try {
+          const contact = await db.contact.findFirst({
+            where: { id: contactId, deletedAt: null },
+            select: { phoneE164: true },
+          })
+          const phone = contact?.phoneE164?.trim()
+          if (!phone || !phone.startsWith('+')) {
+            return { status: 'skipped', detail: 'Contact has no E.164 phone number' }
+          }
+          const { sendWhatsAppTemplate } = await import(
+            '@studymind/integration-trengo/outbound'
+          )
+          const r = await sendWhatsAppTemplate({
+            contactId,
+            agentId,
+            recipient: phone,
+            templateId: trengoTemplate.templateId,
+            templateTitle: trengoTemplate.templateTitle,
+            renderedBody: body,
+            params: trengoTemplate.params,
+            requestId,
+          })
+          return {
+            status: 'sent',
+            ref:
+              r.trengoMessageId != null
+                ? String(r.trengoMessageId)
+                : r.ticketId != null
+                  ? String(r.ticketId)
+                  : r.interactionId,
+          }
+        } catch (err) {
+          if (err instanceof BusinessError) {
+            return { status: 'failed', detail: `${err.code}: ${err.message}` }
+          }
+          return { status: 'failed', detail: err instanceof Error ? err.message : String(err) }
+        }
+      }
       return sendViaTrengoChannel('whatsapp', contactId, body, attachments)
     },
 
@@ -175,7 +217,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       return sendViaTrengoChannel('sms', contactId, body, attachments)
     },
 
-    async email({ body, contactId, attachments }): Promise<ChannelResult> {
+    async email({ body, contactId, attachments, subject: subjectOverride }): Promise<ChannelResult> {
       const contact = await db.contact.findFirst({
         where: { id: contactId, deletedAt: null },
         select: { email: true },
@@ -192,6 +234,15 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       if (!mailbox) {
         return { status: 'skipped', detail: 'Agent has no Gmail connected' }
       }
+      const mappedAttachments =
+        attachments && attachments.length > 0
+          ? attachments.map((a) => ({
+              filename: a.filename,
+              contentType: a.contentType,
+              data: a.data,
+            }))
+          : undefined
+
       // Reply on the most recent email thread we have for the contact.
       const recent = await db.interaction.findFirst({
         where: {
@@ -209,17 +260,30 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           : typeof payload['gmailThreadId'] === 'string'
             ? (payload['gmailThreadId'] as string)
             : null
-      if (!threadId) {
-        return { status: 'skipped', detail: 'No Gmail thread for this contact' }
-      }
-      const subject =
-        typeof payload['subject'] === 'string'
-          ? (payload['subject'] as string)
-          : recent?.summary ?? 'Call summary'
-      const originalMessageId =
-        typeof payload['messageId'] === 'string' ? (payload['messageId'] as string) : undefined
 
       try {
+        if (!threadId) {
+          // No prior thread — start a fresh one rather than skipping, so the
+          // wizard's email step works for brand-new enquiries too.
+          const { sendEmail } = await import('@studymind/integration-gmail/outbound')
+          const result = await sendEmail({
+            agentId,
+            subject: subjectOverride?.trim() || 'Following up on our call',
+            body,
+            toAddresses: [contact.email],
+            requestId,
+            attachments: mappedAttachments,
+          })
+          return { status: 'sent', ref: result.gmailMessageId }
+        }
+
+        const subject =
+          typeof payload['subject'] === 'string'
+            ? (payload['subject'] as string)
+            : recent?.summary ?? 'Call summary'
+        const originalMessageId =
+          typeof payload['messageId'] === 'string' ? (payload['messageId'] as string) : undefined
+
         const { sendReply } = await import('@studymind/integration-gmail/outbound')
         const result = await sendReply({
           agentId,
@@ -229,14 +293,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           toAddresses: [contact.email],
           requestId,
           originalMessageId,
-          attachments:
-            attachments && attachments.length > 0
-              ? attachments.map((a) => ({
-                  filename: a.filename,
-                  contentType: a.contentType,
-                  data: a.data,
-                }))
-              : undefined,
+          attachments: mappedAttachments,
         })
         return { status: 'sent', ref: result.gmailMessageId }
       } catch (err) {

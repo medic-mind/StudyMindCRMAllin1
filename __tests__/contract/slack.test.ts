@@ -184,14 +184,43 @@ describe('POST /api/webhooks/slack — message.channels', () => {
     expect(inngestSend).not.toHaveBeenCalled()
   })
 
-  it('rejects with an invalid signature', async () => {
+  it('rejects with an invalid signature, naming the reason', async () => {
     const { raw } = loadFixture('message.channels.json')
     const ts = '1715260010'
     const wrong = sign(raw, Number(ts), 'wrong_secret')
     const res = await ROUTE.POST(buildRequest(raw, wrong, ts))
     expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toBe('signature_mismatch')
     expect(providerEventCreate).not.toHaveBeenCalled()
     expect(inngestSend).not.toHaveBeenCalled()
+  })
+
+  it('with no allowlist configured, processes any channel the bot receives', async () => {
+    // No SLACK_WATCHED_CHANNELS → bot membership is the gate (CLAUDE.md §12):
+    // Slack only delivers channel events for channels the bot was /invited to.
+    delete process.env['SLACK_WATCHED_CHANNELS']
+    const { raw } = loadFixture('message.channels.json')
+    const altered = raw.replace('C0WATCHED01', 'C0ANYCHANNEL')
+    const ts = '1715260010'
+    providerEventFindUnique.mockResolvedValueOnce(null)
+    providerEventCreate.mockResolvedValueOnce({ id: 'pe_slack_any' })
+
+    const res = await ROUTE.POST(buildRequest(altered, sign(altered, Number(ts)), ts))
+    expect(res.status).toBe(200)
+    expect(providerEventCreate).toHaveBeenCalled()
+    expect(inngestSend).toHaveBeenCalled()
+  })
+})
+
+describe('GET /api/webhooks/slack — configuration self-check', () => {
+  it('reports presence booleans only (no secrets) and the channel mode', async () => {
+    const res = await ROUTE.GET(new Request('http://localhost/api/webhooks/slack'))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body['signingSecretConfigured']).toBe(true)
+    expect(String(body['channelMode'])).toContain('allowlist')
+    expect(JSON.stringify(body)).not.toContain(SIGNING_SECRET)
   })
 })
 

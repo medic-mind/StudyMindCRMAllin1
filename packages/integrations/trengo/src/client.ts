@@ -67,6 +67,35 @@ export interface TrengoLabelResource {
   color?: string | null
 }
 
+/** An approved WhatsApp (HSM) template as Trengo returns it. Field names vary
+ *  slightly across Trengo plans/versions, so everything but `id` is optional
+ *  and the outbound layer normalises. */
+export interface TrengoWaTemplateResource {
+  id: number
+  title?: string | null
+  name?: string | null
+  message?: string | null
+  body?: string | null
+  content?: string | null
+  status?: string | null
+}
+
+/** Send an approved WhatsApp template (HSM) — starts/refreshes the WhatsApp
+ *  session so it works outside the 24-hour customer-service window. */
+export interface TrengoSendWaTemplateInput {
+  /** E.164 recipient phone. */
+  recipientPhone: string
+  /** The wa_templates row id (hsm_id). */
+  templateId: number
+  /** Values for the template's {{n}} placeholders, in order. */
+  params: Array<{ key: string; value: string }>
+}
+
+export interface TrengoSendWaTemplateResult {
+  ticketId: number | null
+  messageId: number | null
+}
+
 export interface TrengoClient {
   readonly baseUrl: string
   readonly agentId: string
@@ -88,6 +117,11 @@ export interface TrengoClient {
   createConversation(
     input: TrengoCreateConversationInput,
   ): Promise<TrengoCreateConversationResult>
+  /** The workspace's approved WhatsApp (HSM) templates. */
+  listWaTemplates(): Promise<TrengoWaTemplateResource[]>
+  /** Send an approved WhatsApp template via /wa_sessions (valid outside the
+   *  24-hour window — the same thing the Trengo UI does). */
+  sendWaTemplate(input: TrengoSendWaTemplateInput): Promise<TrengoSendWaTemplateResult>
   request<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
@@ -297,6 +331,35 @@ export async function createClientForAgent(
       })
       const ticketId =
         res.ticket?.id ?? res.message?.ticket_id ?? res.data?.ticket_id ?? 0
+      const messageId = res.message?.id ?? res.data?.id ?? null
+      return { ticketId, messageId }
+    },
+    async listWaTemplates() {
+      // Trengo paginates; one page covers an ops team's approved templates.
+      // Rows come wrapped under `data`.
+      const res = await request<{ data?: TrengoWaTemplateResource[] }>(
+        'GET',
+        '/wa_templates',
+      )
+      return res.data ?? []
+    },
+    async sendWaTemplate(input) {
+      // POST /wa_sessions starts (or refreshes) a WhatsApp session with an
+      // approved HSM template — the only way to message outside the 24-hour
+      // window. Params are keyed "{{1}}", "{{2}}", … exactly as Trengo's own
+      // composer sends them. Response shape varies by version; parse
+      // defensively like createConversation.
+      const res = await request<{
+        ticket?: { id: number }
+        message?: { id: number; ticket_id?: number }
+        data?: { ticket_id?: number; id?: number }
+      }>('POST', '/wa_sessions', {
+        recipient_phone_number: input.recipientPhone,
+        hsm_id: input.templateId,
+        params: input.params.map((p) => ({ key: p.key, value: p.value })),
+      })
+      const ticketId =
+        res.ticket?.id ?? res.message?.ticket_id ?? res.data?.ticket_id ?? null
       const messageId = res.message?.id ?? res.data?.id ?? null
       return { ticketId, messageId }
     },

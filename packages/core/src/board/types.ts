@@ -118,8 +118,27 @@ export const CallSummaryAttachmentRef = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('contactDocument'), id: z.string() }),
   z.object({ kind: z.literal('uploadedInvoice'), id: z.string() }),
   z.object({ kind: z.literal('callSummaryTemplatePdf'), id: z.string() }),
+  z.object({ kind: z.literal('infoPack'), id: z.string() }),
 ])
 export type CallSummaryAttachmentRef = z.infer<typeof CallSummaryAttachmentRef>
+
+/** Approved Trengo WhatsApp (HSM) template pick — sent via the template
+ *  session so it is valid outside the 24-hour window. No PDF attachments on
+ *  this path: the approved templates already carry the info-pack links. */
+export const CallSummaryWhatsAppTemplate = z.object({
+  templateId: z.number().int().positive(),
+  templateTitle: z.string().trim().min(1).max(200),
+  params: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1).max(20),
+        value: z.string().trim().max(500),
+      }),
+    )
+    .max(20)
+    .default([]),
+})
+export type CallSummaryWhatsAppTemplate = z.infer<typeof CallSummaryWhatsAppTemplate>
 
 export const CallSummarySendInput = z.object({
   summaryInteractionId: z.string(),
@@ -131,6 +150,20 @@ export const CallSummarySendInput = z.object({
     email: z.boolean().optional(),
   }),
   slackChannelId: z.string().trim().min(1).max(64).optional(),
+  /** Per-channel body overrides — the wizard composes the email and the text
+   *  separately. A channel without an override sends the summary body. */
+  channelBodies: z
+    .object({
+      whatsapp: z.string().trim().min(1).max(8000).optional(),
+      sms: z.string().trim().min(1).max(8000).optional(),
+      email: z.string().trim().min(1).max(8000).optional(),
+      trengo: z.string().trim().min(1).max(8000).optional(),
+    })
+    .optional(),
+  /** Subject for a fresh email when the contact has no Gmail thread yet. */
+  emailSubject: z.string().trim().min(1).max(200).optional(),
+  /** Send the WhatsApp channel as this approved Trengo template. */
+  whatsappTemplate: CallSummaryWhatsAppTemplate.optional(),
   /** Up to 10 attachments for the email channel. Ignored when email
    * isn't enabled. */
   emailAttachments: z.array(CallSummaryAttachmentRef).max(10).optional(),

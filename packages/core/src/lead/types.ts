@@ -67,6 +67,11 @@ export const NormalisedLead = z.object({
    * Used (with IP geolocation as fallback) to compose a full international
    * phone number from locally-typed digits and to set Contact.country. */
   country: z.string().nullable(),
+  /** The VISITOR's IP when the form sent it as a field (CF7 `_remote_ip` et
+   * al). Preferred over the transport IP for geolocation: CF7 webhooks are
+   * POSTed by the WordPress server, so the transport IP is the site server,
+   * not the enquirer. */
+  clientIp: z.string().nullable(),
 
   // Landing-page intelligence (CLAUDE.md §16) — drives classification first.
   landingDomain: z.string().nullable(),

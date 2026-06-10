@@ -175,3 +175,66 @@ describe('normaliseLead — country field + URL message guard', () => {
     expect(out.message).toBeNull()
   })
 })
+
+describe('normaliseLead — never name a contact after the freebie', () => {
+  it('refuses a product-shaped value as the name and leaves name null', () => {
+    const out = normaliseLead({
+      fields: {
+        'text-901': 'GAMSAT Book',
+        'email-1': 'jess@example.com',
+      },
+      meta: { url: 'https://medicmind.co.uk/gamsat-books/' },
+    })
+    expect(out.name).toBeNull()
+    expect(out.firstName).toBeNull()
+    expect(out.email).toBe('jess@example.com')
+  })
+
+  it('refuses product-ish KEYS even when the value looks like a name', () => {
+    const out = normaliseLead({
+      fields: {
+        'product-title': 'Sarah Lawson',
+        'email-1': 'real@example.com',
+      },
+      meta: {},
+    })
+    expect(out.name).toBeNull()
+  })
+
+  it('still sniffs a real person name from an unknown field', () => {
+    const out = normaliseLead({
+      fields: {
+        'text-618': 'Aisha Rahman',
+        'email-1': 'aisha@example.com',
+      },
+      meta: {},
+    })
+    expect(out.name).toBe('Aisha Rahman')
+  })
+})
+
+describe('normaliseLead — visitor IP field (clientIp)', () => {
+  it('lifts the CF7 _remote_ip field', () => {
+    const out = normaliseLead({
+      fields: { _remote_ip: '203.0.113.9', 'email-1': 'a@b.com' },
+      meta: {},
+    })
+    expect(out.clientIp).toBe('203.0.113.9')
+  })
+
+  it('sniffs an IPv4-shaped value on an unknown key', () => {
+    const out = normaliseLead({
+      fields: { 'hidden-77': '198.51.100.24', 'email-1': 'a@b.com' },
+      meta: {},
+    })
+    expect(out.clientIp).toBe('198.51.100.24')
+  })
+
+  it('is null when no IP-shaped field exists', () => {
+    const out = normaliseLead({
+      fields: { 'email-1': 'a@b.com' },
+      meta: {},
+    })
+    expect(out.clientIp).toBeNull()
+  })
+})

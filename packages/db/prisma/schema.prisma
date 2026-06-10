@@ -2384,6 +2384,38 @@ model CallSummaryTemplate {
   @@index([sortOrder])
 }
 
+// -----------------------------------------------------------------------------
+// Info pack / brochure document library (Settings → Documents). The PDFs the
+// team attaches to call-summary emails (information packs, brochures, course
+// guides). Stored inline like CallSummaryTemplate.pdfData so self-hosted
+// deploys stay S3-free; served at /api/info-packs/[id]/file. Manager+ manages
+// the catalogue; everyone reads + picks them in the call-summary email step.
+// Deliberately NOT offered on the Trengo WhatsApp path — approved WhatsApp
+// templates already carry the pack links, so attaching the PDF again would
+// duplicate it.
+// -----------------------------------------------------------------------------
+
+model InfoPackDocument {
+  id          String  @id
+  name        String  @unique
+  description String?
+  sortOrder   Int     @default(0)
+
+  fileName    String
+  contentType String
+  byteSize    Int
+  data        Bytes
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  @@index([archivedAt])
+  @@index([sortOrder])
+}
+
 /// Operator-managed Slack channels that a call summary can be posted to as an
 /// internal action point for virtual assistants (CLAUDE.md §10/§12). Replaces
 /// the single env-configured SLACK_ALERTS_CHANNEL_ID for the call-summary

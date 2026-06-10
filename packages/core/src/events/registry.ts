@@ -148,6 +148,15 @@ export const EVENT_NAMES = [
   'call_summary_template.pdf_attached',
   'call_summary_template.pdf_removed',
 
+  // Info pack / brochure document library (Settings → Documents). The PDFs
+  // attached to call-summary emails (information packs, brochures, guides).
+  'info_pack.created',
+  'info_pack.updated',
+  'info_pack.file_replaced',
+  'info_pack.archived',
+  'info_pack.restored',
+  'info_pack.deleted',
+
   // Slack channel options (Settings → Slack channels). Operator-managed Slack
   // channels the call-summary "Internal — Slack" section can post to, with
   // optional deep-link action buttons for virtual assistants.

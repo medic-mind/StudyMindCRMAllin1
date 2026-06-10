@@ -92,6 +92,14 @@ const GROUPS: Group[] = [
         icon: <MailIcon size={16} />,
       },
       {
+        href: '/settings/documents',
+        title: 'Documents',
+        description:
+          'Information packs and brochures (PDF) agents attach to call-summary emails. One library, picked at send time.',
+        roles: 'Manager+',
+        icon: <MailIcon size={16} />,
+      },
+      {
         href: '/settings/slack-channels',
         title: 'Slack channels',
         description:

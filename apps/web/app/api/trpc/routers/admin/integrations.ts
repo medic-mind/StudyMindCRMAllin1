@@ -182,11 +182,15 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
     setupSteps: [
       {
         title: 'Create the Slack app',
-        body: 'api.slack.com/apps → Create New App. Add Bot Token Scopes channels:history and chat:write. Install to workspace and copy the bot token into SLACK_BOT_TOKEN.',
+        body: 'api.slack.com/apps → Create New App. Add Bot Token Scopes channels:history, channels:read and chat:write (channels:read powers the pick-by-name channel browser in Settings → Slack channels). Install to workspace and copy the bot token into SLACK_BOT_TOKEN.',
       },
       {
         title: 'Subscribe to events',
-        body: 'Event Subscriptions → Request URL is https://<your-host>/api/webhooks/slack. Subscribe message.channels. Copy the signing secret into SLACK_SIGNING_SECRET.',
+        body: 'Event Subscriptions → Request URL is https://<your-host>/api/webhooks/slack. Subscribe message.channels. Copy the signing secret into SLACK_SIGNING_SECRET. Tip: opening that URL in a browser shows whether the deployed app has the secret + token loaded.',
+      },
+      {
+        title: 'Choose what it reads',
+        body: 'The CRM reads every channel the bot is /invited to — invite the bot to a channel to start reading it. To narrow reading to specific channels instead, set SLACK_WATCHED_CHANNELS to a comma-separated list of channel ids.',
       },
     ],
     providerDashboardUrl: 'https://api.slack.com/apps',
