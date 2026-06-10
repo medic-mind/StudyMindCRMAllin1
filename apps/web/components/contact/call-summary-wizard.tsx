@@ -26,6 +26,8 @@ import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
+import { missingWaParams, parseWaTemplateSegments, renderWaTemplate } from './wa-template'
+
 type Outcome = 'answered' | 'voicemail' | 'no_answer'
 type Step = 'email' | 'text' | 'internal'
 
@@ -55,15 +57,6 @@ export interface CallSummaryWizardProps {
 function applyNamePlaceholders(body: string, name: string): string {
   const firstName = name.split(/\s+/)[0] ?? ''
   return body.replace(/\{\{\s*first_name\s*\}\}/gi, firstName).replace(/\{\{\s*name\s*\}\}/gi, name)
-}
-
-/** Render a Trengo WhatsApp template body with the agent's param values.
- *  Unfilled params keep their {{n}} placeholder so the preview is honest. */
-function renderWaTemplate(body: string, params: Record<string, string>): string {
-  return body.replace(/\{\{\s*(\d+)\s*\}\}/g, (whole, n: string) => {
-    const v = params[`{{${n}}}`]
-    return v && v.trim().length > 0 ? v : whole
-  })
 }
 
 /** Read a File as a base64 string (no data-URL prefix). */
@@ -392,6 +385,13 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     if (sendText && usingWaTemplate && !waTemplate) {
       toast.error('Pick a WhatsApp template (or switch to free text).')
       return
+    }
+    if (sendText && usingWaTemplate && waTemplate) {
+      const missing = missingWaParams(waTemplate.params, waParams)
+      if (missing.length > 0) {
+        toast.error(`Fill in the blank${missing.length > 1 ? 's' : ''} in the message first (${missing.join(', ')}).`)
+        return
+      }
     }
     if (sendText && !usingWaTemplate && !textBody.trim()) {
       toast.error('Write the message first (or choose No).')
@@ -870,7 +870,7 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                         </p>
                       ) : (
                         <>
-                          <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
                             {waTemplates.map((t) => (
                               <button
                                 key={t.id}
@@ -879,48 +879,38 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                                   setWaTemplateId(t.id)
                                   setWaParams({})
                                 }}
+                                aria-pressed={t.id === waTemplateId}
                                 className={
                                   t.id === waTemplateId
-                                    ? 'inline-flex items-center gap-1 rounded-full border border-primary-300 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-800'
-                                    : 'inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700'
+                                    ? 'block w-full rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-left'
+                                    : 'block w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-left transition-colors hover:border-emerald-300 hover:bg-emerald-50/50'
                                 }
                               >
-                                {t.title}
+                                <span
+                                  className={
+                                    t.id === waTemplateId
+                                      ? 'block text-xs font-semibold text-emerald-900'
+                                      : 'block text-xs font-semibold text-neutral-800'
+                                  }
+                                >
+                                  {t.title}
+                                </span>
+                                <span className="block truncate text-[11px] text-neutral-500">
+                                  {t.body.replace(/\s+/g, ' ')}
+                                </span>
                               </button>
                             ))}
                           </div>
                           {waTemplate ? (
-                            <div className="space-y-2 rounded-md border border-neutral-200 bg-white p-2.5">
-                              {waTemplate.params.length > 0 ? (
-                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                  {waTemplate.params.map((key) => (
-                                    <div key={key}>
-                                      <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-                                        Field {key}
-                                      </label>
-                                      <Input
-                                        className="mt-0.5"
-                                        value={waParams[key] ?? ''}
-                                        onChange={(e) =>
-                                          setWaParams((prev) => ({
-                                            ...prev,
-                                            [key]: e.target.value,
-                                          }))
-                                        }
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                              <div>
-                                <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">
-                                  Preview — exactly what {contactName} receives
-                                </p>
-                                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-neutral-50 p-2 text-xs text-neutral-700">
-                                  {waRendered}
-                                </pre>
-                              </div>
-                            </div>
+                            <WaTemplateComposer
+                              body={waTemplate.body}
+                              paramKeys={waTemplate.params}
+                              values={waParams}
+                              contactName={contactName}
+                              onChange={(key, value) =>
+                                setWaParams((prev) => ({ ...prev, [key]: value }))
+                              }
+                            />
                           ) : (
                             <p className="text-xs text-neutral-500">Pick a template above.</p>
                           )}
@@ -1154,6 +1144,103 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * The Trengo-style template composer: the message is shown as a WhatsApp
+ * bubble with the fill-in fields embedded inline at the exact {{n}}
+ * positions, so what you see is literally what the customer receives. The
+ * surrounding template text is fixed (WhatsApp HSM rules) — only the blanks
+ * are editable. A repeated {{n}} mirrors the value typed into its first slot.
+ */
+function WaTemplateComposer({
+  body,
+  paramKeys,
+  values,
+  contactName,
+  onChange,
+}: {
+  body: string
+  paramKeys: ReadonlyArray<string>
+  values: Record<string, string>
+  contactName: string
+  onChange: (key: string, value: string) => void
+}) {
+  const segments = parseWaTemplateSegments(body)
+  const missing = missingWaParams(paramKeys, values)
+
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-900/80">
+          Message to {contactName} — fill in the blanks
+        </p>
+        {paramKeys.length > 0 ? (
+          missing.length > 0 ? (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+              {missing.length} blank{missing.length > 1 ? 's' : ''} to fill
+            </span>
+          ) : (
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+              Ready to send ✓
+            </span>
+          )
+        ) : null}
+      </div>
+
+      {/* The outgoing WhatsApp bubble. */}
+      <div className="mt-2 max-w-xl rounded-2xl rounded-br-sm border border-emerald-200 bg-white px-3 py-2 shadow-sm">
+        <p className="whitespace-pre-wrap text-sm leading-7 text-neutral-900">
+          {segments.map((seg, i) => {
+            if (seg.kind === 'text') {
+              return <span key={i}>{seg.text}</span>
+            }
+            const value = values[seg.key] ?? ''
+            if (!seg.first) {
+              // Mirror of an earlier blank — WhatsApp substitutes every
+              // occurrence with the same value.
+              return (
+                <span
+                  key={i}
+                  className={
+                    value.trim()
+                      ? 'mx-0.5 rounded bg-emerald-100 px-1 font-medium text-emerald-900'
+                      : 'mx-0.5 rounded bg-amber-50 px-1 font-medium text-amber-700'
+                  }
+                >
+                  {value.trim() || seg.key}
+                </span>
+              )
+            }
+            return (
+              <input
+                key={i}
+                type="text"
+                value={value}
+                onChange={(e) => onChange(seg.key, e.target.value)}
+                placeholder={seg.key}
+                aria-label={`Template field ${seg.key}`}
+                style={{ width: `${Math.min(Math.max(value.length, seg.key.length) + 2, 42)}ch` }}
+                className={
+                  value.trim()
+                    ? 'mx-0.5 inline-block rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0 align-baseline text-sm font-medium text-emerald-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500'
+                    : 'mx-0.5 inline-block rounded-md border border-dashed border-amber-400 bg-amber-50 px-1.5 py-0 align-baseline text-sm font-medium text-amber-900 placeholder:text-amber-500 focus:border-solid focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500'
+                }
+              />
+            )
+          })}
+        </p>
+        <p className="mt-1 text-right text-[10px] text-neutral-400">
+          WhatsApp template · via Trengo
+        </p>
+      </div>
+
+      <p className="mt-1.5 text-[10px] text-emerald-900/60">
+        The wording is fixed by the approved template — only the highlighted blanks are
+        yours to fill. It sends exactly as shown.
+      </p>
     </div>
   )
 }
