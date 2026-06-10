@@ -592,6 +592,8 @@ model Contact {
   /// GoCardless customers linked to this contact (ADR 0038). Linked by
   /// unambiguous email match at import or manually in the DD workspace.
   gcCustomers GcCustomer[]
+  /// Durable Direct Debit sign-up links issued to this contact.
+  mandateSetupLinks MandateSetupLink[]
 
   @@index([email])
   @@index([phoneE164])
@@ -853,10 +855,11 @@ model Family {
   /// Conversation heads (ADR 0020).
   conversations    Conversation[]              @relation("FamilyConversations")
   bookings         Booking[]
-  subscriptions    StripeSubscription[]
-  stripeCustomers  StripeCustomer[]
-  mandates         GcMandate[]
-  gcCustomers      GcCustomer[]
+  subscriptions     StripeSubscription[]
+  stripeCustomers   StripeCustomer[]
+  mandates          GcMandate[]
+  gcCustomers       GcCustomer[]
+  mandateSetupLinks MandateSetupLink[]
   invoices         Invoice[]
   uploadedInvoices UploadedInvoice[]
   payments         Payment[]
@@ -2754,6 +2757,9 @@ model MandateIntent {
   status           String  @default("pending")
   // Resolved GoCardless mandate id once the redirect flow completes.
   gcMandateId      String?
+  /// Durable setup link (ADR 0038 amendment) this redirect flow was minted
+  /// for, so completion can close the link and stop its reminders.
+  setupLinkId      String?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -2763,6 +2769,52 @@ model MandateIntent {
   @@index([familyId])
   @@index([billingContactId])
   @@index([status])
+  @@index([setupLinkId])
+}
+
+/// Durable Direct Debit sign-up link (ADR 0038 amendment). GoCardless
+/// redirect flows expire after ~30 minutes, so we never email those: we email
+/// a CRM-owned token URL instead, and mint a fresh redirect flow on every
+/// click. The row also drives the automation: the setup email goes out on
+/// issue, one reminder goes out automatically if the mandate is still not in
+/// place, and the link auto-expires.
+model MandateSetupLink {
+  id        String @id
+  /// Unguessable URL token (crypto-random, base64url).
+  token     String @unique
+  contactId String
+  familyId  String
+  /// Optional plan wording shown to the parent in the email + GoCardless page.
+  description String?
+  /// active | completed | revoked | expired
+  status    String   @default("active")
+  expiresAt DateTime
+
+  /// Email automation state.
+  emailTo        String?
+  emailedAt      DateTime?
+  reminderSentAt DateTime?
+
+  /// Open tracking (no audit per open — stored on the row).
+  lastOpenedAt DateTime?
+  openCount    Int       @default(0)
+
+  completedAt DateTime?
+  /// The mandate that resulted, once completed.
+  gcMandateId String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  family  Family  @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([status, expiresAt])
+  @@index([contactId])
+  @@index([familyId])
 }
 
 // -----------------------------------------------------------------------------

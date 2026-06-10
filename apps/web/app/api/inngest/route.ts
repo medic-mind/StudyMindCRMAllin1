@@ -27,6 +27,7 @@ import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 import { costSummaryWeekly } from './_boundary/cost-summary'
 import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
 import { flagDdDefaultersNightly } from './_boundary/flag-dd-defaulters'
+import { gocardlessSetupLinkMaintenance } from './_boundary/gocardless-setup-links'
 import { leadClassifyRequested } from './_boundary/process-lead'
 import { uebaWeekly } from './_boundary/ueba'
 import { WEBINAR_BOUNDARY_FUNCTIONS } from './_boundary/webinar'
@@ -41,6 +42,7 @@ const BOUNDARY_FUNCTIONS = [
   costSummaryWeekly,
   auditLogArchiveWeekly,
   flagDdDefaultersNightly,
+  gocardlessSetupLinkMaintenance,
   leadClassifyRequested,
   uebaWeekly,
   ...WEBINAR_BOUNDARY_FUNCTIONS,

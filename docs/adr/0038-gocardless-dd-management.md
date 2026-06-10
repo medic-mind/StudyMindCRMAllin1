@@ -102,3 +102,29 @@ Issues), absorbing the existing defaulters table as the Issues tab.
   "needs linking" queue) instead of silently skipped.
 - `GcMandate.familyId` consumers must filter `familyId: { not: null }`
   (done in `dd-defaulters.ts`).
+
+## Amendment (2026-06-10) — automated sign-up emails + durable setup links
+
+The hosted-mandate flow gained a proper outbound system. A raw GoCardless
+redirect flow expires after ~30 minutes, so it must never be emailed; instead:
+
+- **`MandateSetupLink`** — a durable, unguessable token URL the CRM owns
+  (14-day TTL). The public open route
+  (`/api/gocardless/setup/[token]`) mints a fresh redirect flow at click time
+  and 302s the parent to GoCardless; `MandateIntent.setupLinkId` ties each
+  flow back so completion closes the link.
+- **Automated emails** — issuing a link emails the parent a branded sign-up
+  email automatically (`packages/core/src/email/direct-debit-setup.ts`,
+  sent via the system Gmail mailbox, CLAUDE.md §14). One polite reminder goes
+  out by itself 3 days later if the mandate is still not in place (one nudge,
+  never a sequence); links auto-expire. Hourly boundary cron
+  `gocardless/setup-link-maintenance`.
+- **Surface** — tRPC `gocardless.setupLinks.{send,list,resend,revoke}`
+  (replaces `mandates.createSetupLink`); the workspace Customers tab shows
+  every outstanding link (emailed / reminded / opened / completed) with
+  copy / re-send / revoke. Sends and reminders land on the contact timeline
+  and in the audit log (`gocardless.setup_link.*`).
+- The `/api/gocardless/setup` + `/api/gocardless/redirect-flow/complete`
+  routes are on the middleware public-path allowlist (token-authenticated,
+  not session) — the completion route was unreachable for parents before
+  this amendment.

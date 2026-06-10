@@ -43,6 +43,12 @@ const PUBLIC_PATH_PREFIXES = [
   '/api/health',
   // Custom brand logo bytes — rendered on the unauthenticated sign-in screen.
   '/api/branding/logo',
+  // GoCardless hosted mandate flow (ADR 0038): the parent's browser opens the
+  // durable setup link and returns to the completion route after confirming
+  // bank details. Authenticated by an unguessable token / redirect_flow_id,
+  // not a session.
+  '/api/gocardless/setup',
+  '/api/gocardless/redirect-flow/complete',
   '/_next',
 ]
 

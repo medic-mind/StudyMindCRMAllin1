@@ -73,3 +73,25 @@ export {
   type DeriveAtRiskResult,
   type RecomputeContext,
 } from './at-risk'
+// Durable Direct Debit sign-up links + email automation (ADR 0038 amendment).
+export {
+  completeSetupLink,
+  createMandateSetupLink,
+  expireStaleSetupLinks,
+  generateSetupLinkToken,
+  listSetupLinkReminderCandidates,
+  markSetupLinkEmailed,
+  recordSetupLinkOpen,
+  resolveSetupLinkForOpen,
+  revokeSetupLink,
+  SETUP_LINK_REMINDER_AFTER_DAYS,
+  SETUP_LINK_TTL_DAYS,
+  setupLinkOpenState,
+  type CreateSetupLinkInput,
+  type OpenableSetupLink,
+  type ReminderCandidate,
+  type ResolveSetupLinkResult,
+  type RevokeSetupLinkResult,
+  type SetupLinkRecord,
+  type SetupLinkStatus,
+} from './dd-setup-links'

@@ -17,6 +17,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
+  completeSetupLink,
   upsertGcMandateMirror,
   upsertGcPaymentMirror,
   upsertGcSubscriptionMirror,
@@ -41,7 +42,13 @@ export interface CreateHostedRedirectFlowInput {
    * Omitted → legacy behaviour (one durable intent per family+contact).
    */
   sessionKey?: string
-  actorId: string
+  /**
+   * Durable setup link this flow was minted for (ADR 0038 amendment) —
+   * stamped on the MandateIntent so completion can close the link.
+   */
+  setupLinkId?: string
+  /** Null when the flow is minted by the public setup-link route (no agent). */
+  actorId: string | null
   requestId: string
 }
 
@@ -90,6 +97,7 @@ export async function createHostedRedirectFlow(
       billingContactId,
       idempotencyKey,
       status: 'pending',
+      setupLinkId: input.setupLinkId ?? null,
       createdById: actorId,
       updatedById: actorId,
     },
@@ -188,6 +196,7 @@ export async function completeHostedRedirectFlow(
       idempotencyKey: true,
       status: true,
       gcMandateId: true,
+      setupLinkId: true,
     },
   })
   if (!intent) return { ok: false, reason: 'intent_not_found' }
@@ -261,6 +270,12 @@ export async function completeHostedRedirectFlow(
     where: { id: intent.id },
     data: { status: 'completed', gcMandateId },
   })
+
+  // Close the durable setup link (stops its automated reminder). ADR 0038
+  // amendment — idempotent, so a replayed completion converges.
+  if (intent.setupLinkId) {
+    await completeSetupLink(db, { setupLinkId: intent.setupLinkId, gcMandateId })
+  }
 
   await writeAuditLogEntry(db, {
     actorId: null,

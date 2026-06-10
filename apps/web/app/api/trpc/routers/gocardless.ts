@@ -16,13 +16,16 @@ import type { GcPaymentState, GcSubscriptionState, Prisma } from '@prisma/client
 import { z } from 'zod'
 
 import { BackfillAlreadyRunningError, startBackfill } from '@studymind/core/backfill'
-import { linkGcCustomer } from '@studymind/core/finance'
+import {
+  createMandateSetupLink,
+  linkGcCustomer,
+  revokeSetupLink,
+} from '@studymind/core/finance'
 import { GocardlessApiError } from '@studymind/integration-gocardless/client'
 import {
   cancelMandateAction,
   cancelPendingPayment,
   cancelSubscriptionPlan,
-  createHostedRedirectFlow,
   createOneOffPayment,
   createSubscriptionPlan,
   GcMandateNotFoundError,
@@ -32,6 +35,7 @@ import {
 } from '@studymind/integration-gocardless/outbound'
 import { inngest } from '@studymind/jobs'
 
+import { buildSetupLinkUrl, sendSetupLinkEmail } from '@/lib/gocardless/setup-link-email'
 import {
   auditedProcedure,
   protectedProcedure,
@@ -488,11 +492,23 @@ export const gocardlessRouter = router({
         }
       }),
 
-    createSetupLink: auditedProcedure
+  }),
+
+  // Durable Direct Debit sign-up links + automated emails (ADR 0038
+  // amendment). We never email a raw GoCardless flow URL (~30 min expiry);
+  // we email a CRM token link and mint a fresh flow on each open. The setup
+  // email goes out automatically on issue; one automated reminder follows if
+  // the mandate is still not in place; links auto-expire after 14 days.
+  setupLinks: router({
+    send: auditedProcedure
       .input(
         z.object({
           contactId: z.string().min(1),
           description: z.string().trim().min(2).max(255).optional(),
+          /** Defaults to the contact's email; override for a different payer address. */
+          email: z.string().trim().email().optional(),
+          /** Set false to only generate + copy the link (no email). */
+          sendEmail: z.boolean().default(true),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -501,7 +517,7 @@ export const gocardlessRouter = router({
 
         const contact = await ctx.db.contact.findFirst({
           where: { id: input.contactId, deletedAt: null },
-          select: { id: true },
+          select: { id: true, email: true, firstName: true },
         })
         if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'contact not found' })
 
@@ -514,44 +530,214 @@ export const gocardlessRouter = router({
           throw new TRPCError({
             code: 'CONFLICT',
             message:
-              'This contact does not belong to a family yet. Billing is family-keyed — add them to a family first, then generate the setup link.',
+              'This contact does not belong to a family yet. Billing is family-keyed — add them to a family first, then send the setup link.',
           })
         }
 
-        const appUrl = (
-          process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000'
-        ).replace(/\/$/, '')
+        const emailTo = input.email ?? contact.email ?? null
+        if (input.sendEmail && !emailTo) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              'This contact has no email address — add one, provide an override, or generate a copy-only link.',
+          })
+        }
 
-        try {
-          const result = await createHostedRedirectFlow(ctx.db, {
+        const link = await createMandateSetupLink(ctx.db, {
+          contactId: input.contactId,
+          familyId: member.familyId,
+          description: input.description ?? null,
+          emailTo,
+          actorId: user.id,
+        })
+
+        await ctx.audit({
+          action: 'gocardless.setup_link.created',
+          target: { type: 'Contact', id: input.contactId },
+          after: {
+            setupLinkId: link.id,
             familyId: member.familyId,
-            billingContactId: input.contactId,
-            redirectUrl: `${appUrl}/api/gocardless/redirect-flow/complete`,
-            description: input.description ?? 'StudyMind Direct Debit',
-            // Fresh flow per click — hosted flows expire after ~30 minutes.
-            sessionKey: ctx.requestId,
-            actorId: user.id,
-            requestId: ctx.requestId,
-          })
-          await ctx.audit({
-            action: 'gocardless.setup_link.created',
-            target: { type: 'Contact', id: input.contactId },
-            after: {
+            emailTo,
+            sendEmail: input.sendEmail,
+            description: input.description ?? null,
+          },
+        })
+
+        let emailStatus: 'sent' | 'skipped' | 'failed' | 'not_requested' = 'not_requested'
+        let emailDetail: string | undefined
+        if (input.sendEmail && emailTo) {
+          const sent = await sendSetupLinkEmail({
+            kind: 'initial',
+            link: {
+              id: link.id,
+              token: link.token,
+              description: input.description ?? null,
+              expiresAt: link.expiresAt,
+              contactId: input.contactId,
               familyId: member.familyId,
-              mandateIntentId: result.mandateIntentId,
-              status: result.status,
             },
+            to: emailTo,
+            firstName: contact.firstName,
+            actorId: user.id,
           })
-          if (result.status !== 'succeeded' || !result.redirectUrl) {
-            throw new TRPCError({
-              code: 'INTERNAL_SERVER_ERROR',
-              message: 'GoCardless did not return a setup link',
-            })
-          }
-          return { url: result.redirectUrl, mandateIntentId: result.mandateIntentId }
-        } catch (err) {
-          rethrowGcError(err)
+          emailStatus = sent.status
+          emailDetail = sent.detail
         }
+
+        return {
+          setupLinkId: link.id,
+          url: buildSetupLinkUrl(link.token),
+          expiresAt: link.expiresAt,
+          emailedTo: emailStatus === 'sent' ? emailTo : null,
+          emailStatus,
+          emailDetail: emailDetail ?? null,
+        }
+      }),
+
+    list: protectedProcedure
+      .input(
+        z.object({
+          view: z.enum(['outstanding', 'all']).default('outstanding'),
+          limit: z.number().min(1).max(100).default(50),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const rows = await ctx.db.mandateSetupLink.findMany({
+          where: {
+            deletedAt: null,
+            ...(input.view === 'outstanding' ? { status: 'active' } : {}),
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: input.limit,
+          select: {
+            id: true,
+            token: true,
+            status: true,
+            description: true,
+            expiresAt: true,
+            emailTo: true,
+            emailedAt: true,
+            reminderSentAt: true,
+            lastOpenedAt: true,
+            openCount: true,
+            completedAt: true,
+            gcMandateId: true,
+            createdAt: true,
+            contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+          },
+        })
+        return {
+          items: rows.map((r) => ({
+            id: r.id,
+            url: buildSetupLinkUrl(r.token),
+            status: r.status,
+            description: r.description,
+            expiresAt: r.expiresAt,
+            emailTo: r.emailTo,
+            emailedAt: r.emailedAt,
+            reminderSentAt: r.reminderSentAt,
+            lastOpenedAt: r.lastOpenedAt,
+            openCount: r.openCount,
+            completedAt: r.completedAt,
+            gcMandateId: r.gcMandateId,
+            createdAt: r.createdAt,
+            contactId: r.contact.id,
+            contactName:
+              [r.contact.firstName, r.contact.lastName].filter(Boolean).join(' ') ||
+              r.contact.email ||
+              'Contact',
+          })),
+        }
+      }),
+
+    resend: auditedProcedure
+      .input(z.object({ id: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        const link = await ctx.db.mandateSetupLink.findFirst({
+          where: { id: input.id, deletedAt: null },
+          select: {
+            id: true,
+            token: true,
+            status: true,
+            description: true,
+            expiresAt: true,
+            emailTo: true,
+            contactId: true,
+            familyId: true,
+            contact: { select: { firstName: true, email: true } },
+          },
+        })
+        if (!link) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (link.status !== 'active') {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: `This link is ${link.status} — send a new one instead.`,
+          })
+        }
+        const to = link.emailTo ?? link.contact.email
+        if (!to) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'No email address on this link or contact.',
+          })
+        }
+        const sent = await sendSetupLinkEmail({
+          kind: 'initial',
+          link: {
+            id: link.id,
+            token: link.token,
+            description: link.description,
+            expiresAt: link.expiresAt,
+            contactId: link.contactId,
+            familyId: link.familyId,
+          },
+          to,
+          firstName: link.contact.firstName,
+          actorId: user.id,
+        })
+        if (sent.status !== 'sent') {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: sent.detail ?? 'Email could not be sent',
+          })
+        }
+        await ctx.audit({
+          action: 'gocardless.setup_link.emailed',
+          target: { type: 'Contact', id: link.contactId },
+          after: { setupLinkId: link.id, to, kind: 'resend' },
+        })
+        return { ok: true, emailedTo: to }
+      }),
+
+    revoke: auditedProcedure
+      .input(z.object({ id: z.string().min(1), reason: z.string().trim().min(2).max(500) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        const link = await ctx.db.mandateSetupLink.findFirst({
+          where: { id: input.id, deletedAt: null },
+          select: { contactId: true },
+        })
+        if (!link) throw new TRPCError({ code: 'NOT_FOUND' })
+        const result = await revokeSetupLink(ctx.db, {
+          setupLinkId: input.id,
+          actorId: user.id,
+        })
+        if (!result.ok) {
+          throw new TRPCError({
+            code: result.reason === 'not_found' ? 'NOT_FOUND' : 'CONFLICT',
+            message: result.reason,
+          })
+        }
+        await ctx.audit({
+          action: 'gocardless.setup_link.revoked',
+          target: { type: 'Contact', id: link.contactId },
+          after: { setupLinkId: input.id, reason: input.reason },
+        })
+        return { ok: true }
       }),
   }),
 

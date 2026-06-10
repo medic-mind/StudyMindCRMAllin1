@@ -288,6 +288,9 @@ export const EVENT_NAMES = [
   'gocardless.customer.linked',
   'gocardless.customer.unlinked',
   'gocardless.setup_link.created',
+  'gocardless.setup_link.emailed',
+  'gocardless.setup_link.reminder_sent',
+  'gocardless.setup_link.revoked',
   'gocardless.import.started',
 
   // Envelope encryption (originally safeguarding; ADR 0013 retains these
