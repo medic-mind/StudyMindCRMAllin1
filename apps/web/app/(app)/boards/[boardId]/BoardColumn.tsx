@@ -40,6 +40,7 @@ interface CardData {
   contactName: string
   contactEmail?: string | null
   contactPhone?: string | null
+  company?: { id: string; name: string; color: string | null } | null
   description?: string | null
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>

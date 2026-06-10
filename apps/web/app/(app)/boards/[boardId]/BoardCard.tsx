@@ -53,6 +53,7 @@ interface CardData {
   contactName: string
   contactEmail?: string | null
   contactPhone?: string | null
+  company?: { id: string; name: string; color: string | null } | null
   description?: string | null
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
@@ -164,9 +165,34 @@ export function BoardCard({
               </span>
             )}
         </div>
+        {/* Contact preview directly under the name (NAME → email → phone) —
+            clickable to mail / dial without opening the card.
+            `pointer-events-auto` re-enables clicks inside the otherwise
+            click-through card body; the links stopPropagation so they don't
+            also open the modal. */}
+        {cardFaceHas(cardFields, 'contact') && (card.contactEmail || card.contactPhone) && (
+          <div className="pointer-events-auto mt-1.5 flex flex-col gap-1 text-xs text-neutral-600">
+            {card.contactEmail && <EmailLink email={card.contactEmail} />}
+            {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
+          </div>
+        )}
+        {/* SUBJECT — COMPANY row, then any labels. */}
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           {cardFaceHas(cardFields, 'subject') && card.subject ? (
             <Badge tone="info">{card.subject.name}</Badge>
+          ) : null}
+          {cardFaceHas(cardFields, 'company') && card.company ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] font-medium text-neutral-700"
+              title="Company"
+            >
+              <span
+                aria-hidden
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: resolveStageColor(card.company.color ?? 'neutral-400') }}
+              />
+              {card.company.name}
+            </span>
           ) : null}
           {cardFaceHas(cardFields, 'labels') &&
             card.labels.map((l) => (
@@ -179,16 +205,6 @@ export function BoardCard({
               </span>
             ))}
         </div>
-        {/* Contact preview — phone + email, directly clickable to dial / mail
-            without opening the card. `pointer-events-auto` re-enables clicks
-            inside the otherwise click-through card body; the links
-            stopPropagation so they don't also open the modal. */}
-        {cardFaceHas(cardFields, 'contact') && (card.contactEmail || card.contactPhone) && (
-          <div className="pointer-events-auto mt-2 flex flex-col gap-1 text-xs text-neutral-600">
-            {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
-            {card.contactEmail && <EmailLink email={card.contactEmail} />}
-          </div>
-        )}
         {/* Note preview — first 2 lines of the card description so the
             agent gets context at a glance. */}
         {cardFaceHas(cardFields, 'description') &&

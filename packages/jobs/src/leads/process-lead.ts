@@ -42,6 +42,9 @@ export interface LeadAiEnrichment {
   urgency: 'low' | 'medium' | 'high'
   suggestedCategories: string[]
   suggestedProductTags: string[]
+  /** AI-detected requested call time ("YYYY-MM-DDTHH:mm" / "YYYY-MM-DD",
+   * Europe/London). Fallback only — the deterministic parser wins. */
+  preferredCallTime?: string | null
   confidence: number
 }
 
@@ -373,7 +376,15 @@ export async function processLead(
     const subj = await findOrCreateSubject(db, { name: classification.subject }, cardCtx)
     subjectId = subj.id
   }
-  const scheduledCallAt = londonWallToUtc(normalised.preferredWhen)
+  // The form's date/time field (deterministic) wins; the AI's read of the
+  // message/odd fields is the fallback. Shape-validated so a malformed AI
+  // string can never set a junk chip.
+  const aiPreferredWhen =
+    ai?.preferredCallTime && /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/u.test(ai.preferredCallTime)
+      ? ai.preferredCallTime
+      : null
+  const preferredWhen = normalised.preferredWhen ?? aiPreferredWhen
+  const scheduledCallAt = londonWallToUtc(preferredWhen)
 
   if (plan.kind === 'reenquiry') {
     const contactId = plan.contactId
@@ -460,7 +471,7 @@ export async function processLead(
             board: classification.destination,
             site: siteName,
             formTitle: normalised.formTitle,
-            preferredWhen: normalised.preferredWhen,
+            preferredWhen,
             message: normalised.message,
             landingUrl: normalised.landingUrl,
             aiSummary: ai?.summary ?? null,
@@ -576,7 +587,7 @@ export async function processLead(
           board: classification.destination,
           site: siteName,
           formTitle: normalised.formTitle,
-          preferredWhen: normalised.preferredWhen,
+          preferredWhen,
           message: normalised.message,
           landingUrl: normalised.landingUrl,
           aiSummary: ai?.summary ?? null,

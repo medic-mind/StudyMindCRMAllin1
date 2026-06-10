@@ -85,6 +85,7 @@ export default async function BoardPage({ params, searchParams }: PageProps) {
     contactName: c.contactName,
     contactEmail: c.contactEmail,
     contactPhone: c.contactPhone,
+    company: c.company,
     description: c.description,
     subject: c.subject,
     labels: c.labels,
