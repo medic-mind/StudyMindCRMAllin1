@@ -69,6 +69,17 @@ export function TrengoSection({ contactId, conversations }: Props): JSX.Element 
                     {windowOpen ? '24h window open' : '24h window closed'}
                   </span>
                 )}
+                {c.latestStatus && c.latestStatus !== 'sent' && (
+                  <span
+                    className={`rounded px-1.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      c.latestStatus === 'failed'
+                        ? 'bg-red-50 text-red-800'
+                        : 'bg-amber-50 text-amber-800'
+                    }`}
+                  >
+                    {c.latestStatus}
+                  </span>
+                )}
               </span>
               <time dateTime={new Date(c.latestAt).toISOString()}>
                 {new Intl.DateTimeFormat('en-GB', {
@@ -79,6 +90,13 @@ export function TrengoSection({ contactId, conversations }: Props): JSX.Element 
             </div>
             {c.latestSnippet && (
               <p className="mt-1 text-sm text-neutral-800">{c.latestSnippet}</p>
+            )}
+            {c.latestError && (
+              <p className="mt-1 text-xs text-red-700">
+                Trengo rejected the send: {c.latestError}. It retries automatically
+                every 5 minutes — if this keeps failing, check your token in
+                Account → Trengo.
+              </p>
             )}
             <TrengoConversationActions
               contactId={contactId}

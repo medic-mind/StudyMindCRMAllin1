@@ -414,6 +414,12 @@ export interface TrengoConversation {
   latestAt: Date
   /** Outbound deadline derived from WhatsApp 24h window — null otherwise. */
   replyDeadlineAt: Date | null
+  /** Send state of the newest outbound message in the conversation:
+   *  sending | failed | sent | null (latest message inbound / unknown).
+   *  "failed" = at least one attempt errored; the retry cron may recover it. */
+  latestStatus: 'sending' | 'failed' | 'sent' | null
+  /** The provider's actual error message for a failed send. */
+  latestError: string | null
 }
 
 export async function trengoConversationsForContact(
@@ -453,11 +459,28 @@ export async function trengoConversationsForContact(
         latestSnippet: r.summary,
         latestAt: r.occurredAt,
         replyDeadlineAt: null,
+        latestStatus: null,
+        latestError: null,
       }
       convs.set(ticketId, c)
       order.push(ticketId)
     }
-    if (r.type === 'message') c.messageCount += 1
+    if (r.type === 'message') {
+      c.messageCount += 1
+      // Rows iterate newest-first, so the first message row per conversation
+      // is its newest message — that's whose send state the card shows.
+      if (c.latestStatus === null && c.latestError === null && c.messageCount === 1) {
+        const rawStatus = asString(p['status'])
+        const lastError = asObject(p['lastError'])
+        const errMsg = asString(lastError['message'])
+        if (rawStatus === 'pending_send') {
+          c.latestStatus = errMsg ? 'failed' : 'sending'
+          c.latestError = errMsg
+        } else if (rawStatus === 'sent') {
+          c.latestStatus = 'sent'
+        }
+      }
+    }
     if (r.type === 'ticket_closed') c.ticketStatus = 'closed'
     if (r.type === 'ticket_reopened') c.ticketStatus = 'open'
     if (r.type === 'ticket_assigned' && !c.ticketStatus) c.ticketStatus = 'assigned'
