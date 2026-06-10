@@ -106,6 +106,13 @@ export {
   type CallSummaryDraftPromptInput,
 } from './prompts/call-summary-draft'
 export {
+  buildVaInstructionsPrompt,
+  buildVaInstructionsScaffold,
+  VaInstructionsShape,
+  VERSION as VA_INSTRUCTIONS_PROMPT_VERSION,
+  type VaInstructionsPromptInput,
+} from './prompts/va-instructions'
+export {
   buildStatusSummaryPrompt,
   statusSummarySchema,
   VERSION as STATUS_SUMMARY_PROMPT_VERSION,

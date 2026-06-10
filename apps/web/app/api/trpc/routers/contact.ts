@@ -11,9 +11,13 @@ import { BusinessError } from '@studymind/core/errors'
 import {
   buildCallSummaryDraftPrompt,
   buildCallSummaryScaffold,
+  buildVaInstructionsPrompt,
+  buildVaInstructionsScaffold,
   CALL_SUMMARY_DRAFT_PROMPT_VERSION,
   CallSummaryDraftShape,
   runDraft,
+  VA_INSTRUCTIONS_PROMPT_VERSION,
+  VaInstructionsShape,
 } from '@studymind/ai'
 import {
   addContactCallSummary,
@@ -1117,6 +1121,69 @@ export const contactRouter = router({
             callInteractionId: call?.id ?? null,
             callOccurredAt: call?.occurredAt ?? null,
           }
+        }
+      }),
+
+    /**
+     * AI-draft the INTERNAL next-step instructions for the team / VA after a
+     * call (step 2): "send a ½h trial + all details for the subject", etc.
+     * Uses the contact's known subjects + the latest call transcript + the
+     * customer summary the agent just wrote. Always returns text (deterministic
+     * scaffold on no-AI / error) so the button never no-ops.
+     */
+    draftInternalNote: protectedProcedure
+      .input(
+        z.object({
+          contactId: z.string(),
+          customerSummary: z.string().max(8000).optional(),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        const contact = await ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+            subjects: { include: { subject: { select: { name: true } } } },
+          },
+        })
+        const contactName =
+          [contact?.firstName, contact?.lastName].filter(Boolean).join(' ').trim() ||
+          contact?.email ||
+          'there'
+        const interests = (contact?.subjects ?? [])
+          .map((s) => s.subject.name)
+          .filter((n): n is string => Boolean(n))
+        const call = await ctx.db.interaction.findFirst({
+          where: { contactId: input.contactId, type: 'call', deletedAt: null },
+          orderBy: { occurredAt: 'desc' },
+          select: { payload: true },
+        })
+        const transcriptRaw = (call?.payload as { transcriptText?: unknown } | null)?.transcriptText
+        const transcript = typeof transcriptRaw === 'string' ? transcriptRaw.trim() : ''
+
+        const prompt = buildVaInstructionsPrompt({
+          contactName,
+          interests,
+          customerSummary: input.customerSummary,
+          transcript: transcript || undefined,
+        })
+        try {
+          const result = await runDraft({
+            task: 'call_summary_draft',
+            promptVersion: VA_INSTRUCTIONS_PROMPT_VERSION,
+            system: prompt.system,
+            user: prompt.user,
+            model: 'gpt-4o-mini',
+            temperature: 0.4,
+            contentShape: VaInstructionsShape,
+            contactId: input.contactId,
+            ctx: { source: 'contact.callSummary.draftInternalNote' },
+          })
+          return { text: result.text, source: 'ai' as const }
+        } catch {
+          return { text: buildVaInstructionsScaffold(interests), source: 'scaffold' as const }
         }
       }),
   }),

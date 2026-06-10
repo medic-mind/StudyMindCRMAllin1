@@ -224,6 +224,23 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
     }
   }
 
+  const [draftingNote, setDraftingNote] = useState(false)
+  async function suggestInternalNote() {
+    setDraftingNote(true)
+    try {
+      const r = await utils.contact.callSummary.draftInternalNote.fetch({
+        contactId,
+        customerSummary: body.trim() || undefined,
+      })
+      setInternalNote((prev) => (prev.trim() ? `${prev.trim()}\n\n${r.text}` : r.text))
+      toast.success('Suggested next steps added — edit as needed.')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not suggest next steps')
+    } finally {
+      setDraftingNote(false)
+    }
+  }
+
   function resetAll() {
     setBody('')
     setOutcome('answered')
@@ -375,6 +392,16 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
           <p className="mt-0.5 text-xs text-amber-900/70">
             Not seen by the customer. What happened, and what the team / VA needs to do next.
           </p>
+
+          <button
+            type="button"
+            onClick={suggestInternalNote}
+            disabled={draftingNote}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100/70 px-3 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50"
+          >
+            <span aria-hidden="true">✨</span>
+            {draftingNote ? 'Thinking…' : 'AI suggest next steps'}
+          </button>
 
           <Textarea
             className="mt-2"
