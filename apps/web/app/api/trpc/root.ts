@@ -29,6 +29,7 @@ import { contactChannelsRouter } from './routers/contact-channels'
 // root so callers use `trpc.contact.channels.emailThreads`.
 const contactWithChannels = router({
   list: contactRouter.list,
+  filterFacets: contactRouter.filterFacets,
   get: contactRouter.get,
   create: contactRouter.create,
   update: contactRouter.update,

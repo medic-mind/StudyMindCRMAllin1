@@ -44,7 +44,7 @@ const COLUMNS: CsvColumn<Row>[] = [
   { header: 'Calls', value: (r) => r.callCount },
   { header: 'Texts', value: (r) => r.textCount },
   { header: 'Emails', value: (r) => r.emailCount },
-  { header: 'Hours booked', value: (r) => (r.hoursBooked ?? '') },
+  { header: 'Hours booked', value: (r) => r.hoursBooked ?? '' },
   {
     header: 'Last lesson',
     value: (r) => (r.lastLessonAt ? new Date(r.lastLessonAt) : ''),
@@ -52,8 +52,7 @@ const COLUMNS: CsvColumn<Row>[] = [
   {
     header: 'Amount spent (GBP)',
     // Minor units → pounds with 2dp; blank until the booking sync writes it.
-    value: (r) =>
-      r.amountSpentMinor != null ? (r.amountSpentMinor / 100).toFixed(2) : '',
+    value: (r) => (r.amountSpentMinor != null ? (r.amountSpentMinor / 100).toFixed(2) : ''),
   },
   {
     header: 'Last contacted',
@@ -70,6 +69,9 @@ interface Props {
   kinds?: Kind[]
   bookingStatuses?: BookingStatus[]
   labelIds?: string[]
+  subjectIds?: string[]
+  countries?: string[]
+  enquiryCategories?: string[]
   hasHours?: boolean
 }
 
@@ -81,6 +83,9 @@ export function ContactsExportButton({
   kinds,
   bookingStatuses,
   labelIds,
+  subjectIds,
+  countries,
+  enquiryCategories,
   hasHours,
 }: Props) {
   const utils = trpc.useUtils()
@@ -100,6 +105,9 @@ export function ContactsExportButton({
           ...(kinds && kinds.length > 0 ? { kinds } : {}),
           ...(bookingStatuses && bookingStatuses.length > 0 ? { bookingStatuses } : {}),
           ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
+          ...(subjectIds && subjectIds.length > 0 ? { subjectIds } : {}),
+          ...(countries && countries.length > 0 ? { countries } : {}),
+          ...(enquiryCategories && enquiryCategories.length > 0 ? { enquiryCategories } : {}),
           ...(hasHours ? { minHoursBooked: 1 } : {}),
           cursor,
           limit: 100,

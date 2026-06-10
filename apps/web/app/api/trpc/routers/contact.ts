@@ -87,6 +87,15 @@ const ListInput = z.object({
   companyIds: z.array(z.string()).max(50).optional(),
   /** Filter by Subject.id (m2m). */
   subjectId: z.string().nullish(),
+  /** Multi-select subject filter (OR within subjects). Supersedes subjectId. */
+  subjectIds: z.array(z.string()).max(50).optional(),
+  /** Filter by Contact.country (exact stored values, OR). Options come from
+   * `filterFacets` so they always match what's in the column. */
+  countries: z.array(z.string().trim().min(1).max(120)).max(60).optional(),
+  /** Contacts whose web enquiries carried ANY of these classification
+   * categories ("Summer Camp", "UCAT", …). Matched against the categories on
+   * leads converted to the contact. */
+  enquiryCategories: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
   /** Filter by contact kind. */
   kind: z.enum(['unclassified', 'parent', 'student', 'tutor', 'other']).optional(),
   /** Multi-select kind filter (OR). Supersedes kind. */
@@ -95,9 +104,7 @@ const ListInput = z.object({
     .max(10)
     .optional(),
   /** Filter by booking lifecycle (CLAUDE.md §15). */
-  bookingStatus: z
-    .enum(['lead', 'registered_no_hours', 'registered_with_hours'])
-    .optional(),
+  bookingStatus: z.enum(['lead', 'registered_no_hours', 'registered_with_hours']).optional(),
   /** Multi-select booking-status filter (OR). Supersedes bookingStatus. */
   bookingStatuses: z
     .array(z.enum(['lead', 'registered_no_hours', 'registered_with_hours']))
@@ -131,179 +138,227 @@ function newId(): string {
 }
 
 export const contactRouter = router({
-  list: protectedProcedure
-    .input(ListInput)
-    .query(async ({ ctx, input }) => {
-      // Sorts on a real Contact column + an id tiebreak. Nulls land last on
-      // the booking-derived columns (a contact without a synced balance should
-      // not top a "most hours" sort). Cursor pagination is only engaged for
-      // the default createdAt sort (below); the hours sorts return the first
-      // page sized to the limit, which is what the table needs.
-      const dir = input.sortDir
-      let orderBy: Array<Record<string, unknown>>
-      switch (input.sortBy) {
-        case 'name':
-          orderBy = [{ lastName: dir }, { firstName: dir }, { id: 'desc' }]
-          break
-        case 'hoursBooked':
-          orderBy = [{ hoursBooked: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
-          break
-        case 'hoursDelivered':
-          orderBy = [{ hoursDelivered: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
-          break
-        case 'lastLessonAt':
-          orderBy = [{ lastLessonAt: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
-          break
-        default:
-          orderBy = [{ createdAt: dir }, { id: 'desc' }]
-      }
+  list: protectedProcedure.input(ListInput).query(async ({ ctx, input }) => {
+    // Sorts on a real Contact column + an id tiebreak. Nulls land last on
+    // the booking-derived columns (a contact without a synced balance should
+    // not top a "most hours" sort). Cursor pagination is only engaged for
+    // the default createdAt sort (below); the hours sorts return the first
+    // page sized to the limit, which is what the table needs.
+    const dir = input.sortDir
+    let orderBy: Array<Record<string, unknown>>
+    switch (input.sortBy) {
+      case 'name':
+        orderBy = [{ lastName: dir }, { firstName: dir }, { id: 'desc' }]
+        break
+      case 'hoursBooked':
+        orderBy = [{ hoursBooked: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
+        break
+      case 'hoursDelivered':
+        orderBy = [{ hoursDelivered: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
+        break
+      case 'lastLessonAt':
+        orderBy = [{ lastLessonAt: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
+        break
+      default:
+        orderBy = [{ createdAt: dir }, { id: 'desc' }]
+    }
 
-      const lastLessonCutoff =
-        input.lastLessonBeforeDays != null
-          ? new Date(Date.now() - input.lastLessonBeforeDays * 24 * 60 * 60 * 1000)
-          : null
+    const lastLessonCutoff =
+      input.lastLessonBeforeDays != null
+        ? new Date(Date.now() - input.lastLessonBeforeDays * 24 * 60 * 60 * 1000)
+        : null
 
-      // Every filter EXCEPT the keyset cursor — shared by the count and the
-      // page read so "total" reflects the whole filtered set. Plural filter
-      // params (multi-select UI) win over their singular back-compat twin.
-      const filterWhere: Prisma.ContactWhereInput = {
-        deletedAt: null,
-        ...(input.kinds && input.kinds.length > 0
-          ? { kind: { in: input.kinds } }
-          : input.kind
-            ? { kind: input.kind }
-            : {}),
-        ...(input.bookingStatuses && input.bookingStatuses.length > 0
-          ? { bookingStatus: { in: input.bookingStatuses } }
-          : input.bookingStatus
-            ? { bookingStatus: input.bookingStatus }
-            : {}),
-        ...(input.hasFamily !== undefined
-          ? input.hasFamily
-            ? { familyMembers: { some: {} } }
-            : { familyMembers: { none: {} } }
+    // Enquiry-category filter: Lead has no Prisma relation to Contact
+    // (convertedToContactId is a plain column), so resolve the matching
+    // contact ids up front and filter on `id IN`.
+    let enquiryContactIds: string[] | null = null
+    if (input.enquiryCategories && input.enquiryCategories.length > 0) {
+      const leads = await ctx.db.lead.findMany({
+        where: {
+          deletedAt: null,
+          convertedToContactId: { not: null },
+          categories: { hasSome: input.enquiryCategories },
+        },
+        select: { convertedToContactId: true },
+        distinct: ['convertedToContactId'],
+        take: 10_000,
+      })
+      enquiryContactIds = leads
+        .map((l) => l.convertedToContactId)
+        .filter((id): id is string => !!id)
+    }
+
+    // Every filter EXCEPT the keyset cursor — shared by the count and the
+    // page read so "total" reflects the whole filtered set. Plural filter
+    // params (multi-select UI) win over their singular back-compat twin.
+    const filterWhere: Prisma.ContactWhereInput = {
+      deletedAt: null,
+      ...(input.kinds && input.kinds.length > 0
+        ? { kind: { in: input.kinds } }
+        : input.kind
+          ? { kind: input.kind }
           : {}),
-        ...(input.companyIds && input.companyIds.length > 0
-          ? { companies: { some: { companyId: { in: input.companyIds } } } }
-          : input.companyId
-            ? { companies: { some: { companyId: input.companyId } } }
-            : {}),
-        ...(input.subjectId
+      ...(input.bookingStatuses && input.bookingStatuses.length > 0
+        ? { bookingStatus: { in: input.bookingStatuses } }
+        : input.bookingStatus
+          ? { bookingStatus: input.bookingStatus }
+          : {}),
+      ...(input.hasFamily !== undefined
+        ? input.hasFamily
+          ? { familyMembers: { some: {} } }
+          : { familyMembers: { none: {} } }
+        : {}),
+      ...(input.companyIds && input.companyIds.length > 0
+        ? { companies: { some: { companyId: { in: input.companyIds } } } }
+        : input.companyId
+          ? { companies: { some: { companyId: input.companyId } } }
+          : {}),
+      ...(input.subjectIds && input.subjectIds.length > 0
+        ? { subjects: { some: { subjectId: { in: input.subjectIds } } } }
+        : input.subjectId
           ? { subjects: { some: { subjectId: input.subjectId } } }
           : {}),
-        // AND semantics: a customer must carry every requested label.
-        ...(input.labelIds && input.labelIds.length > 0
-          ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
-          : {}),
-        ...(input.minHoursBooked != null || input.maxHoursBooked != null
-          ? {
-              hoursBooked: {
-                ...(input.minHoursBooked != null ? { gte: input.minHoursBooked } : {}),
-                ...(input.maxHoursBooked != null ? { lte: input.maxHoursBooked } : {}),
-              },
-            }
-          : {}),
-        ...(input.minHoursDelivered != null || input.maxHoursDelivered != null
-          ? {
-              hoursDelivered: {
-                ...(input.minHoursDelivered != null ? { gte: input.minHoursDelivered } : {}),
-                ...(input.maxHoursDelivered != null ? { lte: input.maxHoursDelivered } : {}),
-              },
-            }
-          : {}),
-        ...(lastLessonCutoff ? { lastLessonAt: { lte: lastLessonCutoff } } : {}),
-        ...(input.q
+      ...(input.countries && input.countries.length > 0
+        ? { country: { in: input.countries } }
+        : {}),
+      ...(enquiryContactIds ? { id: { in: enquiryContactIds } } : {}),
+      // AND semantics: a customer must carry every requested label.
+      ...(input.labelIds && input.labelIds.length > 0
+        ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
+        : {}),
+      ...(input.minHoursBooked != null || input.maxHoursBooked != null
+        ? {
+            hoursBooked: {
+              ...(input.minHoursBooked != null ? { gte: input.minHoursBooked } : {}),
+              ...(input.maxHoursBooked != null ? { lte: input.maxHoursBooked } : {}),
+            },
+          }
+        : {}),
+      ...(input.minHoursDelivered != null || input.maxHoursDelivered != null
+        ? {
+            hoursDelivered: {
+              ...(input.minHoursDelivered != null ? { gte: input.minHoursDelivered } : {}),
+              ...(input.maxHoursDelivered != null ? { lte: input.maxHoursDelivered } : {}),
+            },
+          }
+        : {}),
+      ...(lastLessonCutoff ? { lastLessonAt: { lte: lastLessonCutoff } } : {}),
+      ...(input.q
+        ? {
+            OR: [
+              { firstName: { contains: input.q, mode: 'insensitive' } },
+              { lastName: { contains: input.q, mode: 'insensitive' } },
+              { email: { contains: input.q, mode: 'insensitive' } },
+              { phoneE164: { contains: input.q } },
+            ],
+          }
+        : {}),
+    }
+
+    // Keyset cursor (only meaningful for the default createdAt sort). Combined
+    // with the filters via a top-level AND so the search `OR` is preserved.
+    const cursorWhere: Prisma.ContactWhereInput | null =
+      input.page == null && input.cursor && input.sortBy === 'createdAt'
+        ? input.sortDir === 'desc'
           ? {
               OR: [
-                { firstName: { contains: input.q, mode: 'insensitive' } },
-                { lastName: { contains: input.q, mode: 'insensitive' } },
-                { email: { contains: input.q, mode: 'insensitive' } },
-                { phoneE164: { contains: input.q } },
+                { createdAt: { lt: input.cursor.createdAt } },
+                {
+                  AND: [{ createdAt: input.cursor.createdAt }, { id: { lt: input.cursor.id } }],
+                },
               ],
             }
-          : {}),
-      }
+          : {
+              OR: [
+                { createdAt: { gt: input.cursor.createdAt } },
+                {
+                  AND: [{ createdAt: input.cursor.createdAt }, { id: { gt: input.cursor.id } }],
+                },
+              ],
+            }
+        : null
 
-      // Keyset cursor (only meaningful for the default createdAt sort). Combined
-      // with the filters via a top-level AND so the search `OR` is preserved.
-      const cursorWhere: Prisma.ContactWhereInput | null =
-        input.page == null && input.cursor && input.sortBy === 'createdAt'
-          ? input.sortDir === 'desc'
-            ? {
-                OR: [
-                  { createdAt: { lt: input.cursor.createdAt } },
-                  {
-                    AND: [
-                      { createdAt: input.cursor.createdAt },
-                      { id: { lt: input.cursor.id } },
-                    ],
-                  },
-                ],
-              }
-            : {
-                OR: [
-                  { createdAt: { gt: input.cursor.createdAt } },
-                  {
-                    AND: [
-                      { createdAt: input.cursor.createdAt },
-                      { id: { gt: input.cursor.id } },
-                    ],
-                  },
-                ],
-              }
-          : null
+    const usingOffset = input.page != null
 
-      const usingOffset = input.page != null
-
-      const [total, rows] = await Promise.all([
-        ctx.db.contact.count({ where: filterWhere }),
-        ctx.db.contact.findMany({
-          where: cursorWhere ? { AND: [filterWhere, cursorWhere] } : filterWhere,
-          orderBy,
-          ...(usingOffset
-            ? { skip: (input.page! - 1) * input.limit, take: input.limit }
-            : { take: input.limit + 1 }),
-          include: {
-            familyMembers: {
-              take: 1,
-              include: { family: { select: { id: true, name: true } } },
-            },
-            interactions: {
-              where: { deletedAt: null },
-              orderBy: { occurredAt: 'desc' },
-              take: 1,
-              select: { occurredAt: true },
-            },
-            companies: {
-              include: {
-                company: { select: { id: true, name: true, slug: true, color: true } },
-              },
-            },
-            labels: {
-              include: { label: { select: { id: true, name: true, color: true } } },
-            },
-            bookingProfile: { select: { hoursRemaining: true, nextHoursExpiryAt: true } },
+    const [total, rows] = await Promise.all([
+      ctx.db.contact.count({ where: filterWhere }),
+      ctx.db.contact.findMany({
+        where: cursorWhere ? { AND: [filterWhere, cursorWhere] } : filterWhere,
+        orderBy,
+        ...(usingOffset
+          ? { skip: (input.page! - 1) * input.limit, take: input.limit }
+          : { take: input.limit + 1 }),
+        include: {
+          familyMembers: {
+            take: 1,
+            include: { family: { select: { id: true, name: true } } },
           },
-        }),
-      ])
+          interactions: {
+            where: { deletedAt: null },
+            orderBy: { occurredAt: 'desc' },
+            take: 1,
+            select: { occurredAt: true },
+          },
+          companies: {
+            include: {
+              company: { select: { id: true, name: true, slug: true, color: true } },
+            },
+          },
+          labels: {
+            include: { label: { select: { id: true, name: true, color: true } } },
+          },
+          bookingProfile: { select: { hoursRemaining: true, nextHoursExpiryAt: true } },
+        },
+      }),
+    ])
 
-      const hasMore = !usingOffset && rows.length > input.limit
-      const sliced = hasMore ? rows.slice(0, input.limit) : rows
-      const pageIds = sliced.map((r) => r.id)
-      // Two batched groupBys for the whole page: comms counts + active
-      // complaints. One extra query each, regardless of page size.
-      const [counts, complaints] = await Promise.all([
-        loadContactCommsCounts(ctx.db, pageIds),
-        loadContactComplaintCounts(ctx.db, pageIds),
-      ])
-      const items: ContactSummary[] = sliced.map((r) =>
-        toContactSummary(r, counts.get(r.id), new Date(), complaints.get(r.id) ?? 0),
-      )
-      const last = sliced[sliced.length - 1]
-      const nextCursor =
-        hasMore && last ? { id: last.id, createdAt: last.createdAt } : null
-      return { items, nextCursor, total }
-    }),
+    const hasMore = !usingOffset && rows.length > input.limit
+    const sliced = hasMore ? rows.slice(0, input.limit) : rows
+    const pageIds = sliced.map((r) => r.id)
+    // Two batched groupBys for the whole page: comms counts + active
+    // complaints. One extra query each, regardless of page size.
+    const [counts, complaints] = await Promise.all([
+      loadContactCommsCounts(ctx.db, pageIds),
+      loadContactComplaintCounts(ctx.db, pageIds),
+    ])
+    const items: ContactSummary[] = sliced.map((r) =>
+      toContactSummary(r, counts.get(r.id), new Date(), complaints.get(r.id) ?? 0),
+    )
+    const last = sliced[sliced.length - 1]
+    const nextCursor = hasMore && last ? { id: last.id, createdAt: last.createdAt } : null
+    return { items, nextCursor, total }
+  }),
+
+  /** Facet options for the B2C list filters that have no fixed value set:
+   * the countries actually stored on contacts and the enquiry categories
+   * actually seen on classified leads ("Summer Camp", "UCAT", …). Both grow
+   * automatically as ops add classification rules or new countries enquire. */
+  filterFacets: protectedProcedure.query(async ({ ctx }) => {
+    const [countryGroups, recentLeads] = await Promise.all([
+      ctx.db.contact.groupBy({
+        by: ['country'],
+        where: { deletedAt: null, country: { not: null } },
+        _count: { _all: true },
+      }),
+      ctx.db.lead.findMany({
+        where: {
+          deletedAt: null,
+          convertedToContactId: { not: null },
+          categories: { isEmpty: false },
+        },
+        select: { categories: true },
+        orderBy: { createdAt: 'desc' },
+        take: 5000,
+      }),
+    ])
+    const countries = countryGroups
+      .flatMap((g) => (g.country ? [{ value: g.country, count: g._count._all }] : []))
+      .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+    const enquiryCategories = [...new Set(recentLeads.flatMap((l) => l.categories))].sort((a, b) =>
+      a.localeCompare(b),
+    )
+    return { countries, enquiryCategories }
+  }),
 
   get: protectedProcedure
     .input(z.object({ id: z.string(), purpose: z.string().min(1).optional() }))
@@ -331,167 +386,162 @@ export const contactRouter = router({
       return toContactDetail(row)
     }),
 
-  create: auditedProcedure
-    .input(ContactCreateInput)
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      const id = newId()
-      const minor = isMinorByDob(input.dateOfBirth)
-      const created = await ctx.db.contact.create({
-        data: {
-          id,
-          kind: input.kind,
-          firstName: input.firstName ?? null,
-          lastName: input.lastName ?? null,
-          email: input.email ?? null,
-          phoneE164: input.phoneE164 ?? null,
-          dateOfBirth: input.dateOfBirth ?? null,
-          isMinor: minor,
-          notes: input.notes ?? null,
-          addressLine1: input.addressLine1 ?? null,
-          addressLine2: input.addressLine2 ?? null,
-          city: input.city ?? null,
-          postcode: input.postcode ?? null,
-          country: input.country ?? null,
-          schoolName: input.schoolName ?? null,
-          yearGroup: input.yearGroup ?? null,
-          sendStatus: input.sendStatus ?? null,
-          jobTitle: input.jobTitle ?? null,
-          pronouns: input.pronouns ?? null,
-          mailchimpEmail: input.mailchimpEmail ?? null,
-          preferredContactMethod: input.preferredContactMethod ?? null,
-          timezone: input.timezone ?? null,
-          referralSource: input.referralSource ?? null,
-          examTarget: input.examTarget ?? null,
-          createdById: user.id,
-          updatedById: user.id,
-          ...(input.companyIds && input.companyIds.length > 0
-            ? {
-                companies: {
-                  create: input.companyIds.map((companyId) => ({
-                    companyId,
-                    createdById: user.id,
-                  })),
-                },
-              }
-            : {}),
-          ...(input.subjectIds && input.subjectIds.length > 0
-            ? {
-                subjects: {
-                  create: input.subjectIds.map((subjectId) => ({
-                    subjectId,
-                    createdById: user.id,
-                  })),
-                },
-              }
-            : {}),
-        },
-      })
-      await ctx.audit({
-        action: 'contact.created',
-        target: { type: 'Contact', id: created.id },
-        before: null,
-        after: created,
-      })
-      return { id: created.id }
-    }),
+  create: auditedProcedure.input(ContactCreateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    const id = newId()
+    const minor = isMinorByDob(input.dateOfBirth)
+    const created = await ctx.db.contact.create({
+      data: {
+        id,
+        kind: input.kind,
+        firstName: input.firstName ?? null,
+        lastName: input.lastName ?? null,
+        email: input.email ?? null,
+        phoneE164: input.phoneE164 ?? null,
+        dateOfBirth: input.dateOfBirth ?? null,
+        isMinor: minor,
+        notes: input.notes ?? null,
+        addressLine1: input.addressLine1 ?? null,
+        addressLine2: input.addressLine2 ?? null,
+        city: input.city ?? null,
+        postcode: input.postcode ?? null,
+        country: input.country ?? null,
+        schoolName: input.schoolName ?? null,
+        yearGroup: input.yearGroup ?? null,
+        sendStatus: input.sendStatus ?? null,
+        jobTitle: input.jobTitle ?? null,
+        pronouns: input.pronouns ?? null,
+        mailchimpEmail: input.mailchimpEmail ?? null,
+        preferredContactMethod: input.preferredContactMethod ?? null,
+        timezone: input.timezone ?? null,
+        referralSource: input.referralSource ?? null,
+        examTarget: input.examTarget ?? null,
+        createdById: user.id,
+        updatedById: user.id,
+        ...(input.companyIds && input.companyIds.length > 0
+          ? {
+              companies: {
+                create: input.companyIds.map((companyId) => ({
+                  companyId,
+                  createdById: user.id,
+                })),
+              },
+            }
+          : {}),
+        ...(input.subjectIds && input.subjectIds.length > 0
+          ? {
+              subjects: {
+                create: input.subjectIds.map((subjectId) => ({
+                  subjectId,
+                  createdById: user.id,
+                })),
+              },
+            }
+          : {}),
+      },
+    })
+    await ctx.audit({
+      action: 'contact.created',
+      target: { type: 'Contact', id: created.id },
+      before: null,
+      after: created,
+    })
+    return { id: created.id }
+  }),
 
-  update: auditedProcedure
-    .input(ContactUpdateInput)
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      const before = await ctx.db.contact.findFirst({
-        where: { id: input.id, deletedAt: null },
-      })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+  update: auditedProcedure.input(ContactUpdateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    const before = await ctx.db.contact.findFirst({
+      where: { id: input.id, deletedAt: null },
+    })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
 
-      // Update semantics: undefined → don't touch, null → clear, value → set.
-      // Zod nullish() preserves the distinction.
-      function pass<T>(v: T | null | undefined): T | null | undefined {
-        return v
-      }
-      const after = await ctx.db.contact.update({
-        where: { id: input.id },
-        data: {
-          // Reclassification: undefined leaves the kind unchanged (Prisma
-          // ignores undefined), so existing callers that omit it are unaffected.
-          kind: input.kind,
-          firstName: pass(input.firstName),
-          lastName: pass(input.lastName),
-          email: pass(input.email),
-          phoneE164: pass(input.phoneE164),
-          dateOfBirth: pass(input.dateOfBirth),
-          notes: pass(input.notes),
-          addressLine1: pass(input.addressLine1),
-          addressLine2: pass(input.addressLine2),
-          city: pass(input.city),
-          postcode: pass(input.postcode),
-          country: pass(input.country),
-          schoolName: pass(input.schoolName),
-          yearGroup: pass(input.yearGroup),
-          sendStatus: pass(input.sendStatus),
-          jobTitle: pass(input.jobTitle),
-          pronouns: pass(input.pronouns),
-          mailchimpEmail: pass(input.mailchimpEmail),
-          preferredContactMethod: pass(input.preferredContactMethod),
-          timezone: pass(input.timezone),
-          referralSource: pass(input.referralSource),
-          examTarget: pass(input.examTarget),
-          // m2m: replace the whole set when the array is sent. Undefined =
-          // don't touch. Empty array = clear.
-          ...(input.companyIds !== undefined
-            ? {
-                companies: {
-                  deleteMany: {},
-                  create: input.companyIds.map((companyId) => ({
-                    companyId,
-                    createdById: user.id,
-                  })),
-                },
-              }
-            : {}),
-          ...(input.subjectIds !== undefined
-            ? {
-                subjects: {
-                  deleteMany: {},
-                  create: input.subjectIds.map((subjectId) => ({
-                    subjectId,
-                    createdById: user.id,
-                  })),
-                },
-              }
-            : {}),
-          // Refresh isMinor from DOB whenever DOB is sent in this update.
-          ...(input.dateOfBirth !== undefined
-            ? { isMinor: isMinorByDob(input.dateOfBirth ?? null) }
-            : {}),
-          updatedById: user.id,
-        },
-      })
-      await ctx.audit({
-        action: 'contact.updated',
-        target: { type: 'Contact', id: after.id },
-        before,
-        after,
-      })
+    // Update semantics: undefined → don't touch, null → clear, value → set.
+    // Zod nullish() preserves the distinction.
+    function pass<T>(v: T | null | undefined): T | null | undefined {
+      return v
+    }
+    const after = await ctx.db.contact.update({
+      where: { id: input.id },
+      data: {
+        // Reclassification: undefined leaves the kind unchanged (Prisma
+        // ignores undefined), so existing callers that omit it are unaffected.
+        kind: input.kind,
+        firstName: pass(input.firstName),
+        lastName: pass(input.lastName),
+        email: pass(input.email),
+        phoneE164: pass(input.phoneE164),
+        dateOfBirth: pass(input.dateOfBirth),
+        notes: pass(input.notes),
+        addressLine1: pass(input.addressLine1),
+        addressLine2: pass(input.addressLine2),
+        city: pass(input.city),
+        postcode: pass(input.postcode),
+        country: pass(input.country),
+        schoolName: pass(input.schoolName),
+        yearGroup: pass(input.yearGroup),
+        sendStatus: pass(input.sendStatus),
+        jobTitle: pass(input.jobTitle),
+        pronouns: pass(input.pronouns),
+        mailchimpEmail: pass(input.mailchimpEmail),
+        preferredContactMethod: pass(input.preferredContactMethod),
+        timezone: pass(input.timezone),
+        referralSource: pass(input.referralSource),
+        examTarget: pass(input.examTarget),
+        // m2m: replace the whole set when the array is sent. Undefined =
+        // don't touch. Empty array = clear.
+        ...(input.companyIds !== undefined
+          ? {
+              companies: {
+                deleteMany: {},
+                create: input.companyIds.map((companyId) => ({
+                  companyId,
+                  createdById: user.id,
+                })),
+              },
+            }
+          : {}),
+        ...(input.subjectIds !== undefined
+          ? {
+              subjects: {
+                deleteMany: {},
+                create: input.subjectIds.map((subjectId) => ({
+                  subjectId,
+                  createdById: user.id,
+                })),
+              },
+            }
+          : {}),
+        // Refresh isMinor from DOB whenever DOB is sent in this update.
+        ...(input.dateOfBirth !== undefined
+          ? { isMinor: isMinorByDob(input.dateOfBirth ?? null) }
+          : {}),
+        updatedById: user.id,
+      },
+    })
+    await ctx.audit({
+      action: 'contact.updated',
+      target: { type: 'Contact', id: after.id },
+      before,
+      after,
+    })
 
-      // Two-way sync: if an identity field changed on a Summer Camp-linked
-      // contact, push it back to the camp booking. Best-effort; a no-op for
-      // non-camp contacts (CLAUDE.md §15 summer-camp write-back).
-      const identityTouched =
-        input.firstName !== undefined ||
-        input.lastName !== undefined ||
-        input.email !== undefined ||
-        input.phoneE164 !== undefined
-      if (identityTouched) {
-        const { pushContactDetailsForContact } = await import(
-          '@studymind/integration-summer-camp/writeback'
-        )
-        await pushContactDetailsForContact(ctx.db, after.id).catch(() => null)
-      }
+    // Two-way sync: if an identity field changed on a Summer Camp-linked
+    // contact, push it back to the camp booking. Best-effort; a no-op for
+    // non-camp contacts (CLAUDE.md §15 summer-camp write-back).
+    const identityTouched =
+      input.firstName !== undefined ||
+      input.lastName !== undefined ||
+      input.email !== undefined ||
+      input.phoneE164 !== undefined
+    if (identityTouched) {
+      const { pushContactDetailsForContact } =
+        await import('@studymind/integration-summer-camp/writeback')
+      await pushContactDetailsForContact(ctx.db, after.id).catch(() => null)
+    }
 
-      return { id: after.id }
-    }),
+    return { id: after.id }
+  }),
 
   // CLAUDE.md §18, §20.1 — listing AI-derived merge suggestions is a read.
   // Any agent role can request suggestions; only admin/ops_manager can
@@ -890,9 +940,9 @@ export const contactRouter = router({
         // and attaches it; Gmail attaches inline), not email alone.
         const wantsAttachments = Boolean(
           input.channels.email ||
-            input.channels.whatsapp ||
-            input.channels.sms ||
-            input.channels.trengo,
+          input.channels.whatsapp ||
+          input.channels.sms ||
+          input.channels.trengo,
         )
         const refs = wantsAttachments ? (input.emailAttachments ?? []) : []
         const attachments: Array<{
@@ -906,21 +956,23 @@ export const contactRouter = router({
               where: { id: ref.id },
               select: { fileName: true, contentType: true, data: true },
             })
-            if (row) attachments.push({
-              filename: row.fileName,
-              contentType: row.contentType,
-              data: row.data,
-            })
+            if (row)
+              attachments.push({
+                filename: row.fileName,
+                contentType: row.contentType,
+                data: row.data,
+              })
           } else if (ref.kind === 'uploadedInvoice') {
             const row = await ctx.db.uploadedInvoice.findUnique({
               where: { id: ref.id },
               select: { fileName: true, contentType: true, data: true },
             })
-            if (row) attachments.push({
-              filename: row.fileName,
-              contentType: row.contentType,
-              data: row.data,
-            })
+            if (row)
+              attachments.push({
+                filename: row.fileName,
+                contentType: row.contentType,
+                data: row.data,
+              })
           } else if (ref.kind === 'callSummaryTemplatePdf') {
             const row = await ctx.db.callSummaryTemplate.findUnique({
               where: { id: ref.id },
@@ -1288,11 +1340,7 @@ export const contactRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      if (
-        user.role !== 'ceo' &&
-        user.role !== 'senior_manager' &&
-        user.role !== 'manager'
-      ) {
+      if (user.role !== 'ceo' && user.role !== 'senior_manager' && user.role !== 'manager') {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'Only Manager or above can bulk-delete contacts',
