@@ -20,6 +20,7 @@ import { customerRiskRouter } from './routers/customerRisk'
 import { chatRouter } from './routers/chat'
 import { companyRouter } from './routers/company'
 import { contactRouter } from './routers/contact'
+import { contactBookingRouter } from './routers/contact-booking'
 import { contactChannelsRouter } from './routers/contact-channels'
 
 // `contact.channels.*` namespace lives in its own file (ADR 0017) to keep
@@ -40,6 +41,7 @@ const contactWithChannels = router({
   callSummary: contactRouter.callSummary,
   mailchimp: contactRouter.mailchimp,
   channels: contactChannelsRouter,
+  booking: contactBookingRouter,
 })
 import { costRouter } from './routers/cost'
 import { dashboardRouter } from './routers/dashboard'

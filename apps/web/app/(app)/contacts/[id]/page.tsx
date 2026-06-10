@@ -20,6 +20,7 @@ import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import {
   ActivityIcon,
+  CalendarIcon,
   CoinsIcon,
   FileTextIcon,
   ListTodoIcon,
@@ -38,6 +39,7 @@ import { EditContactButton } from './EditContactButton'
 import { Timeline } from './Timeline'
 import { CallsSection } from './sections/CallsSection'
 import { CallSummarySection } from './sections/CallSummarySection'
+import { BookingSection } from './sections/BookingSection'
 import { ChannelTiles } from './sections/ChannelTiles'
 import { ContactSearchBar } from './sections/ContactSearchBar'
 import { DocumentsSection } from './sections/DocumentsSection'
@@ -142,6 +144,8 @@ export default async function ContactDetailPage({
     tasks,
     notes,
     timeline,
+    bookingSummary,
+    bookingLessons,
   ] = await Promise.all([
     caller.contact.channels.summary({ contactId: id }),
     caller.contact.channels.emailThreads({ contactId: id, limit: 25 }),
@@ -152,6 +156,8 @@ export default async function ContactDetailPage({
     caller.contact.channels.tasks({ contactId: id }),
     caller.contact.channels.notes({ contactId: id, limit: 25 }),
     caller.interaction.list({ contactId: id, limit: 25 }),
+    caller.contact.booking.summary({ contactId: id }),
+    caller.contact.booking.lessons({ contactId: id, limit: 20 }),
   ])
 
   const kindTone = KIND_TONE[contact.kind] ?? 'neutral'
@@ -161,13 +167,14 @@ export default async function ContactDetailPage({
   // the SectionCard heading's scroll-mt.
   const sectionNav: Array<[string, string]> = [
     ['section-links', 'Linked'],
+    ['section-booking', 'Booking'],
     ['section-email', 'Email'],
     ['section-calls', 'Calls'],
     ['section-call-summary', 'Call summary'],
     ['section-forward', 'Forward'],
     ['section-slack', 'Slack'],
     ['section-trengo', 'Trengo'],
-    ...(contact.family ? ([['section-payments', 'Payments']] as Array<[string, string]>) : []),
+    ['section-payments', 'Payments'],
     ['section-invoices', 'Invoices'],
     ['section-tasks', 'Tasks'],
     ['section-notes', 'Notes'],
@@ -324,6 +331,14 @@ export default async function ContactDetailPage({
             <LinkedContactsSection contactId={contact.id} />
           </SectionCard>
 
+          <SectionCard
+            id="section-booking"
+            title="Booking & hours"
+            icon={<CalendarIcon size={16} />}
+          >
+            <BookingSection summary={bookingSummary} lessons={bookingLessons} />
+          </SectionCard>
+
           <SectionCard id="section-email" title="Email" icon={<MailIcon size={16} />}>
             <EmailSection threads={emailThreads.items} />
           </SectionCard>
@@ -381,11 +396,9 @@ export default async function ContactDetailPage({
             <TrengoSection contactId={contact.id} conversations={trengo.items} />
           </SectionCard>
 
-          {contact.family && (
-            <SectionCard id="section-payments" title="Payments" icon={<CoinsIcon size={16} />}>
-              <PaymentsPanel target={{ contactId: contact.id }} />
-            </SectionCard>
-          )}
+          <SectionCard id="section-payments" title="Payments" icon={<CoinsIcon size={16} />}>
+            <PaymentsPanel target={{ contactId: contact.id }} />
+          </SectionCard>
 
           <SectionCard
             id="section-invoices"
