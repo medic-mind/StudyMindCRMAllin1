@@ -5,7 +5,8 @@
 // human-confirmed (CLAUDE.md §3) and audited server-side.
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -59,8 +60,16 @@ function cadence(item: {
 }
 
 export function PlansTab() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  // ?customer=CU… filters the whole tab to one customer (set by the customer
+  // record's deep links — same pattern as the GoCardless dashboard).
+  const customerFilter = searchParams.get('customer')
+
   const [status, setStatus] = useState<StatusFilter>('active')
   const [showNew, setShowNew] = useState(false)
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
   const [action, setAction] = useState<{
     kind: 'cancel' | 'pause' | 'resume'
     gcSubscriptionId: string
@@ -68,8 +77,25 @@ export function PlansTab() {
   } | null>(null)
   const [reason, setReason] = useState('')
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 250)
+    return () => clearTimeout(t)
+  }, [q])
+
+  const filterInput = {
+    ...(customerFilter ? { gcCustomerId: customerFilter } : {}),
+    ...(!customerFilter && debouncedQ.trim().length >= 2 ? { q: debouncedQ.trim() } : {}),
+  }
+
   const utils = trpc.useUtils()
-  const list = trpc.gocardless.subscriptions.list.useQuery({ status })
+  const list = trpc.gocardless.subscriptions.list.useQuery({ status, ...filterInput })
+  const counts = trpc.gocardless.subscriptions.statusCounts.useQuery(filterInput)
+  const filteredCustomer = trpc.gocardless.customers.detail.useQuery(
+    { gcCustomerId: customerFilter ?? '' },
+    { enabled: customerFilter !== null },
+  )
+
+  const clearCustomerFilter = () => router.replace('/direct-debits/plans', { scroll: false })
 
   const refresh = () => {
     void utils.gocardless.subscriptions.list.invalidate()
@@ -107,16 +133,65 @@ export function PlansTab() {
   const busy = cancel.isPending || pause.isPending || resume.isPending
   const items = list.data?.items ?? []
 
+  const countFor = (value: StatusFilter): number | null => {
+    if (!counts.data) return null
+    if (value === 'all') return counts.data.total
+    return counts.data.counts[value] ?? 0
+  }
+  const chipOptions = STATUS_OPTIONS.map((opt) => {
+    const n = countFor(opt.value)
+    return { value: opt.value, label: n === null ? opt.label : `${opt.label} (${n})` }
+  })
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <FilterChips options={STATUS_OPTIONS} value={status} onChange={setStatus} />
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterChips options={chipOptions} value={status} onChange={setStatus} />
+          {customerFilter ? (
+            <span className="flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-800">
+              {filteredCustomer.data?.customer.name ??
+                filteredCustomer.data?.customer.email ??
+                customerFilter}
+              <button
+                type="button"
+                aria-label="Clear customer filter"
+                className="ml-1 text-primary-500 hover:text-primary-800"
+                onClick={clearCustomerFilter}
+              >
+                ✕
+              </button>
+            </span>
+          ) : (
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search by customer…"
+              className="h-8 w-56"
+            />
+          )}
+        </div>
         <Button size="sm" onClick={() => setShowNew((v) => !v)}>
           {showNew ? 'Close' : 'New plan'}
         </Button>
       </div>
 
-      {showNew ? <NewPlanForm onDone={() => setShowNew(false)} /> : null}
+      {showNew ? (
+        <NewPlanForm
+          onDone={() => setShowNew(false)}
+          prefillCustomer={
+            customerFilter && filteredCustomer.data
+              ? {
+                  gcCustomerId: customerFilter,
+                  label:
+                    filteredCustomer.data.customer.name ??
+                    filteredCustomer.data.customer.email ??
+                    customerFilter,
+                }
+              : null
+          }
+        />
+      ) : null}
 
       {action ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
@@ -215,10 +290,15 @@ export function PlansTab() {
                       >
                         {s.customer.contactName ?? s.customer.displayName}
                       </Link>
+                    ) : s.customer ? (
+                      <Link
+                        href={`/direct-debits/customers/${encodeURIComponent(s.customer.gcCustomerId)}`}
+                        className="font-medium text-neutral-700 hover:text-primary-700 hover:underline"
+                      >
+                        {s.customer.displayName}
+                      </Link>
                     ) : (
-                      <span className="text-neutral-700">
-                        {s.customer?.displayName ?? '—'}
-                      </span>
+                      <span className="text-neutral-700">—</span>
                     )}
                   </Td>
                   <Td>
@@ -312,7 +392,13 @@ function gbpToMinor(v: string): number | null {
   return Number.isFinite(minor) && minor > 0 ? minor : null
 }
 
-function NewPlanForm({ onDone }: { onDone: () => void }) {
+function NewPlanForm({
+  onDone,
+  prefillCustomer = null,
+}: {
+  onDone: () => void
+  prefillCustomer?: { gcCustomerId: string; label: string } | null
+}) {
   const utils = trpc.useUtils()
   const [mandate, setMandate] = useState<PickedMandate | null>(null)
   const [amount, setAmount] = useState('')
@@ -390,7 +476,11 @@ function NewPlanForm({ onDone }: { onDone: () => void }) {
     <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
       <div className="space-y-1.5">
         <Label>Customer &amp; mandate</Label>
-        <CustomerMandatePicker value={mandate} onChange={setMandate} />
+        <CustomerMandatePicker
+          value={mandate}
+          onChange={setMandate}
+          initialCustomer={prefillCustomer}
+        />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1.5">

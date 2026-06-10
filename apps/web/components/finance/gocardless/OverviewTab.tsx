@@ -136,10 +136,15 @@ export function OverviewTab() {
                       >
                         {p.customer.contactName ?? p.customer.displayName}
                       </Link>
+                    ) : p.customer ? (
+                      <Link
+                        href={`/direct-debits/customers/${encodeURIComponent(p.customer.gcCustomerId)}`}
+                        className="font-medium text-neutral-700 hover:text-primary-700 hover:underline"
+                      >
+                        {p.customer.displayName}
+                      </Link>
                     ) : (
-                      <span className="font-medium text-neutral-700">
-                        {p.customer?.displayName ?? 'Unlinked customer'}
-                      </span>
+                      <span className="font-medium text-neutral-700">Unlinked customer</span>
                     )}
                     <Badge tone={PAYMENT_TONE[p.status] ?? 'neutral'} dot>
                       {statusLabel(p.status)}
@@ -191,10 +196,15 @@ export function OverviewTab() {
                       >
                         {c.customer.contactName ?? c.customer.displayName}
                       </Link>
+                    ) : c.customer ? (
+                      <Link
+                        href={`/direct-debits/customers/${encodeURIComponent(c.customer.gcCustomerId)}`}
+                        className="font-medium text-neutral-700 hover:text-primary-700 hover:underline"
+                      >
+                        {c.customer.displayName}
+                      </Link>
                     ) : (
-                      <span className="font-medium text-neutral-700">
-                        {c.customer?.displayName ?? '—'}
-                      </span>
+                      <span className="font-medium text-neutral-700">—</span>
                     )}
                     {c.name ? (
                       <span className="ml-2 text-xs text-neutral-500">{c.name}</span>

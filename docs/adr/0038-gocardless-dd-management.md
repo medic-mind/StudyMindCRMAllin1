@@ -149,3 +149,20 @@ workspace gained a master dashboard:
   the next scheduled collections — all from one widened
   `gocardless.overview` query. Read-only: money actions stay behind the
   confirmed flows on the working tabs (CLAUDE.md §3).
+
+## Amendment (2026-06-10, third) — GoCardless-dashboard parity pass
+
+The workspace now mirrors the GoCardless dashboard's information
+architecture (visuals stay on StudyMind design tokens, §4):
+
+- **Customer record** at `/direct-debits/customers/[gcCustomerId]`
+  (`gocardless.customers.detail`): identity + CRM-link controls, lifetime
+  totals, bank mandates (with audited cancel), every plan, recent payments,
+  and the customer's sign-up links. Customer names everywhere (lists,
+  dashboard queues) click through to it; linked customers go to the CRM
+  contact.
+- **List parity**: per-status counts on the Plans/Payments filter strips
+  (`statusCounts`), customer search on both lists (resolved through the
+  customer mirror), and a `?customer=` deep-link filter set by the record's
+  action buttons — which also prefills the New-plan / Collect-payment
+  mandate pickers so "create for this customer" is one click.

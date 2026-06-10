@@ -152,6 +152,35 @@ async function loadCustomerSummaries(
   return map
 }
 
+/**
+ * Resolve a free-text customer search to the matching GoCardless customer
+ * ids, so the plans/payments lists can filter by customer the way the
+ * GoCardless dashboard does. Returns null when no query was given (no
+ * filter); an empty array means "matches nothing".
+ */
+async function resolveCustomerIdsForQuery(
+  db: Prisma.TransactionClient | import('@prisma/client').PrismaClient,
+  q: string | undefined,
+): Promise<string[] | null> {
+  const trimmed = q?.trim()
+  if (!trimmed || trimmed.length < 2) return null
+  const rows = await db.gcCustomer.findMany({
+    where: {
+      deletedAt: null,
+      OR: [
+        { email: { contains: trimmed, mode: 'insensitive' } },
+        { givenName: { contains: trimmed, mode: 'insensitive' } },
+        { familyName: { contains: trimmed, mode: 'insensitive' } },
+        { companyName: { contains: trimmed, mode: 'insensitive' } },
+        { gcCustomerId: { equals: trimmed } },
+      ],
+    },
+    select: { gcCustomerId: true },
+    take: 200,
+  })
+  return rows.map((r) => r.gcCustomerId)
+}
+
 const Cursor = z.object({ id: z.string(), createdAt: z.date() }).nullish()
 
 function cursorWhere(cursor: { id: string; createdAt: Date } | null | undefined) {
@@ -194,6 +223,8 @@ const PAYMENT_STATUSES = [
 const SubscriptionListInput = z.object({
   status: z.enum([...SUBSCRIPTION_STATUSES, 'all']).default('all'),
   gcCustomerId: z.string().optional(),
+  /** Customer search — matches the GoCardless dashboard's list search. */
+  q: z.string().trim().max(120).optional(),
   cursor: Cursor,
   limit: z.number().min(1).max(100).default(50),
 })
@@ -226,8 +257,16 @@ const PaymentListInput = z.object({
   status: z.enum([...PAYMENT_STATUSES, 'all']).default('all'),
   gcCustomerId: z.string().optional(),
   gcSubscriptionId: z.string().optional(),
+  /** Customer search — matches the GoCardless dashboard's list search. */
+  q: z.string().trim().max(120).optional(),
   cursor: Cursor,
   limit: z.number().min(1).max(100).default(50),
+})
+
+/** Shared input for the per-status count strips above the list tables. */
+const StatusCountsInput = z.object({
+  gcCustomerId: z.string().optional(),
+  q: z.string().trim().max(120).optional(),
 })
 
 const PaymentCreateInput = z.object({
@@ -520,6 +559,138 @@ export const gocardlessRouter = router({
           },
         })
         return result
+      }),
+
+    /**
+     * Full customer record (the GoCardless dashboard's customer page):
+     * identity + CRM link, lifetime totals, every mandate, every plan (all
+     * statuses), recent payments, and outstanding sign-up links.
+     */
+    detail: protectedProcedure
+      .input(z.object({ gcCustomerId: z.string().min(3).max(120) }))
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const customer = await ctx.db.gcCustomer.findFirst({
+          where: { gcCustomerId: input.gcCustomerId, deletedAt: null },
+          select: {
+            gcCustomerId: true,
+            email: true,
+            givenName: true,
+            familyName: true,
+            companyName: true,
+            contactId: true,
+            familyId: true,
+            gcCreatedAt: true,
+            createdAt: true,
+            contact: { select: { firstName: true, lastName: true, email: true } },
+          },
+        })
+        if (!customer) throw new TRPCError({ code: 'NOT_FOUND', message: 'customer not found' })
+
+        const [mandates, subscriptions, payments, collected, setupLinks] = await Promise.all([
+          ctx.db.gcMandate.findMany({
+            where: { gcCustomerId: input.gcCustomerId, deletedAt: null },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            select: {
+              gcMandateId: true,
+              state: true,
+              reference: true,
+              scheme: true,
+              nextPossibleChargeDate: true,
+              gcCreatedAt: true,
+            },
+          }),
+          ctx.db.gcSubscription.findMany({
+            where: { gcCustomerId: input.gcCustomerId, deletedAt: null },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            select: {
+              gcSubscriptionId: true,
+              name: true,
+              status: true,
+              amountMinor: true,
+              currency: true,
+              intervalUnit: true,
+              interval: true,
+              dayOfMonth: true,
+              startDate: true,
+              endDate: true,
+              nextChargeAt: true,
+              nextChargeMinor: true,
+              gcCreatedAt: true,
+            },
+          }),
+          ctx.db.gcPayment.findMany({
+            where: { gcCustomerId: input.gcCustomerId, deletedAt: null },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 15,
+            select: {
+              gcPaymentId: true,
+              status: true,
+              amountMinor: true,
+              currency: true,
+              description: true,
+              chargeDate: true,
+              gcSubscriptionId: true,
+            },
+          }),
+          ctx.db.gcPayment.aggregate({
+            where: {
+              gcCustomerId: input.gcCustomerId,
+              deletedAt: null,
+              status: { in: ['confirmed', 'paid_out'] },
+            },
+            _sum: { amountMinor: true },
+            _count: { _all: true },
+          }),
+          customer.contactId
+            ? ctx.db.mandateSetupLink.findMany({
+                where: { contactId: customer.contactId, deletedAt: null },
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                take: 5,
+                select: {
+                  id: true,
+                  status: true,
+                  emailTo: true,
+                  emailedAt: true,
+                  reminderSentAt: true,
+                  openCount: true,
+                  expiresAt: true,
+                  completedAt: true,
+                },
+              })
+            : Promise.resolve([]),
+        ])
+
+        return {
+          customer: {
+            gcCustomerId: customer.gcCustomerId,
+            name:
+              [customer.givenName, customer.familyName].filter(Boolean).join(' ') ||
+              customer.companyName ||
+              null,
+            email: customer.email,
+            contactId: customer.contactId,
+            contactName: customer.contact
+              ? [customer.contact.firstName, customer.contact.lastName]
+                  .filter(Boolean)
+                  .join(' ') ||
+                customer.contact.email ||
+                null
+              : null,
+            familyId: customer.familyId,
+            gcCreatedAt: customer.gcCreatedAt,
+            createdAt: customer.createdAt,
+          },
+          totals: {
+            collectedMinor: collected._sum.amountMinor ?? 0,
+            paymentCount: collected._count._all,
+            activePlans: subscriptions.filter((s) => s.status === 'active').length,
+          },
+          mandates,
+          subscriptions,
+          payments,
+          setupLinks,
+        }
       }),
   }),
 
@@ -860,11 +1031,19 @@ export const gocardlessRouter = router({
   subscriptions: router({
     list: protectedProcedure.input(SubscriptionListInput).query(async ({ ctx, input }) => {
       assertFinanceRole(requireUser(ctx))
+      // An exact customer filter wins over free-text search.
+      const searchIds = input.gcCustomerId
+        ? null
+        : await resolveCustomerIdsForQuery(ctx.db, input.q)
+      if (searchIds !== null && searchIds.length === 0) {
+        return { items: [], nextCursor: null }
+      }
       const rows = await ctx.db.gcSubscription.findMany({
         where: {
           deletedAt: null,
           ...(input.status !== 'all' ? { status: input.status as GcSubscriptionState } : {}),
           ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
+          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
           ...cursorWhere(input.cursor),
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -899,6 +1078,33 @@ export const gocardlessRouter = router({
         })),
         nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
       }
+    }),
+
+    /** Per-status counts for the list's filter strip (GoCardless-style tabs). */
+    statusCounts: protectedProcedure.input(StatusCountsInput).query(async ({ ctx, input }) => {
+      assertFinanceRole(requireUser(ctx))
+      const searchIds = input.gcCustomerId
+        ? null
+        : await resolveCustomerIdsForQuery(ctx.db, input.q)
+      if (searchIds !== null && searchIds.length === 0) {
+        return { counts: {}, total: 0 }
+      }
+      const rows = await ctx.db.gcSubscription.groupBy({
+        by: ['status'],
+        where: {
+          deletedAt: null,
+          ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
+          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
+        },
+        _count: { _all: true },
+      })
+      const counts: Record<string, number> = {}
+      let total = 0
+      for (const row of rows) {
+        counts[row.status] = row._count._all
+        total += row._count._all
+      }
+      return { counts, total }
     }),
 
     create: auditedProcedure.input(SubscriptionCreateInput).mutation(async ({ ctx, input }) => {
@@ -1002,11 +1208,18 @@ export const gocardlessRouter = router({
   payments: router({
     list: protectedProcedure.input(PaymentListInput).query(async ({ ctx, input }) => {
       assertFinanceRole(requireUser(ctx))
+      const searchIds = input.gcCustomerId
+        ? null
+        : await resolveCustomerIdsForQuery(ctx.db, input.q)
+      if (searchIds !== null && searchIds.length === 0) {
+        return { items: [], nextCursor: null }
+      }
       const rows = await ctx.db.gcPayment.findMany({
         where: {
           deletedAt: null,
           ...(input.status !== 'all' ? { status: input.status as GcPaymentState } : {}),
           ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
+          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
           ...(input.gcSubscriptionId ? { gcSubscriptionId: input.gcSubscriptionId } : {}),
           ...cursorWhere(input.cursor),
         },
@@ -1037,6 +1250,33 @@ export const gocardlessRouter = router({
         })),
         nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
       }
+    }),
+
+    /** Per-status counts for the list's filter strip (GoCardless-style tabs). */
+    statusCounts: protectedProcedure.input(StatusCountsInput).query(async ({ ctx, input }) => {
+      assertFinanceRole(requireUser(ctx))
+      const searchIds = input.gcCustomerId
+        ? null
+        : await resolveCustomerIdsForQuery(ctx.db, input.q)
+      if (searchIds !== null && searchIds.length === 0) {
+        return { counts: {}, total: 0 }
+      }
+      const rows = await ctx.db.gcPayment.groupBy({
+        by: ['status'],
+        where: {
+          deletedAt: null,
+          ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
+          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
+        },
+        _count: { _all: true },
+      })
+      const counts: Record<string, number> = {}
+      let total = 0
+      for (const row of rows) {
+        counts[row.status] = row._count._all
+        total += row._count._all
+      }
+      return { counts, total }
     }),
 
     create: auditedProcedure.input(PaymentCreateInput).mutation(async ({ ctx, input }) => {
