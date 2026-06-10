@@ -44,6 +44,13 @@ interface Props {
   contactDisplayName: string
 }
 
+/** Substitute {{first_name}} / {{name}} in a saved template body (mirrors the
+ *  comms-centre quick-reply behaviour) so an inserted template is personalised. */
+function applyNamePlaceholders(body: string, name: string): string {
+  const firstName = name.split(/\s+/)[0] ?? ''
+  return body.replace(/\{\{\s*first_name\s*\}\}/gi, firstName).replace(/\{\{\s*name\s*\}\}/gi, name)
+}
+
 /** Read a File as a base64 string (no data-URL prefix) for the upload payload. */
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -100,6 +107,21 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
   const templates: DbTemplate[] = templatesQuery.data ?? []
   const activeTemplate = templates.find((t) => t.id === activeTemplateId) ?? null
 
+  // Saved conversation templates ("Trengo templates" / quick replies). Shared
+  // across channels here — the agent inserts one into the summary body.
+  const quickRepliesQuery = trpc.quickReply.list.useQuery(undefined, {
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  const quickReplies = quickRepliesQuery.data ?? []
+
+  function insertQuickReply(id: string) {
+    const qr = quickReplies.find((q) => q.id === id)
+    if (!qr) return
+    const text = applyNamePlaceholders(qr.body, contactDisplayName)
+    setBody((prev) => (prev.trim() ? `${prev.trim()}\n\n${text}` : text))
+  }
+
   const slackChannelsQuery = trpc.slackChannel.pickList.useQuery()
   const slackChannels = slackChannelsQuery.data ?? []
   const defaultSlackChannelId = useMemo(
@@ -111,19 +133,17 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
   const vaQuery = trpc.task.assignableUsers.useQuery({})
   const assignableUsers = vaQuery.data ?? []
 
-  // Attachment sources — only fetched once Email is chosen.
-  const documentsQuery = trpc.contact.documents.list.useQuery(
-    { contactId },
-    { enabled: email },
-  )
-  const invoicesQuery = trpc.uploadedInvoice.list.useQuery(
-    { contactId, includeArchived: false },
-    { enabled: email },
-  )
-  const attachTemplatesQuery = trpc.callSummaryTemplate.list.useQuery(
-    { includeArchived: false },
-    { enabled: email },
-  )
+  // Attachment sources — always available so the agent can pre-select a
+  // document or PDF up front; the picked files are delivered with the Email
+  // channel (see the note in the attach panel).
+  const documentsQuery = trpc.contact.documents.list.useQuery({ contactId })
+  const invoicesQuery = trpc.uploadedInvoice.list.useQuery({
+    contactId,
+    includeArchived: false,
+  })
+  const attachTemplatesQuery = trpc.callSummaryTemplate.list.useQuery({
+    includeArchived: false,
+  })
 
   const attachmentChoices: AttachmentChoice[] = [
     ...(documentsQuery.data ?? []).map((d) => ({
@@ -160,7 +180,8 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
 
   async function onPickFiles(files: FileList | null) {
     if (!files || files.length === 0) return
-    const next: Array<{ filename: string; contentType: string; dataBase64: string; size: number }> = []
+    const next: Array<{ filename: string; contentType: string; dataBase64: string; size: number }> =
+      []
     for (const file of Array.from(files)) {
       if (file.size > 8 * 1024 * 1024) {
         toast.error(`"${file.name}" is over the 8 MB limit.`)
@@ -244,8 +265,7 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
         const results = await send.mutateAsync({
           summaryInteractionId: created.id,
           channels: { whatsapp, sms, email },
-          emailAttachments:
-            email && pickedAttachments.length > 0 ? pickedAttachments : undefined,
+          emailAttachments: email && pickedAttachments.length > 0 ? pickedAttachments : undefined,
           uploadedAttachments:
             email && uploadedFiles.length > 0
               ? uploadedFiles.map((f) => ({
@@ -394,8 +414,8 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
               </div>
             ) : (
               <p className="ml-6 mt-1 text-[11px] text-amber-900/70">
-                No channels configured — posts to the fallback channel. Add channels at
-                Settings → Slack channels.
+                No channels configured — posts to the fallback channel. Add channels at Settings →
+                Slack channels.
               </p>
             )
           ) : null}
@@ -509,6 +529,25 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
             </button>
           )
         })}
+        {quickReplies.length > 0 ? (
+          <select
+            aria-label="Insert a saved template"
+            value=""
+            onChange={(e) => {
+              insertQuickReply(e.target.value)
+              e.currentTarget.value = ''
+            }}
+            className="rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-medium text-neutral-600 transition-colors hover:border-primary-300 hover:text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          >
+            <option value="">Insert template…</option>
+            {quickReplies.map((q) => (
+              <option key={q.id} value={q.id}>
+                {q.title}
+                {q.channel ? ` · ${q.channel}` : ''}
+              </option>
+            ))}
+          </select>
+        ) : null}
         {templatesQuery.data && templates.length === 0 ? (
           <span className="text-xs text-neutral-500">
             No templates yet — admins can add some at Settings → Call summary templates.
@@ -597,81 +636,88 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
           number). Email replies on the latest Gmail thread.
         </p>
 
-        {email ? (
-          <div className="mt-3 border-t border-primary-200/60 pt-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-primary-900/80">
-              Attach to the email ({pickedAttachments.length + uploadedFiles.length})
+        <div className="mt-3 border-t border-primary-200/60 pt-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-primary-900/80">
+            Attach files &amp; documents ({pickedAttachments.length + uploadedFiles.length})
+          </p>
+          {!email && pickedAttachments.length + uploadedFiles.length > 0 ? (
+            <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+              Attachments send with the Email channel — tick Email above to include them.
             </p>
+          ) : (
+            <p className="mt-0.5 text-[10px] text-primary-900/60">
+              Picked files are delivered with the Email channel.
+            </p>
+          )}
 
-            {/* Upload a file straight from your device — always available. */}
-            <div className="mt-1.5">
-              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-primary-300 bg-white px-2.5 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-50">
-                <input
-                  type="file"
-                  multiple
-                  className="sr-only"
-                  onChange={(e) => {
-                    void onPickFiles(e.target.files)
-                    e.currentTarget.value = ''
-                  }}
-                />
-                Upload a file…
-              </label>
-              {uploadedFiles.length > 0 ? (
-                <ul className="mt-1.5 space-y-1">
-                  {uploadedFiles.map((f, i) => (
-                    <li
-                      key={`${f.filename}:${i}`}
-                      className="flex items-center gap-2 rounded border border-neutral-200 bg-white px-2 py-1 text-xs"
+          {/* Upload a file straight from your device — always available. */}
+          <div className="mt-1.5">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-primary-300 bg-white px-2.5 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-50">
+              <input
+                type="file"
+                multiple
+                className="sr-only"
+                onChange={(e) => {
+                  void onPickFiles(e.target.files)
+                  e.currentTarget.value = ''
+                }}
+              />
+              Upload a file…
+            </label>
+            {uploadedFiles.length > 0 ? (
+              <ul className="mt-1.5 space-y-1">
+                {uploadedFiles.map((f, i) => (
+                  <li
+                    key={`${f.filename}:${i}`}
+                    className="flex items-center gap-2 rounded border border-neutral-200 bg-white px-2 py-1 text-xs"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-neutral-700">{f.filename}</span>
+                    <span className="shrink-0 font-mono text-[10px] text-neutral-400">
+                      {Math.max(1, Math.round(f.size / 1024))} KB
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeUpload(i)}
+                      aria-label={`Remove ${f.filename}`}
+                      className="shrink-0 px-1 text-neutral-400 hover:text-neutral-700"
                     >
-                      <span className="min-w-0 flex-1 truncate text-neutral-700">{f.filename}</span>
-                      <span className="shrink-0 font-mono text-[10px] text-neutral-400">
-                        {Math.max(1, Math.round(f.size / 1024))} KB
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeUpload(i)}
-                        aria-label={`Remove ${f.filename}`}
-                        className="shrink-0 px-1 text-neutral-400 hover:text-neutral-700"
-                      >
-                        ×
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-
-            {/* Or pick a file already saved against this contact. */}
-            {attachmentChoices.length > 0 ? (
-              <>
-                <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-neutral-400">
-                  Or attach a saved file
-                </p>
-                <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto pr-1">
-                  {attachmentChoices.map((c) => (
-                    <li key={`${c.kind}:${c.id}`}>
-                      <label className="flex items-start gap-2 text-xs text-neutral-700">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
-                          checked={isPicked(c)}
-                          onChange={(e) => toggleAttachment(c, e.target.checked)}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium">{c.label}</span>
-                          {c.hint && (
-                            <span className="block text-[10px] text-neutral-500">{c.hint}</span>
-                          )}
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </>
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
             ) : null}
           </div>
-        ) : null}
+
+          {/* Or pick a file already saved against this contact. */}
+          {attachmentChoices.length > 0 ? (
+            <>
+              <p className="mt-2 text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+                Or attach a saved file
+              </p>
+              <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto pr-1">
+                {attachmentChoices.map((c) => (
+                  <li key={`${c.kind}:${c.id}`}>
+                    <label className="flex items-start gap-2 text-xs text-neutral-700">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                        checked={isPicked(c)}
+                        onChange={(e) => toggleAttachment(c, e.target.checked)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{c.label}</span>
+                        {c.hint && (
+                          <span className="block text-[10px] text-neutral-500">{c.hint}</span>
+                        )}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -693,8 +739,8 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
       </div>
 
       <p className="text-[11px] text-neutral-500">
-        Each channel is best-effort and independent — one failing channel never aborts the
-        others. After this you&apos;ll add an internal note for the team.
+        Each channel is best-effort and independent — one failing channel never aborts the others.
+        After this you&apos;ll add an internal note for the team.
       </p>
     </div>
   )
