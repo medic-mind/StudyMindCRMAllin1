@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { SuggestInput } from '@/components/ui/suggest-input'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 
@@ -223,17 +224,13 @@ export function NewComplaintDialog() {
                   </Select>
                 </Field>
                 <Field label="Category (optional)">
-                  <Input
+                  <SuggestInput
+                    aria-label="Complaint category"
                     placeholder="Pick or type new"
-                    list="hub-complaint-category-options"
+                    options={categoriesQuery.data ?? []}
                     value={category}
-                    onChange={(e) => setCategory(e.target.value)}
+                    onChange={setCategory}
                   />
-                  <datalist id="hub-complaint-category-options">
-                    {(categoriesQuery.data ?? []).map((c) => (
-                      <option key={c} value={c} />
-                    ))}
-                  </datalist>
                 </Field>
               </div>
 
