@@ -74,6 +74,13 @@ export const EVENT_NAMES = [
   // Mailchimp audience push (CLAUDE.md §16).
   'contact.mailchimp_pushed',
 
+  // Medi Platform (Medic Mind UCAT portal) account sync (ADR 0037). A
+  // `user.registered` event from the portal is onboarded as a Contact (+ an
+  // "imported from Medi Platform" note); the summary audit row per processed
+  // event. The Contact create/update itself audits `contact.created` /
+  // `contact.updated` as usual.
+  'medi.account_synced',
+
   // Sister-brand companies (CLAUDE.md §4). Admin-editable from Settings.
   'company.created',
   'company.updated',
@@ -528,6 +535,9 @@ export const INNGEST_EVENT_NAMES = [
   // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
   // persists a Lead then hands off async classification + pipeline routing.
   'lead/classify.requested',
+  // Medi Platform account sync (ADR 0037): the POST /api/contacts receiver
+  // persists a `medi` ProviderEvent then hands off async Contact onboarding.
+  'medi/account.received',
   // Zoom recording.completed webhook (ADR 0035): hands off async so the class
   // recording is emailed promptly instead of waiting for the hourly sweep.
   'webinar/recording.completed',
