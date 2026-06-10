@@ -35,6 +35,8 @@ interface Props {
   /** Optimistic local-state shift so the card jumps the instant the
    * user picks a target. */
   onLocalMove?: (cardId: string, toStageId: string) => void
+  /** Restores the pre-move snapshot when the server rejects the move. */
+  onLocalRevert?: () => void
 }
 
 export function MoveCardMenu({
@@ -43,6 +45,7 @@ export function MoveCardMenu({
   stages,
   crossBoardStages = [],
   onLocalMove,
+  onLocalRevert,
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
@@ -99,9 +102,7 @@ export function MoveCardMenu({
     onSuccess: async (_data, vars) => {
       const dest =
         stages.find((s) => s.id === vars.toStageId) ??
-        crossBoardStages
-          .flatMap((g) => g.stages)
-          .find((s) => s.id === vars.toStageId)
+        crossBoardStages.flatMap((g) => g.stages).find((s) => s.id === vars.toStageId)
       toast.success(`Moved to ${dest?.name ?? 'new stage'}`)
       await Promise.all([
         utils.card.list.invalidate(),
@@ -110,7 +111,13 @@ export function MoveCardMenu({
       ])
       router.refresh()
     },
-    onError: (e) => toast.error(e.message ?? 'Could not move card'),
+    onError: (e) => {
+      // Snap the optimistic move back and re-sync so a rejected move never
+      // leaves the card stranded in the wrong column until a manual refresh.
+      onLocalRevert?.()
+      toast.error(e.message ?? 'Could not move card')
+      router.refresh()
+    },
   })
 
   const sameBoardTargets = stages.filter((s) => s.id !== currentStageId)

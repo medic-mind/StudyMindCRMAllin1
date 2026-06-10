@@ -127,8 +127,24 @@ export function BoardListView({
     setCards([...latestServerCards.current])
   }, [serverSignature])
 
+  // Snapshot before each optimistic move so a rejected server mutation can
+  // revert (mirrors BoardDnd). Cross-board targets remove the card locally —
+  // re-keying it onto a stage this board doesn't render silently dropped it.
+  const preMoveSnapshot = useRef<CardData[] | null>(null)
   function moveCardLocal(cardId: string, toStageId: string) {
-    setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, stageId: toStageId } : c)))
+    preMoveSnapshot.current = cards.map((c) => ({ ...c }))
+    const onThisBoard = stages.some((st) => st.id === toStageId)
+    setCards((prev) =>
+      onThisBoard
+        ? prev.map((c) => (c.id === cardId ? { ...c, stageId: toStageId } : c))
+        : prev.filter((c) => c.id !== cardId),
+    )
+  }
+  function revertLocalMove() {
+    if (preMoveSnapshot.current) {
+      setCards(preMoveSnapshot.current)
+      preMoveSnapshot.current = null
+    }
   }
 
   const byStage = useMemo(() => {
@@ -281,10 +297,7 @@ export function BoardListView({
                           )}
                         </td>
                         {canWrite ? (
-                          <td
-                            className="px-3 py-2 align-top"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                          <td className="px-3 py-2 align-top" onClick={(e) => e.stopPropagation()}>
                             <div className="space-y-1.5">
                               {quickActions.length > 0 ? (
                                 <QuickActionButtons
@@ -292,6 +305,7 @@ export function BoardListView({
                                   currentStageId={card.stageId}
                                   actions={quickActions}
                                   onLocalMove={moveCardLocal}
+                                  onLocalRevert={revertLocalMove}
                                 />
                               ) : null}
                               <MoveCardMenu
@@ -300,6 +314,7 @@ export function BoardListView({
                                 stages={stageOptions}
                                 crossBoardStages={crossBoardStages}
                                 onLocalMove={moveCardLocal}
+                                onLocalRevert={revertLocalMove}
                               />
                             </div>
                           </td>

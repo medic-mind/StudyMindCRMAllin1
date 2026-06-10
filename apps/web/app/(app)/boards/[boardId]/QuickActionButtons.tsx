@@ -15,6 +15,8 @@ import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
 
+import { resolveStageColor } from '../../pipeline/stage-color'
+
 interface QuickAction {
   id: string
   label: string
@@ -31,14 +33,22 @@ interface Props {
   /** Optimistic local-state shift so the card jumps the instant the user
    * clicks — no waiting for the round-trip + router refresh. */
   onLocalMove?: (cardId: string, toStageId: string) => void
+  /** Restores the pre-move snapshot when the server rejects the move, so
+   * a failed quick action never leaves the card stranded/vanished until a
+   * manual refresh. */
+  onLocalRevert?: () => void
 }
 
 function chipStyle(color: string | null): React.CSSProperties {
   if (!color) return {}
+  // Colours may be hex (#10b981) or a Tailwind token (emerald-500) depending
+  // on where the row came from — resolve both; raw tokens are not valid CSS
+  // and silently rendered the chips grey.
+  const css = resolveStageColor(color)
   return {
-    backgroundColor: color,
+    backgroundColor: css,
     color: '#ffffff',
-    borderColor: color,
+    borderColor: css,
   }
 }
 
@@ -47,13 +57,22 @@ export function QuickActionButtons({
   currentStageId,
   actions,
   onLocalMove,
+  onLocalRevert,
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
   const apply = trpc.card.applyQuickAction.useMutation({
     onSuccess: async (_data, vars) => {
       const fired = actions.find((a) => a.id === vars.quickActionId)
-      toast.success(fired ? `${fired.label} → ${fired.targetStageName}` : 'Applied')
+      toast.success(
+        fired
+          ? `${fired.label} → ${
+              fired.targetBoardName
+                ? `${fired.targetBoardName} · ${fired.targetStageName}`
+                : fired.targetStageName
+            }`
+          : 'Applied',
+      )
       await Promise.all([
         utils.card.list.invalidate(),
         utils.card.get.invalidate({ id: cardId }),
@@ -61,7 +80,13 @@ export function QuickActionButtons({
       ])
       router.refresh()
     },
-    onError: (e) => toast.error(e.message ?? 'Could not apply quick action'),
+    onError: (e) => {
+      // Snap the optimistic move back and re-sync with the server so the
+      // card never stays vanished/mis-placed until a manual refresh.
+      onLocalRevert?.()
+      toast.error(e.message ?? 'Could not apply quick action')
+      router.refresh()
+    },
   })
 
   const visible = actions.filter((a) => a.targetStageId !== currentStageId)

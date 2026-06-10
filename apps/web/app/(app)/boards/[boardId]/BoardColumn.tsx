@@ -76,6 +76,8 @@ interface Props {
   /** Optimistic local-state update so quick actions + move dropdown
    * shift the card immediately, before the server mutation lands. */
   onLocalMove?: (cardId: string, toStageId: string) => void
+  /** Restores the pre-move snapshot when a server move is rejected. */
+  onLocalRevert?: () => void
   /** Optimistic insert when a card is added from this column's footer. */
   onCardCreated?: (card: CardData) => void
 }
@@ -94,6 +96,7 @@ export function BoardColumn({
   canDeleteCard,
   currentUserName,
   onLocalMove,
+  onLocalRevert,
   onCardCreated,
 }: Props) {
   const colour = resolveStageColor(stage.color)
@@ -122,10 +125,7 @@ export function BoardColumn({
           {cards.length}
         </span>
       </header>
-      <SortableContext
-        items={cards.map((c) => c.id)}
-        strategy={verticalListSortingStrategy}
-      >
+      <SortableContext items={cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
         {cards.length === 0 ? (
           <div className="flex-1 px-3 py-6 text-center text-xs text-neutral-400">
             No cards in {stage.name} yet.
@@ -147,6 +147,7 @@ export function BoardColumn({
                 canDeleteCard={canDeleteCard}
                 currentUserName={currentUserName}
                 onLocalMove={onLocalMove}
+                onLocalRevert={onLocalRevert}
               />
             ))}
           </ul>

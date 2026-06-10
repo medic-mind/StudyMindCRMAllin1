@@ -27,10 +27,58 @@ export const STAGE_COLOR_OPTIONS: ReadonlyArray<StageColorOption> = [
 
 const HEX_RE = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i
 
+// Full token → hex lookup. STAGE_COLOR_OPTIONS above is only the curated
+// picker; rows seeded by migrations (labels, other boards' stages, quick
+// actions) use a wider palette — e.g. `blue-600`, `violet-600`,
+// `neutral-500`, `pink-500` — and an unmapped token used to fall back to
+// grey, which read as "the cards lost their colours". Tailwind palette
+// values, hand-pinned.
+const TOKEN_HEX: Record<string, string> = {
+  // picker tokens
+  'blue-500': '#3b82f6',
+  'amber-500': '#f59e0b',
+  'emerald-500': '#10b981',
+  'orange-600': '#ea580c',
+  'rose-600': '#e11d48',
+  'violet-500': '#8b5cf6',
+  'sky-500': '#0ea5e9',
+  'slate-500': '#64748b',
+  // wider palette used by seeds + admin-entered tokens
+  'red-500': '#ef4444',
+  'red-600': '#dc2626',
+  'orange-500': '#f97316',
+  'amber-400': '#fbbf24',
+  'amber-600': '#d97706',
+  'yellow-500': '#eab308',
+  'lime-500': '#84cc16',
+  'green-500': '#22c55e',
+  'green-600': '#16a34a',
+  'emerald-600': '#059669',
+  'teal-500': '#14b8a6',
+  'teal-600': '#0d9488',
+  'cyan-500': '#06b6d4',
+  'sky-600': '#0284c7',
+  'blue-600': '#2563eb',
+  'indigo-500': '#6366f1',
+  'indigo-600': '#4f46e5',
+  'violet-600': '#7c3aed',
+  'purple-500': '#a855f7',
+  'purple-600': '#9333ea',
+  'fuchsia-500': '#d946ef',
+  'pink-500': '#ec4899',
+  'pink-600': '#db2777',
+  'rose-500': '#f43f5e',
+  'slate-400': '#94a3b8',
+  'slate-600': '#475569',
+  'gray-500': '#6b7280',
+  'neutral-500': '#737373',
+  'stone-500': '#78716c',
+}
+
 export function resolveStageColor(color: string): string {
   if (HEX_RE.test(color)) return color
-  const match = STAGE_COLOR_OPTIONS.find((o) => o.token === color)
-  if (match) return match.hex
+  const hex = TOKEN_HEX[color]
+  if (hex) return hex
   // Unknown token — fall back to neutral. Stays visible, never throws.
   return '#737373'
 }
