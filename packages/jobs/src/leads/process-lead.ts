@@ -16,10 +16,12 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { logger } from '@studymind/core'
 import { createCard, findOrCreateSubject } from '@studymind/core/board'
 import {
+  asTypedPhoneFallback,
   chooseContactMatch,
   classifyLead,
   composePhoneE164,
   findDialCountry,
+  inferPhoneE164,
   londonWallToUtc,
   normaliseLead,
   planLeadRouting,
@@ -274,10 +276,23 @@ export async function processLead(
     !normalised.phoneE164 && normalised.phone && dialCountry
       ? composePhoneE164(dialCountry, normalised.phone)
       : null
+  // No country at all (no form field, geo failed)? The number may still carry
+  // its own dial code typed without the + ("51 928 812 118").
+  const inferredPhone =
+    !normalised.phoneE164 && !composedPhone && normalised.phone
+      ? inferPhoneE164(normalised.phone)
+      : null
+  // Last resort: a typed number ALWAYS lands on the contact's phone field —
+  // as-typed digits beat a number buried in the notes (it stays visible and
+  // manually dialable; an agent can fix the prefix later).
+  const fallbackPhone =
+    !normalised.phoneE164 && !composedPhone && !inferredPhone && normalised.phone
+      ? asTypedPhoneFallback(normalised.phone)
+      : null
 
   // 6. Match an existing contact (conservative — never auto-merge).
   const email = normalised.email
-  const phoneE164 = normalised.phoneE164 ?? composedPhone
+  const phoneE164 = normalised.phoneE164 ?? composedPhone ?? inferredPhone ?? fallbackPhone
   const [byEmail, byPhone] = await Promise.all([
     email
       ? db.contact.findMany({ where: { email, deletedAt: null }, select: { id: true }, take: 5 })
@@ -325,7 +340,8 @@ export async function processLead(
   }
 
   // Notes/payloads must reflect the *resolved* phone: "Phone (as typed)"
-  // only fires when even dial-code composition failed.
+  // only fires when even the as-typed fallback rejected the value (too few
+  // digits to be a number at all).
   const normalisedResolved: NormalisedLead = { ...normalised, phoneE164 }
 
   // 7. Execute the plan atomically.

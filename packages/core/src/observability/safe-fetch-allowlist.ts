@@ -46,8 +46,11 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   // B2B Invoices Platform (CRM ↔ invoicing two-way sync)
   'b2b.studymind.co.uk',
   // IP geolocation (lead country derivation, ADR 0023). Best-effort; only
-  // ever sent an IP address, never PII.
+  // ever sent an IP address, never PII. Two providers — ipapi.co is the
+  // fallback when ipwho.is fails — so phone dial-code composition rarely
+  // misses a country.
   'ipwho.is',
+  'ipapi.co',
   // Axiom (log ingest)
   'api.axiom.co',
   // Sentry ingest

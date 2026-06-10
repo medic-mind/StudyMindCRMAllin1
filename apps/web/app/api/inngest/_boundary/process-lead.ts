@@ -47,9 +47,48 @@ const enrichLead: NonNullable<ProcessLeadDeps['enrich']> = async ({
   })
 }
 
-/** Best-effort IP → ISO2 country (ipwho.is, free, https, no key). Private /
- * local addresses are skipped; any failure returns null and never blocks the
- * lead. 3s timeout so a slow geo provider can't stall the queue. */
+/** Fetch with a hard timeout so a slow geo provider can't stall the queue. */
+async function fetchWithTimeout(url: string, ms: number): Promise<Response | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), ms)
+  try {
+    return await safeFetch(url, { signal: ctrl.signal })
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function geoViaIpwho(ip: string): Promise<string | null> {
+  const res = await fetchWithTimeout(
+    `https://ipwho.is/${encodeURIComponent(ip)}?fields=success,country_code`,
+    3000,
+  )
+  if (!res?.ok) return null
+  try {
+    const body = (await res.json()) as { success?: boolean; country_code?: string }
+    return body.success && typeof body.country_code === 'string' ? body.country_code : null
+  } catch {
+    return null
+  }
+}
+
+async function geoViaIpapi(ip: string): Promise<string | null> {
+  const res = await fetchWithTimeout(`https://ipapi.co/${encodeURIComponent(ip)}/country/`, 3000)
+  if (!res?.ok) return null
+  try {
+    const text = (await res.text()).trim()
+    return /^[A-Z]{2}$/u.test(text) ? text : null
+  } catch {
+    return null
+  }
+}
+
+/** Best-effort IP → ISO2 country. Two free https providers — ipwho.is first,
+ * ipapi.co as fallback — because a missing country means a nationally-typed
+ * phone can't compose to E.164. Private / local addresses are skipped; any
+ * failure returns null and never blocks the lead. */
 async function geoCountry(ip: string): Promise<string | null> {
   if (
     /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fc|fd)/iu.test(ip) ||
@@ -57,21 +96,7 @@ async function geoCountry(ip: string): Promise<string | null> {
   ) {
     return null
   }
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 3000)
-  try {
-    const res = await safeFetch(
-      `https://ipwho.is/${encodeURIComponent(ip)}?fields=success,country_code`,
-      { signal: ctrl.signal },
-    )
-    if (!res.ok) return null
-    const body = (await res.json()) as { success?: boolean; country_code?: string }
-    return body.success && typeof body.country_code === 'string' ? body.country_code : null
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-  }
+  return (await geoViaIpwho(ip)) ?? (await geoViaIpapi(ip))
 }
 
 export const leadClassifyRequested = inngest.createFunction(
