@@ -22,6 +22,20 @@ const StatusEnum = z.enum(['open', 'in_progress', 'resolved', 'dismissed'])
 const SeverityEnum = z.enum(['low', 'medium', 'high'])
 const ACTIVE_STATUSES = ['open', 'in_progress'] as const
 
+/** Preset complaint themes (Complaint.category stays free text — these seed
+ *  the pick-list; staff can always type a new one). */
+const PRESET_CATEGORIES = [
+  'Billing',
+  'Scheduling',
+  'Tutor',
+  'Teaching quality',
+  'Communication',
+  'Refund',
+  'Technical',
+  'Safeguarding',
+  'Other',
+] as const
+
 /** Write a staff-visible note Interaction on the contact timeline so a
  *  complaint event is reflected in the customer's CRM. */
 async function timelineNote(
@@ -128,6 +142,32 @@ export const complaintRouter = router({
     })
   }),
 
+  /**
+   * Category pick-list for the log-complaint form: the preset themes merged
+   * with every category staff have already typed in (so a new typed category
+   * becomes part of the list organically — no settings page needed).
+   */
+  categories: protectedProcedure.query(async ({ ctx }) => {
+    const used = await ctx.db.complaint.findMany({
+      where: { deletedAt: null, category: { not: null } },
+      select: { category: true },
+      distinct: ['category'],
+      take: 200,
+    })
+    const seen = new Set(PRESET_CATEGORIES.map((c) => c.toLowerCase()))
+    const extras: string[] = []
+    for (const row of used) {
+      const c = row.category?.trim()
+      if (!c) continue
+      const key = c.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      extras.push(c)
+    }
+    extras.sort((a, b) => a.localeCompare(b))
+    return [...PRESET_CATEGORIES, ...extras]
+  }),
+
   /** Live backlog + opened-in-period — for the report KPI strips (Aircall /
    *  Finance). `activeBacklog` is a "now" figure; `openedInPeriod` tracks the
    *  report's period selector so the tile responds to it. */
@@ -194,6 +234,13 @@ export const complaintRouter = router({
         severity: SeverityEnum.default('medium'),
         category: z.string().trim().max(80).optional(),
         assigneeId: z.string().optional(),
+        /** Open a follow-up Task for someone in the same step (optional). */
+        task: z
+          .object({
+            assigneeId: z.string().min(1),
+            dueAt: z.coerce.date().optional(),
+          })
+          .optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -228,9 +275,45 @@ export const complaintRouter = router({
       await ctx.audit({
         action: 'complaint.created',
         target: { type: 'Complaint', id },
-        after: { contactId: input.contactId, title: input.title, severity: input.severity },
+        after: {
+          contactId: input.contactId,
+          title: input.title,
+          severity: input.severity,
+          category: input.category ?? null,
+        },
       })
-      return { id }
+
+      // Optional follow-up task, assigned at log time (same shape as the
+      // standalone createTask below — kept in one mutation so the agent never
+      // logs a complaint and forgets the task half of it).
+      let taskId: string | null = null
+      if (input.task) {
+        taskId = createId()
+        await ctx.db.task.create({
+          data: {
+            id: taskId,
+            title: `Complaint: ${input.title}`,
+            description: input.description ?? null,
+            status: 'open',
+            contactId: input.contactId,
+            assigneeId: input.task.assigneeId,
+            dueAt: input.task.dueAt ?? null,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        })
+        await ctx.db.complaint.update({
+          where: { id },
+          data: { taskId, updatedById: user.id },
+        })
+        await ctx.audit({
+          action: 'complaint.task_created',
+          target: { type: 'Complaint', id },
+          after: { taskId, assigneeId: input.task.assigneeId },
+        })
+      }
+
+      return { id, taskId }
     }),
 
   update: auditedProcedure

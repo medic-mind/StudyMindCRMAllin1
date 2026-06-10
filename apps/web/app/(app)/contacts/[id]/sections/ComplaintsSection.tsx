@@ -48,10 +48,16 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
   const [description, setDescription] = useState('')
   const [severity, setSeverity] = useState<Severity>('medium')
   const [category, setCategory] = useState('')
+  const [withTask, setWithTask] = useState(false)
+  const [taskAssigneeId, setTaskAssigneeId] = useState('')
+  const [taskDue, setTaskDue] = useState('')
   const [busy, setBusy] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
 
   const create = trpc.complaint.create.useMutation()
+  // Preset themes + every category already in use; staff can also type new.
+  const categoriesQuery = trpc.complaint.categories.useQuery(undefined, { enabled: adding })
+  const usersQuery = trpc.task.assignableUsers.useQuery({}, { enabled: adding && withTask })
 
   async function refresh() {
     await Promise.all([
@@ -66,20 +72,34 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
       toast.error('Give the complaint a short title.')
       return
     }
+    if (withTask && !taskAssigneeId) {
+      toast.error('Pick who the follow-up task is for, or untick the task option.')
+      return
+    }
     setBusy(true)
     try {
-      await create.mutateAsync({
+      const result = await create.mutateAsync({
         contactId,
         title: title.trim(),
         description: description.trim() || undefined,
         severity,
         category: category.trim() || undefined,
+        task:
+          withTask && taskAssigneeId
+            ? {
+                assigneeId: taskAssigneeId,
+                dueAt: taskDue ? new Date(`${taskDue}T17:00:00`) : undefined,
+              }
+            : undefined,
       })
-      toast.success('Complaint logged')
+      toast.success(result.taskId ? 'Complaint logged and task assigned' : 'Complaint logged')
       setTitle('')
       setDescription('')
       setSeverity('medium')
       setCategory('')
+      setWithTask(false)
+      setTaskAssigneeId('')
+      setTaskDue('')
       setAdding(false)
       await refresh()
     } catch (e) {
@@ -122,12 +142,56 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
               <option value="medium">Medium severity</option>
               <option value="high">High severity</option>
             </Select>
+            {/* Pick a preset theme or type a brand-new one — both land in
+                Complaint.category; new ones join the pick-list automatically. */}
             <Input
-              className="max-w-[12rem]"
-              placeholder="Category (e.g. billing)"
+              className="max-w-[14rem]"
+              placeholder="Category — pick or type new"
+              list="complaint-category-options"
               value={category}
               onChange={(e) => setCategory(e.target.value)}
             />
+            <datalist id="complaint-category-options">
+              {(categoriesQuery.data ?? []).map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </div>
+
+          {/* Optional follow-up task, assigned as part of logging. */}
+          <div className="rounded-md border border-neutral-200 bg-white p-2">
+            <label className="flex items-center gap-2 text-sm text-neutral-800">
+              <input
+                type="checkbox"
+                checked={withTask}
+                onChange={(e) => setWithTask(e.target.checked)}
+              />
+              Assign a follow-up task to someone
+            </label>
+            {withTask && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Select
+                  value={taskAssigneeId}
+                  onChange={(e) => setTaskAssigneeId(e.target.value)}
+                  aria-label="Task assignee"
+                >
+                  <option value="">Who is it for?</option>
+                  {(usersQuery.data ?? []).map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name ?? u.email}
+                    </option>
+                  ))}
+                </Select>
+                <Input
+                  type="date"
+                  className="max-w-[11rem]"
+                  value={taskDue}
+                  onChange={(e) => setTaskDue(e.target.value)}
+                  aria-label="Task due date (optional)"
+                />
+                <span className="text-xs text-neutral-500">Due date optional</span>
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <Button size="sm" onClick={submitNew} disabled={busy || title.trim().length < 2}>
