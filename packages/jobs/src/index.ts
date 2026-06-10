@@ -11,6 +11,7 @@ import { AUDIT_LOG_ARCHIVE_FUNCTIONS } from './compliance/audit-log-archive'
 import { UEBA_FUNCTIONS } from './security/ueba'
 import { OBSERVABILITY_FUNCTIONS } from './observability'
 import { BACKFILL_REAPER_FUNCTIONS } from './backfill/reap-stale'
+import { MEDI_FUNCTIONS } from './medi/process-account'
 
 export { inngest } from './client'
 
@@ -26,6 +27,7 @@ export const CROSS_CUTTING_FUNCTIONS: ReturnType<typeof inngest.createFunction>[
   ...UEBA_FUNCTIONS,
   ...OBSERVABILITY_FUNCTIONS,
   ...BACKFILL_REAPER_FUNCTIONS,
+  ...MEDI_FUNCTIONS,
 ]
 
 export interface RecurringJobSpec {
