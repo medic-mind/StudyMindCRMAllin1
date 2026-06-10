@@ -19,6 +19,7 @@ import { callSummaryTemplateRouter } from './routers/callSummaryTemplate'
 import { customerRiskRouter } from './routers/customerRisk'
 import { chatRouter } from './routers/chat'
 import { companyRouter } from './routers/company'
+import { complaintRouter } from './routers/complaint'
 import { contactRouter } from './routers/contact'
 import { contactBookingRouter } from './routers/contact-booking'
 import { contactChannelsRouter } from './routers/contact-channels'
@@ -83,6 +84,7 @@ export const appRouter = router({
   chat: chatRouter,
   company: companyRouter,
   card: cardRouter,
+  complaint: complaintRouter,
   contact: contactWithChannels,
   label: labelRouter,
   subject: subjectRouter,

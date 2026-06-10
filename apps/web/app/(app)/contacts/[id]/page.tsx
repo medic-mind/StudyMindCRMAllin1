@@ -20,6 +20,7 @@ import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import {
   ActivityIcon,
+  AlertTriangleIcon,
   CalendarIcon,
   CoinsIcon,
   FileTextIcon,
@@ -41,6 +42,7 @@ import { CallsSection } from './sections/CallsSection'
 import { CallSummarySection } from './sections/CallSummarySection'
 import { BookingSection } from './sections/BookingSection'
 import { ChannelTiles } from './sections/ChannelTiles'
+import { ComplaintsSection } from './sections/ComplaintsSection'
 import { ContactSearchBar } from './sections/ContactSearchBar'
 import { DocumentsSection } from './sections/DocumentsSection'
 import { EmailSection } from './sections/EmailSection'
@@ -168,6 +170,7 @@ export default async function ContactDetailPage({
   const sectionNav: Array<[string, string]> = [
     ['section-links', 'Linked'],
     ['section-booking', 'Booking'],
+    ['section-complaints', 'Complaints'],
     ['section-email', 'Email'],
     ['section-calls', 'Calls'],
     ['section-call-summary', 'Call summary'],
@@ -337,6 +340,14 @@ export default async function ContactDetailPage({
             icon={<CalendarIcon size={16} />}
           >
             <BookingSection summary={bookingSummary} lessons={bookingLessons} />
+          </SectionCard>
+
+          <SectionCard
+            id="section-complaints"
+            title="Complaints"
+            icon={<AlertTriangleIcon size={16} />}
+          >
+            <ComplaintsSection contactId={contact.id} />
           </SectionCard>
 
           <SectionCard id="section-email" title="Email" icon={<MailIcon size={16} />}>

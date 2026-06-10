@@ -561,6 +561,7 @@ model Contact {
   /// Weekly-webinar enrolments (the auto-enrollment system). A contact created
   /// from a Stripe subscription is matched to a WebinarClass and surfaced here.
   webinarEnrollments WebinarEnrollment[]
+  complaints         Complaint[]
 
   @@index([email])
   @@index([phoneE164])
@@ -2086,6 +2087,7 @@ model Task {
   family Family? @relation(fields: [familyId], references: [id])
   team   Team?   @relation(fields: [teamId], references: [id])
   businessAccount BusinessAccount? @relation(fields: [businessAccountId], references: [id])
+  complaint       Complaint?
 
   @@unique([asanaTaskId])
   @@index([assigneeId, status])
@@ -3857,4 +3859,59 @@ model WebinarLevelOption {
   updatedById String?
 
   @@index([archivedAt])
+}
+
+/// A complaint logged against a customer (Contact). Surfaced on the contact
+/// page and on the Active complaints queue. Follow-ups + action points hang
+/// off it via ComplaintUpdate; it can be converted into a follow-up Task.
+/// Status/severity are text (validated fail-closed in the app layer).
+model Complaint {
+  id          String  @id
+  contactId   String
+  title       String
+  description String?
+  /// open | in_progress | resolved | dismissed. "Active" = open | in_progress.
+  status      String  @default("open")
+  /// low | medium | high.
+  severity    String  @default("medium")
+  /// Free-text category (billing, scheduling, tutor, safeguarding, …).
+  category    String?
+  assigneeId  String?
+  /// Optional link to a follow-up Task created from this complaint.
+  taskId       String?   @unique
+  resolvedAt   DateTime?
+  resolvedById String?
+  resolution   String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  contact Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  task    Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  updates ComplaintUpdate[]
+
+  @@index([status])
+  @@index([contactId, createdAt])
+  @@index([assigneeId])
+}
+
+/// A follow-up note or action point on a complaint — the audit trail of how a
+/// complaint was worked. Action points carry a done flag.
+model ComplaintUpdate {
+  id            String   @id
+  complaintId   String
+  body          String
+  /// True when this update is an action point (a to-do) rather than a note.
+  isActionPoint Boolean  @default(false)
+  /// For action points: whether it has been completed.
+  done          Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  createdById   String?
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId, createdAt])
 }
