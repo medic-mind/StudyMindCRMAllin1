@@ -50,6 +50,7 @@ import {
   isMinorByDob,
 } from '@studymind/core/contact'
 
+import { logger } from '@studymind/core/logger'
 import { loadContactCommsCounts, loadContactComplaintCounts } from '@studymind/core/stats'
 
 import { mergeContacts } from '@/lib/services/contact-merge'
@@ -1040,6 +1041,10 @@ export const contactRouter = router({
         z.object({
           contactId: z.string(),
           callInteractionId: z.string().optional(),
+          /** The agent's current compose text (usually a clicked template) —
+           *  when present the AI ENHANCES it with the call's facts instead of
+           *  writing a fresh message. */
+          baseText: z.string().max(6000).optional(),
         }),
       )
       .query(async ({ ctx, input }) => {
@@ -1085,15 +1090,19 @@ export const contactRouter = router({
             ? outcomeRaw
             : undefined
 
+        const baseText = input.baseText?.trim() || undefined
         const prompt = buildCallSummaryDraftPrompt({
           transcript,
           contactName,
           callerName: agent?.name ?? null,
           interests,
           outcomeHint,
+          baseText,
         })
         // Always hand back usable text: try the model, and on any failure fall
         // back to a deterministic scaffold so the button never "does nothing".
+        // BUT be honest about which one happened (`aiUsed`) — silently passing
+        // the scaffold off as an AI draft made the button look broken.
         try {
           const result = await runDraft({
             task: 'call_summary_draft',
@@ -1109,15 +1118,25 @@ export const contactRouter = router({
           return {
             status: 'ok' as const,
             text: result.text,
+            aiUsed: true,
+            hadTranscript: transcript.length > 0,
             source: (transcript ? 'transcript' : 'scaffold') as 'transcript' | 'scaffold',
             outcomeHint: outcomeHint ?? null,
             callInteractionId: call?.id ?? null,
             callOccurredAt: call?.occurredAt ?? null,
           }
-        } catch {
+        } catch (err) {
+          logger.warn(
+            { contactId: input.contactId, err: err instanceof Error ? err.message : String(err) },
+            'call_summary_draft.ai_unavailable_fell_back_to_scaffold',
+          )
           return {
             status: 'ok' as const,
-            text: buildCallSummaryScaffold(contactName, agent?.name ?? null, interests),
+            // Keep what the agent already wrote in preference to the generic
+            // scaffold — wiping their template with boilerplate is worse.
+            text: baseText ?? buildCallSummaryScaffold(contactName, agent?.name ?? null, interests),
+            aiUsed: false,
+            hadTranscript: transcript.length > 0,
             source: 'scaffold' as const,
             outcomeHint: outcomeHint ?? null,
             callInteractionId: call?.id ?? null,
