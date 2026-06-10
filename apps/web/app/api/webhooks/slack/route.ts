@@ -1,11 +1,18 @@
 // Slack Events API webhook. CLAUDE.md §7.1, §12.
 // Verify v0 signature -> handle url_verification handshake -> filter by
-// SLACK_WATCHED_CHANNELS -> upsert ProviderEvent (idempotent on event_id) ->
-// enqueue Inngest -> 200 fast. All real work happens in the Inngest job.
+// channel scope (bot membership, or the SLACK_WATCHED_CHANNELS allowlist when
+// set) -> upsert ProviderEvent (idempotent on event_id) -> enqueue Inngest ->
+// 200 fast. All real work happens in the Inngest job.
+//
+// GET is a configuration self-check (booleans only, no secrets): open the
+// webhook URL in a browser to see whether the deployed app actually has the
+// signing secret + bot token loaded — the first thing to check when Slack's
+// "Retry" fails its URL verification.
 
+import { logger } from '@studymind/core/logger'
 import { withSentry } from '@studymind/core/observability/sentry'
 import { upsertProviderEvent } from '@studymind/core/provider-events'
-import { isWatchedChannel } from '@studymind/integration-slack/config'
+import { getWatchedChannels, isWatchedChannel } from '@studymind/integration-slack/config'
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -19,6 +26,21 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export const POST = withSentry(handlePost, { provider: 'slack', surface: 'webhook' })
+export const GET = withSentry(handleGet, { provider: 'slack', surface: 'webhook' })
+
+async function handleGet(): Promise<Response> {
+  const watched = getWatchedChannels()
+  return Response.json({
+    ok: true,
+    endpoint: 'slack-events',
+    signingSecretConfigured: Boolean(process.env['SLACK_SIGNING_SECRET']),
+    botTokenConfigured: Boolean(process.env['SLACK_BOT_TOKEN']),
+    channelMode:
+      watched.length > 0
+        ? `allowlist (${watched.length} channels)`
+        : 'every channel the bot is invited to',
+  })
+}
 
 async function handlePost(req: Request): Promise<Response> {
   const raw = await req.text()
@@ -27,8 +49,11 @@ async function handlePost(req: Request): Promise<Response> {
 
   const result = verifyAndParse(raw, signature, timestamp)
   if (!result.ok) {
-    // CLAUDE.md §12: never log the raw body of an unverified event.
-    return new Response('invalid signature', { status: 400 })
+    // CLAUDE.md §12: never log the raw body of an unverified event. The reason
+    // is safe (an enum) and turns a mute 400 into a diagnosable one —
+    // `missing_secret` = env not loaded; `signature_mismatch` = wrong secret.
+    logger.warn({ reason: result.reason }, 'slack.webhook_rejected')
+    return Response.json({ error: result.reason }, { status: 400 })
   }
 
   const payload = result.payload

@@ -53,7 +53,117 @@ function mapUniqueError(err: unknown): never {
   throw err
 }
 
+/** Friendly copy for the Slack errors a test post can hit. */
+function describeSlackError(code: string): string {
+  switch (code) {
+    case 'not_in_channel':
+      return 'The bot is not in this channel yet. Open Slack and type /invite @YourBot in the channel, then test again.'
+    case 'channel_not_found':
+      return 'Slack does not recognise this channel id. Double-check it (or re-add the channel from the picker).'
+    case 'is_archived':
+      return 'That Slack channel is archived, so the bot cannot post to it.'
+    case 'invalid_auth':
+    case 'token_revoked':
+    case 'account_inactive':
+      return 'The Slack bot token is invalid or revoked. Reconnect Slack in Settings → Integrations.'
+    case 'msg_too_long':
+      return 'Slack rejected the message as too long.'
+    default:
+      return `Slack rejected the post (${code}).`
+  }
+}
+
 export const slackChannelRouter = router({
+  /**
+   * Browse the Slack workspace's public channels by NAME so an operator can
+   * add posting targets without hunting for channel ids. Fail-soft: returns a
+   * status the UI can render as guidance (not configured / missing the
+   * channels:read scope / transient error) instead of throwing — manual id
+   * entry always remains available as the fallback (and is the only way to
+   * add a private channel, which listing cannot see).
+   */
+  discover: protectedProcedure.query(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    if (!process.env['SLACK_BOT_TOKEN']) {
+      return { status: 'not_configured' as const, channels: [] }
+    }
+    const { createClient, SlackApiError } = await import(
+      '@studymind/integration-slack/client'
+    )
+    try {
+      const channels = await createClient().listChannels()
+      const existing = await ctx.db.slackChannelOption.findMany({
+        select: { channelId: true },
+      })
+      const known = new Set(existing.map((r) => r.channelId))
+      return {
+        status: 'ok' as const,
+        channels: channels.map((c) => ({
+          id: c.id,
+          name: c.name,
+          isMember: c.isMember,
+          alreadyAdded: known.has(c.id),
+        })),
+      }
+    } catch (err) {
+      if (err instanceof SlackApiError && err.slackError === 'missing_scope') {
+        return { status: 'missing_scope' as const, channels: [] }
+      }
+      return {
+        status: 'error' as const,
+        channels: [],
+        message: err instanceof SlackApiError ? err.slackError : 'unreachable',
+      }
+    }
+  }),
+
+  /**
+   * Post a short test message to a configured channel so the operator can
+   * verify the wiring (token valid, bot invited) BEFORE a real notification
+   * needs it. Failures come back as friendly guidance, not errors.
+   */
+  testPost: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const option = await ctx.db.slackChannelOption.findFirst({
+        where: { id: input.id, archivedAt: null },
+        select: { id: true, label: true, channelId: true },
+      })
+      if (!option) throw new TRPCError({ code: 'NOT_FOUND', message: 'Channel not found' })
+
+      const { postAlert } = await import('@studymind/integration-slack/outbound')
+      const { SlackApiError } = await import('@studymind/integration-slack/client')
+      let result: { ok: true } | { ok: false; reason: string }
+      try {
+        await postAlert({
+          message: `:white_check_mark: Test from StudyMind CRM — "${option.label}" is wired up. Sent by ${user.email}.`,
+          // Unique per request so every click posts; a retry of the SAME
+          // request stays idempotent (CLAUDE.md §17).
+          idempotencyKey: `slack-channel-test:${option.id}:${ctx.requestId}`,
+          channelId: option.channelId,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        result = { ok: true }
+      } catch (err) {
+        result = {
+          ok: false,
+          reason:
+            err instanceof SlackApiError
+              ? describeSlackError(err.slackError)
+              : 'Could not reach Slack. Try again in a minute.',
+        }
+      }
+      await ctx.audit({
+        action: 'slack_channel_option.test_posted',
+        target: { type: 'SlackChannelOption', id: option.id },
+        after: { channelId: option.channelId, ...result },
+      })
+      return result
+    }),
+
   list: protectedProcedure
     .input(
       z
