@@ -52,9 +52,17 @@ function buildNav(role: Role): NavItem[] {
       ],
     },
     { href: '/mail', label: 'Mail' },
-    // Missed-calls queue — inbound calls to follow up; calling back clears them
-    // automatically (CLAUDE.md §10). Operational, so all call-handling staff.
-    { href: '/calls', label: 'Missed calls' },
+    // Calls — the missed-calls queue (inbound calls to follow up; calling back
+    // clears them automatically, CLAUDE.md §10) and the full Aircall call
+    // history. Operational, so all call-handling staff.
+    {
+      href: '/calls',
+      label: 'Calls',
+      children: [
+        { href: '/calls', label: 'Missed calls' },
+        { href: '/calls/history', label: 'Call history' },
+      ],
+    },
     // Internal — staff↔staff chat. Renamed from the colliding "Messages"
     // (the sidebar said "Messages" for staff chat while the inbox said
     // "Messages" for customer messages).

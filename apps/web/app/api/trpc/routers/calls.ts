@@ -50,6 +50,22 @@ function isVoicemailPayload(p: Record<string, unknown>): boolean {
   )
 }
 
+function hasRecordingPayload(p: Record<string, unknown>): boolean {
+  return (
+    (typeof p['recordingS3Key'] === 'string' && (p['recordingS3Key'] as string).length > 0) ||
+    (typeof p['recordingUrl'] === 'string' && (p['recordingUrl'] as string).length > 0) ||
+    (typeof p['voicemailUrl'] === 'string' && (p['voicemailUrl'] as string).length > 0)
+  )
+}
+
+type CallOutcome = 'answered' | 'missed' | 'voicemail'
+
+function outcomeOf(c: { durationSec: number; isVoicemail: boolean }): CallOutcome {
+  if (c.isVoicemail) return 'voicemail'
+  if (isAnswered(c)) return 'answered'
+  return 'missed'
+}
+
 export const callsRouter = router({
   missed: router({
     /**
@@ -219,6 +235,140 @@ export const callsRouter = router({
           target: { type: 'AircallCall', id: input.aircallCallId },
         })
         return { ok: true }
+      }),
+  }),
+
+  /** Full call history — every Aircall call (inbound + outbound, answered /
+   *  missed / voicemail), newest first, with filters + recordings. Read: any
+   *  staff. Per-call rows are deduped on the Aircall id (a call emits several
+   *  events). */
+  history: router({
+    list: protectedProcedure
+      .input(
+        z
+          .object({
+            from: z.coerce.date().optional(),
+            to: z.coerce.date().optional(),
+            direction: z.enum(['all', 'inbound', 'outbound']).default('all'),
+            outcome: z.enum(['all', 'answered', 'missed', 'voicemail']).default('all'),
+            withRecording: z.boolean().default(false),
+            page: z.number().int().min(1).default(1),
+            pageSize: z.number().int().min(1).max(100).default(50),
+          })
+          .default({
+            direction: 'all',
+            outcome: 'all',
+            withRecording: false,
+            page: 1,
+            pageSize: 50,
+          }),
+      )
+      .query(async ({ ctx, input }) => {
+        requireUser(ctx)
+        const now = new Date()
+        const to = input.to ?? now
+        const from = input.from ?? new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+
+        const rows = await ctx.db.interaction.findMany({
+          where: { type: 'call', occurredAt: { gte: from, lte: to }, deletedAt: null },
+          select: { id: true, occurredAt: true, contactId: true, payload: true },
+          orderBy: { occurredAt: 'desc' },
+          take: 20000,
+        })
+
+        // Per-call recording: pick the interaction id that actually carries the
+        // audio, keyed the same way normalizeCalls collapses events.
+        const recordingByKey = new Map<string, string>()
+        const raws: RawCall[] = rows.map((r) => {
+          const p = (r.payload ?? {}) as Record<string, unknown>
+          const aircallCallId =
+            typeof p['aircallCallId'] === 'number' ? (p['aircallCallId'] as number) : null
+          const direction =
+            p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
+          const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
+          const rawDigits = typeof p['rawDigits'] === 'string' ? (p['rawDigits'] as string) : null
+          const key = aircallCallId != null ? `ac:${aircallCallId}` : `iid:${r.id}`
+          if (hasRecordingPayload(p) && !recordingByKey.has(key)) recordingByKey.set(key, r.id)
+          return {
+            interactionId: r.id,
+            aircallCallId,
+            occurredAt: r.occurredAt,
+            direction,
+            durationSec,
+            isVoicemail: isVoicemailPayload(p),
+            rawDigits,
+            contactId: r.contactId,
+          }
+        })
+
+        const normalized = normalizeCalls(raws)
+          .map((c) => ({
+            ...c,
+            outcome: outcomeOf(c),
+            recordingInteractionId: recordingByKey.get(c.callKey) ?? null,
+          }))
+          .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+
+        const filtered = normalized.filter((c) => {
+          if (input.direction !== 'all' && c.direction !== input.direction) return false
+          if (input.outcome !== 'all' && c.outcome !== input.outcome) return false
+          if (input.withRecording && !c.recordingInteractionId) return false
+          return true
+        })
+
+        const counts = {
+          total: filtered.length,
+          inbound: filtered.filter((c) => c.direction === 'inbound').length,
+          outbound: filtered.filter((c) => c.direction === 'outbound').length,
+          answered: filtered.filter((c) => c.outcome === 'answered').length,
+          missed: filtered.filter((c) => c.outcome === 'missed').length,
+          voicemail: filtered.filter((c) => c.outcome === 'voicemail').length,
+        }
+
+        const start = (input.page - 1) * input.pageSize
+        const pageRows = filtered.slice(start, start + input.pageSize)
+
+        const contactIds = [
+          ...new Set(pageRows.map((c) => c.contactId).filter((x): x is string => !!x)),
+        ]
+        const contacts = contactIds.length
+          ? await ctx.db.contact.findMany({
+              where: { id: { in: contactIds } },
+              select: { id: true, firstName: true, lastName: true, email: true, kind: true },
+            })
+          : []
+        const contactMap = new Map(contacts.map((c) => [c.id, c]))
+
+        const items = pageRows.map((c) => {
+          const contact = c.contactId ? contactMap.get(c.contactId) : null
+          const name = contact
+            ? [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim() ||
+              contact.email ||
+              null
+            : null
+          return {
+            callKey: c.callKey,
+            occurredAt: c.occurredAt,
+            direction: c.direction,
+            durationSec: c.durationSec,
+            outcome: c.outcome,
+            phone: c.rawDigits,
+            contactId: c.contactId,
+            contactName: name,
+            contactKind: contact?.kind ?? null,
+            recordingInteractionId: c.recordingInteractionId,
+          }
+        })
+
+        return {
+          items,
+          counts,
+          page: input.page,
+          pageSize: input.pageSize,
+          total: counts.total,
+          period: { from, to },
+          capped: rows.length >= 20000,
+        }
       }),
   }),
 })
