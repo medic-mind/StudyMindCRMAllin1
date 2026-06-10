@@ -105,6 +105,8 @@ export async function createCard(
     subjectId?: string
     labelIds?: ReadonlyArray<string>
     description?: string
+    assigneeId?: string | null
+    scheduledCallAt?: Date | null
   },
   ctx: ActorCtx,
 ): Promise<CardSummary> {
@@ -115,6 +117,16 @@ export async function createCard(
   if (!board) throw new BusinessError('BOARD_NOT_FOUND', 'Board not found or archived')
 
   const stage = await resolveStage(db, input.boardId, input.stageId)
+
+  if (input.assigneeId) {
+    const user = await db.user.findFirst({
+      where: { id: input.assigneeId, deletedAt: null, isActive: true },
+      select: { id: true },
+    })
+    if (!user) {
+      throw new BusinessError('CARD_NOT_FOUND', 'Assignee not found or inactive')
+    }
+  }
 
   if (input.subjectId) {
     const subject = await db.subject.findUnique({
@@ -181,6 +193,8 @@ export async function createCard(
       contactId,
       subjectId: input.subjectId ?? null,
       description: input.description?.trim() ? input.description.trim() : null,
+      assigneeId: input.assigneeId ?? null,
+      scheduledCallAt: input.scheduledCallAt ?? null,
       position,
       createdById: ctx.actorId,
       ...(input.labelIds && input.labelIds.length > 0

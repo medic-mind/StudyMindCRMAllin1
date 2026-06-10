@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input'
 import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { londonWallToUtc } from '@/lib/format/london-time'
 import { trpc } from '@/lib/trpc/client'
 
 interface StageOption {
@@ -115,6 +116,13 @@ export function AddCardButton({
   const [description, setDescription] = useState('')
   const [stageId, setStageId] = useState<string>(defaultStageId ?? stages[0]?.id ?? '')
 
+  // Who the card is for + when the call is booked. Assignable users are the
+  // same list the card modal + tasks use; the call time is a Europe/London
+  // wall-clock value (CLAUDE.md §29) converted to UTC on submit.
+  const [assigneeId, setAssigneeId] = useState('')
+  const [callWall, setCallWall] = useState('')
+  const usersQuery = trpc.task.assignableUsers.useQuery({}, { enabled: open })
+
   // Display fields captured at submit time, merged with the server id in
   // onSuccess to build the optimistic card (avoids reading state mid-reset).
   const pending = useRef<Omit<CreatedCard, 'id' | 'stageId' | 'contactId'> | null>(null)
@@ -170,6 +178,8 @@ export function AddCardButton({
     setLabelIds([])
     setDescription('')
     setStageId(defaultStageId ?? stages[0]?.id ?? '')
+    setAssigneeId('')
+    setCallWall('')
   }
 
   async function resolveSubjectId(): Promise<string | undefined> {
@@ -235,6 +245,9 @@ export function AddCardButton({
       return
     }
 
+    const scheduledCallAt = callWall ? londonWallToUtc(callWall) : null
+    const assignee = (usersQuery.data ?? []).find((u) => u.id === assigneeId)
+
     pending.current = {
       contactName: displayName,
       contactEmail: displayEmail,
@@ -246,11 +259,11 @@ export function AddCardButton({
       labels: labels.filter((l) => labelIds.includes(l.id)),
       lastActivityAt: null,
       dueAt: null,
-      scheduledCallAt: null,
+      scheduledCallAt,
       priority: null,
-      assigneeId: null,
-      assigneeName: null,
-      assigneeEmail: null,
+      assigneeId: assigneeId || null,
+      assigneeName: assignee?.name ?? null,
+      assigneeEmail: assignee?.email ?? null,
     }
 
     create.mutate({
@@ -260,6 +273,8 @@ export function AddCardButton({
       subjectId: resolvedSubjectId,
       labelIds: labelIds.length > 0 ? labelIds : undefined,
       description: description.trim() || undefined,
+      assigneeId: assigneeId || undefined,
+      scheduledCallAt: scheduledCallAt ?? undefined,
     })
   }
 
@@ -477,6 +492,30 @@ export function AddCardButton({
                       rows={3}
                     />
                   </Field>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label="Assign to" hint="Who this card is for">
+                      <Select
+                        value={assigneeId}
+                        onChange={(e) => setAssigneeId(e.target.value)}
+                      >
+                        <option value="">Unassigned</option>
+                        {(usersQuery.data ?? []).map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.name ?? u.email}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+
+                    <Field label="Call time" hint="Date & time · UK (Europe/London)">
+                      <Input
+                        type="datetime-local"
+                        value={callWall}
+                        onChange={(e) => setCallWall(e.target.value)}
+                      />
+                    </Field>
+                  </div>
 
                   <Field label="Stage">
                     <Select value={stageId} onChange={(e) => setStageId(e.target.value)}>

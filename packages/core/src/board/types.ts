@@ -61,6 +61,10 @@ export const CardCreateInput = z.object({
   labelIds: z.array(z.string()).max(20).optional(),
   /** Optional free-text note shown as the card's description preview. */
   description: z.string().trim().max(2000).optional(),
+  /** Optionally assign the card to a CRM user at creation time. */
+  assigneeId: z.string().nullish(),
+  /** Optionally schedule the call (date+time, stored UTC) at creation. */
+  scheduledCallAt: z.date().nullish(),
 })
 export type CardCreateInput = z.infer<typeof CardCreateInput>
 
