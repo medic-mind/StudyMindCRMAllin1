@@ -329,13 +329,31 @@ export async function softDeleteCustomerByInvoicingId(
   })
 }
 
-/** Sum payments → invoice.paidMinor. Cheap and order-independent. */
+/**
+ * Sum payments → invoice.paidMinor. Cheap and order-independent.
+ *
+ * A `paid` invoice has nothing outstanding even before its discrete payment
+ * rows have synced (the platform can mark an invoice paid without us yet
+ * mirroring a matching payment row — e.g. it was settled manually). Without
+ * this guard a `payment.*`/`payment.deleted` event would recompute paidMinor
+ * down to the summed rows (often 0) and a *paid* invoice would wrongly show as
+ * still due / outstanding (and inflate the account's Outstanding stat). So when
+ * the mirror status is `paid` we never drop paidMinor below the grand total.
+ */
 export async function recomputeInvoicePaid(db: DbClient, invoiceRowId: string): Promise<void> {
-  const rows = await db.invoicingPayment.findMany({
-    where: { invoiceId: invoiceRowId },
-    select: { amountMinor: true },
-  })
-  const paidMinor = rows.reduce((sum: number, r: { amountMinor: number }) => sum + r.amountMinor, 0)
+  const [invoice, rows] = await Promise.all([
+    db.invoicingInvoice.findUnique({
+      where: { id: invoiceRowId },
+      select: { status: true, grandTotalMinor: true },
+    }),
+    db.invoicingPayment.findMany({
+      where: { invoiceId: invoiceRowId },
+      select: { amountMinor: true },
+    }),
+  ])
+  const summed = rows.reduce((sum: number, r: { amountMinor: number }) => sum + r.amountMinor, 0)
+  const paidMinor =
+    invoice?.status === 'paid' ? Math.max(summed, invoice.grandTotalMinor ?? 0) : summed
   await db.invoicingInvoice.update({
     where: { id: invoiceRowId },
     data: { paidMinor },
