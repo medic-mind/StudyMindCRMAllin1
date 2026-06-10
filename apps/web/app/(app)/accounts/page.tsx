@@ -31,6 +31,9 @@ const KIND_LABELS: Record<string, string> = {
   partnership: 'B2B Partners',
 }
 
+const STATUS_VALUES = ['prospect', 'active', 'paused', 'churned'] as const
+type AccountStatus = (typeof STATUS_VALUES)[number]
+
 export default async function AccountsPage({ searchParams }: Props) {
   const params = await searchParams
   const kind: 'school' | 'partnership' = params.kind === 'partnership' ? 'partnership' : 'school'
@@ -39,6 +42,13 @@ export default async function AccountsPage({ searchParams }: Props) {
   const labelIds = params.labelIds
     ? params.labelIds.split(',').map((s) => s.trim()).filter(Boolean)
     : undefined
+  // Status is now multi-select (comma-joined in the URL).
+  const statuses = params.status
+    ? params.status
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s): s is AccountStatus => (STATUS_VALUES as ReadonlyArray<string>).includes(s))
+    : []
   const caller = await createServerCaller()
   const [accounts, unsortedCount] = await Promise.all([
     caller.businessAccount.list({
@@ -46,12 +56,7 @@ export default async function AccountsPage({ searchParams }: Props) {
       includeArchived: params.archived === '1',
       q: params.q?.trim() ? params.q.trim() : undefined,
       ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
-      ...(params.status === 'prospect' ||
-      params.status === 'active' ||
-      params.status === 'paused' ||
-      params.status === 'churned'
-        ? { status: params.status }
-        : {}),
+      ...(statuses.length > 0 ? { statuses } : {}),
     }),
     caller.businessAccount.unsortedCount(),
   ])
@@ -66,14 +71,7 @@ export default async function AccountsPage({ searchParams }: Props) {
           <AccountsExportButton
             kind={kind}
             q={params.q?.trim() ? params.q.trim() : undefined}
-            status={
-              params.status === 'prospect' ||
-              params.status === 'active' ||
-              params.status === 'paused' ||
-              params.status === 'churned'
-                ? params.status
-                : undefined
-            }
+            statuses={statuses}
           />
         }
       />

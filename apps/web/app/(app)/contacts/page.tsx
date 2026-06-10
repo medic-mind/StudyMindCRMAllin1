@@ -1,7 +1,9 @@
-// Contacts list page. RSC: reads via the tRPC server-side caller. Pagination
-// and filter state are URL-driven so links are shareable. The rich table
-// (selection + bulk actions + sort columns) is the `<ContactsTable>` client
-// island below.
+// Contacts list page. RSC: reads via the tRPC server-side caller. Pagination,
+// sort, page-size and filter state are URL-driven so links are shareable. The
+// rich table (selection + bulk actions + sort columns) is the `<ContactsTable>`
+// client island below. Offset pagination (page + pageSize) gives the agent a
+// total + "showing X–Y of Z"; the multi-select faceted filters let several
+// values be chosen per facet at once.
 
 import Link from 'next/link'
 
@@ -10,6 +12,7 @@ import { PageHeader } from '@/components/shell/page-header'
 
 import { FacetedFilter } from '@/components/ui/faceted-filter'
 import { ClearFiltersButton, FilterBar, ToggleFilter } from '@/components/ui/filter-bar'
+import { PageSizeSelect, SortMenu, type SortOption } from '@/components/ui/list-controls'
 import { SearchField } from '@/components/ui/search-field'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -20,8 +23,6 @@ import { QuickAddContactButton } from './QuickAddContactButton'
 
 interface PageSearchParams {
   q?: string
-  cursorId?: string
-  cursorAt?: string
   company?: string
   kind?: string
   bookingStatus?: string
@@ -29,14 +30,37 @@ interface PageSearchParams {
   hasHours?: string
   sortBy?: string
   sortDir?: string
+  page?: string
+  pageSize?: string
 }
 
 type BookingStatus = 'lead' | 'registered_no_hours' | 'registered_with_hours'
+type ContactKind = 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
 
 const BOOKING_FILTERS: ReadonlyArray<{ value: BookingStatus; label: string }> = [
   { value: 'lead', label: 'Leads' },
   { value: 'registered_no_hours', label: 'Registered' },
   { value: 'registered_with_hours', label: 'Booked hours' },
+]
+
+const KIND_VALUES: ReadonlyArray<ContactKind> = [
+  'unclassified',
+  'parent',
+  'student',
+  'tutor',
+  'other',
+]
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const
+const DEFAULT_PAGE_SIZE = 20
+
+const SORT_FIELDS = ['name', 'createdAt', 'hoursBooked', 'hoursDelivered', 'lastLessonAt'] as const
+const SORT_OPTIONS: ReadonlyArray<SortOption> = [
+  { value: 'createdAt', label: 'Newest added', defaultDir: 'desc' },
+  { value: 'name', label: 'Name', defaultDir: 'asc' },
+  { value: 'hoursBooked', label: 'Hours booked', defaultDir: 'desc' },
+  { value: 'hoursDelivered', label: 'Hours completed', defaultDir: 'desc' },
+  { value: 'lastLessonAt', label: 'Last lesson', defaultDir: 'desc' },
 ]
 
 /** A row from `trpc.company.pickList`. */
@@ -45,6 +69,10 @@ interface CompanyOption {
   name: string
   slug: string
   color: string | null
+}
+
+function splitParam(raw?: string): string[] {
+  return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []
 }
 
 export default async function ContactsPage({
@@ -56,55 +84,81 @@ export default async function ContactsPage({
   const me = await getCurrentUser()
   const role = me?.role ?? 'virtual_assistant'
   const caller = await createServerCaller()
-  const cursor =
-    sp.cursorId && sp.cursorAt ? { id: sp.cursorId, createdAt: new Date(sp.cursorAt) } : undefined
+
   const companies: CompanyOption[] = await caller.company.pickList()
   const bySlug = new Map(companies.map((c) => [c.slug, c]))
-  const activeCompany =
-    sp.company && bySlug.has(sp.company) ? (bySlug.get(sp.company) as CompanyOption) : undefined
-  const kind =
-    sp.kind === 'parent' || sp.kind === 'student' || sp.kind === 'tutor' || sp.kind === 'other'
-      ? sp.kind
-      : undefined
-  const bookingStatus: BookingStatus | undefined =
-    sp.bookingStatus === 'lead' ||
-    sp.bookingStatus === 'registered_no_hours' ||
-    sp.bookingStatus === 'registered_with_hours'
-      ? sp.bookingStatus
-      : undefined
-  const SORT_FIELDS = ['name', 'createdAt', 'hoursBooked', 'hoursDelivered', 'lastLessonAt'] as const
+  const companyIds = splitParam(sp.company)
+    .map((slug) => bySlug.get(slug)?.id)
+    .filter((id): id is string => !!id)
+
+  const kinds = splitParam(sp.kind).filter((k): k is ContactKind =>
+    (KIND_VALUES as ReadonlyArray<string>).includes(k),
+  )
+  const bookingStatuses = splitParam(sp.bookingStatus).filter((b): b is BookingStatus =>
+    BOOKING_FILTERS.some((f) => f.value === b),
+  )
+
+  const labels = await caller.accountLabel.pickList()
+  const labelIds = splitParam(sp.labels)
+  // "Has hours" quick filter — customers with a meaningful booked balance, the
+  // population the risk system cares about.
+  const hasHours = sp.hasHours === '1'
+
   const sortBy = (SORT_FIELDS as ReadonlyArray<string>).includes(sp.sortBy ?? '')
     ? (sp.sortBy as (typeof SORT_FIELDS)[number])
     : 'createdAt'
   const sortDir: 'asc' | 'desc' = sp.sortDir === 'asc' ? 'asc' : 'desc'
-  const labels = await caller.accountLabel.pickList()
-  const labelIds = sp.labels
-    ? sp.labels.split(',').map((s) => s.trim()).filter(Boolean)
-    : undefined
-  // "Has hours" quick filter — customers with a meaningful booked balance, the
-  // population the risk system cares about.
-  const hasHours = sp.hasHours === '1'
+
+  const pageSizeRaw = Number(sp.pageSize)
+  const pageSize = (PAGE_SIZE_OPTIONS as ReadonlyArray<number>).includes(pageSizeRaw)
+    ? pageSizeRaw
+    : DEFAULT_PAGE_SIZE
+  const page = Math.max(1, Number(sp.page) || 1)
+
   const data = await caller.contact.list({
-    cursor,
-    limit: 25,
+    page,
+    limit: pageSize,
     q: sp.q && sp.q.trim() ? sp.q.trim() : undefined,
-    companyId: activeCompany?.id,
-    kind,
-    bookingStatus,
-    ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
+    ...(companyIds.length > 0 ? { companyIds } : {}),
+    ...(kinds.length > 0 ? { kinds } : {}),
+    ...(bookingStatuses.length > 0 ? { bookingStatuses } : {}),
+    ...(labelIds.length > 0 ? { labelIds } : {}),
     ...(hasHours ? { minHoursBooked: 1 } : {}),
     sortBy,
     sortDir,
   })
 
+  const total = data.total
+
+  // Carried into the table for the sortable column-header links. Excludes
+  // `page` so changing the sort resets to page 1.
+  const baseQuery: Record<string, string> = {
+    ...(sp.q ? { q: sp.q } : {}),
+    ...(sp.company ? { company: sp.company } : {}),
+    ...(sp.kind ? { kind: sp.kind } : {}),
+    ...(sp.bookingStatus ? { bookingStatus: sp.bookingStatus } : {}),
+    ...(sp.labels ? { labels: sp.labels } : {}),
+    ...(sp.hasHours ? { hasHours: sp.hasHours } : {}),
+    ...(sp.sortBy ? { sortBy: sp.sortBy } : {}),
+    ...(sp.sortDir ? { sortDir: sp.sortDir } : {}),
+    ...(sp.pageSize ? { pageSize: sp.pageSize } : {}),
+  }
+
   return (
     <>
       <PageHeader
         title="B2C Customers"
-        subtitle={`${data.items.length} on this page${sp.q ? ` matching “${sp.q}”` : ''}`}
+        subtitle={`${total} customer${total === 1 ? '' : 's'}${sp.q ? ` matching “${sp.q}”` : ''}`}
         actions={
           <div className="flex items-center gap-2">
-            <ContactsExportButton q={sp.q} companyId={activeCompany?.id} />
+            <ContactsExportButton
+              q={sp.q}
+              companyIds={companyIds}
+              kinds={kinds}
+              bookingStatuses={bookingStatuses}
+              labelIds={labelIds}
+              hasHours={hasHours}
+            />
             <QuickAddContactButton />
           </div>
         }
@@ -115,6 +169,7 @@ export default async function ContactsPage({
           <FacetedFilter
             paramKey="company"
             label="Company"
+            multiple
             options={companies.map((c) => ({
               value: c.slug,
               label: c.name,
@@ -124,6 +179,7 @@ export default async function ContactsPage({
           <FacetedFilter
             paramKey="kind"
             label="Type"
+            multiple
             options={[
               { value: 'unclassified', label: 'Unclassified' },
               { value: 'parent', label: 'Parent' },
@@ -135,6 +191,7 @@ export default async function ContactsPage({
           <FacetedFilter
             paramKey="bookingStatus"
             label="Status"
+            multiple
             options={BOOKING_FILTERS.map((f) => ({ value: f.value, label: f.label }))}
           />
           {labels.length > 0 && (
@@ -159,6 +216,10 @@ export default async function ContactsPage({
           <ClearFiltersButton
             paramKeys={['q', 'company', 'kind', 'bookingStatus', 'labels', 'hasHours']}
           />
+          <div className="ml-auto flex items-center gap-2">
+            <SortMenu options={SORT_OPTIONS} defaultValue="createdAt" />
+            <PageSizeSelect defaultValue={DEFAULT_PAGE_SIZE} options={PAGE_SIZE_OPTIONS} />
+          </div>
         </FilterBar>
 
         <ContactsTable
@@ -183,24 +244,10 @@ export default async function ContactsPage({
             lastInteractionAt: c.lastInteractionAt,
             createdAt: c.createdAt,
           }))}
-          nextCursor={
-            data.nextCursor
-              ? {
-                  id: data.nextCursor.id,
-                  createdAt: data.nextCursor.createdAt.toISOString(),
-                }
-              : null
-          }
-          baseQuery={{
-            ...(sp.q ? { q: sp.q } : {}),
-            ...(activeCompany ? { company: activeCompany.slug } : {}),
-            ...(sp.kind ? { kind: sp.kind } : {}),
-            ...(sp.bookingStatus ? { bookingStatus: sp.bookingStatus } : {}),
-            ...(sp.labels ? { labels: sp.labels } : {}),
-            ...(sp.hasHours ? { hasHours: sp.hasHours } : {}),
-            ...(sp.sortBy ? { sortBy: sp.sortBy } : {}),
-            ...(sp.sortDir ? { sortDir: sp.sortDir } : {}),
-          }}
+          baseQuery={baseQuery}
+          total={total}
+          page={page}
+          pageSize={pageSize}
           role={role}
         />
       </PageBody>

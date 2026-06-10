@@ -72,18 +72,20 @@ const COLUMNS: CsvColumn<Row>[] = [
   { header: 'Created at', value: (r) => (r.createdAt ? new Date(r.createdAt) : '') },
 ]
 
+type Status = 'prospect' | 'active' | 'paused' | 'churned'
+
 interface Props {
   kind: 'school' | 'partnership'
-  status?: 'prospect' | 'active' | 'paused' | 'churned'
+  statuses?: Status[]
   q?: string
 }
 
-export function AccountsExportButton({ kind, status, q }: Props) {
+export function AccountsExportButton({ kind, statuses, q }: Props) {
   const utils = trpc.useUtils()
   async function getRows(): Promise<Row[]> {
     const data = await utils.businessAccount.list.fetch({
       kind,
-      ...(status ? { status } : {}),
+      ...(statuses && statuses.length > 0 ? { statuses } : {}),
       ...(q ? { q } : {}),
       includeArchived: false,
     })

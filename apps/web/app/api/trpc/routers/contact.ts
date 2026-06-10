@@ -2,6 +2,7 @@
 // All mutations are audited (auditedProcedure runtime-checks ctx.audit was called).
 
 import { createId } from '@paralleldrive/cuid2'
+import type { Prisma } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -66,16 +67,35 @@ const ListInput = z.object({
     })
     .nullish(),
   limit: z.number().min(1).max(100).default(25),
+  /**
+   * 1-based page for offset pagination. When supplied the list returns that
+   * page (skip = (page-1)*limit) instead of cursor-paginating, so the UI can
+   * show "page X of Y" + a total. Cursor mode (omit `page`) is retained for
+   * the CSV export streamer and the typeahead callers.
+   */
+  page: z.number().int().min(1).optional(),
   q: z.string().trim().min(1).max(120).optional(),
   /** Filter by Company.id (m2m — matches contacts tagged with this brand). */
   companyId: z.string().nullish(),
+  /** Multi-select brand filter (OR within companies). Supersedes companyId. */
+  companyIds: z.array(z.string()).max(50).optional(),
   /** Filter by Subject.id (m2m). */
   subjectId: z.string().nullish(),
   /** Filter by contact kind. */
   kind: z.enum(['unclassified', 'parent', 'student', 'tutor', 'other']).optional(),
+  /** Multi-select kind filter (OR). Supersedes kind. */
+  kinds: z
+    .array(z.enum(['unclassified', 'parent', 'student', 'tutor', 'other']))
+    .max(10)
+    .optional(),
   /** Filter by booking lifecycle (CLAUDE.md §15). */
   bookingStatus: z
     .enum(['lead', 'registered_no_hours', 'registered_with_hours'])
+    .optional(),
+  /** Multi-select booking-status filter (OR). Supersedes bookingStatus. */
+  bookingStatuses: z
+    .array(z.enum(['lead', 'registered_no_hours', 'registered_with_hours']))
+    .max(5)
     .optional(),
   /** Only contacts that belong to a Family (or only those who don't). */
   hasFamily: z.boolean().optional(),
@@ -137,105 +157,131 @@ export const contactRouter = router({
           ? new Date(Date.now() - input.lastLessonBeforeDays * 24 * 60 * 60 * 1000)
           : null
 
-      const rows = await ctx.db.contact.findMany({
-        where: {
-          deletedAt: null,
-          ...(input.kind ? { kind: input.kind } : {}),
-          ...(input.bookingStatus ? { bookingStatus: input.bookingStatus } : {}),
-          ...(input.hasFamily !== undefined
-            ? input.hasFamily
-              ? { familyMembers: { some: {} } }
-              : { familyMembers: { none: {} } }
+      // Every filter EXCEPT the keyset cursor — shared by the count and the
+      // page read so "total" reflects the whole filtered set. Plural filter
+      // params (multi-select UI) win over their singular back-compat twin.
+      const filterWhere: Prisma.ContactWhereInput = {
+        deletedAt: null,
+        ...(input.kinds && input.kinds.length > 0
+          ? { kind: { in: input.kinds } }
+          : input.kind
+            ? { kind: input.kind }
             : {}),
-          ...(input.companyId
+        ...(input.bookingStatuses && input.bookingStatuses.length > 0
+          ? { bookingStatus: { in: input.bookingStatuses } }
+          : input.bookingStatus
+            ? { bookingStatus: input.bookingStatus }
+            : {}),
+        ...(input.hasFamily !== undefined
+          ? input.hasFamily
+            ? { familyMembers: { some: {} } }
+            : { familyMembers: { none: {} } }
+          : {}),
+        ...(input.companyIds && input.companyIds.length > 0
+          ? { companies: { some: { companyId: { in: input.companyIds } } } }
+          : input.companyId
             ? { companies: { some: { companyId: input.companyId } } }
             : {}),
-          ...(input.subjectId
-            ? { subjects: { some: { subjectId: input.subjectId } } }
-            : {}),
-          // AND semantics: a customer must carry every requested label.
-          ...(input.labelIds && input.labelIds.length > 0
-            ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
-            : {}),
-          ...(input.minHoursBooked != null || input.maxHoursBooked != null
-            ? {
-                hoursBooked: {
-                  ...(input.minHoursBooked != null ? { gte: input.minHoursBooked } : {}),
-                  ...(input.maxHoursBooked != null ? { lte: input.maxHoursBooked } : {}),
-                },
-              }
-            : {}),
-          ...(input.minHoursDelivered != null || input.maxHoursDelivered != null
-            ? {
-                hoursDelivered: {
-                  ...(input.minHoursDelivered != null ? { gte: input.minHoursDelivered } : {}),
-                  ...(input.maxHoursDelivered != null ? { lte: input.maxHoursDelivered } : {}),
-                },
-              }
-            : {}),
-          ...(lastLessonCutoff ? { lastLessonAt: { lte: lastLessonCutoff } } : {}),
-          ...(input.q
+        ...(input.subjectId
+          ? { subjects: { some: { subjectId: input.subjectId } } }
+          : {}),
+        // AND semantics: a customer must carry every requested label.
+        ...(input.labelIds && input.labelIds.length > 0
+          ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
+          : {}),
+        ...(input.minHoursBooked != null || input.maxHoursBooked != null
+          ? {
+              hoursBooked: {
+                ...(input.minHoursBooked != null ? { gte: input.minHoursBooked } : {}),
+                ...(input.maxHoursBooked != null ? { lte: input.maxHoursBooked } : {}),
+              },
+            }
+          : {}),
+        ...(input.minHoursDelivered != null || input.maxHoursDelivered != null
+          ? {
+              hoursDelivered: {
+                ...(input.minHoursDelivered != null ? { gte: input.minHoursDelivered } : {}),
+                ...(input.maxHoursDelivered != null ? { lte: input.maxHoursDelivered } : {}),
+              },
+            }
+          : {}),
+        ...(lastLessonCutoff ? { lastLessonAt: { lte: lastLessonCutoff } } : {}),
+        ...(input.q
+          ? {
+              OR: [
+                { firstName: { contains: input.q, mode: 'insensitive' } },
+                { lastName: { contains: input.q, mode: 'insensitive' } },
+                { email: { contains: input.q, mode: 'insensitive' } },
+                { phoneE164: { contains: input.q } },
+              ],
+            }
+          : {}),
+      }
+
+      // Keyset cursor (only meaningful for the default createdAt sort). Combined
+      // with the filters via a top-level AND so the search `OR` is preserved.
+      const cursorWhere: Prisma.ContactWhereInput | null =
+        input.page == null && input.cursor && input.sortBy === 'createdAt'
+          ? input.sortDir === 'desc'
             ? {
                 OR: [
-                  { firstName: { contains: input.q, mode: 'insensitive' } },
-                  { lastName: { contains: input.q, mode: 'insensitive' } },
-                  { email: { contains: input.q, mode: 'insensitive' } },
-                  { phoneE164: { contains: input.q } },
+                  { createdAt: { lt: input.cursor.createdAt } },
+                  {
+                    AND: [
+                      { createdAt: input.cursor.createdAt },
+                      { id: { lt: input.cursor.id } },
+                    ],
+                  },
                 ],
               }
-            : {}),
-          ...(input.cursor && input.sortBy === 'createdAt'
-            ? input.sortDir === 'desc'
-              ? {
-                  OR: [
-                    { createdAt: { lt: input.cursor.createdAt } },
-                    {
-                      AND: [
-                        { createdAt: input.cursor.createdAt },
-                        { id: { lt: input.cursor.id } },
-                      ],
-                    },
-                  ],
-                }
-              : {
-                  OR: [
-                    { createdAt: { gt: input.cursor.createdAt } },
-                    {
-                      AND: [
-                        { createdAt: input.cursor.createdAt },
-                        { id: { gt: input.cursor.id } },
-                      ],
-                    },
-                  ],
-                }
-            : {}),
-        },
-        orderBy,
-        take: input.limit + 1,
-        include: {
-          familyMembers: {
-            take: 1,
-            include: { family: { select: { id: true, name: true } } },
-          },
-          interactions: {
-            where: { deletedAt: null },
-            orderBy: { occurredAt: 'desc' },
-            take: 1,
-            select: { occurredAt: true },
-          },
-          companies: {
-            include: {
-              company: { select: { id: true, name: true, slug: true, color: true } },
-            },
-          },
-          labels: {
-            include: { label: { select: { id: true, name: true, color: true } } },
-          },
-          bookingProfile: { select: { hoursRemaining: true, nextHoursExpiryAt: true } },
-        },
-      })
+            : {
+                OR: [
+                  { createdAt: { gt: input.cursor.createdAt } },
+                  {
+                    AND: [
+                      { createdAt: input.cursor.createdAt },
+                      { id: { gt: input.cursor.id } },
+                    ],
+                  },
+                ],
+              }
+          : null
 
-      const hasMore = rows.length > input.limit
+      const usingOffset = input.page != null
+
+      const [total, rows] = await Promise.all([
+        ctx.db.contact.count({ where: filterWhere }),
+        ctx.db.contact.findMany({
+          where: cursorWhere ? { AND: [filterWhere, cursorWhere] } : filterWhere,
+          orderBy,
+          ...(usingOffset
+            ? { skip: (input.page! - 1) * input.limit, take: input.limit }
+            : { take: input.limit + 1 }),
+          include: {
+            familyMembers: {
+              take: 1,
+              include: { family: { select: { id: true, name: true } } },
+            },
+            interactions: {
+              where: { deletedAt: null },
+              orderBy: { occurredAt: 'desc' },
+              take: 1,
+              select: { occurredAt: true },
+            },
+            companies: {
+              include: {
+                company: { select: { id: true, name: true, slug: true, color: true } },
+              },
+            },
+            labels: {
+              include: { label: { select: { id: true, name: true, color: true } } },
+            },
+            bookingProfile: { select: { hoursRemaining: true, nextHoursExpiryAt: true } },
+          },
+        }),
+      ])
+
+      const hasMore = !usingOffset && rows.length > input.limit
       const sliced = hasMore ? rows.slice(0, input.limit) : rows
       // One batched groupBy for the whole page's call/text/email counts.
       const counts = await loadContactCommsCounts(
@@ -248,7 +294,7 @@ export const contactRouter = router({
       const last = sliced[sliced.length - 1]
       const nextCursor =
         hasMore && last ? { id: last.id, createdAt: last.createdAt } : null
-      return { items, nextCursor }
+      return { items, nextCursor, total }
     }),
 
   get: protectedProcedure

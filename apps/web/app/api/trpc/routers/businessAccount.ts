@@ -620,7 +620,8 @@ export const businessAccountRouter = router({
     .input(
       z.object({
         kind: KindEnum.optional(),
-        status: StatusEnum.optional(),
+        /** Multi-select status filter (OR). */
+        statuses: z.array(StatusEnum).max(4).optional(),
         q: z.string().trim().max(80).optional(),
         /** Filter to accounts carrying ALL of these label ids. */
         labelIds: z.array(z.string()).max(20).optional(),
@@ -631,7 +632,9 @@ export const businessAccountRouter = router({
       const rows = await ctx.db.businessAccount.findMany({
         where: {
           ...(input.kind ? { kind: input.kind } : {}),
-          ...(input.status ? { status: input.status } : {}),
+          ...(input.statuses && input.statuses.length > 0
+            ? { status: { in: input.statuses } }
+            : {}),
           ...(input.includeArchived ? {} : { archivedAt: null }),
           // AND semantics: an account must carry every requested label.
           ...(input.labelIds && input.labelIds.length > 0

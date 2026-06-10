@@ -8,13 +8,14 @@
 
 import { useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useConfirm } from '@/components/ui/confirm'
 import { FacetedFilter } from '@/components/ui/faceted-filter'
+import { PageSizeSelect, PaginationBar, SortMenu, type SortOption } from '@/components/ui/list-controls'
 import { Popover } from '@/components/ui/popover'
 import { SearchField } from '@/components/ui/search-field'
 import { Toolbar } from '@/components/ui/toolbar'
@@ -100,6 +101,25 @@ type SortKey =
   | 'amountPaidMinor'
   | 'lastContactedAt'
 
+const VALID_SORT_KEYS: ReadonlyArray<SortKey> = [
+  'name',
+  'studentCount',
+  'hoursContracted',
+  'activity',
+  'amountPaidMinor',
+  'lastContactedAt',
+]
+const ACCOUNT_SORT_OPTIONS: ReadonlyArray<SortOption> = [
+  { value: 'name', label: 'Name', defaultDir: 'asc' },
+  { value: 'studentCount', label: 'Students', defaultDir: 'desc' },
+  { value: 'hoursContracted', label: 'Hours', defaultDir: 'desc' },
+  { value: 'activity', label: 'Activity', defaultDir: 'desc' },
+  { value: 'amountPaidMinor', label: 'Amount paid', defaultDir: 'desc' },
+  { value: 'lastContactedAt', label: 'Last contact', defaultDir: 'desc' },
+]
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const
+const DEFAULT_PAGE_SIZE = 20
+
 function sortValue(a: AccountRow, key: SortKey): number | string {
   switch (key) {
     case 'name':
@@ -149,19 +169,34 @@ export function AccountsList({
   const bulkSetStatus = trpc.businessAccount.bulkSetStatus.useMutation()
   const bulkSetLabel = trpc.businessAccount.bulkSetLabel.useMutation()
 
-  // Client-side column sort — the page already holds every row in memory, so
-  // sorting is instant and needs no round-trip. Name defaults ascending;
-  // numeric/recency columns default to "most first" (descending).
-  const [sortKey, setSortKey] = useState<SortKey>('name')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  // Sort + pagination are URL-driven (shareable + consistent with the
+  // Contacts list). The page already holds every filtered row in memory, so
+  // both are instant client-side slices — no round-trip. Name defaults
+  // ascending; numeric/recency columns default to "most first" (descending).
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+
+  const rawSort = searchParams.get('sortBy')
+  const sortKey: SortKey = (VALID_SORT_KEYS as ReadonlyArray<string>).includes(rawSort ?? '')
+    ? (rawSort as SortKey)
+    : 'name'
+  const sortDir: 'asc' | 'desc' =
+    searchParams.get('sortDir') === 'desc'
+      ? 'desc'
+      : searchParams.get('sortDir') === 'asc'
+        ? 'asc'
+        : sortKey === 'name'
+          ? 'asc'
+          : 'desc'
 
   function toggleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortKey(key)
-      setSortDir(key === 'name' ? 'asc' : 'desc')
-    }
+    const params = new URLSearchParams(searchParams.toString())
+    const dir =
+      key === sortKey ? (sortDir === 'asc' ? 'desc' : 'asc') : key === 'name' ? 'asc' : 'desc'
+    params.set('sortBy', key)
+    params.set('sortDir', dir)
+    params.delete('page')
+    router.push(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
   const sortedAccounts = useMemo(
@@ -180,11 +215,25 @@ export function AccountsList({
     [accounts, sortKey, sortDir],
   )
 
-  const allOnPage = useMemo(() => sortedAccounts.map((a) => a.id), [sortedAccounts])
+  const pageSizeRaw = Number(searchParams.get('pageSize'))
+  const pageSize = (PAGE_SIZE_OPTIONS as ReadonlyArray<number>).includes(pageSizeRaw)
+    ? pageSizeRaw
+    : DEFAULT_PAGE_SIZE
+  const totalCount = sortedAccounts.length
+  const page = Math.min(
+    Math.max(1, Number(searchParams.get('page')) || 1),
+    Math.max(1, Math.ceil(totalCount / pageSize)),
+  )
+  const pagedAccounts = useMemo(
+    () => sortedAccounts.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize),
+    [sortedAccounts, page, pageSize],
+  )
+
+  const allOnPage = useMemo(() => pagedAccounts.map((a) => a.id), [pagedAccounts])
   const allSelected = allOnPage.length > 0 && allOnPage.every((id) => selected.has(id))
   const someArchived = useMemo(
-    () => sortedAccounts.some((a) => selected.has(a.id) && a.archived),
-    [sortedAccounts, selected],
+    () => pagedAccounts.some((a) => selected.has(a.id) && a.archived),
+    [pagedAccounts, selected],
   )
 
   function toggleAll(next: boolean) {
@@ -257,6 +306,7 @@ export function AccountsList({
           <FacetedFilter
             paramKey="status"
             label="Status"
+            multiple
             options={[
               { value: 'prospect', label: 'Prospect' },
               { value: 'active', label: 'Active' },
@@ -276,6 +326,8 @@ export function AccountsList({
               }))}
             />
           )}
+          <SortMenu options={ACCOUNT_SORT_OPTIONS} defaultValue="name" align="start" />
+          <PageSizeSelect defaultValue={DEFAULT_PAGE_SIZE} options={PAGE_SIZE_OPTIONS} />
         </div>
         {!creating && (
           <Button type="button" size="sm" onClick={() => setCreating(true)}>
@@ -495,7 +547,7 @@ export function AccountsList({
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {sortedAccounts.map((a) => {
+              {pagedAccounts.map((a) => {
                 const isSelected = selected.has(a.id)
                 return (
                 <tr
@@ -632,6 +684,15 @@ export function AccountsList({
             </tbody>
           </table>
         </Card>
+      )}
+
+      {accounts.length > 0 && (
+        <PaginationBar
+          page={page}
+          pageSize={pageSize}
+          total={totalCount}
+          shown={pagedAccounts.length}
+        />
       )}
     </div>
   )

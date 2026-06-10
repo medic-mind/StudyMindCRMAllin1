@@ -23,6 +23,7 @@ import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useConfirm } from '@/components/ui/confirm'
+import { PaginationBar } from '@/components/ui/list-controls'
 import { Popover } from '@/components/ui/popover'
 import { Toolbar } from '@/components/ui/toolbar'
 import {
@@ -83,10 +84,14 @@ const RISK_BADGE: Record<Exclude<RiskLevel, 'none'>, { label: string; cls: strin
 
 interface Props {
   rows: ReadonlyArray<ContactRow>
-  /** Cursor for the next page, when one exists. */
-  nextCursor: { id: string; createdAt: string } | null
-  /** Current filter state (echoed back in pagination links). */
+  /** Current filter + sort state (echoed back in the sort-column links). */
   baseQuery: Record<string, string>
+  /** Total customers across all pages (for the "showing X–Y of Z" bar). */
+  total: number
+  /** 1-based current page. */
+  page: number
+  /** Rows per page. */
+  pageSize: number
   /** Current role — drives which bulk actions render. */
   role: string
 }
@@ -135,7 +140,7 @@ const CAN_DELETE = new Set(['ceo', 'senior_manager', 'manager'])
 const CAN_PUSH = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
 const CAN_LABEL = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
 
-export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
+export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
   const confirm = useConfirm()
@@ -722,21 +727,8 @@ export function ContactsTable({ rows, nextCursor, baseQuery, role }: Props) {
         )}
       </Card>
 
-      {nextCursor && (
-        <div className="flex justify-end">
-          <Link
-            href={{
-              pathname: '/contacts',
-              query: {
-                ...baseQuery,
-                cursorId: nextCursor.id,
-                cursorAt: nextCursor.createdAt,
-              },
-            }}
-          >
-            <Button variant="secondary">Next page</Button>
-          </Link>
-        </div>
+      {rows.length > 0 && (
+        <PaginationBar page={page} pageSize={pageSize} total={total} shown={rows.length} />
       )}
     </div>
   )

@@ -61,14 +61,28 @@ const COLUMNS: CsvColumn<Row>[] = [
   },
 ]
 
+type Kind = 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
+type BookingStatus = 'lead' | 'registered_no_hours' | 'registered_with_hours'
+
 interface Props {
   q?: string
-  companyId?: string
+  companyIds?: string[]
+  kinds?: Kind[]
+  bookingStatuses?: BookingStatus[]
+  labelIds?: string[]
+  hasHours?: boolean
 }
 
 const MAX_ROWS = 5000
 
-export function ContactsExportButton({ q, companyId }: Props) {
+export function ContactsExportButton({
+  q,
+  companyIds,
+  kinds,
+  bookingStatuses,
+  labelIds,
+  hasHours,
+}: Props) {
   const utils = trpc.useUtils()
   const [pulling, setPulling] = useState(false)
 
@@ -77,11 +91,16 @@ export function ContactsExportButton({ q, companyId }: Props) {
     try {
       const all: Row[] = []
       let cursor: { id: string; createdAt: Date } | undefined
-      // Loop until the cursor is exhausted or we hit the safety cap.
+      // Loop until the cursor is exhausted or we hit the safety cap. The
+      // filters mirror the on-screen list so the CSV matches what's shown.
       for (let i = 0; i < MAX_ROWS / 100 + 1; i += 1) {
         const page = await utils.contact.list.fetch({
           q,
-          companyId,
+          ...(companyIds && companyIds.length > 0 ? { companyIds } : {}),
+          ...(kinds && kinds.length > 0 ? { kinds } : {}),
+          ...(bookingStatuses && bookingStatuses.length > 0 ? { bookingStatuses } : {}),
+          ...(labelIds && labelIds.length > 0 ? { labelIds } : {}),
+          ...(hasHours ? { minHoursBooked: 1 } : {}),
           cursor,
           limit: 100,
         })
