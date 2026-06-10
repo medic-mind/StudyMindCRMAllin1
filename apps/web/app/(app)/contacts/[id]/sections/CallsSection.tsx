@@ -49,7 +49,7 @@ function CallRow({ call }: { call: CallEntry }) {
           }).format(new Date(call.occurredAt))}
         </time>
       </div>
-      {call.recordingS3Key && (
+      {call.hasRecording && (
         <audio
           controls
           preload="none"
@@ -58,6 +58,33 @@ function CallRow({ call }: { call: CallEntry }) {
         >
           Your browser does not support inline audio playback.
         </audio>
+      )}
+      {call.aiOutcome && (
+        <div className="mt-2 rounded-md border border-primary-100 bg-primary-50/60 p-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-primary-700">
+            AI call summary
+          </p>
+          <p className="mt-0.5 text-xs text-neutral-800">
+            <span className="font-medium capitalize">
+              {call.aiOutcome.outcome.replace(/_/g, ' ')}
+            </span>
+            {call.aiOutcome.sentiment ? (
+              <span className="text-neutral-500"> · {call.aiOutcome.sentiment}</span>
+            ) : null}
+            {call.aiOutcome.confidence != null ? (
+              <span className="text-neutral-400">
+                {' '}
+                · {Math.round(call.aiOutcome.confidence * 100)}% confident
+              </span>
+            ) : null}
+          </p>
+          {call.aiOutcome.suggestedFollowUp && (
+            <p className="mt-1 text-xs text-neutral-700">
+              <span className="font-medium text-neutral-600">Next:</span>{' '}
+              {call.aiOutcome.suggestedFollowUp}
+            </p>
+          )}
+        </div>
       )}
       {call.transcript && (
         <div className="mt-1.5">

@@ -235,6 +235,13 @@ export async function emailThreadsForContact(
 // Calls
 // -----------------------------------------------------------------------------
 
+export interface CallAiOutcome {
+  outcome: string
+  sentiment: string | null
+  suggestedFollowUp: string | null
+  confidence: number | null
+}
+
 export interface CallEntry {
   id: string
   occurredAt: Date
@@ -243,10 +250,28 @@ export interface CallEntry {
   durationSec: number | null
   recordingS3Key: string | null
   recordingUrl: string | null
+  voicemailUrl: string | null
+  /** True when there is any audio to stream (S3 copy or a live provider URL). */
+  hasRecording: boolean
   transcript: string | null
+  /** AI outcome classification (Whisper fallback path), when present. */
+  aiOutcome: CallAiOutcome | null
   aircallCallId: number | null
   interactionType: string | null
   triageRequired: boolean
+}
+
+function parseAiOutcome(value: unknown): CallAiOutcome | null {
+  if (!value || typeof value !== 'object') return null
+  const o = value as Record<string, unknown>
+  const outcome = asString(o['outcome'])
+  if (!outcome) return null
+  return {
+    outcome,
+    sentiment: asString(o['sentiment']),
+    suggestedFollowUp: asString(o['suggestedFollowUp']),
+    confidence: asNumber(o['confidence']),
+  }
 }
 
 function classifyOutcome(p: Record<string, unknown>): CallEntry['outcome'] {
@@ -293,7 +318,14 @@ export async function callsForContact(
       durationSec: asNumber(p['durationSec']),
       recordingS3Key: asString(p['recordingS3Key']),
       recordingUrl: asString(p['recordingUrl']),
+      voicemailUrl: asString(p['voicemailUrl']),
+      hasRecording: Boolean(
+        asString(p['recordingS3Key']) ||
+          asString(p['recordingUrl']) ||
+          asString(p['voicemailUrl']),
+      ),
       transcript: asString(p['transcriptText']),
+      aiOutcome: parseAiOutcome(p['aiOutcome']),
       aircallCallId: asNumber(p['aircallCallId']),
       interactionType: asString(p['interactionType']),
       triageRequired: p['triageRequired'] === true,

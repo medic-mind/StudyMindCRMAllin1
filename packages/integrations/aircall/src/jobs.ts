@@ -174,15 +174,27 @@ export const aircallEventReceived = inngest.createFunction(
       })
     }
 
-    // On call.ended without a transcript already in payload, kick off the
-    // Whisper fallback. CLAUDE.md §10.
-    if (type === 'call.ended' && !call.transcription && call.recording) {
-      await step.run('enqueue-fallback-transcribe', async () => {
-        await inngest.send({
-          name: 'aircall/transcribe-fallback',
-          data: { aircallCallId, recordingUrl: call.recording, eventId },
+    // On call.ended with a recording, ensure the audio is copied into S3 so the
+    // contact-page player can stream a durable copy (CLAUDE.md §10). When AI
+    // Assist is off we go through the Whisper fallback (which transcribes AND
+    // persists + stamps the S3 key); when a transcript is already present we
+    // only need to copy the recording.
+    if (type === 'call.ended' && call.recording) {
+      if (!call.transcription) {
+        await step.run('enqueue-fallback-transcribe', async () => {
+          await inngest.send({
+            name: 'aircall/transcribe-fallback',
+            data: { aircallCallId, recordingUrl: call.recording, eventId },
+          })
         })
-      })
+      } else {
+        await step.run('enqueue-persist-recording', async () => {
+          await inngest.send({
+            name: 'aircall/persist-recording',
+            data: { aircallCallId, recordingUrl: call.recording, eventId },
+          })
+        })
+      }
     }
 
     await step.run('mark-processed', async () => {
@@ -272,6 +284,9 @@ export const aircallTranscribeFallback = inngest.createFunction(
         transcriptText: transcript,
         language: null,
         outcome,
+        // The recording is already in S3 (step 1) — stamp its key so the
+        // contact-page player can stream it (CLAUDE.md §10).
+        recordingS3Key: s3Key,
       })
     })
 
@@ -281,6 +296,59 @@ export const aircallTranscribeFallback = inngest.createFunction(
     )
 
     return { ok: true, outcome: outcome.outcome }
+  },
+)
+
+// -----------------------------------------------------------------------------
+// 2b. aircall/persist-recording — copy a call's recording into S3 for durable
+//     playback when AI Assist already produced a transcript (so the Whisper
+//     fallback, which would otherwise do the copy, does not run). CLAUDE.md §10.
+// -----------------------------------------------------------------------------
+
+interface PersistRecordingData {
+  aircallCallId: number
+  recordingUrl: string | null
+  eventId: string
+}
+
+export const aircallPersistRecording = inngest.createFunction(
+  {
+    id: 'aircall/persist-recording',
+    name: 'Aircall: copy a call recording into S3 for durable playback',
+    concurrency: { limit: 3 },
+    retries: 4,
+  },
+  { event: 'aircall/persist-recording' },
+  async ({ event, step }) => {
+    const { aircallCallId, recordingUrl } = event.data as PersistRecordingData
+    if (!recordingUrl) return { skipped: true, reason: 'no_recording_url' }
+
+    // Idempotent: skip if a durable copy is already stamped on the call.
+    const already = await step.run('check-existing', async () => {
+      const row = await db.interaction.findFirst({
+        where: { type: 'call', payload: { path: ['aircallCallId'], equals: aircallCallId } },
+        orderBy: { occurredAt: 'desc' },
+        select: { payload: true },
+      })
+      const p = (row?.payload as Record<string, unknown>) ?? {}
+      return typeof p['recordingS3Key'] === 'string' && (p['recordingS3Key'] as string).length > 0
+    })
+    if (already) return { skipped: true, reason: 'already_persisted' }
+
+    const s3Key = await step.run('persist-to-s3', async () => {
+      const res = await safeFetch(recordingUrl)
+      if (!res.ok) throw new Error(`recording download failed: ${res.status}`)
+      const ct = res.headers.get('content-type') ?? 'audio/mpeg'
+      const buf = Buffer.from(await res.arrayBuffer())
+      const put = await putRecording({ callId: aircallCallId, body: buf, contentType: ct })
+      return put.s3Key
+    })
+
+    await step.run('stamp-s3-key', async () => {
+      await setRecordingS3Key(aircallCallId, s3Key)
+    })
+
+    return { ok: true, s3Key }
   },
 )
 
@@ -506,6 +574,8 @@ interface AttachTranscriptInput {
     suggestedFollowUp: string | null
     confidence: number
   }
+  /** S3 key of the persisted recording, stamped so the player can stream it. */
+  recordingS3Key?: string
 }
 
 async function attachTranscriptToCall(input: AttachTranscriptInput): Promise<void> {
@@ -532,8 +602,28 @@ async function attachTranscriptToCall(input: AttachTranscriptInput): Promise<voi
         transcriptText: input.transcriptText,
         ...(input.language ? { transcriptLanguage: input.language } : {}),
         ...(input.outcome ? { aiOutcome: input.outcome } : {}),
+        ...(input.recordingS3Key && !existingPayload['recordingS3Key']
+          ? { recordingS3Key: input.recordingS3Key }
+          : {}),
       },
     },
+  })
+}
+
+/** Stamp a persisted recording's S3 key onto a call's Interaction so the
+ * contact-page player can stream the durable copy. Idempotent. */
+async function setRecordingS3Key(aircallCallId: number, s3Key: string): Promise<void> {
+  const interaction = await db.interaction.findFirst({
+    where: { type: 'call', payload: { path: ['aircallCallId'], equals: aircallCallId } },
+    orderBy: { occurredAt: 'desc' },
+    select: { id: true, payload: true },
+  })
+  if (!interaction) return
+  const existingPayload = (interaction.payload as Record<string, unknown>) ?? {}
+  if (existingPayload['recordingS3Key']) return
+  await db.interaction.update({
+    where: { id: interaction.id },
+    data: { payload: { ...existingPayload, recordingS3Key: s3Key } },
   })
 }
 
@@ -545,6 +635,7 @@ import { aircallSyncCalls } from './sync'
 export const FUNCTIONS = [
   aircallEventReceived,
   aircallTranscribeFallback,
+  aircallPersistRecording,
   aircallRecoverDisabledWebhook,
   aircallSyncCalls,
   ...AIRCALL_BACKFILL_FUNCTIONS,

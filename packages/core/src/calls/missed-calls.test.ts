@@ -93,6 +93,46 @@ describe('deriveMissedCalls', () => {
     expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('outstanding')
   })
 
+  it('resolves a callback even when the two legs are formatted differently', () => {
+    // Inbound miss carries a spaced raw_digits; the click-to-call'd outbound
+    // leg comes back E.164-tight. Same person — must still resolve.
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 10,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+44 7700 900555',
+      }),
+      raw({
+        aircallCallId: 11,
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T13:00:00Z'),
+        rawDigits: '+447700900555',
+      }),
+    ])
+    expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('called_back')
+  })
+
+  it('resolves a callback across national-vs-E.164 formatting', () => {
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 12,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900666',
+      }),
+      raw({
+        aircallCallId: 13,
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T13:00:00Z'),
+        rawDigits: '07700 900666',
+      }),
+    ])
+    expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('called_back')
+  })
+
   it('does not cross-resolve between different numbers', () => {
     const calls = normalizeCalls([
       raw({ aircallCallId: 1, direction: 'inbound', durationSec: 0, occurredAt: new Date('2026-06-01T09:00:00Z'), rawDigits: '+447700900333' }),

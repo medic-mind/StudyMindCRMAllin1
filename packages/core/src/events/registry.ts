@@ -493,6 +493,7 @@ export const INNGEST_EVENT_NAMES = [
   'gmail/event.received',
   'booking/event.received',
   'aircall/transcribe-fallback',
+  'aircall/persist-recording',
   'gmail/history.changed',
 
   // Cross-cutting domain events

@@ -58,6 +58,22 @@ export function isAnswered(c: { durationSec: number; isVoicemail: boolean }): bo
   return !c.isVoicemail && c.durationSec > 0
 }
 
+/**
+ * Canonical key for matching a callback to a miss. Aircall stores `raw_digits`
+ * verbatim, so the SAME person's number can arrive formatted differently on an
+ * inbound miss ("+44 7700 900001") vs the outbound callback ("+447700900001",
+ * or a click-to-call'd "07700 900001"). We reduce to digits and compare the
+ * last 9 — stable across spaces, the +44/0 trunk prefix, and the country code.
+ * Without this, calling someone back the same day failed to clear the miss
+ * whenever the two legs were formatted differently.
+ */
+export function phoneMatchKey(raw: string | null): string | null {
+  if (!raw) return null
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length === 0) return null
+  return digits.length > 9 ? digits.slice(-9) : digits
+}
+
 /** Collapse per-event call rows into one row per call (dedupe on Aircall id):
  * earliest time, longest duration, voicemail if any event was a voicemail,
  * first known direction / number / contact. */
@@ -100,13 +116,17 @@ export function deriveMissedCalls(
   calls: ReadonlyArray<NormalizedCall>,
   reviewsByAircallId: ReadonlyMap<string, MissedCallReviewRow>,
 ): MissedCallResult[] {
-  // Index outbound attempts by number → ascending timestamps.
+  // Index outbound attempts by a format-insensitive number key → ascending
+  // timestamps, so a callback resolves a miss even when Aircall formatted the
+  // two legs differently (see phoneMatchKey).
   const outboundByNumber = new Map<string, number[]>()
   for (const c of calls) {
-    if (c.direction === 'outbound' && c.rawDigits) {
-      const arr = outboundByNumber.get(c.rawDigits) ?? []
+    if (c.direction === 'outbound') {
+      const key = phoneMatchKey(c.rawDigits)
+      if (!key) continue
+      const arr = outboundByNumber.get(key) ?? []
       arr.push(c.occurredAt.getTime())
-      outboundByNumber.set(c.rawDigits, arr)
+      outboundByNumber.set(key, arr)
     }
   }
   for (const arr of outboundByNumber.values()) arr.sort((a, b) => a - b)
@@ -116,8 +136,9 @@ export function deriveMissedCalls(
   return missed
     .map((c): MissedCallResult => {
       let calledBackAt: Date | null = null
-      if (c.rawDigits) {
-        const times = outboundByNumber.get(c.rawDigits)
+      const key = phoneMatchKey(c.rawDigits)
+      if (key) {
+        const times = outboundByNumber.get(key)
         const after = times?.find((t) => t > c.occurredAt.getTime())
         if (after != null) calledBackAt = new Date(after)
       }
