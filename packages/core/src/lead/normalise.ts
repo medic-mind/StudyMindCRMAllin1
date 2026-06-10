@@ -138,6 +138,9 @@ const SYNONYMS = {
   ],
   // A country field — name or ISO code. Used for phone dial-code composing.
   country: ['country', 'your-country', 'country-code', 'country-of-residence', 'nationality'],
+  // The visitor's IP, when the form forwards it (CF7 `_remote_ip`, hidden
+  // fields). normKey turns `_remote_ip` into `remote-ip`.
+  ip: ['ip', 'remote-ip', 'user-ip', 'client-ip', 'visitor-ip', 'ip-address', 'user-ip-address', 'remote-addr'],
   // A subject/topic dropdown — "Which course?", "Subject", "Interested in".
   subject: [
     'subject',
@@ -188,6 +191,15 @@ function typePrefix(normalisedKey: string): string {
 function isNoise(normalisedKey: string): boolean {
   return NOISE_PREFIXES.some((p) => normalisedKey.startsWith(p))
 }
+
+// Product / free-resource shaped fields — used to stop the name value-sniff
+// picking up "GAMSAT Book" etc. as the enquirer's name (§16).
+const RESOURCE_KEY_RE =
+  /(product|resource|course|subject|topic|item|title|book|guide|download|file|document|package|pack|exam)/u
+const RESOURCE_VALUE_RE =
+  /\b(books?|e-?books?|guides?|guidebooks?|downloads?|resources?|packs?|papers?|webinars?|courses?|samples?|sheets?|notes?|bundles?|free|ucat|gamsat|bmat|ukcat|interview|tutoring|tuition|gcse|igcse|a-?levels?|11\+)\b/iu
+
+const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u
 
 function inList(list: readonly string[], key: string): boolean {
   return list.includes(key)
@@ -403,7 +415,12 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
   if (found.phone === undefined) {
     const hit = entries.find(
       (e) =>
-        !assigned.has(e.rawKey) && !isNoise(e.key) && PHONE_RE.test(e.value.replace(/\s/gu, '')),
+        !assigned.has(e.rawKey) &&
+        !isNoise(e.key) &&
+        // A dotted IPv4 ("198.51.100.24") is digits-and-dots too — never a
+        // phone number; it stays available for the clientIp sniff below.
+        !IPV4_RE.test(e.value.trim()) &&
+        PHONE_RE.test(e.value.replace(/\s/gu, '')),
     )
     if (hit) {
       found.phone = hit.value
@@ -429,8 +446,14 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
       (e) =>
         !assigned.has(e.rawKey) &&
         !isNoise(e.key) &&
+        // A product/resource field can never be the person's name — a
+        // free-download form ("GAMSAT Book") must not christen the contact
+        // after the freebie. Guard on both the key and the value; when no
+        // name survives, the onboarding falls back to the email address.
+        !RESOURCE_KEY_RE.test(e.key) &&
         e.value.length <= 60 &&
         /^[\p{L}][\p{L}'.\- ]+$/u.test(e.value) &&
+        !RESOURCE_VALUE_RE.test(e.value) &&
         !EMAIL_RE.test(e.value),
     )
     if (hit) {
@@ -485,6 +508,16 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
   // Country (form-selected). Resolved to a dial code downstream.
   const country = found.country ? found.country.trim().slice(0, 80) : null
 
+  // Visitor IP — explicit field first (CF7 `_remote_ip`), else sniff an
+  // IP-shaped value. CF7 webhooks are POSTed by the WordPress server, so this
+  // beats the transport IP for country geolocation.
+  const sniffedIp =
+    found.ip ??
+    entries.find((e) => !assigned.has(e.rawKey) && !isNoise(e.key) && IPV4_RE.test(e.value.trim()))
+      ?.value ??
+    null
+  const clientIp = sniffedIp ? sniffedIp.trim().slice(0, 45) : null
+
   // Stringified field map for UTM lookup.
   const fieldStrs: Record<string, string> = {}
   for (const e of entries) fieldStrs[e.key] = e.value
@@ -522,6 +555,7 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
     preferredWhen,
     requestedSubject,
     country,
+    clientIp,
     landingDomain: domain,
     landingUrl: url,
     landingSlug: parsed.slug,

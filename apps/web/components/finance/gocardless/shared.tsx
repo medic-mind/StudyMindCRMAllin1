@@ -94,17 +94,23 @@ export interface PickedMandate {
 /**
  * Two-step picker: search GoCardless customers, then choose one of their
  * chargeable mandates. Used by the new-plan and collect-payment forms.
+ * `initialCustomer` skips straight to the mandate step (e.g. arriving from
+ * a customer record with ?customer=CU…).
  */
 export function CustomerMandatePicker({
   value,
   onChange,
+  initialCustomer = null,
 }: {
   value: PickedMandate | null
   onChange: (picked: PickedMandate | null) => void
+  initialCustomer?: { gcCustomerId: string; label: string } | null
 }) {
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [customer, setCustomer] = useState<{ gcCustomerId: string; label: string } | null>(null)
+  const [customer, setCustomer] = useState<{ gcCustomerId: string; label: string } | null>(
+    initialCustomer,
+  )
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(q), 250)

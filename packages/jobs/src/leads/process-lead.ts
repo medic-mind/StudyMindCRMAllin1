@@ -267,35 +267,52 @@ export async function processLead(
   // number ("928 812 118", Peru) composes to full E.164 so the contact always
   // gets a dialable number (live bug: it only survived in the notes).
   let dialCountry = findDialCountry(normalised.country)
-  if (!dialCountry && lead.ip && deps.geoCountry) {
+  // The form's own visitor-IP field beats the transport IP: CF7 webhooks are
+  // POSTed by the WordPress server, so lead.ip is often the site server, not
+  // the enquirer.
+  const geoIp = normalised.clientIp ?? lead.ip
+  if (!dialCountry && geoIp && deps.geoCountry) {
     try {
-      const iso2 = await deps.geoCountry(lead.ip)
+      const iso2 = await deps.geoCountry(geoIp)
       dialCountry = findDialCountry(iso2)
     } catch (err) {
       logger.warn({ leadId, err: String(err) }, 'lead.process.geo_failed')
     }
   }
+  // normalisePhone optimistically treats a leading-0 national number as UK
+  // (+44, our home market). When the resolved country says otherwise,
+  // recompose with the real dial code so a French "06…" never becomes "+446…".
+  let formPhoneE164 = normalised.phoneE164
+  if (
+    formPhoneE164?.startsWith('+44') &&
+    dialCountry &&
+    dialCountry.dial !== '44' &&
+    normalised.phone &&
+    normalised.phone.replace(/[^\d+]/gu, '').startsWith('0')
+  ) {
+    formPhoneE164 = composePhoneE164(dialCountry, normalised.phone) ?? formPhoneE164
+  }
   const composedPhone =
-    !normalised.phoneE164 && normalised.phone && dialCountry
+    !formPhoneE164 && normalised.phone && dialCountry
       ? composePhoneE164(dialCountry, normalised.phone)
       : null
   // No country at all (no form field, geo failed)? The number may still carry
   // its own dial code typed without the + ("51 928 812 118").
   const inferredPhone =
-    !normalised.phoneE164 && !composedPhone && normalised.phone
+    !formPhoneE164 && !composedPhone && normalised.phone
       ? inferPhoneE164(normalised.phone)
       : null
   // Last resort: a typed number ALWAYS lands on the contact's phone field —
   // as-typed digits beat a number buried in the notes (it stays visible and
   // manually dialable; an agent can fix the prefix later).
   const fallbackPhone =
-    !normalised.phoneE164 && !composedPhone && !inferredPhone && normalised.phone
+    !formPhoneE164 && !composedPhone && !inferredPhone && normalised.phone
       ? asTypedPhoneFallback(normalised.phone)
       : null
 
   // 6. Match an existing contact (conservative — never auto-merge).
   const email = normalised.email
-  const phoneE164 = normalised.phoneE164 ?? composedPhone ?? inferredPhone ?? fallbackPhone
+  const phoneE164 = formPhoneE164 ?? composedPhone ?? inferredPhone ?? fallbackPhone
   const [byEmail, byPhone] = await Promise.all([
     email
       ? db.contact.findMany({ where: { email, deletedAt: null }, select: { id: true }, take: 5 })
@@ -415,7 +432,14 @@ export async function processLead(
         if (!existingContact.lastName && normalised.lastName)
           patch.lastName = clamp(normalised.lastName, 120)
         if (!existingContact.email && normalised.email) patch.email = normalised.email
-        if (!existingContact.phoneE164 && phoneE164) patch.phoneE164 = phoneE164
+        if (phoneE164) {
+          if (!existingContact.phoneE164) patch.phoneE164 = phoneE164
+          // Self-heal: an earlier enquiry stored the digits as typed (no +).
+          // Now the country is identified, upgrade to proper E.164 — a repair
+          // of malformed data, never an overwrite of a good number (§3).
+          else if (!existingContact.phoneE164.startsWith('+') && phoneE164.startsWith('+'))
+            patch.phoneE164 = phoneE164
+        }
         if (!existingContact.country && (dialCountry?.name ?? normalised.country))
           patch.country = clamp((dialCountry?.name ?? normalised.country)!, 120)
         // Enquiry history: prepend a one-line "latest enquiry" summary so the
@@ -524,6 +548,11 @@ export async function processLead(
   }
 
   // plan.kind === 'onboard'
+  // No usable person name on the form (or we refused a product-shaped one) —
+  // name the contact by their email (else phone) so the record is always
+  // identifiable, never after the freebie they downloaded.
+  const fallbackName =
+    !normalised.firstName && !normalised.lastName ? (email ?? phoneE164 ?? null) : null
   const ctx = { actorId: ACTOR_ID, requestId: lead.id }
   const contactId = createId()
   let cardId: string | null = null
@@ -533,7 +562,11 @@ export async function processLead(
       data: {
         id: contactId,
         kind: DEFAULT_LEAD_CONTACT_KIND,
-        firstName: normalised.firstName ? clamp(normalised.firstName, 120) : null,
+        firstName: normalised.firstName
+          ? clamp(normalised.firstName, 120)
+          : fallbackName
+            ? clamp(fallbackName, 120)
+            : null,
         lastName: normalised.lastName ? clamp(normalised.lastName, 120) : null,
         email: normalised.email,
         phoneE164,

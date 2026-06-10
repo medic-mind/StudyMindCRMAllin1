@@ -97,10 +97,17 @@ async function handlePost(req: Request): Promise<Response> {
     formTitle: url.searchParams.get('form_title') ?? undefined,
     formId: url.searchParams.get('form_id') ?? undefined,
   }
-  // Client IP: first X-Forwarded-For hop (Railway terminates TLS upstream),
-  // falling back to X-Real-IP. Used for country (and so dial-code) derivation.
+  // Client IP: first PUBLIC X-Forwarded-For hop (Railway terminates TLS
+  // upstream; private/reserved hops are LB internals, not the caller),
+  // falling back to X-Real-IP. Used for country (and dial-code) derivation.
+  // Note the better signal — a visitor-IP FIELD on the form — is preferred
+  // downstream (NormalisedLead.clientIp): CF7 webhooks are POSTed by the
+  // WordPress server, so this transport IP is often the site server's.
+  const isPrivateIp = (v: string): boolean =>
+    /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|::1$|f[cd])/iu.test(v)
   const fwd = req.headers.get('x-forwarded-for')
-  const ip = (fwd ? fwd.split(',')[0]!.trim() : null) || req.headers.get('x-real-ip') || null
+  const hops = fwd ? fwd.split(',').map((h) => h.trim()).filter(Boolean) : []
+  const ip = hops.find((h) => !isPrivateIp(h)) || req.headers.get('x-real-ip') || hops[0] || null
   const headers = {
     origin: req.headers.get('origin'),
     referer: req.headers.get('referer'),

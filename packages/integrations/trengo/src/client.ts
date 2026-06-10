@@ -42,6 +42,17 @@ export interface TrengoCreateConversationInput {
   recipient: string
   body: string
   customFields?: Record<string, string>
+  /** Trengo media ids to attach to the first message (uploaded first via
+   *  `uploadMedia`). */
+  attachmentIds?: number[]
+}
+
+/** Our channel kind → Trengo's channel `type` tag (GET /channels). */
+const CHANNEL_TYPE_FOR: Record<TrengoCreateConversationInput['channel'], string> = {
+  whatsapp: 'WA_BUSINESS',
+  sms: 'SMS',
+  email: 'EMAIL',
+  web_chat: 'CHAT',
 }
 
 export interface TrengoCreateConversationResult {
@@ -96,6 +107,24 @@ export interface TrengoSendWaTemplateResult {
   messageId: number | null
 }
 
+/** A Trengo quick reply (canned response) as the API returns it. Field names
+ *  vary across versions, so everything but `id` is optional. */
+export interface TrengoQuickReplyResource {
+  id: number
+  title?: string | null
+  name?: string | null
+  message?: string | null
+  body?: string | null
+}
+
+/** A workspace channel (WhatsApp line, SMS sender, mailbox, …). `type` is
+ *  Trengo's channel type tag, e.g. WA_BUSINESS | SMS | EMAIL | CHAT. */
+export interface TrengoChannelResource {
+  id: number
+  name?: string | null
+  type?: string | null
+}
+
 export interface TrengoClient {
   readonly baseUrl: string
   readonly agentId: string
@@ -122,6 +151,10 @@ export interface TrengoClient {
   /** Send an approved WhatsApp template via /wa_sessions (valid outside the
    *  24-hour window — the same thing the Trengo UI does). */
   sendWaTemplate(input: TrengoSendWaTemplateInput): Promise<TrengoSendWaTemplateResult>
+  /** The workspace's quick replies (canned responses) — the SMS "templates". */
+  listQuickReplies(): Promise<TrengoQuickReplyResource[]>
+  /** The workspace's channels (WhatsApp lines, SMS senders, mailboxes). */
+  listChannels(): Promise<TrengoChannelResource[]>
   request<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
@@ -221,25 +254,36 @@ export async function createClientForAgent(
     return parsed as T
   }
 
+  // Hoisted so createConversation's fallback chain can reuse them without
+  // relying on `this` inside the returned literal.
+  async function sendMessageImpl(
+    input: TrengoSendMessageInput,
+  ): Promise<TrengoMessageResource> {
+    const res = await request<{ message: TrengoMessageResource }>(
+      'POST',
+      `/tickets/${input.ticketId}/messages`,
+      {
+        body: input.body,
+        channel: input.channel,
+        custom_fields: input.customFields ?? {},
+        ...(input.attachmentIds && input.attachmentIds.length > 0
+          ? { attachment_ids: input.attachmentIds }
+          : {}),
+      },
+    )
+    return res.message
+  }
+
+  async function listChannelsImpl(): Promise<TrengoChannelResource[]> {
+    const res = await request<{ data?: TrengoChannelResource[] }>('GET', '/channels')
+    return res.data ?? []
+  }
+
   return {
     baseUrl,
     agentId: opts.agentId,
     request,
-    async sendMessage(input) {
-      const res = await request<{ message: TrengoMessageResource }>(
-        'POST',
-        `/tickets/${input.ticketId}/messages`,
-        {
-          body: input.body,
-          channel: input.channel,
-          custom_fields: input.customFields ?? {},
-          ...(input.attachmentIds && input.attachmentIds.length > 0
-            ? { attachment_ids: input.attachmentIds }
-            : {}),
-        },
-      )
-      return res.message
-    },
+    sendMessage: sendMessageImpl,
     async assignTicket(ticketId, assigneeUserId) {
       const res = await request<{ ticket: TrengoTicketResource }>(
         'PATCH',
@@ -315,24 +359,92 @@ export async function createClientForAgent(
       return { id: media.id }
     },
     async createConversation(input) {
-      // Start a new conversation. Trengo creates the ticket implicitly when a
-      // first outbound message is sent to a recipient on a channel. The exact
-      // payload shape varies by Trengo plan/version — kept here so a fix is a
-      // one-line change. We embed our custom_fields for echo reconciliation.
-      const res = await request<{
-        ticket?: { id: number }
-        message?: { id: number; ticket_id?: number }
-        data?: { ticket_id?: number; id?: number }
-      }>('POST', '/messages', {
-        channel: input.channel,
-        recipient: input.recipient,
-        body: input.body,
-        custom_fields: input.customFields ?? {},
+      // Start a new conversation. Two strategies, in order:
+      //
+      //  (1) POST /messages with our compact shape. Some Trengo versions
+      //      accept this directly.
+      //  (2) The documented chain when (1) is rejected with a 4xx: resolve the
+      //      workspace channel (GET /channels), upsert the channel contact by
+      //      identifier (POST /channels/{id}/contacts — Trengo upserts on the
+      //      identifier so this never duplicates), create the ticket
+      //      (POST /tickets {channel_id, contact_id}), then send the first
+      //      message on it (POST /tickets/{id}/messages — the same documented
+      //      endpoint every reply already uses).
+      //
+      // Both are kept here so a correction is local; the chain endpoints are
+      // pinned by client.test.ts and listed in the README's assumed table.
+      try {
+        const res = await request<{
+          ticket?: { id: number }
+          message?: { id: number; ticket_id?: number }
+          data?: { ticket_id?: number; id?: number }
+        }>('POST', '/messages', {
+          channel: input.channel,
+          recipient: input.recipient,
+          body: input.body,
+          custom_fields: input.customFields ?? {},
+        })
+        const ticketId =
+          res.ticket?.id ?? res.message?.ticket_id ?? res.data?.ticket_id ?? 0
+        const messageId = res.message?.id ?? res.data?.id ?? null
+        if (ticketId) return { ticketId, messageId }
+        // Accepted but no ticket id → fall through to the explicit chain.
+      } catch (err) {
+        // Only fall back on a client-side rejection (wrong shape / unknown
+        // route). 5xx / auth problems propagate — retrying a different shape
+        // would not help and hides the real error.
+        const status = err instanceof TrengoApiError ? err.status : 0
+        if (!(status >= 400 && status < 500)) throw err
+      }
+
+      // (2) Documented chain.
+      const channels = await listChannelsImpl()
+      const wanted = CHANNEL_TYPE_FOR[input.channel]
+      const channelRow =
+        channels.find((c) => (c.type ?? '').toUpperCase() === wanted) ??
+        channels.find((c) => (c.type ?? '').toUpperCase().includes(wanted))
+      if (!channelRow) {
+        throw new TrengoApiError(404, '/channels', {
+          reason: `No ${input.channel} channel found in the Trengo workspace`,
+        })
+      }
+
+      const contactRes = await request<{
+        data?: { id?: number }
+        id?: number
+      }>('POST', `/channels/${channelRow.id}/contacts`, {
+        identifier: input.recipient,
       })
-      const ticketId =
-        res.ticket?.id ?? res.message?.ticket_id ?? res.data?.ticket_id ?? 0
-      const messageId = res.message?.id ?? res.data?.id ?? null
-      return { ticketId, messageId }
+      const trengoContactId = contactRes.data?.id ?? contactRes.id
+      if (!trengoContactId) {
+        throw new TrengoApiError(502, `/channels/${channelRow.id}/contacts`, {
+          reason: 'no contact id returned',
+        })
+      }
+
+      const ticketRes = await request<{
+        data?: { id?: number }
+        ticket?: { id?: number }
+        id?: number
+      }>('POST', '/tickets', {
+        channel_id: channelRow.id,
+        contact_id: trengoContactId,
+      })
+      const ticketId = ticketRes.data?.id ?? ticketRes.ticket?.id ?? ticketRes.id
+      if (!ticketId) {
+        throw new TrengoApiError(502, '/tickets', { reason: 'no ticket id returned' })
+      }
+
+      const message = await sendMessageImpl({
+        ticketId,
+        body: input.body,
+        channel: input.channel,
+        ...(input.customFields ? { customFields: input.customFields } : {}),
+        ...(input.attachmentIds && input.attachmentIds.length > 0
+          ? { attachmentIds: input.attachmentIds }
+          : {}),
+      })
+      return { ticketId, messageId: message.id ?? null }
     },
     async listWaTemplates() {
       // Trengo paginates; one page covers an ops team's approved templates.
@@ -363,5 +475,15 @@ export async function createClientForAgent(
       const messageId = res.message?.id ?? res.data?.id ?? null
       return { ticketId, messageId }
     },
+    async listQuickReplies() {
+      // Trengo's canned responses — surfaced as the SMS "templates". Rows come
+      // wrapped under `data`; one page covers an ops team's catalogue.
+      const res = await request<{ data?: TrengoQuickReplyResource[] }>(
+        'GET',
+        '/quick_replies',
+      )
+      return res.data ?? []
+    },
+    listChannels: listChannelsImpl,
   }
 }

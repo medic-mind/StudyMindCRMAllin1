@@ -1086,13 +1086,25 @@ async function markFailed(interactionId: string, err: unknown): Promise<void> {
 
   const row = await db.interaction.findUnique({
     where: { id: interactionId },
-    select: { payload: true },
+    select: { payload: true, summary: true },
   })
   const existingPayload = (row?.payload as Record<string, unknown> | null) ?? {}
+
+  // Make the failure VISIBLE: the summary is what every list/timeline shows,
+  // and "(sending)" forever was indistinguishable from a hung send. Status
+  // stays `pending_send` so the retry cron still picks the row up — the
+  // summary flips back to "… sent" if a later attempt succeeds.
+  const failedSummary = row?.summary
+    ? row.summary
+        .replace(/\((sending|failed[^)]*)\)\s*$/i, '')
+        .trimEnd()
+        .concat(' (failed — will retry)')
+    : null
 
   await db.interaction.update({
     where: { id: interactionId },
     data: {
+      ...(failedSummary ? { summary: failedSummary } : {}),
       payload: {
         ...existingPayload,
         status: 'pending_send',
@@ -1101,4 +1113,36 @@ async function markFailed(interactionId: string, err: unknown): Promise<void> {
       },
     },
   })
+}
+
+// -----------------------------------------------------------------------------
+// Quick replies — Trengo's canned responses, used as the SMS "templates"
+// (WhatsApp has the approved HSM templates above; SMS has no platform
+// template requirement, so Trengo's own quick-reply catalogue is the
+// equivalent the team already maintains in Trengo).
+// -----------------------------------------------------------------------------
+
+export interface TrengoQuickReply {
+  id: number
+  title: string
+  body: string
+}
+
+export async function listTrengoQuickReplies(
+  agentId: string,
+  requestId: string,
+): Promise<TrengoQuickReply[]> {
+  const client = await createClientForAgent({
+    agentId,
+    requestId,
+    purpose: 'trengo.list_quick_replies',
+  })
+  const rows = await client.listQuickReplies()
+  return rows
+    .map((r) => ({
+      id: r.id,
+      title: r.title ?? r.name ?? `Quick reply ${r.id}`,
+      body: r.message ?? r.body ?? '',
+    }))
+    .filter((r) => r.body.trim().length > 0)
 }
