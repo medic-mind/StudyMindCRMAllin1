@@ -363,12 +363,15 @@ export default async function AircallReportPage({
   const canManage = role === 'ceo' || role === 'senior_manager' || role === 'manager'
 
   const caller = await createServerCaller()
-  const data = await caller.reports.aircall.summary({
-    from: period.from,
-    to: period.to,
-    direction,
-    provider,
-  })
+  const [data, complaints] = await Promise.all([
+    caller.reports.aircall.summary({
+      from: period.from,
+      to: period.to,
+      direction,
+      provider,
+    }),
+    caller.complaint.periodCounts({ from: period.from, to: period.to }),
+  ])
 
   const presets = buildPeriodPresets()
   const activePreset = presets.find(
@@ -546,7 +549,7 @@ export default async function AircallReportPage({
           </Card>
 
           {/* Headline KPIs — always visible above the tabs. */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-7">
             <KpiTile
               label="Total calls"
               value={String(data.kpis.total)}
@@ -586,6 +589,12 @@ export default async function AircallReportPage({
               label="Talk time"
               value={fmtDuration(data.kpis.totalTalkSec)}
               delta={fmtDuration(data.deltas.totalTalkSec)}
+            />
+            <KpiTile
+              label="Complaints"
+              value={String(complaints.activeBacklog)}
+              hint={`${complaints.openedInPeriod} opened · open now`}
+              tone={complaints.activeBacklog > 0 ? 'danger' : 'neutral'}
             />
           </div>
 

@@ -128,6 +128,25 @@ export const complaintRouter = router({
     })
   }),
 
+  /** Live backlog + opened-in-period — for the report KPI strips (Aircall /
+   *  Finance). `activeBacklog` is a "now" figure; `openedInPeriod` tracks the
+   *  report's period selector so the tile responds to it. */
+  periodCounts: protectedProcedure
+    .input(z.object({ from: z.date(), to: z.date() }))
+    .query(async ({ ctx, input }) => {
+      const to = new Date(input.to)
+      to.setUTCHours(23, 59, 59, 999)
+      const [activeBacklog, openedInPeriod] = await Promise.all([
+        ctx.db.complaint.count({
+          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] } },
+        }),
+        ctx.db.complaint.count({
+          where: { deletedAt: null, createdAt: { gte: input.from, lte: to } },
+        }),
+      ])
+      return { activeBacklog, openedInPeriod }
+    }),
+
   get: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {

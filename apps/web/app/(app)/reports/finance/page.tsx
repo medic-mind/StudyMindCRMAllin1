@@ -25,10 +25,13 @@ export default async function FinanceReportPage({
   const sp = await searchParams
   const period = parsePeriod(sp)
   const caller = await createServerCaller()
-  const data = await caller.reports.finance.summary({
-    from: period.from,
-    to: period.to,
-  })
+  const [data, complaints] = await Promise.all([
+    caller.reports.finance.summary({
+      from: period.from,
+      to: period.to,
+    }),
+    caller.complaint.periodCounts({ from: period.from, to: period.to }),
+  ])
 
   const fmtPence = (m: number) => fmtMoney(m)
   const series = [
@@ -87,7 +90,7 @@ export default async function FinanceReportPage({
             />
           </section>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi label="Money in" value={fmtMoney(data.moneyInMinor)} tone="info" />
             <Kpi
               label="Reverted (late failures)"
@@ -107,6 +110,12 @@ export default async function FinanceReportPage({
                   ? '—'
                   : `${Math.round(data.reconciliationLag.p50Sec)}s`
               } · n=${data.reconciliationLag.sampleSize}`}
+            />
+            <Kpi
+              label="Active complaints"
+              value={String(complaints.activeBacklog)}
+              tone={complaints.activeBacklog > 0 ? 'danger' : 'neutral'}
+              hint={`${complaints.openedInPeriod} opened this period`}
             />
           </div>
 
@@ -183,7 +192,7 @@ function Kpi({
 }: {
   label: string
   value: string
-  tone: 'info' | 'warn' | 'neutral'
+  tone: 'info' | 'warn' | 'danger' | 'neutral'
   hint?: string
 }) {
   const accent =
@@ -191,7 +200,9 @@ function Kpi({
       ? 'text-primary-700'
       : tone === 'warn'
         ? 'text-amber-700'
-        : 'text-neutral-900'
+        : tone === 'danger'
+          ? 'text-rose-700'
+          : 'text-neutral-900'
   return (
     <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
       <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
