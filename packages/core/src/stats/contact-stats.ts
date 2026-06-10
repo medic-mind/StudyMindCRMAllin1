@@ -54,3 +54,34 @@ export async function loadContactCommsCounts(
 
   return out
 }
+
+// Per-contact ACTIVE-complaint counts for the list views (Contacts table +
+// at-risk dashboard). "Active" mirrors the Complaint schema + the complaints
+// queue: open | in_progress (resolved/dismissed are excluded). One batched
+// groupBy keyed on contactId covers a whole page.
+const ACTIVE_COMPLAINT_STATUSES = ['open', 'in_progress'] as const
+
+export async function loadContactComplaintCounts(
+  db: Db,
+  contactIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (contactIds.length === 0) return out
+  for (const id of contactIds) out.set(id, 0)
+
+  const groups = await db.complaint.groupBy({
+    by: ['contactId'],
+    where: {
+      contactId: { in: contactIds },
+      deletedAt: null,
+      status: { in: [...ACTIVE_COMPLAINT_STATUSES] },
+    },
+    _count: { _all: true },
+  })
+
+  for (const row of groups) {
+    out.set(row.contactId, row._count._all)
+  }
+
+  return out
+}

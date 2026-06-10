@@ -121,6 +121,7 @@ export function toContactSummary(
   row: ContactSummaryRow,
   counts: ContactCommsCounts = NO_COUNTS,
   now: Date = new Date(),
+  complaintCount = 0,
 ): ContactSummary {
   const family = row.familyMembers[0]?.family ?? null
   const last = row.interactions[0]?.occurredAt ?? null
@@ -155,6 +156,7 @@ export function toContactSummary(
     callCount: counts.callCount,
     emailCount: counts.emailCount,
     textCount: counts.textCount,
+    complaintCount,
     labels: (row.labels ?? []).map((l) => l.label),
     riskLevel: risk.level,
     riskScore: risk.score,

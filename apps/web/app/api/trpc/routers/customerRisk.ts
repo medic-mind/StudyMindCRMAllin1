@@ -16,6 +16,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import { deriveHoursRisk, type HoursRiskLevel } from '@studymind/core/contact'
+import { loadContactComplaintCounts } from '@studymind/core/stats'
 
 import {
   auditedProcedure,
@@ -111,6 +112,13 @@ export const customerRiskRouter = router({
           .map((g) => [g.contactId, g._count._all]),
       )
 
+      // Active complaints for the scanned customers (open | in_progress), so the
+      // dashboard can surface "customer with hours at risk AND a live complaint".
+      const complaintByContact = await loadContactComplaintCounts(
+        ctx.db,
+        rows.map((r) => r.id),
+      )
+
       const minRank = LEVEL_RANK[input.minLevel]
       const scored = rows
         .map((r) => {
@@ -146,6 +154,7 @@ export const customerRiskRouter = router({
             reviewStatus: (r.riskReview?.status as 'flagged' | 'dismissed' | undefined) ?? null,
             reviewNote: r.riskReview?.note ?? null,
             openTaskCount: openTaskByContact.get(r.id) ?? 0,
+            complaintCount: complaintByContact.get(r.id) ?? 0,
           }
         })
         .filter((r) => {

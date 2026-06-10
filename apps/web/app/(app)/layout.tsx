@@ -119,6 +119,7 @@ function buildNav(role: Role): NavItem[] {
       label: 'Reports',
       children: [
         { href: '/reports/aircall', label: 'Aircall' },
+        { href: '/reports/complaints', label: 'Complaints' },
         { href: '/reports/finance', label: 'Finance' },
         { href: '/reports/operations', label: 'Operations' },
         { href: '/reports/retention', label: 'Retention' },

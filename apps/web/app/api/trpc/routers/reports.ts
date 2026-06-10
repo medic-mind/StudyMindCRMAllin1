@@ -976,4 +976,109 @@ export const reportsRouter = router({
         }),
     }),
   }),
+
+  // Complaints analytics (CLAUDE.md §27). Period-scoped on complaints OPENED in
+  // the window, plus a live standing-backlog snapshot and the customers with the
+  // most active complaints. "Active" = open | in_progress (mirrors the queue).
+  complaints: router({
+    summary: protectedProcedure.input(PeriodInput).query(async ({ ctx, input }) => {
+      assertReports(requireUser(ctx))
+      const from = input.from
+      const periodTo = endOfUtcDay(input.to)
+      const ACTIVE = ['open', 'in_progress'] as const
+
+      const [activeBacklog, openedRows, resolvedRows, activeGroups] = await Promise.all([
+        ctx.db.complaint.count({ where: { deletedAt: null, status: { in: [...ACTIVE] } } }),
+        ctx.db.complaint.findMany({
+          where: { deletedAt: null, createdAt: { gte: from, lte: periodTo } },
+          select: { status: true, severity: true, category: true, createdAt: true },
+          take: 20_000,
+        }),
+        ctx.db.complaint.findMany({
+          where: { deletedAt: null, resolvedAt: { gte: from, lte: periodTo } },
+          select: { createdAt: true, resolvedAt: true },
+          take: 20_000,
+        }),
+        ctx.db.complaint.groupBy({
+          by: ['contactId'],
+          where: { deletedAt: null, status: { in: [...ACTIVE] } },
+          _count: { _all: true },
+        }),
+      ])
+
+      const openedInPeriod = openedRows.length
+      const resolvedInPeriod = resolvedRows.length
+      const resolutionHours = resolvedRows
+        .map((r) =>
+          r.resolvedAt ? (r.resolvedAt.getTime() - r.createdAt.getTime()) / 3_600_000 : null,
+        )
+        .filter((n): n is number => n != null && n >= 0)
+      const avgResolutionHours = resolutionHours.length
+        ? Math.round((resolutionHours.reduce((s, n) => s + n, 0) / resolutionHours.length) * 10) /
+          10
+        : null
+
+      function isoDay(d: Date): string {
+        const y = d.getUTCFullYear()
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+        const day = String(d.getUTCDate()).padStart(2, '0')
+        return `${y}-${m}-${day}`
+      }
+      const days: string[] = []
+      const cursor = new Date(from)
+      cursor.setUTCHours(0, 0, 0, 0)
+      while (cursor <= periodTo) {
+        days.push(isoDay(cursor))
+        cursor.setUTCDate(cursor.getUTCDate() + 1)
+      }
+      const openedByDay = new Map<string, number>(days.map((d) => [d, 0]))
+
+      const byStatus = { open: 0, in_progress: 0, resolved: 0, dismissed: 0 }
+      const bySeverity = { low: 0, medium: 0, high: 0 }
+      const byCategoryMap = new Map<string, number>()
+      for (const r of openedRows) {
+        const k = isoDay(r.createdAt)
+        if (openedByDay.has(k)) openedByDay.set(k, (openedByDay.get(k) ?? 0) + 1)
+        if (r.status in byStatus) byStatus[r.status as keyof typeof byStatus] += 1
+        if (r.severity in bySeverity) bySeverity[r.severity as keyof typeof bySeverity] += 1
+        const cat = r.category?.trim() || 'Uncategorised'
+        byCategoryMap.set(cat, (byCategoryMap.get(cat) ?? 0) + 1)
+      }
+      const byCategory = [...byCategoryMap.entries()]
+        .map(([category, count]) => ({ category, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8)
+
+      const topGroups = activeGroups
+        .map((g) => ({ contactId: g.contactId, count: g._count._all }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8)
+      const topContacts = topGroups.length
+        ? await ctx.db.contact.findMany({
+            where: { id: { in: topGroups.map((g) => g.contactId) } },
+            select: { id: true, firstName: true, lastName: true, email: true },
+          })
+        : []
+      const nameById = new Map(
+        topContacts.map((c) => [
+          c.id,
+          [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || c.email || 'Contact',
+        ]),
+      )
+      const topCustomers = topGroups.map((g) => ({
+        id: g.contactId,
+        name: nameById.get(g.contactId) ?? 'Contact',
+        activeCount: g.count,
+      }))
+
+      return {
+        kpis: { activeBacklog, openedInPeriod, resolvedInPeriod, avgResolutionHours },
+        daily: { labels: days, opened: days.map((d) => openedByDay.get(d) ?? 0) },
+        byStatus,
+        bySeverity,
+        byCategory,
+        topCustomers,
+      }
+    }),
+  }),
 })

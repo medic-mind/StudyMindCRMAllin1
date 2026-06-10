@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest'
 
-import { loadContactCommsCounts } from './contact-stats'
+import { loadContactCommsCounts, loadContactComplaintCounts } from './contact-stats'
 
 interface FakeGroup {
   contactId: string | null
@@ -67,5 +67,58 @@ describe('loadContactCommsCounts', () => {
       ['a'],
     )
     expect(out.get('a')?.callCount).toBe(0)
+  })
+})
+
+interface FakeComplaintGroup {
+  contactId: string
+  _count: { _all: number }
+}
+
+function fakeComplaintDb(groups: FakeComplaintGroup[]) {
+  return {
+    complaint: {
+      groupBy: vi.fn().mockResolvedValue(groups),
+    },
+  } as unknown as Parameters<typeof loadContactComplaintCounts>[0]
+}
+
+describe('loadContactComplaintCounts', () => {
+  it('returns an empty map for no input', async () => {
+    const out = await loadContactComplaintCounts(fakeComplaintDb([]), [])
+    expect(out.size).toBe(0)
+  })
+
+  it('seeds every requested contact with zero', async () => {
+    const out = await loadContactComplaintCounts(fakeComplaintDb([]), ['a', 'b'])
+    expect(out.get('a')).toBe(0)
+    expect(out.get('b')).toBe(0)
+  })
+
+  it('maps each contact to its active-complaint count', async () => {
+    const out = await loadContactComplaintCounts(
+      fakeComplaintDb([
+        { contactId: 'a', _count: { _all: 3 } },
+        { contactId: 'b', _count: { _all: 1 } },
+      ]),
+      ['a', 'b'],
+    )
+    expect(out.get('a')).toBe(3)
+    expect(out.get('b')).toBe(1)
+  })
+
+  it('filters the query to active statuses (open | in_progress)', async () => {
+    const db = fakeComplaintDb([])
+    await loadContactComplaintCounts(db, ['a'])
+    const groupBy = (db as unknown as { complaint: { groupBy: ReturnType<typeof vi.fn> } })
+      .complaint.groupBy
+    expect(groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          deletedAt: null,
+          status: { in: ['open', 'in_progress'] },
+        }),
+      }),
+    )
   })
 })

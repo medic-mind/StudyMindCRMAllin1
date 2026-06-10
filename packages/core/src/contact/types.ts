@@ -103,6 +103,8 @@ export const ContactSummary = z.object({
   callCount: z.number(),
   emailCount: z.number(),
   textCount: z.number(),
+  /** Active (open | in_progress) complaints logged against this customer. */
+  complaintCount: z.number().default(0),
   /** Applied shared-catalogue labels (custom tags). */
   labels: LabelRef.array(),
   /** Derived hours-risk level + score (CLAUDE.md §6.4 pattern). `none` when

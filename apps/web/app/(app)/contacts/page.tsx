@@ -241,6 +241,7 @@ export default async function ContactsPage({
             callCount: c.callCount,
             emailCount: c.emailCount,
             textCount: c.textCount,
+            complaintCount: c.complaintCount,
             lastInteractionAt: c.lastInteractionAt,
             createdAt: c.createdAt,
           }))}

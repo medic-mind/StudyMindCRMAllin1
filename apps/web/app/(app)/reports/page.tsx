@@ -12,6 +12,12 @@ const reports = [
       'Call volume, peak times and agent performance — inbound/outbound, missed and voicemail. Export to PDF.',
   },
   {
+    href: '/reports/complaints',
+    title: 'Complaints',
+    description:
+      'Open backlog, complaints raised and resolved over time, severity, theme and the customers with the most open complaints.',
+  },
+  {
     href: '/reports/finance',
     title: 'Finance',
     description:

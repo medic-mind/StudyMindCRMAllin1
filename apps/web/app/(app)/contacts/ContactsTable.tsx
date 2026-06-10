@@ -72,6 +72,7 @@ interface ContactRow {
   callCount: number
   emailCount: number
   textCount: number
+  complaintCount: number
   lastInteractionAt: Date | string | null
   createdAt: Date | string
 }
@@ -593,6 +594,14 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
                                 title="Hours at risk of expiring unused"
                               >
                                 {RISK_BADGE[c.riskLevel].label}
+                              </span>
+                            )}
+                            {c.complaintCount > 0 && (
+                              <span
+                                className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200"
+                                title={`${c.complaintCount} active complaint${c.complaintCount === 1 ? '' : 's'}`}
+                              >
+                                {c.complaintCount} complaint{c.complaintCount === 1 ? '' : 's'}
                               </span>
                             )}
                             {c.companies.slice(0, 3).map((cc) => (

@@ -50,7 +50,7 @@ import {
   isMinorByDob,
 } from '@studymind/core/contact'
 
-import { loadContactCommsCounts } from '@studymind/core/stats'
+import { loadContactCommsCounts, loadContactComplaintCounts } from '@studymind/core/stats'
 
 import { mergeContacts } from '@/lib/services/contact-merge'
 import { findMergeCandidates } from '@/lib/services/merge-suggestions'
@@ -288,13 +288,15 @@ export const contactRouter = router({
 
       const hasMore = !usingOffset && rows.length > input.limit
       const sliced = hasMore ? rows.slice(0, input.limit) : rows
-      // One batched groupBy for the whole page's call/text/email counts.
-      const counts = await loadContactCommsCounts(
-        ctx.db,
-        sliced.map((r) => r.id),
-      )
+      const pageIds = sliced.map((r) => r.id)
+      // Two batched groupBys for the whole page: comms counts + active
+      // complaints. One extra query each, regardless of page size.
+      const [counts, complaints] = await Promise.all([
+        loadContactCommsCounts(ctx.db, pageIds),
+        loadContactComplaintCounts(ctx.db, pageIds),
+      ])
       const items: ContactSummary[] = sliced.map((r) =>
-        toContactSummary(r, counts.get(r.id)),
+        toContactSummary(r, counts.get(r.id), new Date(), complaints.get(r.id) ?? 0),
       )
       const last = sliced[sliced.length - 1]
       const nextCursor =
