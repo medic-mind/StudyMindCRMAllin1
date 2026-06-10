@@ -97,7 +97,14 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
   }
 
   return {
-    async slack({ body, contactName, contactId, slackChannelId }): Promise<ChannelResult> {
+    async slack({
+      body,
+      contactName,
+      contactId,
+      slackChannelId,
+      outcome,
+      variant,
+    }): Promise<ChannelResult> {
       // Resolve the target channel + its deep-link action buttons. Order:
       // (1) the channel the agent picked (slackChannelId), (2) the configured
       // default SlackChannelOption, (3) the legacy env channel as a fallback so
@@ -120,11 +127,27 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
 
       const contactUrl = `${appUrl()}/contacts/${contactId}`
       const buttons = parseActionButtons(option?.actionButtons)
-      const blocks = buildCallSummarySlackBlocks({ contactName, body, contactUrl, buttons })
+      // Phone + email ride the headline so the VA team can act without
+      // opening the CRM (the internal-note layout).
+      const contactRow = await db.contact.findFirst({
+        where: { id: contactId, deletedAt: null },
+        select: { phoneE164: true, email: true },
+      })
+      const enriched = {
+        contactName,
+        body,
+        contactUrl,
+        buttons,
+        contactPhone: contactRow?.phoneE164 ?? null,
+        contactEmail: contactRow?.email ?? null,
+        outcome: outcome ?? null,
+        variant: variant ?? ('summary' as const),
+      }
+      const blocks = buildCallSummarySlackBlocks(enriched)
 
       const { postAlert } = await import('@studymind/integration-slack/outbound')
       const result = await postAlert({
-        message: buildCallSummarySlackText({ contactName, body, contactUrl }),
+        message: buildCallSummarySlackText(enriched),
         blocks,
         idempotencyKey: `call-summary:${contactId}:${requestId}`,
         channelId,

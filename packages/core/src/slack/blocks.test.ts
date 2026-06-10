@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildCallSummarySlackBlocks, resolveButtonUrl } from './blocks'
+import { buildCallSummaryHeadline, buildCallSummarySlackBlocks, resolveButtonUrl } from './blocks'
 
 describe('resolveButtonUrl', () => {
   it('substitutes the contactUrl placeholder', () => {
@@ -49,5 +49,46 @@ describe('buildCallSummarySlackBlocks', () => {
     const blocks = buildCallSummarySlackBlocks({ ...base, buttons })
     const actions = blocks[1] as { elements: unknown[] }
     expect(actions.elements).toHaveLength(5)
+  })
+})
+
+describe('buildCallSummarySlackBlocks — VA internal-note layout', () => {
+  it('renders the outcome — name — phone — email headline + pending tasks section', () => {
+    const blocks = buildCallSummarySlackBlocks({
+      contactName: 'Jane Smith',
+      body: '- Send the UCAT pack\n- Chase payment',
+      contactUrl: 'https://crm.example/contacts/c1',
+      buttons: [],
+      contactPhone: '+447700900123',
+      contactEmail: 'jane@example.com',
+      outcome: 'answered',
+      variant: 'internal_note',
+    }) as Array<{ type: string; text?: { text: string } }>
+
+    expect(blocks[0]!.text!.text).toBe(
+      '*Call completed — Jane Smith — +447700900123 — jane@example.com*',
+    )
+    expect(blocks[1]!.type).toBe('divider')
+    expect(blocks[2]!.text!.text).toContain('*Pending tasks for VA team*')
+    expect(blocks[2]!.text!.text).toContain('- Send the UCAT pack')
+  })
+
+  it('drops missing identity parts from the headline and maps outcomes', () => {
+    expect(
+      buildCallSummaryHeadline({ contactName: 'Jane', outcome: 'voicemail' }),
+    ).toBe('Voicemail left — Jane')
+    expect(
+      buildCallSummaryHeadline({ contactName: 'Jane', contactPhone: null, outcome: 'no_answer' }),
+    ).toBe('No answer — Jane')
+  })
+
+  it('keeps the classic layout for the summary variant', () => {
+    const blocks = buildCallSummarySlackBlocks({
+      contactName: 'Jane Smith',
+      body: 'Spoke about UCAT.',
+      contactUrl: 'https://crm.example/contacts/c1',
+      buttons: [],
+    }) as Array<{ type: string; text?: { text: string } }>
+    expect(blocks[0]!.text!.text).toContain('*Call summary — Jane Smith*')
   })
 })
