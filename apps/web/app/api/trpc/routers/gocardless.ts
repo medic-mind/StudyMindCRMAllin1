@@ -19,6 +19,7 @@ import { BackfillAlreadyRunningError, startBackfill } from '@studymind/core/back
 import {
   createMandateSetupLink,
   linkGcCustomer,
+  monthlyRunRateMinor,
   revokeSetupLink,
 } from '@studymind/core/finance'
 import { GocardlessApiError } from '@studymind/integration-gocardless/client'
@@ -263,29 +264,113 @@ const MandateListInput = z.object({
 const CHARGEABLE_MANDATE_STATES = ['pending_submission', 'submitted', 'active'] as const
 
 export const gocardlessRouter = router({
+  // Master dashboard for the Direct Debits section (ADR 0038). One query
+  // feeds the whole Overview tab: headline KPIs, the needs-attention queues,
+  // and the upcoming-collections list.
   overview: protectedProcedure.query(async ({ ctx }) => {
     assertFinanceRole(requireUser(ctx))
-    const [subsByStatus, customerTotal, customerUnlinked, mandateActive, collected] =
-      await Promise.all([
-        ctx.db.gcSubscription.groupBy({
-          by: ['status'],
-          where: { deletedAt: null },
-          _count: { _all: true },
-        }),
-        ctx.db.gcCustomer.count({ where: { deletedAt: null } }),
-        ctx.db.gcCustomer.count({ where: { deletedAt: null, contactId: null } }),
-        ctx.db.gcMandate.count({ where: { deletedAt: null, state: 'active' } }),
-        ctx.db.gcPayment.aggregate({
-          where: { deletedAt: null, status: { in: ['confirmed', 'paid_out'] } },
-          _sum: { amountMinor: true },
-          _count: { _all: true },
-        }),
-      ])
+    const now = new Date()
+    const cutoff30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+
+    const [
+      subsByStatus,
+      customerTotal,
+      customerUnlinked,
+      mandateActive,
+      collected,
+      collected30d,
+      failed30d,
+      inFlight,
+      activePlans,
+      setupLinksOutstanding,
+      upcomingRows,
+      failureRows,
+    ] = await Promise.all([
+      ctx.db.gcSubscription.groupBy({
+        by: ['status'],
+        where: { deletedAt: null },
+        _count: { _all: true },
+      }),
+      ctx.db.gcCustomer.count({ where: { deletedAt: null } }),
+      ctx.db.gcCustomer.count({ where: { deletedAt: null, contactId: null } }),
+      ctx.db.gcMandate.count({ where: { deletedAt: null, state: 'active' } }),
+      ctx.db.gcPayment.aggregate({
+        where: { deletedAt: null, status: { in: ['confirmed', 'paid_out'] } },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
+      ctx.db.gcPayment.aggregate({
+        where: {
+          deletedAt: null,
+          status: { in: ['confirmed', 'paid_out'] },
+          chargeDate: { gte: cutoff30d },
+        },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
+      ctx.db.gcPayment.aggregate({
+        where: {
+          deletedAt: null,
+          status: { in: ['failed', 'charged_back'] },
+          chargeDate: { gte: cutoff30d },
+        },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
+      // Money in flight: collected from the bank but not yet settled/confirmed.
+      ctx.db.gcPayment.aggregate({
+        where: {
+          deletedAt: null,
+          status: { in: ['pending_customer_approval', 'pending_submission', 'submitted'] },
+        },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
+      ctx.db.gcSubscription.findMany({
+        where: { deletedAt: null, status: 'active' },
+        select: { amountMinor: true, intervalUnit: true, interval: true },
+      }),
+      ctx.db.mandateSetupLink.count({ where: { deletedAt: null, status: 'active' } }),
+      ctx.db.gcSubscription.findMany({
+        where: { deletedAt: null, status: 'active', nextChargeAt: { not: null } },
+        orderBy: { nextChargeAt: 'asc' },
+        take: 8,
+        select: {
+          gcSubscriptionId: true,
+          name: true,
+          currency: true,
+          amountMinor: true,
+          nextChargeAt: true,
+          nextChargeMinor: true,
+          gcCustomerId: true,
+        },
+      }),
+      ctx.db.gcPayment.findMany({
+        where: { deletedAt: null, status: { in: ['failed', 'charged_back'] } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 5,
+        select: {
+          gcPaymentId: true,
+          status: true,
+          amountMinor: true,
+          currency: true,
+          chargeDate: true,
+          description: true,
+          gcCustomerId: true,
+        },
+      }),
+    ])
+
+    const customers = await loadCustomerSummaries(ctx.db, [
+      ...upcomingRows.map((r) => r.gcCustomerId ?? ''),
+      ...failureRows.map((r) => r.gcCustomerId ?? ''),
+    ])
 
     const subscriptions: Record<string, number> = {}
     for (const row of subsByStatus) {
       subscriptions[row.status] = row._count._all
     }
+
     return {
       subscriptions,
       customers: { total: customerTotal, unlinked: customerUnlinked },
@@ -294,6 +379,37 @@ export const gocardlessRouter = router({
         totalMinor: collected._sum.amountMinor ?? 0,
         count: collected._count._all,
       },
+      collected30d: {
+        totalMinor: collected30d._sum.amountMinor ?? 0,
+        count: collected30d._count._all,
+      },
+      failed30d: {
+        totalMinor: failed30d._sum.amountMinor ?? 0,
+        count: failed30d._count._all,
+      },
+      inFlight: {
+        totalMinor: inFlight._sum.amountMinor ?? 0,
+        count: inFlight._count._all,
+      },
+      monthlyRunRateMinor: monthlyRunRateMinor(activePlans),
+      setupLinks: { outstanding: setupLinksOutstanding },
+      upcomingCharges: upcomingRows.map((r) => ({
+        gcSubscriptionId: r.gcSubscriptionId,
+        name: r.name,
+        currency: r.currency,
+        amountMinor: r.nextChargeMinor ?? r.amountMinor,
+        nextChargeAt: r.nextChargeAt,
+        customer: r.gcCustomerId ? (customers.get(r.gcCustomerId) ?? null) : null,
+      })),
+      recentFailures: failureRows.map((r) => ({
+        gcPaymentId: r.gcPaymentId,
+        status: r.status,
+        amountMinor: r.amountMinor,
+        currency: r.currency,
+        chargeDate: r.chargeDate,
+        description: r.description,
+        customer: r.gcCustomerId ? (customers.get(r.gcCustomerId) ?? null) : null,
+      })),
     }
   }),
 
