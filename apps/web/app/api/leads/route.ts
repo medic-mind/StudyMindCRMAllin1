@@ -97,10 +97,15 @@ async function handlePost(req: Request): Promise<Response> {
     formTitle: url.searchParams.get('form_title') ?? undefined,
     formId: url.searchParams.get('form_id') ?? undefined,
   }
+  // Client IP: first X-Forwarded-For hop (Railway terminates TLS upstream),
+  // falling back to X-Real-IP. Used for country (and so dial-code) derivation.
+  const fwd = req.headers.get('x-forwarded-for')
+  const ip = (fwd ? fwd.split(',')[0]!.trim() : null) || req.headers.get('x-real-ip') || null
   const headers = {
     origin: req.headers.get('origin'),
     referer: req.headers.get('referer'),
     host: req.headers.get('host'),
+    ip,
   }
 
   const rawInput: RawLeadInput = { fields: parsed.fields, meta, headers }

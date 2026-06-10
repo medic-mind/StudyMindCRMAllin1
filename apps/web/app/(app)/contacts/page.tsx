@@ -27,6 +27,9 @@ interface PageSearchParams {
   kind?: string
   bookingStatus?: string
   labels?: string
+  subjects?: string
+  country?: string
+  enquiry?: string
   hasHours?: string
   sortBy?: string
   sortDir?: string
@@ -72,7 +75,12 @@ interface CompanyOption {
 }
 
 function splitParam(raw?: string): string[] {
-  return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []
+  return raw
+    ? raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : []
 }
 
 export default async function ContactsPage({
@@ -104,6 +112,20 @@ export default async function ContactsPage({
   // population the risk system cares about.
   const hasHours = sp.hasHours === '1'
 
+  // Faceted B2C filters: subject (tagged on the contact, synced from the
+  // latest enquiry), country, and enquiry type ("Summer Camp", "UCAT", …).
+  const [subjects, facets] = await Promise.all([
+    caller.subject.list({}),
+    caller.contact.filterFacets(),
+  ])
+  const subjectIds = splitParam(sp.subjects).filter((id) => subjects.some((s) => s.id === id))
+  const countries = splitParam(sp.country).filter((c) =>
+    facets.countries.some((f) => f.value === c),
+  )
+  const enquiryCategories = splitParam(sp.enquiry).filter((c) =>
+    facets.enquiryCategories.includes(c),
+  )
+
   const sortBy = (SORT_FIELDS as ReadonlyArray<string>).includes(sp.sortBy ?? '')
     ? (sp.sortBy as (typeof SORT_FIELDS)[number])
     : 'createdAt'
@@ -123,6 +145,9 @@ export default async function ContactsPage({
     ...(kinds.length > 0 ? { kinds } : {}),
     ...(bookingStatuses.length > 0 ? { bookingStatuses } : {}),
     ...(labelIds.length > 0 ? { labelIds } : {}),
+    ...(subjectIds.length > 0 ? { subjectIds } : {}),
+    ...(countries.length > 0 ? { countries } : {}),
+    ...(enquiryCategories.length > 0 ? { enquiryCategories } : {}),
     ...(hasHours ? { minHoursBooked: 1 } : {}),
     sortBy,
     sortDir,
@@ -138,6 +163,9 @@ export default async function ContactsPage({
     ...(sp.kind ? { kind: sp.kind } : {}),
     ...(sp.bookingStatus ? { bookingStatus: sp.bookingStatus } : {}),
     ...(sp.labels ? { labels: sp.labels } : {}),
+    ...(sp.subjects ? { subjects: sp.subjects } : {}),
+    ...(sp.country ? { country: sp.country } : {}),
+    ...(sp.enquiry ? { enquiry: sp.enquiry } : {}),
     ...(sp.hasHours ? { hasHours: sp.hasHours } : {}),
     ...(sp.sortBy ? { sortBy: sp.sortBy } : {}),
     ...(sp.sortDir ? { sortDir: sp.sortDir } : {}),
@@ -157,6 +185,9 @@ export default async function ContactsPage({
               kinds={kinds}
               bookingStatuses={bookingStatuses}
               labelIds={labelIds}
+              subjectIds={subjectIds}
+              countries={countries}
+              enquiryCategories={enquiryCategories}
               hasHours={hasHours}
             />
             <QuickAddContactButton />
@@ -206,6 +237,33 @@ export default async function ContactsPage({
               }))}
             />
           )}
+          {subjects.length > 0 && (
+            <FacetedFilter
+              paramKey="subjects"
+              label="Subject"
+              multiple
+              options={subjects.map((s) => ({ value: s.id, label: s.name }))}
+            />
+          )}
+          {facets.enquiryCategories.length > 0 && (
+            <FacetedFilter
+              paramKey="enquiry"
+              label="Enquiry type"
+              multiple
+              options={facets.enquiryCategories.map((c) => ({ value: c, label: c }))}
+            />
+          )}
+          {facets.countries.length > 0 && (
+            <FacetedFilter
+              paramKey="country"
+              label="Country"
+              multiple
+              options={facets.countries.map((c) => ({
+                value: c.value,
+                label: `${c.value} (${c.count})`,
+              }))}
+            />
+          )}
           <ToggleFilter paramKey="hasHours" label="Has hours" />
           <Link
             href="/contacts/at-risk"
@@ -214,7 +272,17 @@ export default async function ContactsPage({
             At-risk customers
           </Link>
           <ClearFiltersButton
-            paramKeys={['q', 'company', 'kind', 'bookingStatus', 'labels', 'hasHours']}
+            paramKeys={[
+              'q',
+              'company',
+              'kind',
+              'bookingStatus',
+              'labels',
+              'subjects',
+              'country',
+              'enquiry',
+              'hasHours',
+            ]}
           />
           <div className="ml-auto flex items-center gap-2">
             <SortMenu options={SORT_OPTIONS} defaultValue="createdAt" />

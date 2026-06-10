@@ -7,6 +7,14 @@
 export * from './types'
 export { normaliseLead, normalisePhone, extractPreferredWhen, type RawLeadInput } from './normalise'
 export { classifyLead, FREE_RESOURCES_CATEGORY, type ClassifyOptions } from './classify'
+export {
+  asTypedPhoneFallback,
+  composePhoneE164,
+  findDialCountry,
+  inferPhoneE164,
+  DIAL_COUNTRIES,
+  type DialCountry,
+} from './dial-codes'
 export { londonWallToUtc } from './london-time'
 export { scoreLead, type ScoreSignals, type ScoreResult } from './score'
 export {

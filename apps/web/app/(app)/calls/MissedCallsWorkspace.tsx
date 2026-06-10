@@ -45,12 +45,47 @@ interface Counts {
   total: number
 }
 
+interface SyncHealth {
+  apiConfigured: boolean
+  lastSyncAt: string | Date | null
+  lastSyncSuccess: boolean | null
+  outboundInWindow: number
+  inboundInWindow: number
+}
+
 interface Props {
   items: Item[]
   counts: Counts
   filter: Filter
   days: number
   canAction: boolean
+  health: SyncHealth
+}
+
+/**
+ * Explains why "called back" detection can't work, when the data says it
+ * can't. Detection needs OUTBOUND calls to reach the CRM (a later outbound
+ * call to the same number clears the miss). If the window holds inbound calls
+ * but not a single outbound one, or the sync cron has never run / is stale,
+ * the problem is the Aircall feed — not the agent's callbacks.
+ */
+function syncProblem(h: SyncHealth, days: number): string | null {
+  if (!h.apiConfigured && !h.lastSyncAt) {
+    return 'The Aircall API is not configured (AIRCALL_API_ID / AIRCALL_API_TOKEN), so the 10-minute call sync is off. Callbacks made inside Aircall never reach the CRM, so they cannot clear missed calls. Add the API credentials in Railway, or check the Aircall webhook subscribes to outbound call events.'
+  }
+  if (h.lastSyncAt) {
+    const ageMin = (Date.now() - new Date(h.lastSyncAt).getTime()) / 60000
+    if (ageMin > 60) {
+      return `The Aircall call sync last ran ${Math.round(ageMin / 60)}h ago (it should run every 10 minutes). Recent calls — including your callbacks — are not being imported, so missed calls are not clearing. Check the worker service / Inngest.`
+    }
+    if (h.lastSyncSuccess === false) {
+      return 'The most recent Aircall call sync failed. Recent callbacks may not have been imported yet, so some missed calls will not have cleared. Check the worker logs.'
+    }
+  }
+  if (h.inboundInWindow > 0 && h.outboundInWindow === 0) {
+    return `No outbound calls have reached the CRM in the last ${days} days, while ${h.inboundInWindow} inbound calls have. "Called back" is detected from outbound calls, so nothing can clear. This usually means the Aircall webhook only delivers inbound events and the API sync is not running — check AIRCALL_API_ID / AIRCALL_API_TOKEN.`
+  }
+  return null
 }
 
 const STATE_LABEL: Record<State, string> = {
@@ -72,9 +107,10 @@ function fmtDateTime(d: string | Date): string {
   )
 }
 
-export function MissedCallsWorkspace({ items, counts, filter, days, canAction }: Props) {
+export function MissedCallsWorkspace({ items, counts, filter, days, canAction, health }: Props) {
   const router = useRouter()
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const problem = syncProblem(health, days)
 
   const onSettled = () => {
     setBusyKey(null)
@@ -102,6 +138,15 @@ export function MissedCallsWorkspace({ items, counts, filter, days, canAction }:
 
   return (
     <div className="space-y-4">
+      {problem ? (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <p className="font-semibold">Callbacks can&rsquo;t be detected right now</p>
+          <p className="mt-1">{problem}</p>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Filter">
           {chips.map((c) => {

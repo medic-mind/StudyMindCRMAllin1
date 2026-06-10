@@ -219,15 +219,31 @@ export function CallSummarySection({ cardId, canWrite }: Props) {
 
   async function draftFromCall() {
     setDrafting(true)
+    const hadBase = body.trim().length > 0
     try {
-      const result = await utils.card.callSummary.draftFromCall.fetch({ cardId })
+      // Send the current compose text (e.g. a clicked template) so the AI
+      // ENHANCES it with the call's facts rather than replacing it.
+      const result = await utils.card.callSummary.draftFromCall.fetch({
+        cardId,
+        baseText: body.trim() || undefined,
+      })
       setBody(result.text)
       if (result.outcomeHint) setOutcome(result.outcomeHint as Outcome)
-      toast.success(
-        result.source === 'transcript'
-          ? 'AI draft ready — edit before sending.'
-          : 'Draft scaffold ready — fill in the blanks (no call transcript yet).',
-      )
+      if (!result.aiUsed) {
+        toast.warning(
+          'AI is unavailable right now — your text was left unchanged. Ask an admin to check the AI provider key / budget (details are in the server logs).',
+        )
+      } else if (result.hadTranscript) {
+        toast.success(
+          hadBase
+            ? 'AI enhanced your draft with the call — review before sending.'
+            : 'AI draft from the call ready — edit before sending.',
+        )
+      } else {
+        toast.info(
+          'No transcript on the latest call (AI Assist may be off for that line) — AI drafted from the contact details instead; fill in the blanks.',
+        )
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not draft from call')
     } finally {

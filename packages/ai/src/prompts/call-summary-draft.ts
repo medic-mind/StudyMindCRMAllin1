@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { sanitiseUserContent } from '../sanitise'
 import { VOICE } from './style/voice'
 
-export const VERSION = '2026-06-10.1'
+export const VERSION = '2026-06-10.2'
 
 const SYSTEM_BASE = `
 ${VOICE}
@@ -58,17 +58,45 @@ export interface CallSummaryDraftPromptInput {
   interests?: ReadonlyArray<string>
   /** Outcome hint when known (answered / voicemail / no_answer). */
   outcomeHint?: 'answered' | 'voicemail' | 'no_answer'
+  /**
+   * The agent's current compose text — usually a saved template they clicked
+   * to prefill. When present the model ENHANCES this draft (keeps its
+   * structure, offers and links; personalises and completes it with facts
+   * from the transcript) instead of writing a fresh message from scratch.
+   */
+  baseText?: string
 }
 
 function firstNameOf(name: string): string {
   return name.trim().split(/\s+/)[0] ?? name.trim()
 }
 
+// Appended to the system prompt when the agent already has compose text (a
+// clicked template). The job flips from "write a message" to "enhance THIS
+// message" — the format rules above still apply, but the base draft's own
+// structure, offers and links win over the strict greeting+bullets shape.
+const ENHANCE_ADDENDUM = `
+
+The agent has already drafted a message (usually a saved template). Your job
+is to ENHANCE that draft, not replace it:
+- Keep its overall structure, any offers, prices, links, and sign-off exactly
+  as written — those are deliberate.
+- Personalise it: greet the customer by first name, reference what was
+  actually discussed on the call, and complete any blanks/placeholders
+  (___, <subject>, {{...}}) with facts from the transcript.
+- Where the transcript adds something material the draft is missing (their
+  exam date, the subject, what they asked us to do), weave it in briefly.
+- If the base draft's structure conflicts with the greeting+bullets format
+  above, the base draft's structure wins.
+- Never delete a link or an offer from the base draft. Never invent specifics.
+`.trimEnd()
+
 export function buildCallSummaryDraftPrompt(input: CallSummaryDraftPromptInput): {
   system: string
   user: string
 } {
   const safeTranscript = sanitiseUserContent(input.transcript ?? '').slice(0, 12_000)
+  const safeBase = sanitiseUserContent(input.baseText ?? '').slice(0, 6_000).trim()
   const outcome = input.outcomeHint ? `Outcome hint: ${input.outcomeHint}\n` : ''
   const caller = input.callerName ? sanitiseUserContent(firstNameOf(input.callerName)) : 'the agent'
   const interests =
@@ -78,15 +106,18 @@ export function buildCallSummaryDraftPrompt(input: CallSummaryDraftPromptInput):
   const transcriptBlock = safeTranscript
     ? `Transcript:\n"""\n${safeTranscript}\n"""`
     : 'Transcript: (none captured — produce the greeting and 4–5 fill-in bullets the agent can complete)'
+  const baseBlock = safeBase
+    ? `\nThe agent's current draft to enhance:\n"""\n${safeBase}\n"""\n`
+    : ''
   const user = `
 Customer first name: ${sanitiseUserContent(firstNameOf(input.contactName))}
 Agent (caller) first name: ${caller}
 ${interests}${outcome}
 ${transcriptBlock}
-
+${baseBlock}
 Message:
 `.trim()
-  return { system: SYSTEM_BASE, user }
+  return { system: safeBase ? SYSTEM_BASE + ENHANCE_ADDENDUM : SYSTEM_BASE, user }
 }
 
 /**

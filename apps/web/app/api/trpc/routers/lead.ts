@@ -168,6 +168,45 @@ export const leadRouter = router({
       }
     }),
 
+  /** Enquiry history for the contact page: every lead_enquiry Interaction on
+   * the contact, newest first, with the organised payload (site, form,
+   * subject, products, preferred time, message, IP/country). */
+  enquiriesForContact: protectedProcedure
+    .input(z.object({ contactId: z.string(), limit: z.number().int().min(1).max(100).default(25) }))
+    .query(async ({ ctx, input }) => {
+      requireUser(ctx)
+      const rows = await ctx.db.interaction.findMany({
+        where: { contactId: input.contactId, type: 'lead_enquiry' },
+        orderBy: { occurredAt: 'desc' },
+        take: input.limit,
+        select: { id: true, occurredAt: true, summary: true, payload: true },
+      })
+      return rows.map((r) => {
+        const p = (r.payload ?? {}) as Record<string, unknown>
+        const str = (k: string) => (typeof p[k] === 'string' ? (p[k] as string) : null)
+        const arr = (k: string) => (Array.isArray(p[k]) ? (p[k] as string[]) : [])
+        return {
+          id: r.id,
+          occurredAt: r.occurredAt,
+          summary: r.summary,
+          reenquiry: p['reenquiry'] === true,
+          site: str('site'),
+          formTitle: str('formTitle'),
+          subject: str('subject'),
+          board: str('board'),
+          categories: arr('categories'),
+          productTags: arr('productTags'),
+          preferredWhen: str('preferredWhen'),
+          message: str('message'),
+          aiSummary: str('aiSummary'),
+          phoneAsTyped: str('phoneAsTyped'),
+          ip: str('ip'),
+          countryCode: str('countryCode'),
+          score: typeof p['score'] === 'number' ? (p['score'] as number) : null,
+        }
+      })
+    }),
+
   stats: protectedProcedure.query(async ({ ctx }) => {
     requireUser(ctx)
     const grouped = await ctx.db.lead.groupBy({
@@ -208,6 +247,8 @@ export const leadRouter = router({
     return {
       ...toListItem(lead as unknown as LeadRow),
       referrer: lead.referrer,
+      ip: lead.ip,
+      countryCode: lead.countryCode,
       utm: lead.utm,
       classification: lead.classification,
       classifiedAt: lead.classifiedAt,

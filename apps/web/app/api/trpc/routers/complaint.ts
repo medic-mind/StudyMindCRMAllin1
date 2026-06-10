@@ -22,6 +22,20 @@ const StatusEnum = z.enum(['open', 'in_progress', 'resolved', 'dismissed'])
 const SeverityEnum = z.enum(['low', 'medium', 'high'])
 const ACTIVE_STATUSES = ['open', 'in_progress'] as const
 
+/** Preset complaint themes (Complaint.category stays free text — these seed
+ *  the pick-list; staff can always type a new one). */
+const PRESET_CATEGORIES = [
+  'Billing',
+  'Scheduling',
+  'Tutor',
+  'Teaching quality',
+  'Communication',
+  'Refund',
+  'Technical',
+  'Safeguarding',
+  'Other',
+] as const
+
 /** Write a staff-visible note Interaction on the contact timeline so a
  *  complaint event is reflected in the customer's CRM. */
 async function timelineNote(
@@ -128,6 +142,85 @@ export const complaintRouter = router({
     })
   }),
 
+  /**
+   * Management headline stats for the top-level Complaints dashboard. All-staff
+   * (the queue is worked by everyone) — the deep period analytics with charts
+   * stay Manager+ under /reports/complaints. Kept to a handful of cheap
+   * counts/groupBys so it is safe to load on every dashboard view.
+   */
+  dashboardStats: protectedProcedure.query(async ({ ctx }) => {
+    const now = Date.now()
+    const since30 = new Date(now - 30 * 86_400_000)
+    const since90 = new Date(now - 90 * 86_400_000)
+    const [activeGroups, openedLast30, resolvedLast30, unassignedActive, resolvedRows] =
+      await Promise.all([
+        ctx.db.complaint.groupBy({
+          by: ['severity'],
+          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] } },
+          _count: true,
+        }),
+        ctx.db.complaint.count({ where: { deletedAt: null, createdAt: { gte: since30 } } }),
+        ctx.db.complaint.count({ where: { deletedAt: null, resolvedAt: { gte: since30 } } }),
+        ctx.db.complaint.count({
+          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] }, assigneeId: null },
+        }),
+        // Resolution time over the last 90 days of resolved complaints.
+        ctx.db.complaint.findMany({
+          where: { deletedAt: null, resolvedAt: { gte: since90 } },
+          select: { createdAt: true, resolvedAt: true },
+        }),
+      ])
+
+    const bySeverity = { high: 0, medium: 0, low: 0 }
+    for (const g of activeGroups) {
+      const k = g.severity as 'high' | 'medium' | 'low'
+      if (k in bySeverity) bySeverity[k] = g._count
+    }
+    const activeBacklog = bySeverity.high + bySeverity.medium + bySeverity.low
+
+    const hours = resolvedRows
+      .map((r) => (r.resolvedAt ? (r.resolvedAt.getTime() - r.createdAt.getTime()) / 3_600_000 : null))
+      .filter((x): x is number => x != null && x >= 0)
+    const avgResolutionHours =
+      hours.length > 0 ? Math.round((hours.reduce((a, b) => a + b, 0) / hours.length) * 10) / 10 : null
+
+    return {
+      activeBacklog,
+      bySeverity,
+      highSeverityActive: bySeverity.high,
+      unassignedActive,
+      openedLast30,
+      resolvedLast30,
+      avgResolutionHours,
+    }
+  }),
+
+  /**
+   * Category pick-list for the log-complaint form: the preset themes merged
+   * with every category staff have already typed in (so a new typed category
+   * becomes part of the list organically — no settings page needed).
+   */
+  categories: protectedProcedure.query(async ({ ctx }) => {
+    const used = await ctx.db.complaint.findMany({
+      where: { deletedAt: null, category: { not: null } },
+      select: { category: true },
+      distinct: ['category'],
+      take: 200,
+    })
+    const seen = new Set(PRESET_CATEGORIES.map((c) => c.toLowerCase()))
+    const extras: string[] = []
+    for (const row of used) {
+      const c = row.category?.trim()
+      if (!c) continue
+      const key = c.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      extras.push(c)
+    }
+    extras.sort((a, b) => a.localeCompare(b))
+    return [...PRESET_CATEGORIES, ...extras]
+  }),
+
   /** Live backlog + opened-in-period — for the report KPI strips (Aircall /
    *  Finance). `activeBacklog` is a "now" figure; `openedInPeriod` tracks the
    *  report's period selector so the tile responds to it. */
@@ -194,6 +287,13 @@ export const complaintRouter = router({
         severity: SeverityEnum.default('medium'),
         category: z.string().trim().max(80).optional(),
         assigneeId: z.string().optional(),
+        /** Open a follow-up Task for someone in the same step (optional). */
+        task: z
+          .object({
+            assigneeId: z.string().min(1),
+            dueAt: z.coerce.date().optional(),
+          })
+          .optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -228,9 +328,45 @@ export const complaintRouter = router({
       await ctx.audit({
         action: 'complaint.created',
         target: { type: 'Complaint', id },
-        after: { contactId: input.contactId, title: input.title, severity: input.severity },
+        after: {
+          contactId: input.contactId,
+          title: input.title,
+          severity: input.severity,
+          category: input.category ?? null,
+        },
       })
-      return { id }
+
+      // Optional follow-up task, assigned at log time (same shape as the
+      // standalone createTask below — kept in one mutation so the agent never
+      // logs a complaint and forgets the task half of it).
+      let taskId: string | null = null
+      if (input.task) {
+        taskId = createId()
+        await ctx.db.task.create({
+          data: {
+            id: taskId,
+            title: `Complaint: ${input.title}`,
+            description: input.description ?? null,
+            status: 'open',
+            contactId: input.contactId,
+            assigneeId: input.task.assigneeId,
+            dueAt: input.task.dueAt ?? null,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        })
+        await ctx.db.complaint.update({
+          where: { id },
+          data: { taskId, updatedById: user.id },
+        })
+        await ctx.audit({
+          action: 'complaint.task_created',
+          target: { type: 'Complaint', id },
+          after: { taskId, assigneeId: input.task.assigneeId },
+        })
+      }
+
+      return { id, taskId }
     }),
 
   update: auditedProcedure

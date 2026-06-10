@@ -26,8 +26,14 @@ export interface RawLeadInput {
     formId?: string
     domain?: string
   }
-  /** Request headers used as fallbacks for url / referrer / domain. */
-  headers?: { origin?: string | null; referer?: string | null; host?: string | null }
+  /** Request headers used as fallbacks for url / referrer / domain, plus the
+   * client IP (first X-Forwarded-For hop) for country derivation. */
+  headers?: {
+    origin?: string | null
+    referer?: string | null
+    host?: string | null
+    ip?: string | null
+  }
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
@@ -130,6 +136,8 @@ const SYNONYMS = {
     'your-time',
     'your-preferred-time',
   ],
+  // A country field — name or ISO code. Used for phone dial-code composing.
+  country: ['country', 'your-country', 'country-code', 'country-of-residence', 'nationality'],
   // A subject/topic dropdown — "Which course?", "Subject", "Interested in".
   subject: [
     'subject',
@@ -407,6 +415,9 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
     const candidates = entries
       .filter((e) => !assigned.has(e.rawKey) && !isNoise(e.key))
       .filter((e) => e.value.length >= 25 || e.value.split(/\s+/u).length >= 4)
+      // A bare URL is never the enquiry message (hidden page-url style fields
+      // on unknown keys were being picked up as the "message").
+      .filter((e) => !/^https?:\/\/\S+$/u.test(e.value))
       .sort((a, b) => b.value.length - a.value.length)
     if (candidates[0]) {
       found.message = candidates[0].value
@@ -471,6 +482,8 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
   const preferredWhen = extractPreferredWhen(whenValues)
   // A subject/topic dropdown selection, if present.
   const requestedSubject = found.subject ? found.subject.trim().slice(0, 120) : null
+  // Country (form-selected). Resolved to a dial code downstream.
+  const country = found.country ? found.country.trim().slice(0, 80) : null
 
   // Stringified field map for UTM lookup.
   const fieldStrs: Record<string, string> = {}
@@ -508,6 +521,7 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
     parentName: found.parentName ?? null,
     preferredWhen,
     requestedSubject,
+    country,
     landingDomain: domain,
     landingUrl: url,
     landingSlug: parsed.slug,

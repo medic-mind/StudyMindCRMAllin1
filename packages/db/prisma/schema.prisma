@@ -2037,6 +2037,12 @@ model Lead {
   formTitle      String?
   formId         String?
   referrer       String?
+  /// Client IP the enquiry was submitted from (first X-Forwarded-For hop).
+  /// Used to derive a country (and so a phone dial code) when the form has
+  /// no country field. Subject to the same §21 lead retention.
+  ip             String?
+  /// ISO-3166-1 alpha-2 country, from the form's country field or IP geo.
+  countryCode    String?
   /// utm_source / utm_medium / utm_campaign / utm_term / utm_content.
   utm            Json?
 

@@ -63,6 +63,10 @@ export const NormalisedLead = z.object({
    * like "Which course?"), if one was present. Feeds the card Subject tag
    * alongside the URL-derived category. */
   requestedSubject: z.string().nullable(),
+  /** A country the enquirer selected on the form (name or ISO2), if present.
+   * Used (with IP geolocation as fallback) to compose a full international
+   * phone number from locally-typed digits and to set Contact.country. */
+  country: z.string().nullable(),
 
   // Landing-page intelligence (CLAUDE.md §16) — drives classification first.
   landingDomain: z.string().nullable(),

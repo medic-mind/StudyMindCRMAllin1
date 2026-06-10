@@ -11,6 +11,7 @@ import { usePathname } from 'next/navigation'
 import type { ComponentType, SVGProps } from 'react'
 
 import {
+  AlertTriangleIcon,
   BarChartIcon,
   BuildingIcon,
   CalendarIcon,
@@ -81,6 +82,7 @@ const ICONS: Record<string, IconComp> = {
   '/pipeline': GitBranchIcon,
   '/boards': GitBranchIcon,
   '/tasks': ListTodoIcon,
+  '/complaints': AlertTriangleIcon,
   '/camps': CalendarIcon,
   '/webinars': CalendarIcon,
   '/finance': CoinsIcon,
@@ -108,6 +110,7 @@ const SECTION: Record<string, string> = {
   '/accounts': 'Work',
   '/boards': 'Work',
   '/tasks': 'Work',
+  '/complaints': 'Work',
   '/camps': 'Operations',
   '/webinars': 'Operations',
   '/finance': 'Operations',
@@ -133,9 +136,13 @@ export function SidebarNav({ items }: Props) {
   const pathname = usePathname() ?? ''
 
   // Bucket items into sections; preserve incoming order within each bucket.
+  // An item with no SECTION entry MUST still render — default it to a real,
+  // rendered group ('Work'), never an unlisted bucket. (A previous default of
+  // 'Workspace' wasn't in SECTION_ORDER, so unmapped items like /complaints
+  // silently vanished from the nav.)
   const buckets = new Map<string, NavItem[]>()
   for (const it of items) {
-    const section = SECTION[it.href] ?? 'Workspace'
+    const section = SECTION[it.href] ?? 'Work'
     const list = buckets.get(section) ?? []
     list.push(it)
     buckets.set(section, list)

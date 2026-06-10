@@ -16,8 +16,12 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { logger } from '@studymind/core'
 import { createCard, findOrCreateSubject } from '@studymind/core/board'
 import {
+  asTypedPhoneFallback,
   chooseContactMatch,
   classifyLead,
+  composePhoneE164,
+  findDialCountry,
+  inferPhoneE164,
   londonWallToUtc,
   normaliseLead,
   planLeadRouting,
@@ -48,6 +52,11 @@ export interface ProcessLeadDeps {
     classification: LeadClassification
     brandName: string | null
   }) => Promise<LeadAiEnrichment | null>
+  /** Best-effort IP → ISO2 country geolocation (injected at the worker
+   * boundary so the pure job stays network-free in tests). Used to compose a
+   * dial code for nationally-typed phone numbers when the form has no
+   * country field. A failure or null never blocks processing. */
+  geoCountry?: (ip: string) => Promise<string | null>
   now?: Date
 }
 
@@ -250,9 +259,40 @@ export async function processLead(
     }
   }
 
-  // 5. Match an existing contact (conservative — never auto-merge).
+  // 5. Country + phone resolution. The form's country field wins; else
+  // geo-locate the captured IP. With a country in hand, a nationally-typed
+  // number ("928 812 118", Peru) composes to full E.164 so the contact always
+  // gets a dialable number (live bug: it only survived in the notes).
+  let dialCountry = findDialCountry(normalised.country)
+  if (!dialCountry && lead.ip && deps.geoCountry) {
+    try {
+      const iso2 = await deps.geoCountry(lead.ip)
+      dialCountry = findDialCountry(iso2)
+    } catch (err) {
+      logger.warn({ leadId, err: String(err) }, 'lead.process.geo_failed')
+    }
+  }
+  const composedPhone =
+    !normalised.phoneE164 && normalised.phone && dialCountry
+      ? composePhoneE164(dialCountry, normalised.phone)
+      : null
+  // No country at all (no form field, geo failed)? The number may still carry
+  // its own dial code typed without the + ("51 928 812 118").
+  const inferredPhone =
+    !normalised.phoneE164 && !composedPhone && normalised.phone
+      ? inferPhoneE164(normalised.phone)
+      : null
+  // Last resort: a typed number ALWAYS lands on the contact's phone field —
+  // as-typed digits beat a number buried in the notes (it stays visible and
+  // manually dialable; an agent can fix the prefix later).
+  const fallbackPhone =
+    !normalised.phoneE164 && !composedPhone && !inferredPhone && normalised.phone
+      ? asTypedPhoneFallback(normalised.phone)
+      : null
+
+  // 6. Match an existing contact (conservative — never auto-merge).
   const email = normalised.email
-  const phoneE164 = normalised.phoneE164
+  const phoneE164 = normalised.phoneE164 ?? composedPhone ?? inferredPhone ?? fallbackPhone
   const [byEmail, byPhone] = await Promise.all([
     email
       ? db.contact.findMany({ where: { email, deletedAt: null }, select: { id: true }, take: 5 })
@@ -295,10 +335,16 @@ export async function processLead(
     productTags: classification.productTags,
     score: classification.score,
     classification: classificationBlob,
+    countryCode: dialCountry?.iso2 ?? null,
     classifiedAt: now,
   }
 
-  // 6. Execute the plan atomically.
+  // Notes/payloads must reflect the *resolved* phone: "Phone (as typed)"
+  // only fires when even the as-typed fallback rejected the value (too few
+  // digits to be a number at all).
+  const normalisedResolved: NormalisedLead = { ...normalised, phoneE164 }
+
+  // 7. Execute the plan atomically.
   if (plan.kind === 'needs_triage') {
     await db.$transaction(async (tx) => {
       await tx.lead.update({
@@ -342,7 +388,14 @@ export async function processLead(
       // contact already has (CLAUDE.md §3 no silent mutation).
       const existingContact = await tx.contact.findUnique({
         where: { id: contactId },
-        select: { firstName: true, lastName: true, email: true, phoneE164: true },
+        select: {
+          firstName: true,
+          lastName: true,
+          email: true,
+          phoneE164: true,
+          country: true,
+          notes: true,
+        },
       })
       if (existingContact) {
         const patch: Prisma.ContactUpdateInput = {}
@@ -351,8 +404,19 @@ export async function processLead(
         if (!existingContact.lastName && normalised.lastName)
           patch.lastName = clamp(normalised.lastName, 120)
         if (!existingContact.email && normalised.email) patch.email = normalised.email
-        if (!existingContact.phoneE164 && normalised.phoneE164)
-          patch.phoneE164 = normalised.phoneE164
+        if (!existingContact.phoneE164 && phoneE164) patch.phoneE164 = phoneE164
+        if (!existingContact.country && (dialCountry?.name ?? normalised.country))
+          patch.country = clamp((dialCountry?.name ?? normalised.country)!, 120)
+        // Enquiry history: prepend a one-line "latest enquiry" summary so the
+        // pinned note always reflects the most recent ask (the full history
+        // lives in the Enquiries section / timeline).
+        {
+          const when = now.toISOString().slice(0, 10)
+          const what = classification.subject ?? (classification.categories.join(', ') || 'enquiry')
+          const where = siteName ?? normalised.landingDomain ?? normalised.source
+          const line = `[${when}] Enquired again: ${what} via ${where}${normalised.formTitle ? ` (${normalised.formTitle})` : ''}`
+          patch.notes = clamp(`${line}\n${existingContact.notes ?? ''}`, 4000)
+        }
         if (Object.keys(patch).length > 0) {
           patch.updatedById = ACTOR_ID
           await tx.contact.update({ where: { id: contactId }, data: patch })
@@ -365,6 +429,16 @@ export async function processLead(
             after: { ...patch, viaLead: lead.id },
           })
         }
+      }
+
+      if (subjectId) {
+        // The contact's subject tags follow the latest enquiry (additive —
+        // we never remove tags an agent may have set; §3 no silent mutation).
+        await tx.contactSubject.upsert({
+          where: { contactId_subjectId: { contactId, subjectId } },
+          create: { contactId, subjectId, createdById: ACTOR_ID },
+          update: {},
+        })
       }
 
       await tx.interaction.create({
@@ -387,9 +461,12 @@ export async function processLead(
             site: siteName,
             formTitle: normalised.formTitle,
             preferredWhen: normalised.preferredWhen,
+            message: normalised.message,
             landingUrl: normalised.landingUrl,
             aiSummary: ai?.summary ?? null,
-            phoneAsTyped: normalised.phoneE164 ? null : normalised.phone,
+            phoneAsTyped: phoneE164 ? null : normalised.phone,
+            ip: lead.ip,
+            countryCode: dialCountry?.iso2 ?? null,
           } as Prisma.InputJsonValue,
         },
       })
@@ -448,8 +525,9 @@ export async function processLead(
         firstName: normalised.firstName ? clamp(normalised.firstName, 120) : null,
         lastName: normalised.lastName ? clamp(normalised.lastName, 120) : null,
         email: normalised.email,
-        phoneE164: normalised.phoneE164,
-        notes: buildContactNotes(normalised, classification, siteName),
+        phoneE164,
+        country: dialCountry?.name ?? (normalised.country ? clamp(normalised.country, 120) : null),
+        notes: buildContactNotes(normalisedResolved, classification, siteName),
         // Organise by site: "Web enquiry · Medic Mind site" so the Contacts
         // list + filters group by where the lead came from.
         referralSource: clamp(siteName ? `Web enquiry · ${siteName}` : 'Web enquiry', 120),
@@ -465,6 +543,11 @@ export async function processLead(
           companyId: classification.brandCompanyId,
           createdById: ACTOR_ID,
         },
+      })
+    }
+    if (subjectId) {
+      await tx.contactSubject.create({
+        data: { contactId, subjectId, createdById: ACTOR_ID },
       })
     }
     await writeAuditLogEntry(tx, {
@@ -494,9 +577,12 @@ export async function processLead(
           site: siteName,
           formTitle: normalised.formTitle,
           preferredWhen: normalised.preferredWhen,
+          message: normalised.message,
           landingUrl: normalised.landingUrl,
           aiSummary: ai?.summary ?? null,
-          phoneAsTyped: normalised.phoneE164 ? null : normalised.phone,
+          phoneAsTyped: phoneE164 ? null : normalised.phone,
+          ip: lead.ip,
+          countryCode: dialCountry?.iso2 ?? null,
         } as Prisma.InputJsonValue,
       },
     })

@@ -74,6 +74,7 @@ import {
 } from '@studymind/ai'
 import { displayNameOf } from '@studymind/core/contact'
 import { BusinessError } from '@studymind/core/errors'
+import { logger } from '@studymind/core/logger'
 
 import { canArchiveStage, nextPosition, type PipelineStageRecord } from '@studymind/core/pipeline'
 
@@ -914,7 +915,15 @@ const cardRouter = router({
      * variants when there's no call or no transcript yet.
      */
     draftFromCall: protectedProcedure
-      .input(z.object({ cardId: z.string() }))
+      .input(
+        z.object({
+          cardId: z.string(),
+          /** The agent's current compose text (usually a clicked template) —
+           *  when present the AI ENHANCES it with the call's facts instead of
+           *  writing a fresh message. */
+          baseText: z.string().max(6000).optional(),
+        }),
+      )
       .query(async ({ ctx, input }) => {
         const user = requireUser(ctx)
         const card = await ctx.db.card.findFirst({
@@ -960,14 +969,18 @@ const cardRouter = router({
           outcomeRaw === 'answered' || outcomeRaw === 'voicemail' || outcomeRaw === 'no_answer'
             ? outcomeRaw
             : undefined
+        const baseText = input.baseText?.trim() || undefined
         const prompt = buildCallSummaryDraftPrompt({
           transcript,
           contactName,
           callerName: agent?.name ?? null,
           interests,
           outcomeHint,
+          baseText,
         })
-        // Always hand back usable text (deterministic scaffold on AI failure).
+        // Always hand back usable text (deterministic scaffold on AI failure)
+        // — but be honest about which one happened (`aiUsed`), mirroring
+        // contact.callSummary.draftFromCall.
         try {
           const result = await runDraft({
             task: 'call_summary_draft',
@@ -983,15 +996,24 @@ const cardRouter = router({
           return {
             status: 'ok' as const,
             text: result.text,
+            aiUsed: true,
+            hadTranscript: transcript.length > 0,
             source: (transcript ? 'transcript' : 'scaffold') as 'transcript' | 'scaffold',
             outcomeHint: outcomeHint ?? null,
             callInteractionId: call?.id ?? null,
             callOccurredAt: call?.occurredAt ?? null,
           }
-        } catch {
+        } catch (err) {
+          logger.warn(
+            { cardId: input.cardId, err: err instanceof Error ? err.message : String(err) },
+            'call_summary_draft.ai_unavailable_fell_back_to_scaffold',
+          )
           return {
             status: 'ok' as const,
-            text: buildCallSummaryScaffold(contactName, agent?.name ?? null, interests),
+            // Keep what the agent already wrote in preference to the scaffold.
+            text: baseText ?? buildCallSummaryScaffold(contactName, agent?.name ?? null, interests),
+            aiUsed: false,
+            hadTranscript: transcript.length > 0,
             source: 'scaffold' as const,
             outcomeHint: outcomeHint ?? null,
             callInteractionId: call?.id ?? null,
