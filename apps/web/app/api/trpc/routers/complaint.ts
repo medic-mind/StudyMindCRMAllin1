@@ -143,6 +143,59 @@ export const complaintRouter = router({
   }),
 
   /**
+   * Management headline stats for the top-level Complaints dashboard. All-staff
+   * (the queue is worked by everyone) — the deep period analytics with charts
+   * stay Manager+ under /reports/complaints. Kept to a handful of cheap
+   * counts/groupBys so it is safe to load on every dashboard view.
+   */
+  dashboardStats: protectedProcedure.query(async ({ ctx }) => {
+    const now = Date.now()
+    const since30 = new Date(now - 30 * 86_400_000)
+    const since90 = new Date(now - 90 * 86_400_000)
+    const [activeGroups, openedLast30, resolvedLast30, unassignedActive, resolvedRows] =
+      await Promise.all([
+        ctx.db.complaint.groupBy({
+          by: ['severity'],
+          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] } },
+          _count: true,
+        }),
+        ctx.db.complaint.count({ where: { deletedAt: null, createdAt: { gte: since30 } } }),
+        ctx.db.complaint.count({ where: { deletedAt: null, resolvedAt: { gte: since30 } } }),
+        ctx.db.complaint.count({
+          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] }, assigneeId: null },
+        }),
+        // Resolution time over the last 90 days of resolved complaints.
+        ctx.db.complaint.findMany({
+          where: { deletedAt: null, resolvedAt: { gte: since90 } },
+          select: { createdAt: true, resolvedAt: true },
+        }),
+      ])
+
+    const bySeverity = { high: 0, medium: 0, low: 0 }
+    for (const g of activeGroups) {
+      const k = g.severity as 'high' | 'medium' | 'low'
+      if (k in bySeverity) bySeverity[k] = g._count
+    }
+    const activeBacklog = bySeverity.high + bySeverity.medium + bySeverity.low
+
+    const hours = resolvedRows
+      .map((r) => (r.resolvedAt ? (r.resolvedAt.getTime() - r.createdAt.getTime()) / 3_600_000 : null))
+      .filter((x): x is number => x != null && x >= 0)
+    const avgResolutionHours =
+      hours.length > 0 ? Math.round((hours.reduce((a, b) => a + b, 0) / hours.length) * 10) / 10 : null
+
+    return {
+      activeBacklog,
+      bySeverity,
+      highSeverityActive: bySeverity.high,
+      unassignedActive,
+      openedLast30,
+      resolvedLast30,
+      avgResolutionHours,
+    }
+  }),
+
+  /**
    * Category pick-list for the log-complaint form: the preset themes merged
    * with every category staff have already typed in (so a new typed category
    * becomes part of the list organically — no settings page needed).

@@ -1,6 +1,10 @@
-// Active complaints queue — every open complaint across all customers, worked
-// to zero. Filter tabs (active / mine / resolved / all) are URL-driven. Each
-// row links to the customer's Complaints section. RSC (CLAUDE.md §26).
+// Complaints management hub — the master dashboard for complaints handling.
+// Headline KPIs (live backlog, high-severity, unassigned, 30-day opened /
+// resolved, avg resolution) sit above the worklist queue of every open
+// complaint across all customers, worked to zero. Each row links to that
+// customer's Complaints section in their CRM record (complaints are stored
+// per-customer). Deep period analytics (charts, theme over time) live on the
+// Manager+ /reports/complaints page, linked from here. RSC (CLAUDE.md §26).
 
 import Link from 'next/link'
 
@@ -8,6 +12,7 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { getCurrentUser } from '@/lib/auth/server'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -38,6 +43,17 @@ const SEVERITY_CLS: Record<string, string> = {
   low: 'bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200',
 }
 
+// Mirrors REPORT_ROLES in the reports router — the deep analytics page is
+// Manager+, so only show its link to roles who can actually open it.
+const REPORT_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+
+function fmtHours(h: number | null): string {
+  if (h == null) return '—'
+  if (h < 1) return `${Math.round(h * 60)}m`
+  if (h < 48) return `${Math.round(h * 10) / 10}h`
+  return `${Math.round((h / 24) * 10) / 10}d`
+}
+
 export default async function ComplaintsPage({
   searchParams,
 }: {
@@ -47,18 +63,60 @@ export default async function ComplaintsPage({
   const filter: Filter =
     sp.filter === 'mine' || sp.filter === 'resolved' || sp.filter === 'all' ? sp.filter : 'active'
   const caller = await createServerCaller()
-  const complaints = await caller.complaint.list({ filter, limit: 200 })
+  const me = await getCurrentUser()
+  const canSeeReport = me ? REPORT_ROLES.has(me.role) : false
+  const [complaints, stats] = await Promise.all([
+    caller.complaint.list({ filter, limit: 200 }),
+    caller.complaint.dashboardStats(),
+  ])
   const now = new Date()
 
   return (
     <>
       <PageHeader
         title="Complaints"
-        subtitle={`${complaints.length} ${filter === 'active' ? 'active' : ''} complaint${
-          complaints.length === 1 ? '' : 's'
-        }`}
+        subtitle="The hub for complaints handling — live backlog, then every open complaint to work to zero."
+        actions={
+          canSeeReport ? (
+            <Link
+              href="/reports/complaints"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-card transition-colors hover:bg-neutral-50"
+            >
+              Full analytics report →
+            </Link>
+          ) : null
+        }
       />
       <PageBody>
+        {/* Headline KPIs — the "master dashboard" strip. */}
+        <section className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-6">
+          <Stat
+            label="Active backlog"
+            value={stats.activeBacklog}
+            hint="Open + in progress now"
+            tone={stats.activeBacklog > 0 ? 'danger' : 'success'}
+          />
+          <Stat
+            label="High severity"
+            value={stats.highSeverityActive}
+            hint="Active, needs attention"
+            tone={stats.highSeverityActive > 0 ? 'danger' : 'neutral'}
+          />
+          <Stat
+            label="Unassigned"
+            value={stats.unassignedActive}
+            hint="Active, nobody owns"
+            tone={stats.unassignedActive > 0 ? 'warn' : 'neutral'}
+          />
+          <Stat label="Opened" value={stats.openedLast30} hint="Last 30 days" tone="info" />
+          <Stat label="Resolved" value={stats.resolvedLast30} hint="Last 30 days" tone="success" />
+          <Stat
+            label="Avg resolution"
+            value={fmtHours(stats.avgResolutionHours)}
+            hint="Open → resolved, 90d"
+          />
+        </section>
+
         <div
           role="tablist"
           aria-label="Complaint filter"
@@ -132,5 +190,34 @@ export default async function ComplaintsPage({
         )}
       </PageBody>
     </>
+  )
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  tone = 'neutral',
+}: {
+  label: string
+  value: number | string
+  hint?: string
+  tone?: 'info' | 'success' | 'warn' | 'danger' | 'neutral'
+}) {
+  const accent: Record<typeof tone, string> = {
+    info: 'text-primary-700',
+    success: 'text-emerald-700',
+    warn: 'text-amber-700',
+    danger: 'text-rose-700',
+    neutral: 'text-neutral-900',
+  }
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">{label}</div>
+      <div className={`mt-1 font-mono text-2xl font-semibold tabular-nums ${accent[tone]}`}>
+        {value}
+      </div>
+      {hint ? <div className="mt-0.5 text-xs text-neutral-500">{hint}</div> : null}
+    </div>
   )
 }
