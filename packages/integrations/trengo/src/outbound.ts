@@ -357,6 +357,207 @@ export async function startConversation(
 }
 
 // -----------------------------------------------------------------------------
+// WhatsApp (HSM) templates — list + send.
+//
+// The approved templates live in Trengo (they carry the info-pack links the
+// team already uses); we surface them in the CRM call-summary flow "just as
+// they would on Trengo". Listing is read-only per-agent; sending goes through
+// /wa_sessions so it is valid outside the 24-hour window, with the same
+// two-phase pending_send Interaction as every other Trengo outbound.
+// -----------------------------------------------------------------------------
+
+export interface WhatsAppTemplate {
+  id: number
+  title: string
+  body: string
+  /** The {{n}} placeholder keys found in the body, in order ("{{1}}", …). */
+  params: string[]
+}
+
+/** Extract the {{n}} placeholders from a template body, deduped, in order. */
+export function extractWaTemplateParams(body: string): string[] {
+  const seen = new Set<string>()
+  for (const match of body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
+    seen.add(`{{${match[1]}}}`)
+  }
+  return [...seen]
+}
+
+export async function listWhatsAppTemplates(
+  agentId: string,
+  requestId: string,
+): Promise<WhatsAppTemplate[]> {
+  const client = await createClientForAgent({
+    agentId,
+    requestId,
+    purpose: 'trengo.list_wa_templates',
+  })
+  const rows = await client.listWaTemplates()
+  return rows
+    .filter((r) => {
+      // Only templates WhatsApp has approved are sendable; keep rows whose
+      // status is missing (older Trengo versions omit it) or approved-ish.
+      const status = (r.status ?? '').toLowerCase()
+      return status === '' || status === 'approved' || status === 'accepted' || status === 'active'
+    })
+    .map((r) => {
+      const body = r.message ?? r.body ?? r.content ?? ''
+      return {
+        id: r.id,
+        title: r.title ?? r.name ?? `Template ${r.id}`,
+        body,
+        params: extractWaTemplateParams(body),
+      }
+    })
+    .filter((t) => t.body.trim().length > 0)
+}
+
+export interface SendWhatsAppTemplateInput {
+  contactId: string
+  agentId: string
+  /** E.164 recipient phone. */
+  recipient: string
+  templateId: number
+  templateTitle: string
+  /** The template body with params substituted — what the customer reads.
+   *  Persisted on the timeline Interaction. */
+  renderedBody: string
+  params: Array<{ key: string; value: string }>
+  requestId: string
+}
+
+export interface SendWhatsAppTemplateResult {
+  interactionId: string
+  ticketId: number | null
+  trengoMessageId: number | null
+}
+
+export async function sendWhatsAppTemplate(
+  input: SendWhatsAppTemplateInput,
+): Promise<SendWhatsAppTemplateResult> {
+  // Idempotency: same (contactId, requestId) tuple yields the same Interaction.
+  const existing = await db.interaction.findFirst({
+    where: {
+      type: 'message',
+      contactId: input.contactId,
+      payload: { path: ['outboundRequestId'], equals: input.requestId },
+    },
+    select: { id: true },
+  })
+
+  let interactionId: string
+  if (existing) {
+    interactionId = existing.id
+  } else {
+    const created = await db.interaction.create({
+      data: {
+        id: createId(),
+        type: 'message',
+        contactId: input.contactId,
+        occurredAt: new Date(),
+        summary: `Outbound whatsapp template (sending)`,
+        createdById: input.agentId,
+        updatedById: input.agentId,
+        payload: {
+          interactionType: 'message.outbound',
+          status: 'pending_send',
+          channel: 'whatsapp',
+          agentId: input.agentId,
+          body: input.renderedBody,
+          recipient: input.recipient,
+          waTemplate: {
+            id: input.templateId,
+            title: input.templateTitle,
+            params: input.params.map((p) => ({ key: p.key, value: p.value })),
+          },
+          outboundRequestId: input.requestId,
+        },
+      },
+      select: { id: true },
+    })
+    interactionId = created.id
+  }
+
+  let client
+  try {
+    client = await createClientForAgent({
+      agentId: input.agentId,
+      requestId: input.requestId,
+      purpose: 'trengo.send_wa_template',
+    })
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+
+  try {
+    const result = await client.sendWaTemplate({
+      recipientPhone: input.recipient,
+      templateId: input.templateId,
+      params: input.params,
+    })
+
+    await db.interaction.update({
+      where: { id: interactionId },
+      data: {
+        summary: `Outbound whatsapp template sent (${input.templateTitle})`,
+        payload: {
+          interactionType: 'message.outbound',
+          status: 'sent',
+          channel: 'whatsapp',
+          agentId: input.agentId,
+          body: input.renderedBody,
+          recipient: input.recipient,
+          waTemplate: {
+            id: input.templateId,
+            title: input.templateTitle,
+            params: input.params.map((p) => ({ key: p.key, value: p.value })),
+          },
+          outboundRequestId: input.requestId,
+          ...(result.ticketId != null ? { ticketId: result.ticketId } : {}),
+          ...(result.messageId != null ? { trengoMessageId: result.messageId } : {}),
+        },
+      },
+    })
+
+    await writeAuditLogEntry(db, {
+      actorId: input.agentId,
+      action: 'trengo.message_sent',
+      target: { type: 'Contact', id: input.contactId },
+      requestId: input.requestId,
+      after: {
+        interactionId,
+        channel: 'whatsapp',
+        waTemplateId: input.templateId,
+        ...(result.ticketId != null ? { ticketId: result.ticketId } : {}),
+        ...(result.messageId != null ? { trengoMessageId: result.messageId } : {}),
+      },
+    })
+
+    // Mirror the conversation head when Trengo told us which ticket the
+    // session landed on, so the thread shows in the inbox immediately.
+    if (result.ticketId != null) {
+      await applyEventToConversation(db, {
+        ticketId: result.ticketId,
+        eventName: 'message.outbound',
+        occurredAt: new Date(),
+        channel: 'whatsapp',
+        contactId: input.contactId,
+      })
+    }
+
+    return {
+      interactionId,
+      ticketId: result.ticketId,
+      trengoMessageId: result.messageId,
+    }
+  } catch (err) {
+    await markFailed(interactionId, err)
+    throw err
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Ticket state changes — close / reopen.
 //
 // Trengo's PATCH /tickets/:id/{close,reopen} endpoints do not accept

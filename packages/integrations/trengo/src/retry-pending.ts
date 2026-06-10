@@ -28,6 +28,7 @@ import {
   removeConversationLabel,
   reopenConversation,
   sendMessage,
+  sendWhatsAppTemplate,
   startConversation,
 } from './outbound'
 import type { TrengoChannel } from './types'
@@ -53,6 +54,11 @@ interface RetryablePayload {
   internalNote?: boolean
   newConversation?: boolean
   recipient?: string
+  waTemplate?: {
+    id?: number
+    title?: string
+    params?: Array<{ key?: string; value?: string }>
+  }
   attempts?: number
   lastError?: { code?: string; message?: string }
 }
@@ -111,6 +117,43 @@ export const trengoRetryPendingSend = inngest.createFunction(
       }
       if (payload.lastError?.code === 'TOKEN_EXPIRED') {
         skipped += 1
+        continue
+      }
+
+      // WhatsApp template (HSM) rows have a recipient + waTemplate but no
+      // ticket — recover via sendWhatsAppTemplate (idempotent on the same
+      // outboundRequestId). Handled before the ticketId guard below.
+      if (payload.waTemplate && typeof payload.waTemplate.id === 'number') {
+        if (
+          !row.contactId ||
+          typeof payload.agentId !== 'string' ||
+          typeof payload.recipient !== 'string' ||
+          typeof payload.body !== 'string' ||
+          typeof payload.outboundRequestId !== 'string'
+        ) {
+          skipped += 1
+          continue
+        }
+        try {
+          await sendWhatsAppTemplate({
+            contactId: row.contactId,
+            agentId: payload.agentId,
+            recipient: payload.recipient,
+            templateId: payload.waTemplate.id,
+            templateTitle: payload.waTemplate.title ?? `Template ${payload.waTemplate.id}`,
+            renderedBody: payload.body,
+            params: (payload.waTemplate.params ?? []).flatMap((p) =>
+              typeof p.key === 'string' && typeof p.value === 'string'
+                ? [{ key: p.key, value: p.value }]
+                : [],
+            ),
+            requestId: payload.outboundRequestId,
+          })
+          recovered += 1
+        } catch (err) {
+          await bumpAttemptCounter(row.id, attempts + 1, err)
+          retried += 1
+        }
         continue
       }
 

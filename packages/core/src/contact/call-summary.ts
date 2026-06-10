@@ -31,6 +31,17 @@ export interface ChannelResult {
 export type ChannelKey = 'slack' | 'trengo' | 'whatsapp' | 'sms' | 'email'
 export type SendResults = Partial<Record<ChannelKey, ChannelResult>>
 
+/** An approved Trengo WhatsApp (HSM) template the agent picked for the
+ *  WhatsApp channel. When present the sender uses the template session
+ *  send (valid outside the 24-hour window) instead of a free-text message.
+ *  No attachments ride this path — the approved templates already carry the
+ *  info-pack links. */
+export interface WhatsAppTemplateRef {
+  templateId: number
+  templateTitle: string
+  params: Array<{ key: string; value: string }>
+}
+
 export interface CallSummarySenders {
   slack?: (args: {
     body: string
@@ -47,6 +58,7 @@ export interface CallSummarySenders {
     body: string
     contactId: string
     attachments?: ReadonlyArray<ResolvedAttachment>
+    trengoTemplate?: WhatsAppTemplateRef
   }) => Promise<ChannelResult>
   sms?: (args: {
     body: string
@@ -57,6 +69,8 @@ export interface CallSummarySenders {
     body: string
     contactId: string
     attachments?: ReadonlyArray<ResolvedAttachment>
+    /** Subject for a fresh email when the contact has no Gmail thread yet. */
+    subject?: string
   }) => Promise<ChannelResult>
 }
 
@@ -229,8 +243,18 @@ export async function sendContactCallSummary(
     channels: { slack?: boolean; trengo?: boolean; whatsapp?: boolean; sms?: boolean; email?: boolean }
     slackChannelId?: string
     /** Optional pre-resolved attachments, delivered with every customer
-     *  channel that supports them (WhatsApp / SMS / Trengo / email). */
+     *  channel that supports them (WhatsApp / SMS / Trengo / email). The
+     *  WhatsApp template path ignores them by design. */
     attachments?: ReadonlyArray<ResolvedAttachment>
+    /** Per-channel body overrides (the wizard composes the email and the
+     *  text separately). A channel without an override sends the summary
+     *  Interaction's body. */
+    channelBodies?: { whatsapp?: string; sms?: string; email?: string; trengo?: string }
+    /** Subject for a fresh email when the contact has no Gmail thread yet. */
+    emailSubject?: string
+    /** Approved Trengo WhatsApp template — sent via the template session
+     *  instead of free text when present. */
+    whatsappTemplate?: WhatsAppTemplateRef
     senders: CallSummarySenders
   },
   ctx: ActorCtx,
@@ -244,6 +268,10 @@ export async function sendContactCallSummary(
   }
   const payload = (summary.payload as { body?: unknown } | null) ?? {}
   const body = typeof payload.body === 'string' ? payload.body : ''
+  const bodyFor = (channel: 'whatsapp' | 'sms' | 'email' | 'trengo'): string => {
+    const override = input.channelBodies?.[channel]
+    return typeof override === 'string' && override.trim().length > 0 ? override : body
+  }
   const contactId = summary.contactId
 
   const contact = await db.contact.findFirst({
@@ -271,21 +299,40 @@ export async function sendContactCallSummary(
   if (input.channels.trengo) {
     results.trengo = await runChannel(
       input.senders.trengo
-        ? () => input.senders.trengo!({ body, contactId, attachments: input.attachments })
+        ? () =>
+            input.senders.trengo!({
+              body: bodyFor('trengo'),
+              contactId,
+              attachments: input.attachments,
+            })
         : undefined,
     )
   }
   if (input.channels.whatsapp) {
     results.whatsapp = await runChannel(
       input.senders.whatsapp
-        ? () => input.senders.whatsapp!({ body, contactId, attachments: input.attachments })
+        ? () =>
+            input.senders.whatsapp!({
+              body: bodyFor('whatsapp'),
+              contactId,
+              // The template path carries the pack links itself — never
+              // double-attach (the user's templates already include them).
+              ...(input.whatsappTemplate
+                ? { trengoTemplate: input.whatsappTemplate }
+                : { attachments: input.attachments }),
+            })
         : undefined,
     )
   }
   if (input.channels.sms) {
     results.sms = await runChannel(
       input.senders.sms
-        ? () => input.senders.sms!({ body, contactId, attachments: input.attachments })
+        ? () =>
+            input.senders.sms!({
+              body: bodyFor('sms'),
+              contactId,
+              attachments: input.attachments,
+            })
         : undefined,
     )
   }
@@ -294,9 +341,10 @@ export async function sendContactCallSummary(
       input.senders.email
         ? () =>
             input.senders.email!({
-              body,
+              body: bodyFor('email'),
               contactId,
               attachments: input.attachments,
+              ...(input.emailSubject ? { subject: input.emailSubject } : {}),
             })
         : undefined,
     )
@@ -321,6 +369,23 @@ export async function sendContactCallSummary(
           sms: Boolean(input.channels.sms),
           email: Boolean(input.channels.email),
         },
+        ...(input.channelBodies
+          ? {
+              channelBodies: Object.fromEntries(
+                Object.entries(input.channelBodies).filter(
+                  ([, v]) => typeof v === 'string' && v.length > 0,
+                ),
+              ),
+            }
+          : {}),
+        ...(input.whatsappTemplate
+          ? {
+              whatsappTemplate: {
+                id: input.whatsappTemplate.templateId,
+                title: input.whatsappTemplate.templateTitle,
+              },
+            }
+          : {}),
         results: resultsJson,
       } satisfies Prisma.InputJsonObject,
       createdById: ctx.actorId,

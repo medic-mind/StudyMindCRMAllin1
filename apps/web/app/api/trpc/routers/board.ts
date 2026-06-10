@@ -166,6 +166,14 @@ async function resolveCallSummaryAttachments(
           data: row.pdfData,
         })
       }
+    } else if (ref.kind === 'infoPack') {
+      const row = await db.infoPackDocument.findUnique({
+        where: { id: ref.id },
+        select: { fileName: true, contentType: true, data: true, archivedAt: true },
+      })
+      if (row && row.archivedAt == null) {
+        out.push({ filename: row.fileName, contentType: row.contentType, data: row.data })
+      }
     }
   }
   return out
@@ -893,6 +901,9 @@ const cardRouter = router({
             channels: input.channels,
             slackChannelId: input.slackChannelId,
             attachments,
+            ...(input.channelBodies ? { channelBodies: input.channelBodies } : {}),
+            ...(input.emailSubject ? { emailSubject: input.emailSubject } : {}),
+            ...(input.whatsappTemplate ? { whatsappTemplate: input.whatsappTemplate } : {}),
             senders,
           },
           { actorId: user.id, requestId: ctx.requestId },

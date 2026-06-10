@@ -32,6 +32,7 @@ import {
   listContactDocuments,
   removeContactDocument,
 } from '@studymind/core/contact/documents'
+import type { WhatsAppTemplate } from '@studymind/integration-trengo/outbound'
 
 import { buildCallSummarySenders } from '@/lib/board/call-summary-senders'
 import {
@@ -905,12 +906,44 @@ export const contactRouter = router({
             trengo: z.boolean().optional(),
             email: z.boolean().optional(),
           }),
+          // Per-channel body overrides — the wizard composes the email and
+          // the text separately. A channel without an override sends the
+          // summary Interaction's body.
+          channelBodies: z
+            .object({
+              whatsapp: z.string().trim().min(1).max(8000).optional(),
+              sms: z.string().trim().min(1).max(8000).optional(),
+              email: z.string().trim().min(1).max(8000).optional(),
+              trengo: z.string().trim().min(1).max(8000).optional(),
+            })
+            .optional(),
+          // Subject for a fresh email when the contact has no Gmail thread.
+          emailSubject: z.string().trim().min(1).max(200).optional(),
+          // Approved Trengo WhatsApp template — sent via the template session
+          // (works outside the 24h window). No PDFs ride this path: the
+          // templates already carry the info-pack links.
+          whatsappTemplate: z
+            .object({
+              templateId: z.number().int().positive(),
+              templateTitle: z.string().trim().min(1).max(200),
+              params: z
+                .array(
+                  z.object({
+                    key: z.string().trim().min(1).max(20),
+                    value: z.string().trim().max(500),
+                  }),
+                )
+                .max(20)
+                .default([]),
+            })
+            .optional(),
           emailAttachments: z
             .array(
               z.discriminatedUnion('kind', [
                 z.object({ kind: z.literal('contactDocument'), id: z.string() }),
                 z.object({ kind: z.literal('uploadedInvoice'), id: z.string() }),
                 z.object({ kind: z.literal('callSummaryTemplatePdf'), id: z.string() }),
+                z.object({ kind: z.literal('infoPack'), id: z.string() }),
               ]),
             )
             .max(10)
@@ -985,6 +1018,18 @@ export const contactRouter = router({
                 data: row.pdfData,
               })
             }
+          } else if (ref.kind === 'infoPack') {
+            const row = await ctx.db.infoPackDocument.findUnique({
+              where: { id: ref.id },
+              select: { fileName: true, contentType: true, data: true, archivedAt: true },
+            })
+            if (row && row.archivedAt == null) {
+              attachments.push({
+                filename: row.fileName,
+                contentType: row.contentType,
+                data: row.data,
+              })
+            }
           }
         }
         // Device uploads — raw files the agent picked from their machine,
@@ -1013,6 +1058,11 @@ export const contactRouter = router({
               summaryInteractionId: input.summaryInteractionId,
               channels: input.channels,
               attachments,
+              ...(input.channelBodies ? { channelBodies: input.channelBodies } : {}),
+              ...(input.emailSubject ? { emailSubject: input.emailSubject } : {}),
+              ...(input.whatsappTemplate
+                ? { whatsappTemplate: input.whatsappTemplate }
+                : {}),
               senders,
             },
             { actorId: user.id, requestId: ctx.requestId },
@@ -1026,6 +1076,33 @@ export const contactRouter = router({
           throw err
         }
       }),
+
+    /**
+     * The agent's approved Trengo WhatsApp (HSM) templates, surfaced in the
+     * wizard's text step "just as they would on Trengo". Graceful: a missing
+     * or expired token, or an unsupported workspace, returns `available:false`
+     * with a reason instead of erroring — the UI falls back to free text.
+     */
+    waTemplates: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      try {
+        const { listWhatsAppTemplates } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        const templates = await listWhatsAppTemplates(user.id, ctx.requestId)
+        return { available: true as const, templates }
+      } catch (err) {
+        const reason =
+          err instanceof BusinessError && err.code === 'TOKEN_EXPIRED'
+            ? 'Connect your Trengo token in Settings to load WhatsApp templates.'
+            : 'Could not load WhatsApp templates from Trengo.'
+        return {
+          available: false as const,
+          reason,
+          templates: [] as WhatsAppTemplate[],
+        }
+      }
+    }),
 
     // Two-step flow, step 2: after the customer-facing summary is sent, the
     // agent logs an INTERNAL note (next steps / VA instructions) the customer

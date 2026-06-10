@@ -121,3 +121,52 @@ describe('Trengo client — labels + notes', () => {
     })
   })
 })
+
+describe('Trengo client — WhatsApp templates (call-summary wizard)', () => {
+  it('listWaTemplates GETs /wa_templates and unwraps the data array', async () => {
+    const fetchMock = makeFetch({
+      data: [
+        { id: 5, title: 'UCAT pack', message: 'Hi {{1}}, your pack: https://x', status: 'approved' },
+      ],
+    })
+    const client = await clientWith(fetchMock)
+    const rows = await client.listWaTemplates()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: 5, title: 'UCAT pack' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/wa_templates'),
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('sendWaTemplate POSTs recipient + hsm_id + params to /wa_sessions', async () => {
+    const fetchMock = makeFetch({ message: { id: 11, ticket_id: 99 } })
+    const client = await clientWith(fetchMock)
+    const res = await client.sendWaTemplate({
+      recipientPhone: '+447700900001',
+      templateId: 5,
+      params: [{ key: '{{1}}', value: 'Jess' }],
+    })
+    expect(res).toEqual({ ticketId: 99, messageId: 11 })
+    const call = fetchMock.mock.calls[0]!
+    expect(String(call[0])).toContain('/wa_sessions')
+    const init = call[1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({
+      recipient_phone_number: '+447700900001',
+      hsm_id: 5,
+      params: [{ key: '{{1}}', value: 'Jess' }],
+    })
+  })
+
+  it('sendWaTemplate tolerates a response without ids', async () => {
+    const fetchMock = makeFetch({})
+    const client = await clientWith(fetchMock)
+    const res = await client.sendWaTemplate({
+      recipientPhone: '+447700900001',
+      templateId: 5,
+      params: [],
+    })
+    expect(res).toEqual({ ticketId: null, messageId: null })
+  })
+})
