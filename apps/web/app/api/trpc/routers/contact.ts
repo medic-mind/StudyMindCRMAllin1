@@ -877,8 +877,17 @@ export const contactRouter = router({
           agentId: user.id,
           requestId: ctx.requestId,
         })
-        const refs = input.channels.email ? (input.emailAttachments ?? []) : []
-        const emailAttachments: Array<{
+        // Resolve attachments whenever a customer channel that can carry them
+        // is selected (WhatsApp / SMS / Trengo / email — Trengo uploads media
+        // and attaches it; Gmail attaches inline), not email alone.
+        const wantsAttachments = Boolean(
+          input.channels.email ||
+            input.channels.whatsapp ||
+            input.channels.sms ||
+            input.channels.trengo,
+        )
+        const refs = wantsAttachments ? (input.emailAttachments ?? []) : []
+        const attachments: Array<{
           filename: string
           contentType: string
           data: Buffer
@@ -889,7 +898,7 @@ export const contactRouter = router({
               where: { id: ref.id },
               select: { fileName: true, contentType: true, data: true },
             })
-            if (row) emailAttachments.push({
+            if (row) attachments.push({
               filename: row.fileName,
               contentType: row.contentType,
               data: row.data,
@@ -899,7 +908,7 @@ export const contactRouter = router({
               where: { id: ref.id },
               select: { fileName: true, contentType: true, data: true },
             })
-            if (row) emailAttachments.push({
+            if (row) attachments.push({
               filename: row.fileName,
               contentType: row.contentType,
               data: row.data,
@@ -910,7 +919,7 @@ export const contactRouter = router({
               select: { pdfFileName: true, pdfContentType: true, pdfData: true },
             })
             if (row && row.pdfData && row.pdfContentType && row.pdfFileName) {
-              emailAttachments.push({
+              attachments.push({
                 filename: row.pdfFileName,
                 contentType: row.pdfContentType,
                 data: row.pdfData,
@@ -920,7 +929,7 @@ export const contactRouter = router({
         }
         // Device uploads — raw files the agent picked from their machine,
         // decoded to Buffers and attached alongside the resolved library files.
-        if (input.channels.email) {
+        if (wantsAttachments) {
           for (const f of input.uploadedAttachments ?? []) {
             const data = Buffer.from(f.dataBase64, 'base64')
             if (data.byteLength === 0) continue
@@ -930,7 +939,7 @@ export const contactRouter = router({
                 message: `Attachment "${f.filename}" exceeds the 8 MB limit.`,
               })
             }
-            emailAttachments.push({
+            attachments.push({
               filename: f.filename,
               contentType: f.contentType,
               data,
@@ -943,7 +952,7 @@ export const contactRouter = router({
             {
               summaryInteractionId: input.summaryInteractionId,
               channels: input.channels,
-              emailAttachments,
+              attachments,
               senders,
             },
             { actorId: user.id, requestId: ctx.requestId },

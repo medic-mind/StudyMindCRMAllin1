@@ -42,6 +42,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
     channel: 'whatsapp' | 'sms',
     contactId: string,
     body: string,
+    attachments?: ReadonlyArray<{ filename: string; contentType: string; data: Buffer }>,
   ): Promise<ChannelResult> {
     const { resolveActiveTrengoConversation } = await import(
       '@studymind/integration-trengo/conversations'
@@ -49,6 +50,9 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
     const { sendMessage, startConversation } = await import(
       '@studymind/integration-trengo/outbound'
     )
+    // Trengo media is uploaded then attached by id (sendMessage/startConversation
+    // do the upload). A readonly array can't be passed straight through.
+    const atts = attachments && attachments.length > 0 ? [...attachments] : undefined
     try {
       const conv = await resolveActiveTrengoConversation(db, contactId, channel)
       if (conv) {
@@ -59,6 +63,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           channel,
           body,
           requestId,
+          attachments: atts,
         })
         return { status: 'sent', ref: String(r.trengoMessageId) }
       }
@@ -77,6 +82,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
         recipient: phone,
         body,
         requestId,
+        attachments: atts,
       })
       return {
         status: 'sent',
@@ -127,7 +133,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       return { status: 'sent', ref: result.slackTs }
     },
 
-    async trengo({ body, contactId }): Promise<ChannelResult> {
+    async trengo({ body, contactId, attachments }): Promise<ChannelResult> {
       // Resolve the contact's most recent Trengo conversation (ticket +
       // channel). Shared with the inbox / contact reply path so the lookup
       // lives in one place (packages/integrations/trengo/src/conversations.ts).
@@ -148,6 +154,8 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           channel: conv.channel,
           body,
           requestId,
+          attachments:
+            attachments && attachments.length > 0 ? [...attachments] : undefined,
         })
         return { status: 'sent', ref: String(result.trengoMessageId) }
       } catch (err) {
@@ -159,12 +167,12 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       }
     },
 
-    async whatsapp({ body, contactId }): Promise<ChannelResult> {
-      return sendViaTrengoChannel('whatsapp', contactId, body)
+    async whatsapp({ body, contactId, attachments }): Promise<ChannelResult> {
+      return sendViaTrengoChannel('whatsapp', contactId, body, attachments)
     },
 
-    async sms({ body, contactId }): Promise<ChannelResult> {
-      return sendViaTrengoChannel('sms', contactId, body)
+    async sms({ body, contactId, attachments }): Promise<ChannelResult> {
+      return sendViaTrengoChannel('sms', contactId, body, attachments)
     },
 
     async email({ body, contactId, attachments }): Promise<ChannelResult> {

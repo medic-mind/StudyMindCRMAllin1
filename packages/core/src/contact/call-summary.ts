@@ -38,18 +38,33 @@ export interface CallSummarySenders {
     contactId: string
     slackChannelId?: string
   }) => Promise<ChannelResult>
-  trengo?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
-  whatsapp?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
-  sms?: (args: { body: string; contactId: string }) => Promise<ChannelResult>
+  trengo?: (args: {
+    body: string
+    contactId: string
+    attachments?: ReadonlyArray<ResolvedAttachment>
+  }) => Promise<ChannelResult>
+  whatsapp?: (args: {
+    body: string
+    contactId: string
+    attachments?: ReadonlyArray<ResolvedAttachment>
+  }) => Promise<ChannelResult>
+  sms?: (args: {
+    body: string
+    contactId: string
+    attachments?: ReadonlyArray<ResolvedAttachment>
+  }) => Promise<ChannelResult>
   email?: (args: {
     body: string
     contactId: string
-    attachments?: ReadonlyArray<{
-      filename: string
-      contentType: string
-      data: Buffer
-    }>
+    attachments?: ReadonlyArray<ResolvedAttachment>
   }) => Promise<ChannelResult>
+}
+
+/** Resolved attachment bytes ready to hand to the integration sender. */
+export interface ResolvedAttachment {
+  filename: string
+  contentType: string
+  data: Buffer
 }
 
 export interface CallSummaryInteraction {
@@ -213,12 +228,9 @@ export async function sendContactCallSummary(
     summaryInteractionId: string
     channels: { slack?: boolean; trengo?: boolean; whatsapp?: boolean; sms?: boolean; email?: boolean }
     slackChannelId?: string
-    /** Optional pre-resolved attachments for the email channel. */
-    emailAttachments?: ReadonlyArray<{
-      filename: string
-      contentType: string
-      data: Buffer
-    }>
+    /** Optional pre-resolved attachments, delivered with every customer
+     *  channel that supports them (WhatsApp / SMS / Trengo / email). */
+    attachments?: ReadonlyArray<ResolvedAttachment>
     senders: CallSummarySenders
   },
   ctx: ActorCtx,
@@ -258,17 +270,23 @@ export async function sendContactCallSummary(
   }
   if (input.channels.trengo) {
     results.trengo = await runChannel(
-      input.senders.trengo ? () => input.senders.trengo!({ body, contactId }) : undefined,
+      input.senders.trengo
+        ? () => input.senders.trengo!({ body, contactId, attachments: input.attachments })
+        : undefined,
     )
   }
   if (input.channels.whatsapp) {
     results.whatsapp = await runChannel(
-      input.senders.whatsapp ? () => input.senders.whatsapp!({ body, contactId }) : undefined,
+      input.senders.whatsapp
+        ? () => input.senders.whatsapp!({ body, contactId, attachments: input.attachments })
+        : undefined,
     )
   }
   if (input.channels.sms) {
     results.sms = await runChannel(
-      input.senders.sms ? () => input.senders.sms!({ body, contactId }) : undefined,
+      input.senders.sms
+        ? () => input.senders.sms!({ body, contactId, attachments: input.attachments })
+        : undefined,
     )
   }
   if (input.channels.email) {
@@ -278,7 +296,7 @@ export async function sendContactCallSummary(
             input.senders.email!({
               body,
               contactId,
-              attachments: input.emailAttachments,
+              attachments: input.attachments,
             })
         : undefined,
     )

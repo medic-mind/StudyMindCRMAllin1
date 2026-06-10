@@ -69,6 +69,7 @@ export interface CallSummarySenders {
   trengo?: (args: {
     body: string
     contactId: string
+    attachments?: ReadonlyArray<ResolvedAttachment>
   }) => Promise<ChannelResult>
   /** Explicit WhatsApp send via Trengo (continues the WhatsApp thread if one
    *  exists, else starts one). Distinct from `trengo` which uses whatever the
@@ -76,12 +77,14 @@ export interface CallSummarySenders {
   whatsapp?: (args: {
     body: string
     contactId: string
+    attachments?: ReadonlyArray<ResolvedAttachment>
   }) => Promise<ChannelResult>
   /** Explicit SMS send via Trengo (continues the SMS thread if one exists,
    *  else starts one to the contact's E.164 number). */
   sms?: (args: {
     body: string
     contactId: string
+    attachments?: ReadonlyArray<ResolvedAttachment>
   }) => Promise<ChannelResult>
   email?: (args: {
     body: string
@@ -179,8 +182,9 @@ export async function sendCallSummary(
     summaryInteractionId: string
     channels: { slack?: boolean; trengo?: boolean; whatsapp?: boolean; sms?: boolean; email?: boolean }
     slackChannelId?: string
-    /** Optional pre-resolved attachments for the email channel. */
-    emailAttachments?: ReadonlyArray<ResolvedAttachment>
+    /** Optional pre-resolved attachments, delivered with every customer
+     *  channel that supports them (WhatsApp / SMS / Trengo / email). */
+    attachments?: ReadonlyArray<ResolvedAttachment>
     senders: CallSummarySenders
   },
   ctx: ActorCtx,
@@ -220,17 +224,23 @@ export async function sendCallSummary(
   }
   if (input.channels.trengo) {
     results.trengo = await runChannel(
-      input.senders.trengo ? () => input.senders.trengo!({ body, contactId }) : undefined,
+      input.senders.trengo
+        ? () => input.senders.trengo!({ body, contactId, attachments: input.attachments })
+        : undefined,
     )
   }
   if (input.channels.whatsapp) {
     results.whatsapp = await runChannel(
-      input.senders.whatsapp ? () => input.senders.whatsapp!({ body, contactId }) : undefined,
+      input.senders.whatsapp
+        ? () => input.senders.whatsapp!({ body, contactId, attachments: input.attachments })
+        : undefined,
     )
   }
   if (input.channels.sms) {
     results.sms = await runChannel(
-      input.senders.sms ? () => input.senders.sms!({ body, contactId }) : undefined,
+      input.senders.sms
+        ? () => input.senders.sms!({ body, contactId, attachments: input.attachments })
+        : undefined,
     )
   }
   if (input.channels.email) {
@@ -240,7 +250,7 @@ export async function sendCallSummary(
             input.senders.email!({
               body,
               contactId,
-              attachments: input.emailAttachments,
+              attachments: input.attachments,
             })
         : undefined,
     )

@@ -853,17 +853,24 @@ const cardRouter = router({
         agentId: user.id,
         requestId: ctx.requestId,
       })
-      // Resolve email attachments to bytes when the agent has picked any.
-      // Each ref kind comes from its own table; bytes are inlined in
-      // Postgres for all three (ContactDocument / UploadedInvoice /
-      // CallSummaryTemplate). Cap on the input keeps the payload sane.
-      const refs = input.channels.email ? (input.emailAttachments ?? []) : []
-      const emailAttachments: Array<{ filename: string; contentType: string; data: Buffer }> = [
+      // Resolve attachments to bytes when the agent picked any AND a customer
+      // channel that can carry them is selected (WhatsApp / SMS / Trengo /
+      // email — all upload + attach). Each ref kind comes from its own table;
+      // bytes are inlined in Postgres for all three (ContactDocument /
+      // UploadedInvoice / CallSummaryTemplate). Cap on the input keeps it sane.
+      const wantsAttachments = Boolean(
+        input.channels.email ||
+          input.channels.whatsapp ||
+          input.channels.sms ||
+          input.channels.trengo,
+      )
+      const refs = wantsAttachments ? (input.emailAttachments ?? []) : []
+      const attachments: Array<{ filename: string; contentType: string; data: Buffer }> = [
         ...(await resolveCallSummaryAttachments(ctx.db, refs)),
       ]
       // Device uploads (base64 from the agent's machine) — attached alongside
       // the resolved library files. ≤8 MB each.
-      if (input.channels.email) {
+      if (wantsAttachments) {
         for (const f of input.uploadedAttachments ?? []) {
           const data = Buffer.from(f.dataBase64, 'base64')
           if (data.byteLength === 0) continue
@@ -873,7 +880,7 @@ const cardRouter = router({
               message: `Attachment "${f.filename}" exceeds the 8 MB limit.`,
             })
           }
-          emailAttachments.push({ filename: f.filename, contentType: f.contentType, data })
+          attachments.push({ filename: f.filename, contentType: f.contentType, data })
         }
       }
       try {
@@ -883,7 +890,7 @@ const cardRouter = router({
             summaryInteractionId: input.summaryInteractionId,
             channels: input.channels,
             slackChannelId: input.slackChannelId,
-            emailAttachments,
+            attachments,
             senders,
           },
           { actorId: user.id, requestId: ctx.requestId },

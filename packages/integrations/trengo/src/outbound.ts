@@ -203,6 +203,9 @@ export interface StartConversationInput {
   recipient: string
   body: string
   requestId: string
+  /** Files to upload + attach to the first message (uploaded via Trengo
+   *  `/media` first, then attached by id). */
+  attachments?: OutboundAttachment[]
 }
 
 export interface StartConversationResult {
@@ -265,11 +268,36 @@ export async function startConversation(
   }
 
   try {
+    // Upload any attachments first, collecting Trengo media ids + metadata for
+    // the timeline (mirrors sendMessage).
+    const attachmentIds: number[] = []
+    const attachmentMeta: Array<{
+      filename: string
+      contentType: string
+      sizeBytes: number
+      trengoMediaId: number
+    }> = []
+    for (const att of input.attachments ?? []) {
+      const media = await client.uploadMedia({
+        filename: att.filename,
+        contentType: att.contentType,
+        data: att.data,
+      })
+      attachmentIds.push(media.id)
+      attachmentMeta.push({
+        filename: att.filename,
+        contentType: att.contentType,
+        sizeBytes: att.data.byteLength,
+        trengoMediaId: media.id,
+      })
+    }
+
     const result = await client.createConversation({
       channel: input.channel,
       recipient: input.recipient,
       body: input.body,
       customFields: { interactionId, agentId: input.agentId },
+      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     })
     if (!result.ticketId) {
       throw new TrengoApiError(502, '/messages', { reason: 'no ticket id returned' })
@@ -290,6 +318,7 @@ export async function startConversation(
           newConversation: true,
           outboundRequestId: input.requestId,
           trengoMessageId: result.messageId,
+          ...(attachmentMeta.length > 0 ? { attachments: attachmentMeta } : {}),
         },
       },
     })

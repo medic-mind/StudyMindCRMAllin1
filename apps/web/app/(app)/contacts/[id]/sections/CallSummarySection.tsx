@@ -262,12 +262,16 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
       const created = await add.mutateAsync({ contactId, body, outcome })
 
       if (alsoSend && (whatsapp || sms || email)) {
+        // Attachments now ride every chosen customer channel (WhatsApp/SMS via
+        // Trengo media, email inline), so send them whenever any is selected.
+        const anyChannel = whatsapp || sms || email
         const results = await send.mutateAsync({
           summaryInteractionId: created.id,
           channels: { whatsapp, sms, email },
-          emailAttachments: email && pickedAttachments.length > 0 ? pickedAttachments : undefined,
+          emailAttachments:
+            anyChannel && pickedAttachments.length > 0 ? pickedAttachments : undefined,
           uploadedAttachments:
-            email && uploadedFiles.length > 0
+            anyChannel && uploadedFiles.length > 0
               ? uploadedFiles.map((f) => ({
                   filename: f.filename,
                   contentType: f.contentType,
@@ -640,13 +644,13 @@ export function CallSummarySection({ contactId, contactDisplayName }: Props) {
           <p className="text-[10px] font-semibold uppercase tracking-wide text-primary-900/80">
             Attach files &amp; documents ({pickedAttachments.length + uploadedFiles.length})
           </p>
-          {!email && pickedAttachments.length + uploadedFiles.length > 0 ? (
+          {!whatsapp && !sms && !email && pickedAttachments.length + uploadedFiles.length > 0 ? (
             <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-              Attachments send with the Email channel — tick Email above to include them.
+              Pick a channel above (WhatsApp, SMS or Email) to send these files.
             </p>
           ) : (
             <p className="mt-0.5 text-[10px] text-primary-900/60">
-              Picked files are delivered with the Email channel.
+              Delivered with the chosen channels — WhatsApp &amp; SMS via Trengo, email inline.
             </p>
           )}
 
