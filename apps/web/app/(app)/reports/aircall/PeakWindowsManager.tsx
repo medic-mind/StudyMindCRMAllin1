@@ -79,7 +79,7 @@ function blankDraft(): Draft {
   }
 }
 
-export function PeakWindowsManager({ windows, canManage }: Props) {
+export function PeakWindowsManager({ windows, canManage, onChanged }: Props & { onChanged?: () => void }) {
   const router = useRouter()
   const confirm = useConfirm()
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -89,6 +89,9 @@ export function PeakWindowsManager({ windows, canManage }: Props) {
     toast.success(message)
     setDraft(null)
     void utils.reports.aircall.peakWindows.list.invalidate()
+    // The client workspace owns the summary query — let it refetch so the
+    // heatmap/peak stats reflect the changed windows immediately.
+    onChanged?.()
     router.refresh()
   }
 

@@ -1,10 +1,14 @@
-// CRUD admin for Slack channel options. Inline create + edit, archive +
-// restore, plus an editable list of deep-link action buttons per channel.
-// Manager+ via the tRPC layer. CLAUDE.md §10/§12.
+// CRUD admin for Slack channel options. The primary add path is a pick-by-name
+// browser over the workspace's channels (slackChannel.discover — needs the
+// channels:read bot scope, falls back gracefully); manual id entry stays as
+// the fallback and the only way in for private channels. Each row has a
+// "Send test" so the operator can verify the bot can actually post (token +
+// /invite) before a real notification needs it. Manager+ via the tRPC layer.
+// CLAUDE.md §10/§12.
 
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
@@ -33,6 +37,7 @@ export function SlackChannelsAdmin() {
   const listQuery = trpc.slackChannel.list.useQuery({ includeArchived: true })
   const [editingId, setEditingId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [picking, setPicking] = useState(false)
 
   const channels = listQuery.data ?? []
 
@@ -45,19 +50,38 @@ export function SlackChannelsAdmin() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="max-w-2xl text-sm text-neutral-600">
-          When an agent records a call summary, the <em>Internal — Slack</em> section
-          lets them post it to one of these channels for the virtual-assistant team to
-          action. The <strong>default</strong> channel is pre-selected. Action buttons
-          appear under the message in Slack — use{' '}
-          <code className="rounded bg-neutral-100 px-1">{'{{contactUrl}}'}</code> to link
-          back to the contact.
+          These are the channels the CRM can post into — call summaries, alerts, and
+          the routed notifications below. Add a channel by picking it from your Slack
+          workspace, then use <strong>Send test</strong> to confirm the bot can post
+          there. The <strong>default</strong> channel is used when nothing more
+          specific is configured.
         </p>
-        {!creating && (
-          <Button type="button" size="sm" onClick={() => setCreating(true)}>
-            New channel
-          </Button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {!picking && (
+            <Button type="button" size="sm" onClick={() => { setPicking(true); setCreating(false) }}>
+              Add from Slack
+            </Button>
+          )}
+          {!creating && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => { setCreating(true); setPicking(false) }}
+            >
+              Enter id manually
+            </Button>
+          )}
+        </div>
       </div>
+
+      {picking && (
+        <SlackChannelPicker
+          existing={channels}
+          onClose={() => setPicking(false)}
+          onAdded={refresh}
+        />
+      )}
 
       {creating && (
         <ChannelEditor
@@ -105,6 +129,168 @@ export function SlackChannelsAdmin() {
   )
 }
 
+/**
+ * Pick-by-name browser over the workspace's public channels. One click adds a
+ * channel with a sensible label — no hunting for C012… ids. Private channels
+ * cannot be listed (Slack needs an extra permission for that) so the manual
+ * id form remains the path for those.
+ */
+function SlackChannelPicker({
+  existing,
+  onClose,
+  onAdded,
+}: {
+  existing: ChannelOption[]
+  onClose: () => void
+  onAdded: () => Promise<void>
+}) {
+  const discover = trpc.slackChannel.discover.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  })
+  const create = trpc.slackChannel.create.useMutation()
+  const [query, setQuery] = useState('')
+  const [addingId, setAddingId] = useState<string | null>(null)
+
+  const knownIds = useMemo(() => new Set(existing.map((c) => c.channelId)), [existing])
+
+  const rows = useMemo(() => {
+    const all = discover.data?.status === 'ok' ? discover.data.channels : []
+    const q = query.trim().toLowerCase()
+    return q ? all.filter((c) => c.name.toLowerCase().includes(q)) : all
+  }, [discover.data, query])
+
+  async function add(channel: { id: string; name: string }) {
+    setAddingId(channel.id)
+    try {
+      await create.mutateAsync({
+        label: `#${channel.name}`,
+        channelId: channel.id,
+        isDefault: existing.filter((c) => !c.archived).length === 0,
+        actionButtons: [{ label: 'Open in CRM', url: '{{contactUrl}}' }],
+        sortOrder: 100,
+      })
+      toast.success(`#${channel.name} added — use "Send test" to confirm the bot can post.`)
+      await onAdded()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add channel')
+    } finally {
+      setAddingId(null)
+    }
+  }
+
+  const status = discover.isLoading ? 'loading' : (discover.data?.status ?? 'error')
+
+  return (
+    <div className="space-y-3 rounded-lg border border-primary-200 bg-primary-50/30 p-4 shadow-card">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-neutral-900">Add a channel from Slack</h3>
+        <button type="button" onClick={onClose} className="text-xs text-neutral-500 hover:underline">
+          Close
+        </button>
+      </div>
+
+      {status === 'loading' && (
+        <p className="text-sm text-neutral-500">Loading your Slack channels…</p>
+      )}
+
+      {status === 'not_configured' && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Slack isn&apos;t connected yet — set up the bot under{' '}
+          <a href="/settings/integrations/slack" className="font-medium underline">
+            Settings → Integrations → Slack
+          </a>{' '}
+          first. You can still add a channel by id with &quot;Enter id manually&quot;.
+        </p>
+      )}
+
+      {status === 'missing_scope' && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          The Slack app can&apos;t list channels yet. In{' '}
+          <a
+            href="https://api.slack.com/apps"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium underline"
+          >
+            api.slack.com/apps
+          </a>{' '}
+          add the <code className="rounded bg-amber-100 px-1">channels:read</code> bot
+          permission and re-install the app to your workspace — then this picker lists every
+          channel by name. Until then, add channels by id with &quot;Enter id manually&quot;.
+        </p>
+      )}
+
+      {status === 'error' && (
+        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          Couldn&apos;t reach Slack just now
+          {discover.data?.status === 'error' && discover.data.message
+            ? ` (${discover.data.message})`
+            : ''}
+          . Try again in a minute, or add the channel by id manually.
+        </p>
+      )}
+
+      {status === 'ok' && (
+        <>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search channels…"
+            aria-label="Search Slack channels"
+            autoFocus
+          />
+          {rows.length === 0 ? (
+            <p className="text-sm text-neutral-500">
+              {query ? 'No channels match that search.' : 'No public channels found.'}
+            </p>
+          ) : (
+            <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
+              {rows.map((c) => {
+                const added = c.alreadyAdded || knownIds.has(c.id)
+                return (
+                  <li
+                    key={c.id}
+                    className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-3 py-2"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-900">
+                      #{c.name}
+                    </span>
+                    {!c.isMember && (
+                      <span
+                        className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
+                        title="The bot has not been invited to this channel yet — posts will fail until you type /invite @YourBot in it."
+                      >
+                        Bot not invited
+                      </span>
+                    )}
+                    {added ? (
+                      <span className="shrink-0 text-xs text-neutral-400">Added</span>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={addingId === c.id}
+                        onClick={() => add(c)}
+                      >
+                        {addingId === c.id ? 'Adding…' : 'Add'}
+                      </Button>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <p className="text-[11px] text-neutral-500">
+            Private channels can&apos;t be listed here — add those by id with &quot;Enter id
+            manually&quot; (and /invite the bot into them).
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 function ChannelRow({
   channel,
   onEdit,
@@ -116,7 +302,25 @@ function ChannelRow({
 }) {
   const archive = trpc.slackChannel.archive.useMutation()
   const restore = trpc.slackChannel.restore.useMutation()
+  const testPost = trpc.slackChannel.testPost.useMutation()
   const [busy, setBusy] = useState(false)
+  const [testing, setTesting] = useState(false)
+
+  async function sendTest() {
+    setTesting(true)
+    try {
+      const res = await testPost.mutateAsync({ id: channel.id })
+      if (res.ok) {
+        toast.success(`Test posted to ${channel.label} — check Slack.`)
+      } else {
+        toast.error(res.reason, { duration: 9000 })
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send the test')
+    } finally {
+      setTesting(false)
+    }
+  }
 
   async function toggleArchive() {
     setBusy(true)
@@ -171,9 +375,23 @@ function ChannelRow({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2 lg:flex-col lg:items-end">
-        <Button type="button" size="sm" variant="secondary" onClick={onEdit}>
-          Edit
-        </Button>
+        <div className="flex items-center gap-2">
+          {!channel.archived && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={sendTest}
+              disabled={testing}
+              title="Post a test message so you can confirm the bot is invited and the id is right"
+            >
+              {testing ? 'Sending…' : 'Send test'}
+            </Button>
+          )}
+          <Button type="button" size="sm" variant="secondary" onClick={onEdit}>
+            Edit
+          </Button>
+        </div>
         <button
           type="button"
           onClick={toggleArchive}

@@ -13,6 +13,7 @@ import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { SuggestInput } from '@/components/ui/suggest-input'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
 import { formatRelativeTime } from '@/lib/format/relative-time'
@@ -143,19 +144,16 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
               <option value="high">High severity</option>
             </Select>
             {/* Pick a preset theme or type a brand-new one — both land in
-                Complaint.category; new ones join the pick-list automatically. */}
-            <Input
-              className="max-w-[14rem]"
+                Complaint.category; new ones join the pick-list automatically.
+                In-app suggestion panel (SuggestInput), not browser datalist. */}
+            <SuggestInput
+              className="w-full max-w-[14rem]"
+              aria-label="Complaint category"
               placeholder="Category — pick or type new"
-              list="complaint-category-options"
+              options={categoriesQuery.data ?? []}
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={setCategory}
             />
-            <datalist id="complaint-category-options">
-              {(categoriesQuery.data ?? []).map((c) => (
-                <option key={c} value={c} />
-              ))}
-            </datalist>
           </div>
 
           {/* Optional follow-up task, assigned as part of logging. */}

@@ -116,10 +116,10 @@ export default async function FinancePage() {
         actions={
           <div className="flex items-center gap-3 text-sm">
             <a
-              href="/finance/direct-debit"
+              href="/direct-debits"
               className="text-neutral-700 hover:text-neutral-900 hover:underline"
             >
-              Direct Debit issues →
+              Direct Debits →
             </a>
             <a
               href="/finance/payment-links"

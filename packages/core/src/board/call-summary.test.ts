@@ -193,3 +193,102 @@ describe('sendCallSummary', () => {
     ).rejects.toMatchObject({ code: 'CALL_SUMMARY_NOT_FOUND' })
   })
 })
+
+describe('sendCallSummary — wizard extensions', () => {
+  async function withSummary() {
+    const t = makeDb()
+    seed(t)
+    const summary = await addCallSummary(
+      t.db,
+      { cardId: 'card1', authorId: 'u1', body: 'Summary body' },
+      ctx,
+    )
+    return { t, summary }
+  }
+
+  it('passes per-channel body overrides; un-overridden channels get the summary body', async () => {
+    const { t, summary } = await withSummary()
+    const email = vi.fn(async (): Promise<ChannelResult> => ({ status: 'sent' }))
+    const sms = vi.fn(async (): Promise<ChannelResult> => ({ status: 'sent' }))
+
+    await sendCallSummary(
+      t.db,
+      {
+        summaryInteractionId: summary.id,
+        channels: { email: true, sms: true },
+        channelBodies: { email: 'Long email version' },
+        emailSubject: 'Following up',
+        senders: { email, sms },
+      },
+      ctx,
+    )
+
+    expect(email).toHaveBeenCalledWith(
+      expect.objectContaining({ body: 'Long email version', subject: 'Following up' }),
+    )
+    expect(sms).toHaveBeenCalledWith(expect.objectContaining({ body: 'Summary body' }))
+    const sent = t.interactions.find((i) => i.type === 'call_summary_sent')
+    expect((sent!.payload as Row).channelBodies).toEqual({ email: 'Long email version' })
+  })
+
+  it('routes a WhatsApp template to the sender and withholds attachments on that path', async () => {
+    const { t, summary } = await withSummary()
+    const whatsapp = vi.fn(
+      async (_args: Record<string, unknown>): Promise<ChannelResult> => ({ status: 'sent' }),
+    )
+    const attachments = [
+      { filename: 'pack.pdf', contentType: 'application/pdf', data: Buffer.from('x') },
+    ]
+    const template = {
+      templateId: 7,
+      templateTitle: 'UCAT info pack',
+      params: [{ key: '{{1}}', value: 'Test' }],
+    }
+
+    await sendCallSummary(
+      t.db,
+      {
+        summaryInteractionId: summary.id,
+        channels: { whatsapp: true },
+        channelBodies: { whatsapp: 'Hi Test, your pack: link' },
+        whatsappTemplate: template,
+        attachments,
+        senders: { whatsapp },
+      },
+      ctx,
+    )
+
+    const args = whatsapp.mock.calls[0]![0] as Record<string, unknown>
+    expect(args.body).toBe('Hi Test, your pack: link')
+    expect(args.trengoTemplate).toEqual(template)
+    // Never double-deliver the pack — the approved template already links it.
+    expect(args.attachments).toBeUndefined()
+    const sent = t.interactions.find((i) => i.type === 'call_summary_sent')
+    expect((sent!.payload as Row).whatsappTemplate).toEqual({ id: 7, title: 'UCAT info pack' })
+  })
+
+  it('keeps attachments on the free-text WhatsApp path', async () => {
+    const { t, summary } = await withSummary()
+    const whatsapp = vi.fn(
+      async (_args: Record<string, unknown>): Promise<ChannelResult> => ({ status: 'sent' }),
+    )
+    const attachments = [
+      { filename: 'pack.pdf', contentType: 'application/pdf', data: Buffer.from('x') },
+    ]
+
+    await sendCallSummary(
+      t.db,
+      {
+        summaryInteractionId: summary.id,
+        channels: { whatsapp: true },
+        attachments,
+        senders: { whatsapp },
+      },
+      ctx,
+    )
+
+    const args = whatsapp.mock.calls[0]![0] as Record<string, unknown>
+    expect(args.attachments).toEqual(attachments)
+    expect(args.trengoTemplate).toBeUndefined()
+  })
+})

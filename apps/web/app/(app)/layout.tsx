@@ -117,9 +117,24 @@ function buildNav(role: Role): NavItem[] {
       children: [
         { href: '/finance', label: 'Discrepancies' },
         { href: '/finance/unresolved-payments', label: 'Unresolved payments' },
-        { href: '/finance/direct-debit', label: 'Direct Debits' },
         { href: '/finance/refunds', label: 'Refunds' },
         { href: '/finance/payment-links', label: 'Payment links' },
+      ],
+    },
+    // GoCardless Direct Debits — its own top-level section (ADR 0038). The
+    // master dashboard lives at /direct-debits; the old /finance/direct-debit
+    // route redirects here so there is exactly ONE home for Direct Debits
+    // (Finance keeps reconciliation: discrepancies, refunds, payment links).
+    {
+      href: '/direct-debits',
+      label: 'Direct Debits',
+      visibleTo: ['ceo', 'senior_manager', 'manager'],
+      children: [
+        { href: '/direct-debits', label: 'Overview' },
+        { href: '/direct-debits/plans', label: 'Plans' },
+        { href: '/direct-debits/payments', label: 'Payments' },
+        { href: '/direct-debits/customers', label: 'Customers & mandates' },
+        { href: '/direct-debits/issues', label: 'Issues' },
       ],
     },
     {

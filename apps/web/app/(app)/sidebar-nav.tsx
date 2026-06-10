@@ -23,6 +23,7 @@ import {
   ListTodoIcon,
   MailIcon,
   PhoneIcon,
+  RepeatIcon,
   SettingsIcon,
   UserCircleIcon,
   UserPlusIcon,
@@ -85,6 +86,7 @@ const ICONS: Record<string, IconComp> = {
   '/camps': CalendarIcon,
   '/webinars': CalendarIcon,
   '/finance': CoinsIcon,
+  '/direct-debits': RepeatIcon,
   '/reports': BarChartIcon,
   '/settings': SettingsIcon,
   '/account': UserCircleIcon,
@@ -112,6 +114,7 @@ const SECTION: Record<string, string> = {
   '/camps': 'Operations',
   '/webinars': 'Operations',
   '/finance': 'Operations',
+  '/direct-debits': 'Operations',
   '/reports': 'Operations',
   '/settings': 'Admin',
 }

@@ -53,6 +53,7 @@ import { forwardingRouter } from './routers/forwarding'
 import { gocardlessRouter } from './routers/gocardless'
 import { contactSuggestionsRouter } from './routers/contact-suggestions'
 import { inboxRouter } from './routers/inbox'
+import { infoPackRouter } from './routers/infoPack'
 import { interactionRouter } from './routers/interaction'
 import { invoicingRouter } from './routers/invoicing'
 import { leadRouter } from './routers/lead'
@@ -98,6 +99,7 @@ export const appRouter = router({
   gocardless: gocardlessRouter,
   contactSuggestion: contactSuggestionsRouter,
   inbox: inboxRouter,
+  infoPack: infoPackRouter,
   interaction: interactionRouter,
   invoicing: invoicingRouter,
   lead: leadRouter,

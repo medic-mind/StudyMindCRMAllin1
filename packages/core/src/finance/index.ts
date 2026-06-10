@@ -95,3 +95,9 @@ export {
   type SetupLinkRecord,
   type SetupLinkStatus,
 } from './dd-setup-links'
+// Direct Debit dashboard insights (ADR 0038) — pure money maths.
+export {
+  monthlyEquivalentMinor,
+  monthlyRunRateMinor,
+  type PlanCadence,
+} from './dd-insights'

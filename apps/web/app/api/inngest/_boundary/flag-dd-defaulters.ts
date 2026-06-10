@@ -23,7 +23,7 @@ function buildSlackText(newlyDefaulted: number): { text: string; blocks: unknown
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Direct Debit defaulters*\n${newlyDefaulted} newly-flagged family(ies) — see Finance → Direct Debit issues.`,
+        text: `*Direct Debit defaulters*\n${newlyDefaulted} newly-flagged family(ies) — see Direct Debits → Issues in the CRM.`,
       },
     },
   ]

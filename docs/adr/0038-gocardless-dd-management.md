@@ -128,3 +128,24 @@ redirect flow expires after ~30 minutes, so it must never be emailed; instead:
   routes are on the middleware public-path allowlist (token-authenticated,
   not session) — the completion route was unreachable for parents before
   this amendment.
+
+## Amendment (2026-06-10, second) — top-level nav section + master dashboard
+
+Direct Debits outgrew its slot as a Finance child link. It is now its own
+top-level **Direct Debits** section in the Operations nav group, and the
+workspace gained a master dashboard:
+
+- Routes move to real sub-paths (matching the Webinars/Boards convention so
+  sidebar children highlight correctly): `/direct-debits` (Overview) ·
+  `/direct-debits/{plans,payments,customers,issues}`. The legacy
+  `/finance/direct-debit` route (and its `?tab=` deep links) permanently
+  redirects — exactly one home, no duplication with the Finance section,
+  which keeps reconciliation (discrepancies, refunds, payment links).
+- **Overview** is the GoCardless master dashboard: monthly plan run rate
+  (pure maths in `packages/core/src/finance/dd-insights.ts`, weekly/yearly
+  normalised to monthly, fail-closed on unknown cadences), collected last
+  30 days, money in flight, failed last 30 days, paused plans, customers to
+  link, outstanding sign-up links, recent failures ("needs attention") and
+  the next scheduled collections — all from one widened
+  `gocardless.overview` query. Read-only: money actions stay behind the
+  confirmed flows on the working tabs (CLAUDE.md §3).
