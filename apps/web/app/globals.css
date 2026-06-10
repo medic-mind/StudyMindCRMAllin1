@@ -107,33 +107,37 @@ body {
 }
 
 /*
- * Brand-logo size lock — defence-in-depth final safety net.
- *
- * The BrandLogo component already pins itself with inline width / height /
- * min-* / max-* AND wraps the visual in a CSS background-image (which can
- * not overflow its element). But a regression keeps appearing in
- * production where the uploaded logo renders larger than the top bar.
- *
- * We add a high-specificity selector with !important on every box-sizing
- * dimension so nothing — not flex stretch, not third-party CSS reset, not
- * a stale CDN payload — can grow the logo beyond its budget. The selector
- * targets every [role="img"][aria-label="StudyMind"] descendant of the
- * header banner and any anchor in the auth shell that wraps a BrandLogo.
+ * Uploaded brand-logo size cap — defence-in-depth for the optional custom
+ * logo (Settings → Branding) when it is rendered as an <img> inside the top
+ * bar. The CRM's strict CSP (style-src without 'unsafe-inline', §44.2) drops
+ * the inline width/height the BrandLogo <img> sets, so the cap has to live in
+ * a stylesheet rule to survive. It targets ONLY the uploaded <img alt> — NOT
+ * the inline SVG mark (which carries aria-label and sizes itself via its own
+ * width/height attributes). Crucially it caps maximums only and never forces
+ * a fixed width AND height, so the image keeps its aspect ratio instead of
+ * being stretched into a pill.
  */
-[role="banner"] [role="img"][aria-label="StudyMind"],
-[role="banner"] [role="img"][aria-label="StudyMind"] * {
+[role="banner"] img[alt="StudyMind"] {
   max-height: 28px !important;
   max-width: 168px !important;
-  height: 28px !important;
-  width: 168px !important;
+  width: auto !important;
+  object-fit: contain !important;
   box-sizing: border-box !important;
-  display: block !important;
-  overflow: hidden !important;
-  flex: 0 0 auto !important;
 }
 
-[role="banner"] a[aria-label="StudyMind CRM home"] {
-  max-height: 40px !important;
-  height: 40px !important;
-  overflow: hidden !important;
+/*
+ * Auth (sign-in) hero background. Authored as stylesheet rules — NOT React
+ * inline styles — because the strict CSP (style-src 'self' 'nonce', no
+ * 'unsafe-inline', §44.2) strips inline `style` attributes, which previously
+ * left the hero panel white and rendered the white wordmark invisible.
+ */
+.auth-hero-gradient {
+  background-image: linear-gradient(160deg, #2e1065 0%, #4c1d95 55%, #6b21a8 100%);
+}
+.auth-hero-sheen {
+  background-image: radial-gradient(
+    120% 80% at 50% -10%,
+    rgba(255, 255, 255, 0.08),
+    transparent 60%
+  );
 }

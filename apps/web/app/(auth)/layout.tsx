@@ -16,27 +16,17 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           primary scale), a soft top sheen for depth, intentionally text-light.
           No busy dotted grid; the calm surface reads more premium. */}
       <aside
-        className="relative hidden w-1/2 items-center justify-center overflow-hidden lg:flex"
+        className="auth-hero-gradient relative hidden w-1/2 items-center justify-center overflow-hidden bg-[#2e1065] lg:flex"
         aria-hidden="true"
       >
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(160deg, #2e1065 0%, #4c1d95 55%, #6b21a8 100%)',
-          }}
-        />
+        {/* Gradient + sheen live in globals.css classes (not inline `style`)
+            so the strict CSP can't strip them and leave the hero white. */}
+        <div className="auth-hero-gradient absolute inset-0" />
         {/* Subtle depth glows — kept low so the surface stays dark enough for
             crisp white text (no washed light-on-light patches). */}
         <div className="absolute -left-28 -top-32 size-[26rem] rounded-full bg-white/[0.08] blur-3xl" />
         <div className="absolute -bottom-36 -right-24 size-[32rem] rounded-full bg-white/[0.06] blur-3xl" />
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,0.08), transparent 60%)',
-          }}
-        />
+        <div className="auth-hero-sheen absolute inset-0" />
         {/* Centre brand badge */}
         <div className="relative flex flex-col items-center gap-6 text-center text-white">
           <div className="flex size-28 items-center justify-center rounded-[1.75rem] bg-white/10 shadow-2xl shadow-black/20 ring-1 ring-white/25 backdrop-blur-md">
