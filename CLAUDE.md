@@ -380,7 +380,7 @@ We considered a generic webhook gateway with per-provider plugins. Rejected: eac
 
 **Auth.** Slack Events API with verified signing secret; we recompute the v0 signature and reject on mismatch. Replay protection: reject any request older than 5 minutes by `X-Slack-Request-Timestamp`.
 
-**Subscribed events.** `message.channels` on the agreed list of channels only — never workspace-wide. The list lives in `packages/integrations/slack/config.ts` and changes ship via PR, never via the Slack admin UI.
+**Subscribed events.** `message.channels`, gated per channel by the bot's membership: Slack only delivers events for channels the bot has been `/invite`d to, so the invite is the consent gate — never the whole workspace. Setting `SLACK_WATCHED_CHANNELS` (comma-separated ids) narrows reading to an explicit allowlist; unset means every bot-member channel. Logic in `packages/integrations/slack/config.ts`.
 
 **Summary parser.** A Slack message in a watched channel triggers an Inngest function that uses gpt-4o-mini to extract: candidate contact identifier (name, email, phone), summary text, sentiment, next action. The result becomes an Interaction of type `slack_summary` linked to the matched Contact.
 
