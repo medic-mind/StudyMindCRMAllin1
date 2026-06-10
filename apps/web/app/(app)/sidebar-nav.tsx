@@ -55,6 +55,8 @@ export interface NavItem {
   href: string
   label: string
   children?: NavChild[]
+  /** Optional count pill (e.g. active complaints). Hidden when 0/undefined. */
+  badge?: number
 }
 
 interface Props {
@@ -171,6 +173,18 @@ export function SidebarNav({ items }: Props) {
                       />
                     ) : null}
                     <span>{item.label}</span>
+                    {item.badge && item.badge > 0 ? (
+                      <span
+                        className={
+                          active
+                            ? 'ml-auto rounded-full bg-white/25 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-white'
+                            : 'ml-auto rounded-full bg-rose-100 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-rose-700'
+                        }
+                        aria-label={`${item.badge} active`}
+                      >
+                        {item.badge > 99 ? '99+' : item.badge}
+                      </span>
+                    ) : null}
                   </Link>
                   {active && item.children && item.children.length > 0 ? (
                     <div className="mb-2 ml-7 mt-1 flex flex-col gap-px border-l border-primary-100 pl-3">

@@ -4,6 +4,7 @@ import { getBrandingLogoMeta } from '@studymind/core/branding'
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { db } from '@/lib/db'
+import { createServerCaller } from '@/lib/trpc/server'
 import { ComposeEmailProvider } from '@/components/mail/compose-email'
 import { ConfirmProvider } from '@/components/ui/confirm'
 import { BackfillProgressBanner } from '@/components/shell/backfill-progress-banner'
@@ -171,6 +172,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const totpEnabled = !!me.totpEnabledAt
   const nav = buildNav(role)
   const branding = await getBrandingLogoMeta(db)
+
+  // Live "active complaints" count on the Complaints nav item. Reuses the same
+  // tRPC procedure the /complaints queue counts with, so the badge can never
+  // drift from the list. Never let a count failure take down the shell.
+  const caller = await createServerCaller()
+  const activeComplaints = await caller.complaint.activeCount().catch(() => 0)
+  if (activeComplaints > 0) {
+    const complaintsItem = nav.find((it) => it.href === '/complaints')
+    if (complaintsItem) complaintsItem.badge = activeComplaints
+  }
 
   return (
     // Shell-wide workflow-popup providers (CLAUDE.md §26). ConfirmProvider gives
