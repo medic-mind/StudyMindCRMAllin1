@@ -144,6 +144,30 @@ export const callsRouter = router({
         const inWindow = derived.filter((c) => c.occurredAt <= to)
         const counts = summariseMissedCalls(inWindow)
 
+        // Sync health — so the workspace can explain WHY a callback isn't
+        // clearing instead of silently showing stale state. "Called back" is
+        // derived from outbound calls reaching the CRM (CLAUDE.md §10): if no
+        // outbound call exists in the whole window while inbound calls do, the
+        // outbound leg almost certainly isn't syncing (Aircall API creds unset
+        // so the 10-min sync no-ops, or outbound webhooks not delivering).
+        const outboundInWindow = calls.filter((c) => c.direction === 'outbound').length
+        const inboundInWindow = calls.filter((c) => c.direction === 'inbound').length
+        const apiConfigured = Boolean(
+          process.env['AIRCALL_API_ID'] && process.env['AIRCALL_API_TOKEN'],
+        )
+        const lastSync = await ctx.db.cronRun.findFirst({
+          where: { functionId: 'aircall/sync-calls' },
+          orderBy: { finishedAt: 'desc' },
+          select: { finishedAt: true, success: true },
+        })
+        const health = {
+          apiConfigured,
+          lastSyncAt: lastSync?.finishedAt ?? null,
+          lastSyncSuccess: lastSync?.success ?? null,
+          outboundInWindow,
+          inboundInWindow,
+        }
+
         let filtered = inWindow
         if (input.filter === 'outstanding') {
           filtered = inWindow.filter((c) => c.state === 'outstanding')
@@ -185,7 +209,7 @@ export const callsRouter = router({
           }
         })
 
-        return { items, counts, period: { from, to } }
+        return { items, counts, period: { from, to }, health }
       }),
 
     /** Manually mark a missed call actioned or dismissed (spam). Sales Exec+. */

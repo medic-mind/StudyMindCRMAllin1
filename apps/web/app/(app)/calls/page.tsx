@@ -53,6 +53,7 @@ export default async function MissedCallsPage({
           filter={filter}
           days={days}
           canAction={canAction}
+          health={data.health}
         />
       </PageBody>
     </>

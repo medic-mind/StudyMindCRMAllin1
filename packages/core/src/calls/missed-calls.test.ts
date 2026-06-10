@@ -133,6 +133,53 @@ describe('deriveMissedCalls', () => {
     expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('called_back')
   })
 
+  it('resolves when the customer rings again later and is ANSWERED', () => {
+    // No outbound leg, but the same number got through on a second attempt —
+    // the loop is closed, the miss must not stay outstanding.
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 20,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900777',
+      }),
+      raw({
+        aircallCallId: 21,
+        direction: 'inbound',
+        durationSec: 95,
+        occurredAt: new Date('2026-06-01T12:06:00Z'),
+        rawDigits: '+447700900777',
+      }),
+    ])
+    const out = deriveMissedCalls(calls, noReviews)
+    expect(out).toHaveLength(1) // the answered call is not itself a miss
+    expect(out[0]?.state).toBe('called_back')
+    expect(out[0]?.calledBackAt?.toISOString()).toBe('2026-06-01T12:06:00.000Z')
+  })
+
+  it('does NOT resolve from a later inbound call that also rang out', () => {
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 22,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900888',
+      }),
+      raw({
+        aircallCallId: 23,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T10:00:00Z'),
+        rawDigits: '+447700900888',
+      }),
+    ])
+    const out = deriveMissedCalls(calls, noReviews)
+    expect(out).toHaveLength(2)
+    expect(out.every((c) => c.state === 'outstanding')).toBe(true)
+  })
+
   it('does not cross-resolve between different numbers', () => {
     const calls = normalizeCalls([
       raw({ aircallCallId: 1, direction: 'inbound', durationSec: 0, occurredAt: new Date('2026-06-01T09:00:00Z'), rawDigits: '+447700900333' }),

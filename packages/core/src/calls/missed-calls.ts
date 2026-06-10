@@ -108,20 +108,25 @@ export function normalizeCalls(rows: ReadonlyArray<RawCall>): NormalizedCall[] {
 /**
  * Derive the missed-call list with each call's state. `calls` should include
  * BOTH inbound and outbound calls (outbound calls drive the auto-resolution).
- * Resolution precedence: a manual `dismissed` (spam) always wins; otherwise a
- * detected callback; otherwise a manual `actioned`; otherwise outstanding.
- * Result is newest-first.
+ * A miss resolves to `called_back` when a later call to/from the same number
+ * completes the loop: an OUTBOUND attempt (any outcome — we tried), or an
+ * ANSWERED INBOUND (they rang again and got through). Resolution precedence:
+ * a manual `dismissed` (spam) always wins; otherwise a detected resolution;
+ * otherwise a manual `actioned`; otherwise outstanding. Result is newest-first.
  */
 export function deriveMissedCalls(
   calls: ReadonlyArray<NormalizedCall>,
   reviewsByAircallId: ReadonlyMap<string, MissedCallReviewRow>,
 ): MissedCallResult[] {
-  // Index outbound attempts by a format-insensitive number key → ascending
+  // Index resolving calls by a format-insensitive number key → ascending
   // timestamps, so a callback resolves a miss even when Aircall formatted the
-  // two legs differently (see phoneMatchKey).
+  // two legs differently (see phoneMatchKey). Outbound counts on any attempt;
+  // inbound only counts when it was actually answered.
   const outboundByNumber = new Map<string, number[]>()
   for (const c of calls) {
-    if (c.direction === 'outbound') {
+    const resolves =
+      c.direction === 'outbound' || (c.direction === 'inbound' && isAnswered(c))
+    if (resolves) {
       const key = phoneMatchKey(c.rawDigits)
       if (!key) continue
       const arr = outboundByNumber.get(key) ?? []
