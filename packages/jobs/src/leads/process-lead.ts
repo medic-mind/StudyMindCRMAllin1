@@ -14,10 +14,11 @@ import { createId } from '@paralleldrive/cuid2'
 import type { Prisma, PrismaClient } from '@studymind/db'
 import { writeAuditLogEntry } from '@studymind/audit'
 import { logger } from '@studymind/core'
-import { createCard } from '@studymind/core/board'
+import { createCard, findOrCreateSubject } from '@studymind/core/board'
 import {
   chooseContactMatch,
   classifyLead,
+  londonWallToUtc,
   normaliseLead,
   planLeadRouting,
   type ClassificationRuleset,
@@ -77,14 +78,24 @@ function buildEnquirySummary(n: NormalisedLead, c: LeadClassification): string {
   return clamp(`Web enquiry via ${where}${what}`, 280)
 }
 
-function buildContactNotes(n: NormalisedLead, c: LeadClassification): string {
+function buildContactNotes(
+  n: NormalisedLead,
+  c: LeadClassification,
+  siteName: string | null,
+): string {
   const parts: string[] = []
+  // Organise: which site + which form the enquiry came through, so an agent
+  // reading the contact knows the source at a glance.
+  if (siteName) parts.push(`Site: ${siteName}`)
+  if (n.formTitle) parts.push(`Form: ${n.formTitle}`)
+  if (c.subject) parts.push(`Subject: ${c.subject}`)
   // A number the strict E.164 rules rejected must never vanish — keep it
   // visible on the contact so the agent can still dial it (live bug).
   if (n.phone && !n.phoneE164) parts.push(`Phone (as typed): ${n.phone}`)
   if (c.categories.length) parts.push(`Interest: ${c.categories.join(', ')}`)
   if (c.productTags.length) parts.push(`Products: ${c.productTags.join(', ')}`)
   if (n.parentName) parts.push(`Parent: ${n.parentName}`)
+  if (n.preferredWhen) parts.push(`Preferred time: ${n.preferredWhen} (London)`)
   if (n.message) parts.push(`Message: "${n.message}"`)
   return clamp(parts.join('\n'), 2000)
 }
@@ -116,9 +127,53 @@ async function loadRuleset(db: PrismaClient): Promise<ClassificationRuleset> {
   return { brandRules, urlRules, products }
 }
 
+/** Seed id of the Free Resources board (created by migration). */
+const FREE_RESOURCES_BOARD_ID = 'board_seed_free_resources'
+
+async function firstStageOf(db: PrismaClient, boardId: string): Promise<string | null> {
+  const stage =
+    (await db.pipelineStage.findFirst({
+      where: {
+        boardId,
+        archivedAt: null,
+        name: { equals: 'New leads', mode: 'insensitive' },
+      },
+      select: { id: true },
+    })) ??
+    (await db.pipelineStage.findFirst({
+      where: { boardId, archivedAt: null, isClosed: false },
+      orderBy: { position: 'asc' },
+      select: { id: true },
+    })) ??
+    (await db.pipelineStage.findFirst({
+      where: { boardId, archivedAt: null },
+      orderBy: { position: 'asc' },
+      select: { id: true },
+    }))
+  return stage?.id ?? null
+}
+
+/**
+ * Resolve the board + first stage a lead should land on. `free_resources`
+ * routes to the dedicated Free Resources board when it exists, otherwise it
+ * gracefully falls back to the default Sales Pipeline so a lead is never lost.
+ */
 async function resolveLeadDestination(
   db: PrismaClient,
+  kind: LeadClassification['destination'],
 ): Promise<{ boardId: string; stageId: string } | null> {
+  if (kind === 'free_resources') {
+    const free = await db.board.findFirst({
+      where: { id: FREE_RESOURCES_BOARD_ID, archivedAt: null },
+      select: { id: true },
+    })
+    if (free) {
+      const stageId = await firstStageOf(db, free.id)
+      if (stageId) return { boardId: free.id, stageId }
+    }
+    // Fall through to the sales board if Free Resources isn't set up yet.
+  }
+
   const board =
     (await db.board.findFirst({
       where: { isDefault: true, archivedAt: null },
@@ -131,28 +186,9 @@ async function resolveLeadDestination(
       select: { id: true },
     }))
   if (!board) return null
-
-  const stage =
-    (await db.pipelineStage.findFirst({
-      where: {
-        boardId: board.id,
-        archivedAt: null,
-        name: { equals: 'New leads', mode: 'insensitive' },
-      },
-      select: { id: true },
-    })) ??
-    (await db.pipelineStage.findFirst({
-      where: { boardId: board.id, archivedAt: null, isClosed: false },
-      orderBy: { position: 'asc' },
-      select: { id: true },
-    })) ??
-    (await db.pipelineStage.findFirst({
-      where: { boardId: board.id, archivedAt: null },
-      orderBy: { position: 'asc' },
-      select: { id: true },
-    }))
-  if (!stage) return null
-  return { boardId: board.id, stageId: stage.id }
+  const stageId = await firstStageOf(db, board.id)
+  if (!stageId) return null
+  return { boardId: board.id, stageId }
 }
 
 export async function processLead(
@@ -182,12 +218,14 @@ export async function processLead(
 
   // 2. Forced brand from the lead source, then deterministic classification.
   let forcedBrandId: string | null = null
+  let siteName: string | null = null
   if (lead.sourceId) {
     const src = await db.leadSource.findUnique({
       where: { id: lead.sourceId },
-      select: { defaultBrandId: true },
+      select: { defaultBrandId: true, name: true },
     })
     forcedBrandId = src?.defaultBrandId ?? null
+    siteName = src?.name ?? null
   }
   const ruleset = await loadRuleset(db)
   const classification = classifyLead(normalised, ruleset, { forcedBrandId })
@@ -278,7 +316,18 @@ export async function processLead(
     return { leadId, action: 'needs_triage', status: 'needs_triage', contactId: null, cardId: null }
   }
 
-  const destination = await resolveLeadDestination(db)
+  const destination = await resolveLeadDestination(db, classification.destination)
+
+  // Card enrichment shared by both create paths: the detected Subject becomes
+  // a Subject tag (find-or-create) so the board groups by topic, and a
+  // form-picked date/time becomes the card's Scheduled-call chip (London → UTC).
+  const cardCtx = { actorId: ACTOR_ID, requestId: lead.id }
+  let subjectId: string | undefined
+  if (classification.subject) {
+    const subj = await findOrCreateSubject(db, { name: classification.subject }, cardCtx)
+    subjectId = subj.id
+  }
+  const scheduledCallAt = londonWallToUtc(normalised.preferredWhen)
 
   if (plan.kind === 'reenquiry') {
     const contactId = plan.contactId
@@ -333,6 +382,11 @@ export async function processLead(
             categories: classification.categories,
             productTags: classification.productTags,
             score: classification.score,
+            subject: classification.subject,
+            board: classification.destination,
+            site: siteName,
+            formTitle: normalised.formTitle,
+            preferredWhen: normalised.preferredWhen,
             landingUrl: normalised.landingUrl,
             aiSummary: ai?.summary ?? null,
             phoneAsTyped: normalised.phoneE164 ? null : normalised.phone,
@@ -342,7 +396,13 @@ export async function processLead(
       if (wantCard && destination) {
         const card = await createCard(
           tx,
-          { boardId: destination.boardId, stageId: destination.stageId, contact: { contactId } },
+          {
+            boardId: destination.boardId,
+            stageId: destination.stageId,
+            contact: { contactId },
+            subjectId,
+            scheduledCallAt,
+          },
           ctx,
         )
         cardId = card.id
@@ -389,8 +449,10 @@ export async function processLead(
         lastName: normalised.lastName ? clamp(normalised.lastName, 120) : null,
         email: normalised.email,
         phoneE164: normalised.phoneE164,
-        notes: buildContactNotes(normalised, classification),
-        referralSource: 'Web enquiry',
+        notes: buildContactNotes(normalised, classification, siteName),
+        // Organise by site: "Web enquiry · Medic Mind site" so the Contacts
+        // list + filters group by where the lead came from.
+        referralSource: clamp(siteName ? `Web enquiry · ${siteName}` : 'Web enquiry', 120),
         isMinor: false,
         createdById: ACTOR_ID,
         updatedById: ACTOR_ID,
@@ -427,6 +489,11 @@ export async function processLead(
           categories: classification.categories,
           productTags: classification.productTags,
           score: classification.score,
+          subject: classification.subject,
+          board: classification.destination,
+          site: siteName,
+          formTitle: normalised.formTitle,
+          preferredWhen: normalised.preferredWhen,
           landingUrl: normalised.landingUrl,
           aiSummary: ai?.summary ?? null,
           phoneAsTyped: normalised.phoneE164 ? null : normalised.phone,
@@ -437,7 +504,13 @@ export async function processLead(
     if (destination) {
       const card = await createCard(
         tx,
-        { boardId: destination.boardId, stageId: destination.stageId, contact: { contactId } },
+        {
+          boardId: destination.boardId,
+          stageId: destination.stageId,
+          contact: { contactId },
+          subjectId,
+          scheduledCallAt,
+        },
         ctx,
       )
       cardId = card.id

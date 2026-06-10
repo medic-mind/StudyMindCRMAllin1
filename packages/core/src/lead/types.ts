@@ -54,6 +54,15 @@ export const NormalisedLead = z.object({
   phoneE164: z.string().nullable(),
   message: z.string().nullable(),
   parentName: z.string().nullable(),
+  /** A date/time the enquirer picked on the form (e.g. a "preferred call
+   * time" or "book a slot" field), as Europe/London wall-clock
+   * "YYYY-MM-DDTHH:mm" or "YYYY-MM-DD". The job converts this to UTC and
+   * sets the card's Scheduled-call chip. Null when no such field was found. */
+  preferredWhen: z.string().nullable(),
+  /** A subject/topic the enquirer selected on the form (a dropdown or radio
+   * like "Which course?"), if one was present. Feeds the card Subject tag
+   * alongside the URL-derived category. */
+  requestedSubject: z.string().nullable(),
 
   // Landing-page intelligence (CLAUDE.md §16) — drives classification first.
   landingDomain: z.string().nullable(),
@@ -75,6 +84,13 @@ export const LeadClassification = z.object({
   brandReason: z.string().nullable(),
   categories: z.array(z.string()),
   productTags: z.array(z.string()),
+  /** The single best Subject name for the card tag (most-specific category,
+   * or the form-selected subject). Null when nothing recognisable matched. */
+  subject: z.string().nullable(),
+  /** Which board the enquiry belongs on: the Sales Pipeline, or the separate
+   * Free Resources board (download / freebie / guide enquiries). Driven by
+   * configurable URL rules (a rule whose category is "Free Resources"). */
+  destination: z.enum(['sales', 'free_resources']),
   score: z.number().int().min(0).max(100),
   /** Human-readable reasons for the classification + score (audit/debug). */
   reasons: z.array(z.string()),

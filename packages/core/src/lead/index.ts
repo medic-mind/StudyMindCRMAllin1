@@ -5,8 +5,9 @@
 // processor that consumes these.
 
 export * from './types'
-export { normaliseLead, normalisePhone, type RawLeadInput } from './normalise'
-export { classifyLead, type ClassifyOptions } from './classify'
+export { normaliseLead, normalisePhone, extractPreferredWhen, type RawLeadInput } from './normalise'
+export { classifyLead, FREE_RESOURCES_CATEGORY, type ClassifyOptions } from './classify'
+export { londonWallToUtc } from './london-time'
 export { scoreLead, type ScoreSignals, type ScoreResult } from './score'
 export {
   chooseContactMatch,

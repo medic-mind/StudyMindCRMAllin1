@@ -69,13 +69,28 @@ type LeadRow = {
   landingDomain: string | null
   landingUrl: string | null
   formTitle: string | null
+  classification: unknown
   createdAt: Date
   convertedToContactId: string | null
   brand: { id: string; name: string; color: string | null } | null
   source_: { id: string; name: string } | null
 }
 
+/** Read the detected subject + board ('sales' | 'free_resources') out of the
+ * stored classification JSON, defensively (older rows may not have them). */
+function readClassificationBits(c: unknown): { subject: string | null; board: string | null } {
+  if (c && typeof c === 'object') {
+    const obj = c as Record<string, unknown>
+    return {
+      subject: typeof obj['subject'] === 'string' ? (obj['subject'] as string) : null,
+      board: typeof obj['destination'] === 'string' ? (obj['destination'] as string) : null,
+    }
+  }
+  return { subject: null, board: null }
+}
+
 function toListItem(l: LeadRow) {
+  const { subject, board } = readClassificationBits(l.classification)
   return {
     id: l.id,
     name: l.name,
@@ -85,6 +100,8 @@ function toListItem(l: LeadRow) {
     score: l.score,
     categories: l.categories,
     productTags: l.productTags,
+    subject,
+    board,
     brand: l.brand,
     sourceName: l.source_?.name ?? null,
     sourceLabel: l.source,

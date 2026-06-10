@@ -40,6 +40,16 @@ const ruleset: ClassificationRuleset = {
       brandId: 'cmp_study',
       priority: 100,
     },
+    {
+      id: 'u4',
+      label: 'Free Resources',
+      pattern: 'free-resources',
+      matchType: 'contains',
+      productTags: [],
+      categories: ['Free Resources'],
+      brandId: null,
+      priority: 100,
+    },
   ],
   products: [
     {
@@ -65,6 +75,8 @@ function lead(partial: Partial<NormalisedLead>): NormalisedLead {
     phoneE164: null,
     message: null,
     parentName: null,
+    preferredWhen: null,
+    requestedSubject: null,
     landingDomain: null,
     landingUrl: null,
     landingSlug: null,
@@ -155,5 +167,47 @@ describe('classifyLead — scoring + confidence', () => {
     expect(c.brandCompanyId).toBeNull()
     expect(c.categories).toHaveLength(0)
     expect(c.score).toBeLessThan(60)
+  })
+})
+
+describe('classifyLead — subject + board routing', () => {
+  it('routes a free-resources enquiry to the Free Resources board', () => {
+    const c = classifyLead(
+      lead({ landingDomain: 'medicmind.co.uk', landingSlug: 'free-resources/ucat-guide' }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+    // The category routes; the subject is still the real topic (UCAT), not the
+    // "Free Resources" marker.
+    expect(c.subject).toBe('UCAT')
+  })
+
+  it('routes a freebie/download slug even without a matching rule', () => {
+    const c = classifyLead(
+      lead({ landingDomain: 'studymind.co.uk', landingSlug: 'free-download/maths-cheat-sheet' }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+  })
+
+  it('keeps a normal sales enquiry on the sales board', () => {
+    const c = classifyLead(
+      lead({ landingDomain: 'medicmind.co.uk', landingSlug: 'ucat-course' }),
+      ruleset,
+    )
+    expect(c.destination).toBe('sales')
+    expect(c.subject).toBe('UCAT')
+  })
+
+  it('prefers the form-selected subject over the URL category', () => {
+    const c = classifyLead(
+      lead({
+        landingDomain: 'medicmind.co.uk',
+        landingSlug: 'ucat-course',
+        requestedSubject: 'Medicine Interview',
+      }),
+      ruleset,
+    )
+    expect(c.subject).toBe('Medicine Interview')
   })
 })

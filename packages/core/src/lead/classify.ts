@@ -20,6 +20,33 @@ const HIGH_VALUE_CATEGORIES = new Set([
   'Law Admissions',
 ])
 
+/** The category a "Free Resources" URL rule emits. A lead carrying this
+ * category routes to the Free Resources board instead of the Sales Pipeline.
+ * It is never used as the card Subject (it's a routing signal, not a topic). */
+export const FREE_RESOURCES_CATEGORY = 'Free Resources'
+
+/** Generic service buckets — fine as a fallback Subject, but a specific exam
+ * (UCAT, GAMSAT, A-Level Biology…) is preferred when present. */
+const GENERIC_CATEGORIES = new Set([
+  'Tutoring',
+  'Course',
+  'Mentoring',
+  'Consultation',
+  'Personal Statement',
+  'Work Experience',
+  FREE_RESOURCES_CATEGORY,
+])
+
+/** Pick the single best Subject for the card tag: the form-selected subject
+ * wins (the enquirer told us directly), then the most-specific category. */
+function pickSubject(formSubject: string | null, cats: string[]): string | null {
+  if (formSubject) return formSubject
+  const specific = cats.find((c) => !GENERIC_CATEGORIES.has(c))
+  if (specific) return specific
+  const firstReal = cats.find((c) => c !== FREE_RESOURCES_CATEGORY)
+  return firstReal ?? null
+}
+
 export interface ClassifyOptions {
   /** When the LeadSource pins a brand, it overrides domain detection. */
   forcedBrandId?: string | null
@@ -148,11 +175,27 @@ export function classifyLead(
   if (lead.email || lead.phoneE164) confidence += 0.1
   confidence = Math.min(1, Number(confidence.toFixed(2)))
 
+  // Routing: a "Free Resources" category (from a configurable URL rule, or a
+  // form/slug that reads as a freebie/download) sends the lead to the Free
+  // Resources board instead of the Sales Pipeline.
+  const looksFree =
+    cats.includes(FREE_RESOURCES_CATEGORY) ||
+    /\b(free[- ]?resource|free[- ]?download|download|freebie|cheat[- ]?sheet|free[- ]?guide|free[- ]?ebook|free[- ]?e[- ]?book|lead[- ]?magnet|free[- ]?webinar|free[- ]?taster|sample[- ]?paper)\b/u.test(
+      `${lead.landingSlug ?? ''} ${lead.formTitle ?? ''} ${lead.source}`.toLowerCase(),
+    )
+  const destination: LeadClassification['destination'] = looksFree ? 'free_resources' : 'sales'
+  if (looksFree) reasons.push('Routed to Free Resources board')
+
+  const subject = pickSubject(lead.requestedSubject, cats)
+  if (subject) reasons.push(`Subject: ${subject}`)
+
   return {
     brandCompanyId,
     brandReason,
     categories: cats,
     productTags: prods,
+    subject,
+    destination,
     score,
     reasons: [...reasons, ...scoreReasons],
     matchedRuleIds: uniq(matchedRuleIds),

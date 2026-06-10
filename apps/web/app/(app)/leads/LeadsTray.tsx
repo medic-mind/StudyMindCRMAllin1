@@ -81,6 +81,23 @@ function BrandChip({ brand }: { brand: { name: string; color: string | null } | 
   )
 }
 
+/** Which board the lead routed to — Sales Pipeline vs the Free Resources
+ * board. Older leads (before board routing) have a null board → Sales. */
+function BoardChip({ board }: { board: string | null }) {
+  const free = board === 'free_resources'
+  return (
+    <span
+      className={
+        free
+          ? 'inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-800'
+          : 'inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-800'
+      }
+    >
+      {free ? 'Free Resources' : 'Sales'}
+    </span>
+  )
+}
+
 export function LeadsTray({ initialStats, canWrite }: Props) {
   const [status, setStatus] = useState<StatusKey>('needs_triage')
   const [search, setSearch] = useState('')
@@ -136,8 +153,8 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
           <Link href="/pipeline" className="font-medium text-primary-700 hover:underline">
             New leads
           </Link>{' '}
-          automatically. Duplicates within 24h are merged onto one contact; a
-          later re-enquiry adds a fresh card (no duplicate contact).
+          automatically. Duplicates within 24h are merged onto one contact; a later re-enquiry adds
+          a fresh card (no duplicate contact).
         </span>
         <span className="ml-auto whitespace-nowrap font-medium text-neutral-700">
           {triageCount} to triage · {onboardedCount} auto-saved
@@ -197,7 +214,9 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
                 <Tr>
                   <Th>Enquirer</Th>
                   <Th>Brand</Th>
-                  <Th>Interest</Th>
+                  <Th>Site / Form</Th>
+                  <Th>Subject</Th>
+                  <Th>Board</Th>
                   <Th>Score</Th>
                   <Th>Status</Th>
                   <Th>When</Th>
@@ -222,19 +241,22 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
                       <BrandChip brand={l.brand} />
                     </Td>
                     <Td>
-                      <div className="flex flex-wrap gap-1">
-                        {l.categories.slice(0, 3).map((c) => (
-                          <span
-                            key={c}
-                            className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-700"
-                          >
-                            {c}
-                          </span>
-                        ))}
-                        {l.categories.length === 0 ? (
-                          <span className="text-neutral-400">—</span>
-                        ) : null}
+                      <div className="text-neutral-800">{l.sourceName ?? '—'}</div>
+                      <div className="max-w-[180px] truncate text-xs text-neutral-500">
+                        {l.formTitle ?? '—'}
                       </div>
+                    </Td>
+                    <Td>
+                      {l.subject ? (
+                        <span className="rounded bg-primary-50 px-1.5 py-0.5 text-[11px] font-medium text-primary-800">
+                          {l.subject}
+                        </span>
+                      ) : (
+                        <span className="text-neutral-400">—</span>
+                      )}
+                    </Td>
+                    <Td>
+                      <BoardChip board={l.board} />
                     </Td>
                     <Td>
                       <Badge tone={scoreTone(l.score)}>{l.score ?? '—'}</Badge>
@@ -337,6 +359,35 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
                   </ul>
                 </div>
               ) : null}
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Site
+                  </div>
+                  <div className="mt-1 text-xs text-neutral-700">{d.sourceName ?? '—'}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Board
+                  </div>
+                  <div className="mt-1">
+                    <BoardChip board={d.board} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Form
+                  </div>
+                  <div className="mt-1 text-xs text-neutral-700">{d.formTitle ?? '—'}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Subject
+                  </div>
+                  <div className="mt-1 text-xs text-neutral-700">{d.subject ?? '—'}</div>
+                </div>
+              </div>
 
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">

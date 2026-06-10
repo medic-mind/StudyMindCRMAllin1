@@ -106,6 +106,48 @@ const SYNONYMS = {
   referrer: ['referrer', 'referer', 'http-referer', 'ref'],
   formTitle: ['form-title', 'form-name', 'your-form', 'wpcf7-form-title'],
   formId: ['form-id', 'formid', 'wpcf7', 'wpcf7-unit-tag'],
+  // A date/time the enquirer chose — "preferred call time", a booking slot,
+  // CF7's [date]/[time]/[datetime] fields. We combine date + time when both
+  // are present so a "Tue 3pm" selection lands on the card automatically.
+  when: [
+    'date',
+    'time',
+    'datetime',
+    'preferred-date',
+    'preferred-time',
+    'preferred-datetime',
+    'preferred-call-time',
+    'preferred-time-to-call',
+    'best-time-to-call',
+    'best-time',
+    'call-time',
+    'callback-time',
+    'appointment',
+    'appointment-time',
+    'slot',
+    'booking-time',
+    'your-date',
+    'your-time',
+    'your-preferred-time',
+  ],
+  // A subject/topic dropdown — "Which course?", "Subject", "Interested in".
+  subject: [
+    'subject',
+    'course',
+    'courses',
+    'interested-in',
+    'interest',
+    'which-course',
+    'which-courses',
+    'course-interest',
+    'enquiry-type',
+    'enquiry-subject',
+    'topic',
+    'service',
+    'your-subject',
+    'your-course',
+    'which-service',
+  ],
 } as const
 
 type Role = keyof typeof SYNONYMS
@@ -158,7 +200,82 @@ function roleForKey(key: string, type: string): Role | null {
   if (type === 'email') return 'email'
   if (type === 'tel') return 'phone'
   if (type === 'textarea') return 'message'
+  // CF7 [date]/[time]/[datetime] (and common plugin variants) → the when slot.
+  if (type === 'date' || type === 'time' || type === 'datetime' || type === 'datetime-local')
+    return 'when'
   return null
+}
+
+const ISO_DATE_RE = /\b(\d{4})-(\d{2})-(\d{2})\b/u
+const DMY_RE = /\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b/u
+const TIME_RE = /\b(\d{1,2})[:.](\d{2})\s*(am|pm)?\b/iu
+const TIME_AMPM_RE = /\b(\d{1,2})\s*(am|pm)\b/iu
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** Extract a "YYYY-MM-DD" date from free text. UK reading (D/M/Y) for the
+ * ambiguous slash form. Returns null when no plausible date is present. */
+function extractDate(raw: string): string | null {
+  const iso = ISO_DATE_RE.exec(raw)
+  if (iso) {
+    const [, y, m, d] = iso
+    return `${y}-${m}-${d}`
+  }
+  const dmy = DMY_RE.exec(raw)
+  if (dmy) {
+    const d = dmy[1]!
+    const m = dmy[2]!
+    const rawY = dmy[3]!
+    const y = rawY.length === 2 ? '20' + rawY : rawY
+    const dd = Number(d)
+    const mm = Number(m)
+    if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
+      return `${y}-${pad2(mm)}-${pad2(dd)}`
+    }
+  }
+  return null
+}
+
+/** Extract a 24h "HH:mm" time from free text (handles am/pm). Null if none. */
+function extractTime(raw: string): string | null {
+  const t = TIME_RE.exec(raw)
+  if (t) {
+    let h = Number(t[1])
+    const min = Number(t[2])
+    const ap = t[3]?.toLowerCase()
+    if (ap === 'pm' && h < 12) h += 12
+    if (ap === 'am' && h === 12) h = 0
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return `${pad2(h)}:${pad2(min)}`
+  }
+  const ta = TIME_AMPM_RE.exec(raw)
+  if (ta) {
+    let h = Number(ta[1])
+    const ap = ta[2]!.toLowerCase()
+    if (ap === 'pm' && h < 12) h += 12
+    if (ap === 'am' && h === 12) h = 0
+    if (h >= 0 && h <= 23) return `${pad2(h)}:00`
+  }
+  return null
+}
+
+/**
+ * Assemble a Europe/London wall-clock "YYYY-MM-DDTHH:mm" (or bare date) from
+ * the raw `when`-role values found on the form. CF7 often splits date and time
+ * into two fields, so we scan all of them: first a date, then a time, and
+ * combine. Returns null when no usable date is present (a lone time with no
+ * date is not actionable on a calendar).
+ */
+export function extractPreferredWhen(values: string[]): string | null {
+  let date: string | null = null
+  let time: string | null = null
+  for (const v of values) {
+    if (!date) date = extractDate(v)
+    if (!time) time = extractTime(v)
+  }
+  if (!date) return null
+  return time ? `${date}T${time}` : date
 }
 
 /**
@@ -345,6 +462,16 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
   const email = found.email ? found.email.trim().toLowerCase() : null
   const phoneRes = found.phone ? normalisePhone(found.phone) : null
 
+  // Preferred date/time. CF7 commonly splits date and time into separate
+  // fields, both detected as the `when` role — so we collect *every* when-role
+  // value (not just the first) and assemble a single instant. Falls back to
+  // scanning the message body so "call me Tuesday at 3pm" still lands.
+  const whenValues = entries.filter((e) => roleForKey(e.key, e.type) === 'when').map((e) => e.value)
+  if (found.message) whenValues.push(found.message)
+  const preferredWhen = extractPreferredWhen(whenValues)
+  // A subject/topic dropdown selection, if present.
+  const requestedSubject = found.subject ? found.subject.trim().slice(0, 120) : null
+
   // Stringified field map for UTM lookup.
   const fieldStrs: Record<string, string> = {}
   for (const e of entries) fieldStrs[e.key] = e.value
@@ -359,6 +486,8 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
     if (inList(SYNONYMS.referrer, e.key)) continue
     if (inList(SYNONYMS.formTitle, e.key)) continue
     if (inList(SYNONYMS.formId, e.key)) continue
+    if (inList(SYNONYMS.when, e.key)) continue
+    if (roleForKey(e.key, e.type) === 'when') continue
     if (e.key.startsWith('utm-') || e.key.startsWith('utm_')) continue
     extraFields[e.rawKey] = e.value
   }
@@ -377,6 +506,8 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
     phoneE164: phoneRes?.e164 ?? null,
     message: found.message ?? null,
     parentName: found.parentName ?? null,
+    preferredWhen,
+    requestedSubject,
     landingDomain: domain,
     landingUrl: url,
     landingSlug: parsed.slug,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { normaliseLead, normalisePhone } from './normalise'
+import { extractPreferredWhen, normaliseLead, normalisePhone } from './normalise'
 
 describe('normalisePhone', () => {
   it('keeps a valid E.164 number', () => {
@@ -105,5 +105,51 @@ describe('normaliseLead — first/last + landing fallbacks', () => {
     })
     expect(out.landingDomain).toBe('oxbridgemind.co.uk')
     expect(out.landingSlug).toBe('oxbridge-admissions/apply')
+  })
+})
+
+describe('extractPreferredWhen', () => {
+  it('combines a separate date and time field (CF7 split)', () => {
+    expect(extractPreferredWhen(['2026-06-10', '15:30'])).toBe('2026-06-10T15:30')
+  })
+  it('reads a UK D/M/Y date with am/pm time', () => {
+    expect(extractPreferredWhen(['10/06/2026', '3pm'])).toBe('2026-06-10T15:00')
+  })
+  it('returns a bare date when no time is present', () => {
+    expect(extractPreferredWhen(['2026-06-10'])).toBe('2026-06-10')
+  })
+  it('returns null for a lone time with no date', () => {
+    expect(extractPreferredWhen(['3pm'])).toBeNull()
+  })
+})
+
+describe('normaliseLead — preferred date/time + subject', () => {
+  it('detects a CF7 date + time field and a course dropdown', () => {
+    const out = normaliseLead({
+      fields: {
+        'your-name': 'Sam Patel',
+        email: 'sam@example.test',
+        'date-219': '2026-06-12',
+        'time-44': '14:00',
+        'which-course': 'UCAT',
+      },
+      meta: { url: 'https://medicmind.co.uk/book-a-call/' },
+    })
+    expect(out.preferredWhen).toBe('2026-06-12T14:00')
+    expect(out.requestedSubject).toBe('UCAT')
+    // The date/time/subject fields are consumed, not dumped into extras.
+    expect(out.extraFields).not.toHaveProperty('date-219')
+    expect(out.extraFields).not.toHaveProperty('time-44')
+  })
+
+  it('reads a preferred-call-time phrase from the message body', () => {
+    const out = normaliseLead({
+      fields: {
+        name: 'Jo Lee',
+        email: 'jo@example.test',
+        'your-message': 'Please call me on 12/06/2026 around 4pm about A-Level Maths',
+      },
+    })
+    expect(out.preferredWhen).toBe('2026-06-12T16:00')
   })
 })
