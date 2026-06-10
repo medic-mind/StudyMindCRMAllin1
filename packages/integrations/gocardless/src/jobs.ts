@@ -10,19 +10,57 @@ import {
   recomputeAtRiskForFamily,
   resolveFamilyByGcMandate,
   revertGcPayment,
-  syncGcMandate,
   syncGcPayment,
+  upsertGcMandateMirror,
+  upsertGcPaymentMirror,
+  upsertGcSubscriptionMirror,
 } from '@studymind/core/finance'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { gocardlessBackfill } from './backfill'
 import { createClient } from './client'
+import { mandateMirrorInput, paymentMirrorInput, subscriptionMirrorInput } from './mirror-map'
 import { mapMandateStatus, mapPaymentStatus } from './types'
 
 // Event keys we currently process (resource_type/action). Anything else is
 // logged and skipped (no error) so unrecognised webhook types do not blow up
-// the dead-letter queue.
+// the dead-letter queue. ADR 0038 widened this to the full payment / mandate
+// / subscription lifecycle so the CRM mirror is complete.
 const HANDLED_KEYS = new Set<string>([
+  'payments/created',
+  'payments/customer_approval_granted',
+  'payments/submitted',
+  'payments/confirmed',
+  'payments/failed',
+  'payments/cancelled',
+  'payments/paid_out',
+  'payments/charged_back',
+  'payments/late_failure_settled',
+  'mandates/created',
+  'mandates/customer_approval_granted',
+  'mandates/submitted',
+  'mandates/active',
+  'mandates/failed',
+  'mandates/expired',
+  'mandates/cancelled',
+  'mandates/replaced',
+  'subscriptions/created',
+  'subscriptions/customer_approval_granted',
+  'subscriptions/customer_approval_denied',
+  'subscriptions/payment_created',
+  'subscriptions/amended',
+  'subscriptions/cancelled',
+  'subscriptions/finished',
+  'subscriptions/paused',
+  'subscriptions/resumed',
+])
+
+// Keys that append a timeline Interaction (kept to the meaningful moments so
+// the timeline stays readable — mirror state still updates for every handled
+// key). CRM-initiated subscription actions write their own Interaction in
+// outbound.ts, so subscription webhook echoes are mirror-only.
+const INTERACTION_KEYS = new Set<string>([
   'payments/confirmed',
   'payments/failed',
   'payments/late_failure_settled',
@@ -77,12 +115,18 @@ export const gocardlessEventReceived = inngest.createFunction(
       action: string
       resource_type: string
       created_at: string
-      links: { mandate?: string; payment?: string; new_mandate?: string }
+      links: {
+        mandate?: string
+        payment?: string
+        new_mandate?: string
+        subscription?: string
+      }
     }
     const occurredAt = new Date(rawEvent.created_at)
 
     const isPayment = type.startsWith('payments/')
     const isMandate = type.startsWith('mandates/')
+    const isSubscription = type.startsWith('subscriptions/')
 
     // 2. Refetch the canonical resource. CLAUDE.md §9.
     const refetched = await step.run('refetch', async () => {
@@ -100,6 +144,15 @@ export const gocardlessEventReceived = inngest.createFunction(
         }
         return { kind: 'mandate' as const, mandate, newMandate }
       }
+      if (isSubscription) {
+        // `subscriptions/payment_created` links the subscription too; for all
+        // subscription events the subscription itself is the canonical object.
+        const subscriptionId = rawEvent.links.subscription
+        if (subscriptionId) {
+          const subscription = await client.getSubscription(subscriptionId)
+          return { kind: 'subscription' as const, subscription }
+        }
+      }
       return { kind: 'unresolvable' as const }
     })
 
@@ -115,21 +168,45 @@ export const gocardlessEventReceived = inngest.createFunction(
     }
 
     // 3. Persist into our normalised mirror tables and run any side-effects.
+    // The complete provider mirror (ADR 0038) updates for every handled event,
+    // regardless of whether the customer is linked to a CRM Family yet; the
+    // reconciliation-facing tables (`Payment`) still require the Family link.
     const persisted = await step.run('persist', async () => {
       if (refetched.kind === 'payment') {
         const p = refetched.payment
-        const mandateId = p.links.mandate
+        const mandateId = p.links.mandate ?? null
+        const mappedStatus = mapPaymentStatus(p.status)
+
+        // Resolve customer + contact through the mandate mirror.
+        const mandateRow = mandateId
+          ? await db.gcMandate.findUnique({
+              where: { gcMandateId: mandateId },
+              select: { gcCustomerId: true },
+            })
+          : null
+        const customerRow = mandateRow?.gcCustomerId
+          ? await db.gcCustomer.findUnique({
+              where: { gcCustomerId: mandateRow.gcCustomerId },
+              select: { contactId: true },
+            })
+          : null
+
+        await upsertGcPaymentMirror(
+          db,
+          paymentMirrorInput(p, { gcCustomerId: mandateRow?.gcCustomerId ?? null }),
+        )
+
         if (!mandateId) {
           return {
             kind: 'payment' as const,
             unresolved: true,
             familyId: null as string | null,
+            contactId: null as string | null,
             gcId: p.id,
-            status: mapPaymentStatus(p.status),
+            status: mappedStatus,
             reversal: null as { reopenedAllocations: number } | null,
           }
         }
-        const mappedStatus = mapPaymentStatus(p.status)
         const isConfirmed = mappedStatus === 'confirmed'
         const sync = await syncGcPayment(db, {
           gcPaymentId: p.id,
@@ -151,42 +228,71 @@ export const gocardlessEventReceived = inngest.createFunction(
           kind: 'payment' as const,
           unresolved: sync.unresolved,
           familyId: sync.familyId,
+          contactId: customerRow?.contactId ?? null,
           gcId: p.id,
           status: mappedStatus,
           reversal,
         }
       }
 
+      if (refetched.kind === 'subscription') {
+        const s = refetched.subscription
+        const mandateRow = s.links.mandate
+          ? await db.gcMandate.findUnique({
+              where: { gcMandateId: s.links.mandate },
+              select: { gcCustomerId: true, familyId: true },
+            })
+          : null
+        await upsertGcSubscriptionMirror(
+          db,
+          subscriptionMirrorInput(s, { gcCustomerId: mandateRow?.gcCustomerId ?? null }),
+        )
+        return {
+          kind: 'subscription' as const,
+          unresolved: mandateRow?.familyId == null,
+          familyId: mandateRow?.familyId ?? null,
+          contactId: null as string | null,
+          gcId: s.id,
+          status: s.status,
+        }
+      }
+
       // mandate
       const m = refetched.mandate
-      const familyId = await resolveFamilyByGcMandate(db, m.id)
       const mappedStatus = mapMandateStatus(m.status)
-      const sync = await syncGcMandate(db, {
-        gcMandateId: m.id,
-        state: mappedStatus,
-        ...(familyId ? { familyId } : {}),
-      })
+      const familyId = await resolveFamilyByGcMandate(db, m.id)
 
-      // Replacement — CLAUDE.md §9.
+      // Family can also arrive through the customer link (ADR 0038).
+      const customer = m.links.customer
+        ? await db.gcCustomer.findUnique({
+            where: { gcCustomerId: m.links.customer },
+            select: { contactId: true, familyId: true },
+          })
+        : null
+
+      const sync = await upsertGcMandateMirror(
+        db,
+        mandateMirrorInput(m, { familyId: familyId ?? customer?.familyId ?? null }),
+      )
+
+      // Replacement — CLAUDE.md §9. The mirror keeps the chain even when no
+      // Family is linked yet.
       let replacement: { newGcMandateId: string } | null = null
       if (rawEvent.action === 'replaced' && refetched.newMandate) {
         const newM = refetched.newMandate
-        const newFamilyId = familyId ?? sync.familyId
-        if (newFamilyId) {
-          await syncGcMandate(db, {
-            gcMandateId: newM.id,
-            state: mapMandateStatus(newM.status),
-            familyId: newFamilyId,
-          })
-          await linkReplacedMandate(db, m.id, newM.id)
-          replacement = { newGcMandateId: newM.id }
-        }
+        await upsertGcMandateMirror(
+          db,
+          mandateMirrorInput(newM, { familyId: sync.familyId ?? null }),
+        )
+        await linkReplacedMandate(db, m.id, newM.id)
+        replacement = { newGcMandateId: newM.id }
       }
 
       return {
         kind: 'mandate' as const,
-        unresolved: sync.unresolved,
+        unresolved: sync.familyId === null,
         familyId: sync.familyId,
+        contactId: customer?.contactId ?? null,
         gcId: m.id,
         status: mappedStatus,
         replacement,
@@ -194,9 +300,9 @@ export const gocardlessEventReceived = inngest.createFunction(
     })
 
     if (persisted.unresolved || !persisted.familyId) {
-      logger.warn(
+      logger.info(
         { eventId, type, gcId: persisted.gcId },
-        'gocardless event has no Family link yet — leaving for finance triage',
+        'gocardless event mirrored without a Family link — visible in the DD workspace',
       )
       await step.run('mark-unresolved', async () => {
         await db.providerEvent.update({
@@ -204,47 +310,51 @@ export const gocardlessEventReceived = inngest.createFunction(
           data: { processedAt: new Date() },
         })
       })
-      return { skipped: true, reason: 'unresolved_family' }
+      return { ok: true, mirrored: true, linked: false }
     }
 
     const familyId = persisted.familyId
 
-    // 4. Append a timeline Interaction. Idempotent on (familyId, eventId).
-    await step.run('interaction', async () => {
-      const existing = await db.interaction.findFirst({
-        where: {
-          familyId,
-          type: 'payment',
-          payload: { path: ['gcEventId'], equals: eventId },
-        },
-        select: { id: true },
-      })
-      if (existing) return
-
-      const summary = buildInteractionSummary(type, persisted)
-
-      await db.interaction.create({
-        data: {
-          id: createId(),
-          type: 'payment',
-          familyId,
-          occurredAt,
-          summary,
-          payload: {
-            gcEventId: eventId,
-            gcEventType: type,
-            gcObjectId: persisted.gcId,
-            kind: persisted.kind,
-            ...(persisted.kind === 'payment' && persisted.reversal
-              ? { reversal: persisted.reversal }
-              : {}),
-            ...(persisted.kind === 'mandate' && persisted.replacement
-              ? { replacement: persisted.replacement }
-              : {}),
+    // 4. Append a timeline Interaction for the meaningful moments only —
+    // idempotent on (familyId, eventId).
+    if (INTERACTION_KEYS.has(type)) {
+      await step.run('interaction', async () => {
+        const existing = await db.interaction.findFirst({
+          where: {
+            familyId,
+            type: 'payment',
+            payload: { path: ['gcEventId'], equals: eventId },
           },
-        },
+          select: { id: true },
+        })
+        if (existing) return
+
+        const summary = buildInteractionSummary(type, persisted)
+
+        await db.interaction.create({
+          data: {
+            id: createId(),
+            type: 'payment',
+            familyId,
+            contactId: persisted.contactId,
+            occurredAt,
+            summary,
+            payload: {
+              gcEventId: eventId,
+              gcEventType: type,
+              gcObjectId: persisted.gcId,
+              kind: persisted.kind,
+              ...(persisted.kind === 'payment' && persisted.reversal
+                ? { reversal: persisted.reversal }
+                : {}),
+              ...(persisted.kind === 'mandate' && persisted.replacement
+                ? { replacement: persisted.replacement }
+                : {}),
+            },
+          },
+        })
       })
-    })
+    }
 
     // 5. Audit. Idempotent via requestId == eventId.
     await step.run('audit', async () => {
@@ -288,8 +398,12 @@ function buildInteractionSummary(
   type: string,
   persisted:
     | { kind: 'payment'; reversal: { reopenedAllocations: number } | null }
-    | { kind: 'mandate'; replacement: { newGcMandateId: string } | null },
+    | { kind: 'mandate'; replacement: { newGcMandateId: string } | null }
+    | { kind: 'subscription' },
 ): string {
+  if (persisted.kind === 'subscription') {
+    return `GoCardless ${type}`
+  }
   if (persisted.kind === 'payment') {
     if (type === 'payments/late_failure_settled') {
       return 'GoCardless payment reverted by late failure'
@@ -378,4 +492,8 @@ export const gocardlessReconcileLateFailures = inngest.createFunction(
   },
 )
 
-export const FUNCTIONS = [gocardlessEventReceived, gocardlessReconcileLateFailures] as const
+export const FUNCTIONS = [
+  gocardlessEventReceived,
+  gocardlessReconcileLateFailures,
+  gocardlessBackfill,
+] as const

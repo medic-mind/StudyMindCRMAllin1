@@ -67,6 +67,37 @@ export function mapPaymentStatus(raw: string | null | undefined): PaymentStatus 
 }
 
 // -----------------------------------------------------------------------------
+// Subscription state. Mirrors the Prisma `GcSubscriptionState` enum (ADR 0038).
+// -----------------------------------------------------------------------------
+
+export type SubscriptionStatus =
+  | 'pending_customer_approval'
+  | 'customer_approval_denied'
+  | 'active'
+  | 'finished'
+  | 'cancelled'
+  | 'paused'
+  | 'unknown'
+
+const KNOWN_SUBSCRIPTION_STATUSES = new Set<string>([
+  'pending_customer_approval',
+  'customer_approval_denied',
+  'active',
+  'finished',
+  'cancelled',
+  'paused',
+])
+
+/**
+ * Map a GoCardless subscription status string to our domain enum.
+ * Unknown values fail closed to `unknown` rather than guess. CLAUDE.md §8.
+ */
+export function mapSubscriptionStatus(raw: string | null | undefined): SubscriptionStatus {
+  if (!raw) return 'unknown'
+  return KNOWN_SUBSCRIPTION_STATUSES.has(raw) ? (raw as SubscriptionStatus) : 'unknown'
+}
+
+// -----------------------------------------------------------------------------
 // Webhook payload shapes (CLAUDE.md §9: a single request can carry multiple
 // events in `events[]`).
 // -----------------------------------------------------------------------------
@@ -111,6 +142,9 @@ export interface GcMandateResource {
   id: string
   status: string
   created_at: string
+  reference?: string | null
+  scheme?: string | null
+  next_possible_charge_date?: string | null
   links: {
     customer?: string
     new_mandate?: string
@@ -124,9 +158,42 @@ export interface GcPaymentResource {
   currency: string
   created_at: string
   charge_date?: string | null
+  description?: string | null
+  metadata?: Record<string, string>
   links: {
     mandate?: string
     customer?: string
+    subscription?: string
+  }
+}
+
+export interface GcCustomerResource {
+  id: string
+  created_at: string
+  email?: string | null
+  given_name?: string | null
+  family_name?: string | null
+  company_name?: string | null
+  metadata?: Record<string, string>
+}
+
+export interface GcSubscriptionResource {
+  id: string
+  created_at: string
+  status: string
+  name?: string | null
+  amount: number
+  currency: string
+  interval_unit: string
+  interval?: number
+  day_of_month?: number | null
+  month?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  upcoming_payments?: Array<{ charge_date: string; amount: number }>
+  metadata?: Record<string, string>
+  links: {
+    mandate?: string
   }
 }
 
@@ -137,4 +204,13 @@ export interface GcRedirectFlowResource {
     mandate?: string
     customer?: string
   }
+}
+
+/**
+ * GoCardless list responses carry keyset cursors in `meta.cursors`.
+ * `after` is null/absent on the last page.
+ */
+export interface GcListMeta {
+  cursors?: { before?: string | null; after?: string | null }
+  limit?: number
 }

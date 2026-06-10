@@ -265,6 +265,30 @@ export const EVENT_NAMES = [
   'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
+  // Direct Debit operating system (ADR 0038). The *.created/cancelled/… rows
+  // are written by the outbound actions; the *_requested rows are the tRPC
+  // procedure-level audit (both share the request_id — consumers dedupe).
+  'gocardless.subscription.created',
+  'gocardless.subscription.cancelled',
+  'gocardless.subscription.paused',
+  'gocardless.subscription.resumed',
+  'gocardless.subscription.create_requested',
+  'gocardless.subscription.cancel_requested',
+  'gocardless.subscription.pause_requested',
+  'gocardless.subscription.resume_requested',
+  'gocardless.payment.created',
+  'gocardless.payment.cancelled',
+  'gocardless.payment.retried',
+  'gocardless.payment.create_requested',
+  'gocardless.payment.cancel_requested',
+  'gocardless.payment.retry_requested',
+  'gocardless.mandate.created',
+  'gocardless.mandate.cancelled',
+  'gocardless.mandate.cancel_requested',
+  'gocardless.customer.linked',
+  'gocardless.customer.unlinked',
+  'gocardless.setup_link.created',
+  'gocardless.import.started',
 
   // Envelope encryption (originally safeguarding; ADR 0013 retains these
   // for Gmail OAuth refresh-token storage and any future crypto-shred field).

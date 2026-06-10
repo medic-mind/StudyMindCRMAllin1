@@ -223,10 +223,12 @@ export async function listDefaulters(
 ): Promise<DefaulterRow[]> {
   const now = opts.now ?? new Date()
 
-  // Candidate families: those touched by GoCardless at all.
+  // Candidate families: those touched by GoCardless at all. Mandates without
+  // a Family link (complete-mirror import, ADR 0038) are excluded — there is
+  // no Family to dun.
   const [mandateFamilies, paymentFamilies] = await Promise.all([
     db.gcMandate.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, familyId: { not: null } },
       select: { familyId: true },
       distinct: ['familyId'],
     }),
@@ -239,7 +241,7 @@ export async function listDefaulters(
 
   const familyIds = Array.from(
     new Set([
-      ...mandateFamilies.map((m) => m.familyId),
+      ...mandateFamilies.map((m) => m.familyId).filter((id): id is string => id !== null),
       ...paymentFamilies.map((p) => p.familyId),
     ]),
   )

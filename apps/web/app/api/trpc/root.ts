@@ -49,6 +49,7 @@ import { dashboardRouter } from './routers/dashboard'
 import { familyRouter } from './routers/family'
 import { financeRouter } from './routers/finance'
 import { forwardingRouter } from './routers/forwarding'
+import { gocardlessRouter } from './routers/gocardless'
 import { contactSuggestionsRouter } from './routers/contact-suggestions'
 import { inboxRouter } from './routers/inbox'
 import { interactionRouter } from './routers/interaction'
@@ -93,6 +94,7 @@ export const appRouter = router({
   family: familyRouter,
   finance: financeRouter,
   forwarding: forwardingRouter,
+  gocardless: gocardlessRouter,
   contactSuggestion: contactSuggestionsRouter,
   inbox: inboxRouter,
   interaction: interactionRouter,

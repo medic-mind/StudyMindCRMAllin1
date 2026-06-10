@@ -109,7 +109,7 @@ function buildNav(role: Role): NavItem[] {
       children: [
         { href: '/finance', label: 'Discrepancies' },
         { href: '/finance/unresolved-payments', label: 'Unresolved payments' },
-        { href: '/finance/direct-debit', label: 'Direct Debit issues' },
+        { href: '/finance/direct-debit', label: 'Direct Debits' },
         { href: '/finance/refunds', label: 'Refunds' },
         { href: '/finance/payment-links', label: 'Payment links' },
       ],

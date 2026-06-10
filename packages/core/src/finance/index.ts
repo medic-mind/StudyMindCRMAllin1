@@ -5,6 +5,26 @@ export const FINANCE_DOMAIN = 'finance' as const
 
 export * from './sync-stripe'
 export * from './sync-gocardless'
+// Complete GoCardless provider mirror (ADR 0038). MandateStateValue is
+// deliberately not re-exported here — sync-gocardless already owns that name.
+export {
+  findContactForGcEmail,
+  linkGcCustomer,
+  pickUnambiguousContact,
+  upsertGcCustomerMirror,
+  upsertGcMandateMirror,
+  upsertGcPaymentMirror,
+  upsertGcSubscriptionMirror,
+  type ContactMatchCandidate,
+  type GcPaymentStateValue,
+  type GcSubscriptionStateValue,
+  type LinkGcCustomerResult,
+  type UpsertGcCustomerInput,
+  type UpsertGcCustomerResult,
+  type UpsertGcMandateMirrorInput,
+  type UpsertGcPaymentMirrorInput,
+  type UpsertGcSubscriptionInput,
+} from './gc-mirror'
 export {
   classifyProductFromText,
   resolveAiProductSuggestion,

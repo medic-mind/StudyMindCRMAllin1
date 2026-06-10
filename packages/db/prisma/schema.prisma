@@ -49,6 +49,32 @@ enum MandateState {
   replaced
 }
 
+/// GoCardless subscription lifecycle, mirrored verbatim (ADR 0038).
+/// Unknown provider values fail closed to `unknown` (CLAUDE.md §8).
+enum GcSubscriptionState {
+  pending_customer_approval
+  customer_approval_denied
+  active
+  finished
+  cancelled
+  paused
+  unknown
+}
+
+/// GoCardless payment lifecycle, mirrored verbatim (ADR 0038).
+enum GcPaymentState {
+  pending_customer_approval
+  pending_submission
+  submitted
+  confirmed
+  paid_out
+  cancelled
+  customer_approval_denied
+  failed
+  charged_back
+  unknown
+}
+
 enum BookingState {
   tentative
   confirmed
@@ -563,6 +589,10 @@ model Contact {
   webinarEnrollments WebinarEnrollment[]
   complaints         Complaint[]
 
+  /// GoCardless customers linked to this contact (ADR 0038). Linked by
+  /// unambiguous email match at import or manually in the DD workspace.
+  gcCustomers GcCustomer[]
+
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
@@ -826,6 +856,7 @@ model Family {
   subscriptions    StripeSubscription[]
   stripeCustomers  StripeCustomer[]
   mandates         GcMandate[]
+  gcCustomers      GcCustomer[]
   invoices         Invoice[]
   uploadedInvoices UploadedInvoice[]
   payments         Payment[]
@@ -1653,10 +1684,23 @@ model StripeSubscription {
 
 model GcMandate {
   id           String       @id
-  familyId     String
+  /// Nullable since ADR 0038: the complete-mirror import stores every mandate
+  /// at GoCardless, including ones whose customer is not yet linked to a
+  /// Family. Reconciliation consumers filter `familyId: { not: null }`.
+  familyId     String?
   gcMandateId  String       @unique
   state        MandateState @default(pending_submission)
   replacedById String?
+  /// GoCardless customer id (`CU…`) this mandate belongs to (ADR 0038).
+  /// Soft link — joined in JS via GcCustomer.gcCustomerId, not a DB FK, so
+  /// webhook ordering can never violate a constraint.
+  gcCustomerId String?
+  /// Bank reference shown on the customer's statement.
+  reference    String?
+  /// Direct Debit scheme (bacs, sepa_core, …).
+  scheme       String?
+  nextPossibleChargeDate DateTime?
+  gcCreatedAt  DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -1664,12 +1708,113 @@ model GcMandate {
   updatedById String?
   deletedAt   DateTime?
 
-  family     Family      @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  family     Family?     @relation(fields: [familyId], references: [id], onDelete: Cascade)
   replacedBy GcMandate?  @relation("MandateChain", fields: [replacedById], references: [id])
   replaces   GcMandate[] @relation("MandateChain")
 
   @@index([familyId])
   @@index([state])
+  @@index([gcCustomerId])
+}
+
+/// Complete mirror of a GoCardless customer (ADR 0038). The linkage unit for
+/// the Direct Debit system: link the customer to a CRM Contact (and Family)
+/// once, and every mandate / subscription / payment under it follows. The
+/// import auto-links only on a single unambiguous email match — never
+/// auto-merge (CLAUDE.md §3, §41.1); everything else waits for a human.
+model GcCustomer {
+  id           String  @id
+  gcCustomerId String  @unique
+  email        String?
+  givenName    String?
+  familyName   String?
+  companyName  String?
+  /// CRM links. Set by unambiguous email auto-match at import or by manual
+  /// linking in the Direct Debit workspace. familyId follows the contact's
+  /// family when one exists (finance stays Family-keyed, CLAUDE.md §6.1).
+  contactId    String?
+  familyId     String?
+  gcCreatedAt  DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  contact Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  family  Family?  @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([contactId])
+  @@index([familyId])
+}
+
+/// Complete mirror of a GoCardless subscription — a recurring Direct Debit
+/// plan (ADR 0038). Every status is kept, including `finished` and
+/// `cancelled`, so the full history is visible in the CRM.
+model GcSubscription {
+  id               String              @id
+  gcSubscriptionId String              @unique
+  /// Provider-side links (soft, JS-joined — see GcMandate.gcCustomerId).
+  gcMandateId      String?
+  gcCustomerId     String?
+  name             String?
+  status           GcSubscriptionState @default(unknown)
+  amountMinor      Int
+  currency         String              @default("GBP")
+  /// weekly | monthly | yearly — stored as normalised text (CLAUDE.md §15
+  /// precedent) so a new provider value never blocks a sync.
+  intervalUnit     String
+  interval         Int                 @default(1)
+  dayOfMonth       Int?
+  startDate        DateTime?
+  endDate          DateTime?
+  /// Next charge date + amount from `upcoming_payments[0]`, refreshed on
+  /// every sync. Null once the subscription is terminal.
+  nextChargeAt     DateTime?
+  nextChargeMinor  Int?
+  metadata         Json?
+  gcCreatedAt      DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([gcCustomerId])
+  @@index([gcMandateId])
+}
+
+/// Complete mirror of a GoCardless payment (ADR 0038). Wider population than
+/// the reconciliation-facing `Payment` table: every payment at the provider
+/// lands here regardless of whether its customer is linked to a Family.
+/// `Payment` keeps its existing role (family-linked, drives reconciliation).
+model GcPayment {
+  id               String         @id
+  gcPaymentId      String         @unique
+  gcMandateId      String?
+  gcCustomerId     String?
+  gcSubscriptionId String?
+  status           GcPaymentState @default(unknown)
+  amountMinor      Int
+  currency         String         @default("GBP")
+  description      String?
+  chargeDate       DateTime?
+  gcCreatedAt      DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([gcCustomerId])
+  @@index([gcSubscriptionId])
+  @@index([chargeDate])
 }
 
 model Invoice {
@@ -2882,6 +3027,7 @@ enum BackfillProvider {
   aircall
   trengo
   slack
+  gocardless
 }
 
 enum BackfillJobStatus {
