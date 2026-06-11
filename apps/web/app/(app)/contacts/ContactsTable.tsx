@@ -62,6 +62,8 @@ interface ContactRow {
   kind: string
   companies: ReadonlyArray<{ id: string; name: string; color: string | null }>
   labels: ReadonlyArray<LabelChip>
+  subjects: ReadonlyArray<{ id: string; name: string }>
+  enquiryTypes: ReadonlyArray<string>
   bookingStatus: BookingStatus
   hoursBooked: number | null
   hoursDelivered: number | null
@@ -110,10 +112,7 @@ const KIND_RING: Record<string, string> = {
   other: 'ring-neutral-100',
 }
 
-const BOOKING_STATUS: Record<
-  BookingStatus,
-  { label: string; tone: BadgeTone; title: string }
-> = {
+const BOOKING_STATUS: Record<BookingStatus, { label: string; tone: BadgeTone; title: string }> = {
   lead: {
     label: 'Lead',
     tone: 'neutral',
@@ -164,7 +163,9 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
     setBusy(true)
     try {
       const { count } = await bulkSetLabel.mutateAsync({ contactIds: ids, labelId, remove })
-      toast.success(`${remove ? 'Removed label from' : 'Labelled'} ${count} customer${count === 1 ? '' : 's'}`)
+      toast.success(
+        `${remove ? 'Removed label from' : 'Labelled'} ${count} customer${count === 1 ? '' : 's'}`,
+      )
       setSelected(new Set())
       await utils.contact.list.invalidate()
       router.refresh()
@@ -196,8 +197,8 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
       title: `Merge into ${survivor.displayName}?`,
       body: (
         <>
-          {loserIds.length} contact{loserIds.length === 1 ? '' : 's'} will be soft-deleted and
-          their history re-parented onto <strong>{survivor.displayName}</strong>. This cannot be
+          {loserIds.length} contact{loserIds.length === 1 ? '' : 's'} will be soft-deleted and their
+          history re-parented onto <strong>{survivor.displayName}</strong>. This cannot be
           auto-undone.
         </>
       ),
@@ -281,8 +282,7 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
       const failed = result.results.filter((r) => r.status === 'failed').length
       const skipped = result.results.filter((r) => r.status === 'skipped').length
       toast.success(
-        `Pushed ${result.pushedCount} to Mailchimp · ` +
-          `${failed} failed · ${skipped} skipped`,
+        `Pushed ${result.pushedCount} to Mailchimp · ` + `${failed} failed · ${skipped} skipped`,
       )
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Push failed')
@@ -455,15 +455,13 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-neutral-100">
               <UsersIcon size={18} className="text-neutral-400" />
             </div>
-            <p className="text-sm font-medium text-neutral-800">
-              No contacts match these filters.
-            </p>
+            <p className="text-sm font-medium text-neutral-800">No contacts match these filters.</p>
             <p className="mt-1 text-xs text-neutral-500">
               Adjust the filters above, or add a new contact to get started.
             </p>
           </div>
         ) : (
-          <table className="w-full min-w-[1100px] border-collapse text-sm">
+          <table className="w-full min-w-[1240px] border-collapse text-sm">
             {/* Sticky thead — column headings remain visible while the agent
                 scrolls a long list. Uses an inset border + background to read
                 as a "table chrome" layer over the rows below. */}
@@ -491,6 +489,9 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
                 </th>
                 <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Phone
+                </th>
+                <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Enquiry
                 </th>
                 <th className="px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                   Status
@@ -577,11 +578,7 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
                         href={`/contacts/${c.id}`}
                         className="flex min-w-0 items-center gap-2.5"
                       >
-                        <Avatar
-                          name={c.displayName}
-                          size={32}
-                          className={`ring-2 ${ring}`}
-                        />
+                        <Avatar name={c.displayName} size={32} className={`ring-2 ${ring}`} />
                         <span className="min-w-0">
                           <span className="block truncate font-medium text-neutral-900 group-hover:text-primary-700">
                             {c.displayName}
@@ -641,7 +638,36 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
                       <PhoneLink phone={c.phoneE164} />
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <Badge tone={status.tone} >
+                      {c.subjects.length === 0 && c.enquiryTypes.length === 0 ? (
+                        <span className="text-xs text-neutral-300">—</span>
+                      ) : (
+                        <div className="flex max-w-[220px] flex-wrap items-center gap-1">
+                          {c.subjects.slice(0, 2).map((s) => (
+                            <span
+                              key={s.id}
+                              className="inline-flex items-center rounded-full bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-800"
+                              title="Subject"
+                            >
+                              {s.name}
+                            </span>
+                          ))}
+                          {c.enquiryTypes
+                            .filter((t) => !c.subjects.some((s) => s.name === t))
+                            .slice(0, 3)
+                            .map((t) => (
+                              <span
+                                key={t}
+                                className="inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-inset ring-amber-100"
+                                title="What they enquired about"
+                              >
+                                {t}
+                              </span>
+                            ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <Badge tone={status.tone}>
                         <span title={status.title}>{status.label}</span>
                       </Badge>
                     </td>
@@ -688,14 +714,10 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
                       {c.hoursRemaining != null ? `${c.hoursRemaining}h` : '—'}
                     </td>
                     <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
-                      {c.lastLessonAt
-                        ? formatRelativeTime(new Date(c.lastLessonAt), now)
-                        : '—'}
+                      {c.lastLessonAt ? formatRelativeTime(new Date(c.lastLessonAt), now) : '—'}
                     </td>
                     <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-700">
-                      {c.amountSpentMinor != null
-                        ? formatMoneyMinor(c.amountSpentMinor)
-                        : '—'}
+                      {c.amountSpentMinor != null ? formatMoneyMinor(c.amountSpentMinor) : '—'}
                     </td>
                     <td className="px-3 py-2 align-top text-right font-mono text-xs tabular-nums text-neutral-500">
                       {c.lastInteractionAt

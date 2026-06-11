@@ -25,6 +25,8 @@ interface Row {
   kind: string
   bookingStatus: string
   companyNames: string
+  subjectNames: string
+  enquiryTypeNames: string
   callCount: number
   textCount: number
   emailCount: number
@@ -41,6 +43,8 @@ const COLUMNS: CsvColumn<Row>[] = [
   { header: 'Type', value: (r) => r.kind },
   { header: 'Status', value: (r) => STATUS_LABEL[r.bookingStatus] ?? r.bookingStatus },
   { header: 'Companies', value: (r) => r.companyNames },
+  { header: 'Subjects', value: (r) => r.subjectNames },
+  { header: 'Enquiry types', value: (r) => r.enquiryTypeNames },
   { header: 'Calls', value: (r) => r.callCount },
   { header: 'Texts', value: (r) => r.textCount },
   { header: 'Emails', value: (r) => r.emailCount },
@@ -121,6 +125,8 @@ export function ContactsExportButton({
             kind: c.kind,
             bookingStatus: c.bookingStatus,
             companyNames: c.companies.map((cc) => cc.name).join(' · '),
+            subjectNames: c.subjects.map((sub) => sub.name).join(' · '),
+            enquiryTypeNames: c.enquiryTypes.join(' · '),
             callCount: c.callCount,
             textCount: c.textCount,
             emailCount: c.emailCount,

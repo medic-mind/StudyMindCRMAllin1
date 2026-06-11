@@ -5,7 +5,12 @@
 
 import { describe, it, expect, vi } from 'vitest'
 
-import { loadContactCommsCounts, loadContactComplaintCounts } from './contact-stats'
+import {
+  loadContactCommsCounts,
+  loadContactComplaintCounts,
+  loadContactEnquiryTypes,
+  MAX_ENQUIRY_TYPES,
+} from './contact-stats'
 
 interface FakeGroup {
   contactId: string | null
@@ -120,5 +125,67 @@ describe('loadContactComplaintCounts', () => {
         }),
       }),
     )
+  })
+})
+
+interface FakeLead {
+  convertedToContactId: string | null
+  categories: string[]
+}
+
+function fakeLeadDb(leads: FakeLead[]) {
+  return {
+    lead: {
+      findMany: vi.fn().mockResolvedValue(leads),
+    },
+  } as unknown as Parameters<typeof loadContactEnquiryTypes>[0]
+}
+
+describe('loadContactEnquiryTypes', () => {
+  it('returns an empty map for no input', async () => {
+    const out = await loadContactEnquiryTypes(fakeLeadDb([]), [])
+    expect(out.size).toBe(0)
+  })
+
+  it('seeds every requested contact with an empty list', async () => {
+    const out = await loadContactEnquiryTypes(fakeLeadDb([]), ['a', 'b'])
+    expect(out.get('a')).toEqual([])
+    expect(out.get('b')).toEqual([])
+  })
+
+  it('unions categories latest-first without duplicates', async () => {
+    // findMany is ordered createdAt desc, so the first row is the latest ask.
+    const out = await loadContactEnquiryTypes(
+      fakeLeadDb([
+        { convertedToContactId: 'a', categories: ['Summer Camp'] },
+        { convertedToContactId: 'a', categories: ['Tutoring', 'Summer Camp'] },
+        { convertedToContactId: 'a', categories: ['UCAT'] },
+      ]),
+      ['a'],
+    )
+    expect(out.get('a')).toEqual(['Summer Camp', 'Tutoring', 'UCAT'])
+  })
+
+  it('caps the union at MAX_ENQUIRY_TYPES', async () => {
+    const out = await loadContactEnquiryTypes(
+      fakeLeadDb([
+        {
+          convertedToContactId: 'a',
+          categories: ['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight'],
+        },
+      ]),
+      ['a'],
+    )
+    expect(out.get('a')).toHaveLength(MAX_ENQUIRY_TYPES)
+    expect(out.get('a')).toEqual(['One', 'Two', 'Three', 'Four', 'Five', 'Six'])
+  })
+
+  it('ignores leads for contacts not in the input set', async () => {
+    const out = await loadContactEnquiryTypes(
+      fakeLeadDb([{ convertedToContactId: 'ghost', categories: ['UCAT'] }]),
+      ['a'],
+    )
+    expect(out.get('a')).toEqual([])
+    expect(out.has('ghost')).toBe(false)
   })
 })

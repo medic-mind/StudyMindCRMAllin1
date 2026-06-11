@@ -46,6 +46,9 @@ export interface ContactDetailViewModel {
   companies: CompanyRef[]
   /** Tutoring subjects. */
   subjects: SubjectRef[]
+  /** Enquiry types from the contact's web enquiries ("Tutoring", "Summer
+   * Camp", "Online Courses", …) — Lead.categories, latest-first. */
+  enquiryTypes: string[]
   hasSafeguardingFlag: boolean
   isRestricted: boolean
   family: { id: string; name: string | null } | null
@@ -97,6 +100,7 @@ interface ContactSummaryRow extends ContactRow {
   interactions: Array<{ occurredAt: Date }>
   companies: ContactCompanyJoin[]
   labels?: ContactLabelJoin[]
+  subjects?: ContactSubjectJoin[]
   bookingProfile?: {
     hoursRemaining: { toNumber(): number } | number | null
     nextHoursExpiryAt: Date | null
@@ -122,6 +126,7 @@ export function toContactSummary(
   counts: ContactCommsCounts = NO_COUNTS,
   now: Date = new Date(),
   complaintCount = 0,
+  enquiryTypes: string[] = [],
 ): ContactSummary {
   const family = row.familyMembers[0]?.family ?? null
   const last = row.interactions[0]?.occurredAt ?? null
@@ -158,6 +163,8 @@ export function toContactSummary(
     textCount: counts.textCount,
     complaintCount,
     labels: (row.labels ?? []).map((l) => l.label),
+    subjects: (row.subjects ?? []).map((s) => s.subject),
+    enquiryTypes,
     riskLevel: risk.level,
     riskScore: risk.score,
   }
@@ -170,14 +177,15 @@ interface ContactDetailRow extends ContactRow {
   subjects: ContactSubjectJoin[]
 }
 
-export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
+export function toContactDetail(
+  row: ContactDetailRow,
+  enquiryTypes: string[] = [],
+): ContactDetailViewModel {
   const family = row.familyMembers[0]?.family ?? null
   const hasFlag = row.safeguardingFlags.some(
     (f) => f.state === 'concern_logged' || f.state === 'restricted_access',
   )
-  const isRestricted = row.safeguardingFlags.some(
-    (f) => f.state === 'restricted_access',
-  )
+  const isRestricted = row.safeguardingFlags.some((f) => f.state === 'restricted_access')
   return {
     id: row.id,
     kind: row.kind,
@@ -206,6 +214,7 @@ export function toContactDetail(row: ContactDetailRow): ContactDetailViewModel {
     examTarget: row.examTarget,
     companies: row.companies.map((cc) => cc.company),
     subjects: row.subjects.map((cs) => cs.subject),
+    enquiryTypes,
     hasSafeguardingFlag: hasFlag,
     isRestricted,
     family,

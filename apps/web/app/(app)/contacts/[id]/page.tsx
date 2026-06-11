@@ -255,16 +255,28 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
                   Added {formatDate(contact.createdAt)}
                 </span>
               </div>
-              {contact.subjects.length > 0 ? (
+              {contact.subjects.length > 0 || contact.enquiryTypes.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {contact.subjects.map((s) => (
                     <span
                       key={s.id}
                       className="inline-flex items-center rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-800"
+                      title="Subject"
                     >
                       {s.name}
                     </span>
                   ))}
+                  {contact.enquiryTypes
+                    .filter((t) => !contact.subjects.some((s) => s.name === t))
+                    .map((t) => (
+                      <span
+                        key={t}
+                        className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-inset ring-amber-100"
+                        title="What they enquired about (latest first)"
+                      >
+                        {t}
+                      </span>
+                    ))}
                 </div>
               ) : null}
             </div>
