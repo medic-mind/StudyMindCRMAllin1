@@ -30,6 +30,7 @@ import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE } from './client'
 import { getWatchedChannels } from './config'
+import { resolveSlackNames } from './names'
 
 interface BackfillRequestedData {
   jobId: string
@@ -193,10 +194,16 @@ async function processSlackMessage(
   })
   if (existing) return { matched: true }
 
+  const { senderName: resolvedSender, channelName } = await resolveSlackNames({
+    userId: message.user ?? null,
+    channelId,
+  })
+  const senderName = resolvedSender ?? message.user ?? null
+
   const safeText = sanitiseUserContent(message.text)
   const prompt = buildSlackSummaryPrompt({
-    channelName: null,
-    authorDisplayName: message.user ?? null,
+    channelName,
+    authorDisplayName: senderName,
     text: safeText,
   })
   const parsed: SlackSummary = await runStructured({
@@ -243,12 +250,12 @@ async function processSlackMessage(
         event: 'slack.message_summarised',
         slackTs: message.ts,
         channelId,
-        channelName: null,
+        channelName,
         permalink: message.permalink ?? null,
         // Archive the original message + author so the record outlives Slack's
         // 90-day window (ADR 0034). Category sorts the record.
         messageText: message.text ?? null,
-        senderName: message.user ?? null,
+        senderName,
         category: parsed.category,
         sentiment: parsed.sentiment,
         suggestedNextAction: parsed.suggestedNextAction,
