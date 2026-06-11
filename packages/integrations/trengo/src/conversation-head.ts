@@ -50,6 +50,7 @@ export interface ConversationRow {
   subject: string | null
   tags: string[]
   replyDeadlineAt: Date | null
+  lastMessagePreview?: string | null
 }
 
 interface ConversationCreateInput {
@@ -68,6 +69,7 @@ interface ConversationCreateInput {
   subject: string | null
   tags: string[]
   replyDeadlineAt: Date | null
+  lastMessagePreview?: string | null
 }
 
 interface ConversationUpdateInput {
@@ -84,6 +86,7 @@ interface ConversationUpdateInput {
   subject?: string | null
   tags?: string[]
   replyDeadlineAt?: Date | null
+  lastMessagePreview?: string | null
 }
 
 export interface ApplyEventInput {
@@ -101,6 +104,8 @@ export interface ApplyEventInput {
   subject?: string | null
   /** Label name on label.added / label.removed. */
   label?: string | null
+  /** Message body (message events) — feeds the list-row preview. */
+  preview?: string | null
 }
 
 export const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -177,6 +182,8 @@ function buildCreateForEvent(input: ApplyEventInput): ConversationCreateInput {
     lastOutboundAt: isOutbound ? input.occurredAt : null,
     unreadCount: isInbound ? 1 : 0,
     subject: input.subject ?? null,
+    lastMessagePreview:
+      (isInbound || isOutbound) && input.preview ? input.preview.slice(0, 140) : null,
     tags: input.eventName === 'label.added' && input.label ? [input.label] : [],
     replyDeadlineAt:
       isInbound && channel === 'whatsapp'
@@ -206,6 +213,13 @@ function mergeEvent(
   const occurredAt = input.occurredAt
   const advancesLastMessage = occurredAt > existing.lastMessageAt
   if (advancesLastMessage) patch.lastMessageAt = occurredAt
+  if (
+    advancesLastMessage &&
+    input.preview &&
+    (input.eventName === 'message.inbound' || input.eventName === 'message.outbound')
+  ) {
+    patch.lastMessagePreview = input.preview.slice(0, 140)
+  }
 
   switch (input.eventName) {
     case 'message.inbound': {

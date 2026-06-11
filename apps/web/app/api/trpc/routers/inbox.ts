@@ -269,6 +269,7 @@ export const inboxRouter = router({
             unreadCount: true,
             subject: true,
             tags: true,
+            lastMessagePreview: true,
             replyDeadlineAt: true,
             contact: {
               select: {
@@ -300,6 +301,7 @@ export const inboxRouter = router({
                 take: 100,
                 select: {
                   id: true,
+                  type: true,
                   occurredAt: true,
                   summary: true,
                   payload: true,
@@ -311,7 +313,9 @@ export const inboxRouter = router({
               : await ctx.db.interaction.findMany({
                   where: {
                     deletedAt: null,
-                    type: 'message',
+                    type: {
+                      in: ['message', 'ticket_closed', 'ticket_reopened', 'ticket_assigned'],
+                    },
                     // Tolerate both id shapes: some Trengo workspaces send
                     // numeric strings, and older rows were stored that way —
                     // a strict number match left those messages invisible.
@@ -329,6 +333,7 @@ export const inboxRouter = router({
                   take: 100,
                   select: {
                     id: true,
+                    type: true,
                     occurredAt: true,
                     summary: true,
                     payload: true,
@@ -429,6 +434,19 @@ export const inboxRouter = router({
           const senderName =
             payloadSender ??
             (r.createdById ? (authorNameById.get(r.createdById) ?? null) : null)
+          // Lifecycle rows render as centred system separators ("Closed by …"),
+          // exactly like Trengo's thread.
+          const kind: 'message' | 'system' = r.type === 'message' ? 'message' : 'system'
+          const systemText =
+            kind === 'system'
+              ? `${
+                  r.type === 'ticket_closed'
+                    ? 'Closed'
+                    : r.type === 'ticket_reopened'
+                      ? 'Reopened'
+                      : 'Assigned'
+                }${senderName ? ` by ${senderName}` : ''}`
+              : null
           // Send state of CRM-sent messages (two-phase outbound): pending_send
           // with an error = failed (the retry cron keeps trying); pending_send
           // without one = in flight. Surfacing this is what makes a stuck
@@ -452,6 +470,8 @@ export const inboxRouter = router({
                 : null
           return {
             id: r.id,
+            kind,
+            systemText,
             occurredAt: r.occurredAt,
             direction,
             body: body ?? r.summary,
@@ -497,7 +517,7 @@ export const inboxRouter = router({
       .input(
         z.object({
           filter: z
-            .enum(['active', 'mine', 'unassigned', 'closed', 'snoozed'])
+            .enum(['active', 'mine', 'assigned', 'unassigned', 'closed', 'snoozed'])
             .default('active'),
           channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
           /** Trengo label filter — matches Conversation.tags. */
@@ -522,6 +542,10 @@ export const inboxRouter = router({
           case 'mine':
             where['assigneeUserId'] = user.id
             where['status'] = { in: ['open', 'snoozed'] }
+            break
+          case 'assigned':
+            where['assigneeUserId'] = { not: null }
+            where['status'] = 'open'
             break
           case 'unassigned':
             where['assigneeUserId'] = null
@@ -568,6 +592,7 @@ export const inboxRouter = router({
             unreadCount: true,
             subject: true,
             tags: true,
+            lastMessagePreview: true,
             replyDeadlineAt: true,
             contact: {
               select: {
@@ -619,6 +644,7 @@ export const inboxRouter = router({
           unreadCount: r.unreadCount,
           subject: r.subject,
           tags: r.tags,
+          lastMessagePreview: r.lastMessagePreview,
           replyDeadlineAt: r.replyDeadlineAt,
           contactName: r.contact
             ? [r.contact.firstName, r.contact.lastName]
@@ -660,6 +686,26 @@ export const inboxRouter = router({
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .slice(0, 50)
         .map(([name, count]) => ({ name, count }))
+    }),
+
+    /** Folder counts for the rail (Trengo parity: "New 4 · Assigned 36"). */
+    counts: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!ALLOWED_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+      }
+      const [newCount, assigned, mine, closed, snoozed] = await Promise.all([
+        ctx.db.conversation.count({ where: { status: 'open', assigneeUserId: null } }),
+        ctx.db.conversation.count({
+          where: { status: 'open', assigneeUserId: { not: null } },
+        }),
+        ctx.db.conversation.count({
+          where: { status: { in: ['open', 'snoozed'] }, assigneeUserId: user.id },
+        }),
+        ctx.db.conversation.count({ where: { status: 'closed' } }),
+        ctx.db.conversation.count({ where: { status: 'snoozed' } }),
+      ])
+      return { newCount, assigned, mine, closed, snoozed }
     }),
 
     // ADR 0020 Phase 6i — bulk triage actions on the conversation list.

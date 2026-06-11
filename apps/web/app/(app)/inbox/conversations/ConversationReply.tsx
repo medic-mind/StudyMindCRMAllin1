@@ -542,6 +542,7 @@ function WaTemplatePicker({
   onClear: () => void
   onParam: (key: string, value: string) => void
 }) {
+  const [search, setSearch] = useState('')
   if (loading) {
     return <p className="text-xs text-neutral-500">Loading templates from Trengo…</p>
   }
@@ -561,32 +562,51 @@ function WaTemplatePicker({
     )
   }
   if (!template) {
+    const q = search.trim().toLowerCase()
+    const filtered = q
+      ? data.templates.filter(
+          (t) =>
+            t.title.toLowerCase().includes(q) || t.body.toLowerCase().includes(q),
+        )
+      : data.templates
     return (
       <div>
-        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-          Pick an approved template
-        </p>
-        <ul className="max-h-44 space-y-1 overflow-y-auto pr-1">
-          {data.templates.map((t) => (
-            <li key={t.id}>
-              <button
-                type="button"
-                onClick={() => onPick(t)}
-                className="w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40"
-              >
-                <span className="block text-xs font-semibold text-neutral-900">
-                  {t.title}
-                </span>
-                <span className="mt-0.5 line-clamp-2 block text-xs leading-snug text-neutral-500">
-                  {t.body}
-                </span>
-              </button>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search templates…"
+          aria-label="Search templates"
+          className="mb-1.5 w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm focus:border-primary-500 focus:outline-none"
+        />
+        <ul className="max-h-52 space-y-1 overflow-y-auto pr-1">
+          {filtered.length === 0 ? (
+            <li className="px-1 py-2 text-xs text-neutral-400">
+              No templates match “{search}”.
             </li>
-          ))}
+          ) : (
+            filtered.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(t)}
+                  className="w-full rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40"
+                >
+                  <span className="block text-xs font-semibold text-neutral-900">
+                    {t.title}
+                  </span>
+                  <span className="mt-0.5 line-clamp-2 block text-xs leading-snug text-neutral-500">
+                    {t.body}
+                  </span>
+                </button>
+              </li>
+            ))
+          )}
         </ul>
       </div>
     )
   }
+  // Trengo-style split: the fill-in form on the left, a WhatsApp phone-frame
+  // preview on the right that updates as variables are typed.
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -599,39 +619,51 @@ function WaTemplatePicker({
           ← Different template
         </button>
       </div>
-      <div className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm leading-relaxed text-neutral-800">
-        {segments.map((seg, i) =>
-          seg.kind === 'text' ? (
-            <span key={i}>{seg.text}</span>
-          ) : seg.first ? (
-            <input
-              key={i}
-              value={params[seg.key] ?? ''}
-              onChange={(e) => onParam(seg.key, e.target.value)}
-              placeholder={seg.key}
-              aria-label={`Template variable ${seg.key}`}
-              className="mx-0.5 inline-block w-32 rounded border border-primary-300 bg-white px-1.5 py-0.5 text-sm focus:border-primary-500 focus:outline-none"
-            />
-          ) : (
-            <span key={i} className="mx-0.5 rounded bg-primary-100 px-1 text-primary-800">
-              {(params[seg.key] ?? '').trim() || seg.key}
-            </span>
-          ),
-        )}
-      </div>
-      <div>
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-          The customer will see
-        </p>
-        <div className="max-w-md whitespace-pre-wrap rounded-lg rounded-tl-none border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm leading-relaxed text-neutral-900">
-          {preview}
-        </div>
-        {missing.length > 0 ? (
-          <p className="mt-1 text-xs text-amber-700">
-            Fill {missing.join(', ')} to send — WhatsApp rejects templates with empty
-            variables.
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+            Body — replace each variable with plain text
           </p>
-        ) : null}
+          <div className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm leading-relaxed text-neutral-800">
+            {segments.map((seg, i) =>
+              seg.kind === 'text' ? (
+                <span key={i}>{seg.text}</span>
+              ) : seg.first ? (
+                <input
+                  key={i}
+                  value={params[seg.key] ?? ''}
+                  onChange={(e) => onParam(seg.key, e.target.value)}
+                  placeholder={seg.key}
+                  aria-label={`Template variable ${seg.key}`}
+                  className="mx-0.5 inline-block w-32 rounded border border-primary-300 bg-white px-1.5 py-0.5 text-sm focus:border-primary-500 focus:outline-none"
+                />
+              ) : (
+                <span
+                  key={i}
+                  className="mx-0.5 rounded bg-primary-100 px-1 text-primary-800"
+                >
+                  {(params[seg.key] ?? '').trim() || seg.key}
+                </span>
+              ),
+            )}
+          </div>
+          {missing.length > 0 ? (
+            <p className="mt-1 text-xs text-amber-700">
+              Fill {missing.join(', ')} to send — WhatsApp rejects templates with
+              empty variables.
+            </p>
+          ) : null}
+        </div>
+        <div>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+            The customer will see
+          </p>
+          <div className="mx-auto w-full max-w-[260px] rounded-[1.75rem] border-4 border-neutral-200 bg-amber-50/60 p-3 shadow-inner">
+            <div className="whitespace-pre-wrap rounded-lg rounded-tl-none border border-emerald-200 bg-white px-3 py-2 text-[13px] leading-relaxed text-neutral-900 shadow-sm">
+              {preview}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

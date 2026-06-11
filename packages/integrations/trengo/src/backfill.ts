@@ -606,6 +606,7 @@ async function processTicket(
   const headEvents: Array<{
     direction: 'message.inbound' | 'message.outbound'
     occurredAt: Date
+    preview: string | null
   }> = []
   // The customer's own words, oldest first — input to waterfall steps 2/3.
   const inboundBodies: string[] = []
@@ -623,8 +624,8 @@ async function processTicket(
     }
     const direction = inferMessageDirection(m)
     const occurredAt = parseTrengoDate(m['created_at']) ?? new Date()
-    headEvents.push({ direction, occurredAt })
     const body = extractMessageBody(m)
+    headEvents.push({ direction, occurredAt, preview: body })
     if (direction === 'message.inbound' && body && inboundBodies.length < 12) {
       inboundBodies.push(body)
     }
@@ -731,6 +732,7 @@ async function processTicket(
         contactId,
         familyId,
         subject: ticket.subject,
+        preview: ev.preview,
       })
     }
     const lastAt = headEvents[headEvents.length - 1]!.occurredAt

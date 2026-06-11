@@ -293,6 +293,8 @@ export const trengoEventReceived = inngest.createFunction(
               ? (envelope.data['subject'] as string)
               : null,
           label: envelope.data.label?.name ?? null,
+          preview:
+            typeof envelope.data.body === 'string' ? envelope.data.body : null,
         }),
       )
 

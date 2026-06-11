@@ -178,6 +178,7 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
       occurredAt: new Date(),
       channel: input.channel,
       contactId: input.contactId,
+      preview: input.body,
     })
 
     return { interactionId, trengoMessageId: message?.id ?? null }
@@ -349,6 +350,7 @@ export async function startConversation(
       occurredAt: new Date(),
       channel: input.channel,
       contactId: input.contactId,
+      preview: input.body,
     })
 
     return {
