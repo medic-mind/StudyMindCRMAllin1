@@ -12,12 +12,23 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PageSizeSelect, PaginationBar, SortMenu } from '@/components/ui/list-controls'
+import { SearchField } from '@/components/ui/search-field'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { trpc } from '@/lib/trpc/client'
 
-import { ContactSearch, FilterChips, formatDate } from './shared'
+import {
+  ContactSearch,
+  FilterChips,
+  formatDate,
+  MANDATE_TONE,
+  readPageSort,
+  statusLabel,
+  useListParams,
+} from './shared'
 
 const LINK_OPTIONS = [
   { value: 'all', label: 'All' },
@@ -27,23 +38,58 @@ const LINK_OPTIONS = [
 
 type LinkFilter = (typeof LINK_OPTIONS)[number]['value']
 
+const CUSTOMER_SORT_FIELDS = ['createdAt', 'gcCreatedAt', 'givenName', 'email'] as const
+type CustomerSortField = (typeof CUSTOMER_SORT_FIELDS)[number]
+
+const CUSTOMER_SORT_OPTIONS = [
+  { value: 'createdAt', label: 'Imported' },
+  { value: 'gcCreatedAt', label: 'Customer since' },
+  { value: 'givenName', label: 'Name', defaultDir: 'asc' as const },
+  { value: 'email', label: 'Email', defaultDir: 'asc' as const },
+]
+
+const EXPORT_CAP = 5000
+
 export function CustomersTab() {
-  const [link, setLink] = useState<LinkFilter>('all')
-  const [q, setQ] = useState('')
-  const [debounced, setDebounced] = useState('')
+  const { get, set } = useListParams()
+
+  // Sub-view: the tab covers Customers AND Mandates (GoCardless keeps
+  // mandates under customers; ops asked for a flat mandate list too).
+  const view = get('view') === 'mandates' ? 'mandates' : 'customers'
+
+  const linkRaw = get('link', 'all')
+  const link: LinkFilter = LINK_OPTIONS.some((o) => o.value === linkRaw)
+    ? (linkRaw as LinkFilter)
+    : 'all'
+  const q = get('q').trim()
+  const { page, pageSize, sortBy, sortDir } = readPageSort(get, { sortBy: 'createdAt' })
+  const sortField: CustomerSortField = CUSTOMER_SORT_FIELDS.includes(
+    sortBy as CustomerSortField,
+  )
+    ? (sortBy as CustomerSortField)
+    : 'createdAt'
+
   const [linking, setLinking] = useState<string | null>(null)
   const [showSetupLink, setShowSetupLink] = useState(false)
 
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(q), 250)
-    return () => clearTimeout(t)
-  }, [q])
+  const listInput = {
+    link,
+    ...(q.length >= 2 ? { q } : {}),
+    sortBy: sortField,
+    sortDir,
+    page,
+    pageSize,
+  }
 
   const utils = trpc.useUtils()
-  const list = trpc.gocardless.customers.list.useQuery({
-    link,
-    ...(debounced.trim().length >= 2 ? { q: debounced.trim() } : {}),
+  const list = trpc.gocardless.customers.list.useQuery(listInput, {
+    placeholderData: (prev) => prev,
+    enabled: view === 'customers',
   })
+  const linkCounts = trpc.gocardless.customers.linkCounts.useQuery(
+    q.length >= 2 ? { q } : {},
+    { enabled: view === 'customers' },
+  )
 
   const linkMutation = trpc.gocardless.customers.link.useMutation({
     onSuccess: (res) => {
@@ -54,35 +100,107 @@ export function CustomersTab() {
       )
       setLinking(null)
       void utils.gocardless.customers.list.invalidate()
+      void utils.gocardless.customers.linkCounts.invalidate()
       void utils.gocardless.overview.invalidate()
     },
     onError: (e) => toast.error(e.message),
   })
 
   const items = list.data?.items ?? []
+  const total = list.data?.total ?? 0
+
+  const linkChipOptions = LINK_OPTIONS.map((opt) => {
+    const c = linkCounts.data
+    if (!c) return { value: opt.value, label: opt.label }
+    const n = opt.value === 'all' ? c.total : opt.value === 'linked' ? c.linked : c.unlinked
+    return { value: opt.value, label: `${opt.label} (${n})` }
+  })
+
+  const exportRows = async () => {
+    const rows: Array<Record<string, unknown>> = []
+    let exportPage = 1
+    for (;;) {
+      const res = await utils.gocardless.customers.list.fetch({
+        ...listInput,
+        page: exportPage,
+        pageSize: 100,
+      })
+      for (const r of res.items) {
+        rows.push({
+          name: r.name ?? '',
+          email: r.email ?? '',
+          crmContact: r.contactName ?? '',
+          linked: r.contactId ? 'yes' : 'no',
+          mandates: r.mandateCount,
+          activePlans: r.activeSubscriptionCount,
+          customerSince: r.gcCreatedAt ? new Date(r.gcCreatedAt).toISOString().slice(0, 10) : '',
+          gcCustomerId: r.gcCustomerId,
+        })
+      }
+      if (rows.length >= Math.min(res.total, EXPORT_CAP) || res.items.length === 0) break
+      exportPage += 1
+    }
+    return rows
+  }
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <FilterChips options={LINK_OPTIONS} value={link} onChange={setLink} />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by name or email…"
-            className="h-8 w-64"
+          {/* Customers | Mandates sub-view switch */}
+          <FilterChips
+            options={[
+              { value: 'customers', label: 'Customers' },
+              { value: 'mandates', label: 'Mandates' },
+            ]}
+            value={view}
+            onChange={(v) =>
+              set({ view: v === 'customers' ? null : v, q: null, link: null, state: null })
+            }
           />
+          {view === 'customers' ? (
+            <FilterChips
+              options={linkChipOptions}
+              value={link}
+              onChange={(v) => set({ link: v === 'all' ? null : v })}
+            />
+          ) : null}
+          <SearchField placeholder="Search by name or email…" className="w-64" />
         </div>
-        <Button size="sm" onClick={() => setShowSetupLink((v) => !v)}>
-          {showSetupLink ? 'Close' : 'New Direct Debit setup link'}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {view === 'customers' ? (
+            <>
+              <SortMenu options={CUSTOMER_SORT_OPTIONS} defaultValue="createdAt" />
+              <PageSizeSelect defaultValue={50} options={[25, 50, 100]} />
+              <CsvExportButton
+                getRows={exportRows}
+                columns={[
+                  { header: 'Name', value: (r) => String(r['name'] ?? '') },
+                  { header: 'Email', value: (r) => String(r['email'] ?? '') },
+                  { header: 'CRM contact', value: (r) => String(r['crmContact'] ?? '') },
+                  { header: 'Linked', value: (r) => String(r['linked'] ?? '') },
+                  { header: 'Mandates', value: (r) => String(r['mandates'] ?? '') },
+                  { header: 'Active plans', value: (r) => String(r['activePlans'] ?? '') },
+                  { header: 'Customer since', value: (r) => String(r['customerSince'] ?? '') },
+                  { header: 'GoCardless id', value: (r) => String(r['gcCustomerId'] ?? '') },
+                ]}
+                fileNameBase="gocardless-customers"
+              />
+            </>
+          ) : null}
+          <Button size="sm" onClick={() => setShowSetupLink((v) => !v)}>
+            {showSetupLink ? 'Close' : 'New Direct Debit setup link'}
+          </Button>
+        </div>
       </div>
 
       {showSetupLink ? <SetupLinkForm /> : null}
 
       <SetupLinksPanel />
 
-      {list.isLoading ? (
+      {view === 'mandates' ? (
+        <MandatesView />
+      ) : list.isLoading ? (
         <p className="px-1 py-6 text-sm text-neutral-500">Loading customers…</p>
       ) : items.length === 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
@@ -186,6 +304,261 @@ export function CustomersTab() {
             </Tbody>
           </Table>
         </div>
+      )}
+      {view === 'customers' && items.length > 0 ? (
+        <PaginationBar page={page} pageSize={pageSize} total={total} shown={items.length} />
+      ) : null}
+    </div>
+  )
+}
+
+const MANDATE_STATE_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'pending_submission', label: 'Pending' },
+  { value: 'submitted', label: 'Submitted' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'expired', label: 'Expired' },
+  { value: 'replaced', label: 'Replaced' },
+] as const
+
+type MandateStateFilter = (typeof MANDATE_STATE_OPTIONS)[number]['value']
+
+const MANDATE_SORT_FIELDS = ['createdAt', 'gcCreatedAt', 'nextPossibleChargeDate'] as const
+type MandateSortField = (typeof MANDATE_SORT_FIELDS)[number]
+
+const MANDATE_SORT_OPTIONS = [
+  { value: 'createdAt', label: 'Imported' },
+  { value: 'gcCreatedAt', label: 'Created (GoCardless)' },
+  { value: 'nextPossibleChargeDate', label: 'Next chargeable', defaultDir: 'asc' as const },
+]
+
+/** Flat mandate list — state chips with counts, search, sort, paging,
+ * export, and the audited cancel action. */
+function MandatesView() {
+  const { get, set } = useListParams()
+  const stateRaw = get('state', 'all')
+  const state: MandateStateFilter = MANDATE_STATE_OPTIONS.some((o) => o.value === stateRaw)
+    ? (stateRaw as MandateStateFilter)
+    : 'all'
+  const q = get('q').trim()
+  const { page, pageSize, sortBy, sortDir } = readPageSort(get, { sortBy: 'createdAt' })
+  const sortField: MandateSortField = MANDATE_SORT_FIELDS.includes(sortBy as MandateSortField)
+    ? (sortBy as MandateSortField)
+    : 'createdAt'
+
+  const listInput = {
+    state,
+    ...(q.length >= 2 ? { q } : {}),
+    sortBy: sortField,
+    sortDir,
+    page,
+    pageSize,
+  }
+
+  const utils = trpc.useUtils()
+  const list = trpc.gocardless.mandates.list.useQuery(listInput, {
+    placeholderData: (prev) => prev,
+  })
+  const counts = trpc.gocardless.mandates.stateCounts.useQuery(q.length >= 2 ? { q } : {})
+
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null)
+  const [reason, setReason] = useState('')
+
+  const cancel = trpc.gocardless.mandates.cancel.useMutation({
+    onSuccess: () => {
+      toast.success('Mandate cancelled.')
+      setCancelTarget(null)
+      setReason('')
+      void utils.gocardless.mandates.list.invalidate()
+      void utils.gocardless.mandates.stateCounts.invalidate()
+      void utils.gocardless.overview.invalidate()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  const items = list.data?.items ?? []
+  const total = list.data?.total ?? 0
+
+  const chipOptions = MANDATE_STATE_OPTIONS.map((opt) => {
+    const c = counts.data
+    if (!c) return { value: opt.value, label: opt.label }
+    const n = opt.value === 'all' ? c.total : (c.counts[opt.value] ?? 0)
+    return { value: opt.value, label: `${opt.label} (${n})` }
+  })
+
+  const exportRows = async () => {
+    const rows: Array<Record<string, unknown>> = []
+    let exportPage = 1
+    for (;;) {
+      const res = await utils.gocardless.mandates.list.fetch({
+        ...listInput,
+        page: exportPage,
+        pageSize: 100,
+      })
+      for (const r of res.items) {
+        rows.push({
+          customer: r.customer?.contactName ?? r.customer?.displayName ?? '',
+          email: r.customer?.email ?? '',
+          state: r.state,
+          reference: r.reference ?? '',
+          scheme: r.scheme ?? '',
+          nextChargeable: r.nextPossibleChargeDate
+            ? new Date(r.nextPossibleChargeDate).toISOString().slice(0, 10)
+            : '',
+          created: r.gcCreatedAt ? new Date(r.gcCreatedAt).toISOString().slice(0, 10) : '',
+          gcMandateId: r.gcMandateId,
+        })
+      }
+      if (rows.length >= Math.min(res.total, 5000) || res.items.length === 0) break
+      exportPage += 1
+    }
+    return rows
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <FilterChips
+          options={chipOptions}
+          value={state}
+          onChange={(v) => set({ state: v === 'all' ? null : v })}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <SortMenu options={MANDATE_SORT_OPTIONS} defaultValue="createdAt" />
+          <PageSizeSelect defaultValue={50} options={[25, 50, 100]} />
+          <CsvExportButton
+            getRows={exportRows}
+            columns={[
+              { header: 'Customer', value: (r) => String(r['customer'] ?? '') },
+              { header: 'Email', value: (r) => String(r['email'] ?? '') },
+              { header: 'State', value: (r) => String(r['state'] ?? '') },
+              { header: 'Reference', value: (r) => String(r['reference'] ?? '') },
+              { header: 'Scheme', value: (r) => String(r['scheme'] ?? '') },
+              { header: 'Next chargeable', value: (r) => String(r['nextChargeable'] ?? '') },
+              { header: 'Created', value: (r) => String(r['created'] ?? '') },
+              { header: 'GoCardless id', value: (r) => String(r['gcMandateId'] ?? '') },
+            ]}
+            fileNameBase="gocardless-mandates"
+          />
+        </div>
+      </div>
+
+      {list.isLoading ? (
+        <p className="px-1 py-6 text-sm text-neutral-500">Loading mandates…</p>
+      ) : items.length === 0 ? (
+        <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
+          <p className="text-sm font-medium text-neutral-700">No mandates match these filters.</p>
+          <p className="mt-1 text-sm text-neutral-500">
+            Send a Direct Debit setup link, or run the import to mirror existing mandates.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="rounded-lg border border-neutral-200 bg-white shadow-card">
+            <Table>
+              <Thead>
+                <Tr>
+                  <Th>Customer</Th>
+                  <Th>Mandate</Th>
+                  <Th>Reference</Th>
+                  <Th>Scheme</Th>
+                  <Th>State</Th>
+                  <Th>Next chargeable</Th>
+                  <Th>Created</Th>
+                  <Th />
+                </Tr>
+              </Thead>
+              <Tbody>
+                {items.map((m) => (
+                  <Tr key={m.gcMandateId}>
+                    <Td>
+                      {m.customer?.contactId ? (
+                        <Link
+                          href={`/contacts/${m.customer.contactId}`}
+                          className="font-medium text-primary-700 hover:underline"
+                        >
+                          {m.customer.contactName ?? m.customer.displayName}
+                        </Link>
+                      ) : m.customer ? (
+                        <Link
+                          href={`/direct-debits/customers/${encodeURIComponent(m.customer.gcCustomerId)}`}
+                          className="font-medium text-neutral-700 hover:text-primary-700 hover:underline"
+                        >
+                          {m.customer.displayName}
+                        </Link>
+                      ) : (
+                        <span className="text-neutral-700">—</span>
+                      )}
+                    </Td>
+                    <Td>
+                      <code className="font-mono text-xs">{m.gcMandateId}</code>
+                    </Td>
+                    <Td className="text-neutral-600">{m.reference ?? '—'}</Td>
+                    <Td className="text-neutral-600">{m.scheme ?? '—'}</Td>
+                    <Td>
+                      <Badge tone={MANDATE_TONE[m.state] ?? 'neutral'} dot>
+                        {statusLabel(m.state)}
+                      </Badge>
+                    </Td>
+                    <Td className="text-neutral-600">{formatDate(m.nextPossibleChargeDate)}</Td>
+                    <Td className="text-neutral-600">{formatDate(m.gcCreatedAt)}</Td>
+                    <Td>
+                      {['active', 'submitted', 'pending_submission'].includes(m.state) ? (
+                        cancelTarget === m.gcMandateId ? (
+                          <span className="flex items-center justify-end gap-2">
+                            <Input
+                              value={reason}
+                              onChange={(e) => setReason(e.target.value)}
+                              placeholder="Reason (audited)"
+                              className="h-7 w-44 text-xs"
+                            />
+                            <Button
+                              size="xs"
+                              variant="destructive"
+                              disabled={cancel.isPending || reason.trim().length < 2}
+                              onClick={() =>
+                                cancel.mutate({
+                                  gcMandateId: m.gcMandateId,
+                                  reason: reason.trim(),
+                                })
+                              }
+                            >
+                              Confirm
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => {
+                                setCancelTarget(null)
+                                setReason('')
+                              }}
+                            >
+                              Back
+                            </Button>
+                          </span>
+                        ) : (
+                          <div className="flex justify-end">
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              className="text-red-700"
+                              onClick={() => setCancelTarget(m.gcMandateId)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        )
+                      ) : null}
+                    </Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+          </div>
+          <PaginationBar page={page} pageSize={pageSize} total={total} shown={items.length} />
+        </>
       )}
     </div>
   )

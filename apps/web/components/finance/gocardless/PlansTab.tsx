@@ -1,18 +1,22 @@
 'use client'
 
 // Direct Debit plans (GoCardless subscriptions) — ADR 0038. Every status is
-// visible, past plans included. Create / cancel / pause / resume are all
-// human-confirmed (CLAUDE.md §3) and audited server-side.
+// visible, past plans included, with the proper list system: status tabs
+// with live counts, customer search, cadence + amount filters, whitelisted
+// sorting, paging with totals, and CSV export. List state lives in the URL
+// (CLAUDE.md §26). Create / cancel / pause / resume stay human-confirmed (§3).
 
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PageSizeSelect, PaginationBar, SortMenu } from '@/components/ui/list-controls'
+import { SearchField } from '@/components/ui/search-field'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
@@ -21,8 +25,12 @@ import {
   CustomerMandatePicker,
   FilterChips,
   formatDate,
+  ParamInput,
+  readPageSort,
+  readPoundsParam,
   statusLabel,
   SUBSCRIPTION_TONE,
+  useListParams,
   type PickedMandate,
 } from './shared'
 
@@ -37,15 +45,39 @@ const STATUS_OPTIONS = [
 
 type StatusFilter = (typeof STATUS_OPTIONS)[number]['value']
 
+const SORT_FIELDS = [
+  'createdAt',
+  'gcCreatedAt',
+  'amountMinor',
+  'nextChargeAt',
+  'startDate',
+  'name',
+] as const
+type SortField = (typeof SORT_FIELDS)[number]
+
+const SORT_OPTIONS = [
+  { value: 'createdAt', label: 'Imported' },
+  { value: 'gcCreatedAt', label: 'Created (GoCardless)' },
+  { value: 'amountMinor', label: 'Amount' },
+  { value: 'nextChargeAt', label: 'Next charge', defaultDir: 'asc' as const },
+  { value: 'startDate', label: 'Start date' },
+  { value: 'name', label: 'Plan name', defaultDir: 'asc' as const },
+]
+
+const INTERVAL_OPTIONS = [
+  { value: 'all', label: 'Any cadence' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'yearly', label: 'Yearly' },
+] as const
+
+const EXPORT_CAP = 5000
+
 function cadence(item: {
   intervalUnit: string
   interval: number
   dayOfMonth: number | null
 }): string {
-  const unit =
-    item.interval === 1
-      ? item.intervalUnit.replace(/ly$/, item.intervalUnit === 'weekly' ? 'week' : '')
-      : `${item.interval} ${item.intervalUnit.replace('ly', 's')}`
   const base =
     item.interval === 1
       ? item.intervalUnit === 'weekly'
@@ -53,23 +85,55 @@ function cadence(item: {
         : item.intervalUnit === 'monthly'
           ? 'month'
           : 'year'
-      : unit
+      : `${item.interval} ${item.intervalUnit.replace('ly', 's')}`
   const day =
     item.dayOfMonth === null ? '' : item.dayOfMonth === -1 ? ' (last day)' : ` (day ${item.dayOfMonth})`
   return `every ${base}${day}`
 }
 
 export function PlansTab() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  // ?customer=CU… filters the whole tab to one customer (set by the customer
-  // record's deep links — same pattern as the GoCardless dashboard).
-  const customerFilter = searchParams.get('customer')
+  const { get, set } = useListParams()
 
-  const [status, setStatus] = useState<StatusFilter>('active')
+  const customerFilter = get('customer') || null
+  const statusRaw = get('status', 'active')
+  const status: StatusFilter = STATUS_OPTIONS.some((o) => o.value === statusRaw)
+    ? (statusRaw as StatusFilter)
+    : 'active'
+  const q = get('q').trim()
+  const intervalRaw = get('cadence', 'all')
+  const intervalUnit: 'weekly' | 'monthly' | 'yearly' | undefined =
+    intervalRaw === 'weekly' || intervalRaw === 'monthly' || intervalRaw === 'yearly'
+      ? intervalRaw
+      : undefined
+  const { page, pageSize, sortBy, sortDir } = readPageSort(get, { sortBy: 'createdAt' })
+  const sortField: SortField = SORT_FIELDS.includes(sortBy as SortField)
+    ? (sortBy as SortField)
+    : 'createdAt'
+
+  const filterInput = {
+    ...(customerFilter ? { gcCustomerId: customerFilter } : {}),
+    ...(!customerFilter && q.length >= 2 ? { q } : {}),
+    ...(intervalUnit ? { intervalUnit } : {}),
+    ...(readPoundsParam(get('min')) !== undefined
+      ? { amountMinMinor: readPoundsParam(get('min')) }
+      : {}),
+    ...(readPoundsParam(get('max')) !== undefined
+      ? { amountMaxMinor: readPoundsParam(get('max')) }
+      : {}),
+  }
+  const listInput = { status, ...filterInput, sortBy: sortField, sortDir, page, pageSize }
+
+  const utils = trpc.useUtils()
+  const list = trpc.gocardless.subscriptions.list.useQuery(listInput, {
+    placeholderData: (prev) => prev,
+  })
+  const counts = trpc.gocardless.subscriptions.statusCounts.useQuery(filterInput)
+  const filteredCustomer = trpc.gocardless.customers.detail.useQuery(
+    { gcCustomerId: customerFilter ?? '' },
+    { enabled: customerFilter !== null },
+  )
+
   const [showNew, setShowNew] = useState(false)
-  const [q, setQ] = useState('')
-  const [debouncedQ, setDebouncedQ] = useState('')
   const [action, setAction] = useState<{
     kind: 'cancel' | 'pause' | 'resume'
     gcSubscriptionId: string
@@ -77,28 +141,9 @@ export function PlansTab() {
   } | null>(null)
   const [reason, setReason] = useState('')
 
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQ(q), 250)
-    return () => clearTimeout(t)
-  }, [q])
-
-  const filterInput = {
-    ...(customerFilter ? { gcCustomerId: customerFilter } : {}),
-    ...(!customerFilter && debouncedQ.trim().length >= 2 ? { q: debouncedQ.trim() } : {}),
-  }
-
-  const utils = trpc.useUtils()
-  const list = trpc.gocardless.subscriptions.list.useQuery({ status, ...filterInput })
-  const counts = trpc.gocardless.subscriptions.statusCounts.useQuery(filterInput)
-  const filteredCustomer = trpc.gocardless.customers.detail.useQuery(
-    { gcCustomerId: customerFilter ?? '' },
-    { enabled: customerFilter !== null },
-  )
-
-  const clearCustomerFilter = () => router.replace('/direct-debits/plans', { scroll: false })
-
   const refresh = () => {
     void utils.gocardless.subscriptions.list.invalidate()
+    void utils.gocardless.subscriptions.statusCounts.invalidate()
     void utils.gocardless.overview.invalidate()
   }
 
@@ -132,6 +177,7 @@ export function PlansTab() {
 
   const busy = cancel.isPending || pause.isPending || resume.isPending
   const items = list.data?.items ?? []
+  const total = list.data?.total ?? 0
 
   const countFor = (value: StatusFilter): number | null => {
     if (!counts.data) return null
@@ -143,11 +189,43 @@ export function PlansTab() {
     return { value: opt.value, label: n === null ? opt.label : `${opt.label} (${n})` }
   })
 
+  const exportRows = async () => {
+    const rows: Array<Record<string, unknown>> = []
+    let exportPage = 1
+    for (;;) {
+      const res = await utils.gocardless.subscriptions.list.fetch({
+        ...listInput,
+        page: exportPage,
+        pageSize: 100,
+      })
+      for (const r of res.items) {
+        rows.push({
+          customer: r.customer?.contactName ?? r.customer?.displayName ?? '',
+          email: r.customer?.email ?? '',
+          plan: r.name ?? '',
+          amount: (r.amountMinor / 100).toFixed(2),
+          cadence: cadence(r),
+          status: r.status,
+          nextCharge: r.nextChargeAt ? new Date(r.nextChargeAt).toISOString().slice(0, 10) : '',
+          started: r.startDate ? new Date(r.startDate).toISOString().slice(0, 10) : '',
+          gcSubscriptionId: r.gcSubscriptionId,
+        })
+      }
+      if (rows.length >= Math.min(res.total, EXPORT_CAP) || res.items.length === 0) break
+      exportPage += 1
+    }
+    return rows
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <FilterChips options={chipOptions} value={status} onChange={setStatus} />
+          <FilterChips
+            options={chipOptions}
+            value={status}
+            onChange={(v) => set({ status: v === 'active' ? null : v })}
+          />
           {customerFilter ? (
             <span className="flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-800">
               {filteredCustomer.data?.customer.name ??
@@ -157,23 +235,60 @@ export function PlansTab() {
                 type="button"
                 aria-label="Clear customer filter"
                 className="ml-1 text-primary-500 hover:text-primary-800"
-                onClick={clearCustomerFilter}
+                onClick={() => set({ customer: null })}
               >
                 ✕
               </button>
             </span>
-          ) : (
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search by customer…"
-              className="h-8 w-56"
-            />
-          )}
+          ) : null}
         </div>
         <Button size="sm" onClick={() => setShowNew((v) => !v)}>
           {showNew ? 'Close' : 'New plan'}
         </Button>
+      </div>
+
+      {/* Filter + view toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
+        {!customerFilter ? (
+          <SearchField placeholder="Search by customer…" className="w-56" />
+        ) : null}
+        <select
+          value={intervalRaw}
+          onChange={(e) => set({ cadence: e.target.value === 'all' ? null : e.target.value })}
+          aria-label="Cadence"
+          className="h-8 rounded-md border border-neutral-300 bg-white px-2 text-xs"
+        >
+          {INTERVAL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <span className="flex items-center gap-1 text-xs text-neutral-500">
+          £
+          <ParamInput param="min" label="Minimum amount" placeholder="min" width="w-20" />
+          –
+          <ParamInput param="max" label="Maximum amount" placeholder="max" width="w-20" />
+        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <SortMenu options={SORT_OPTIONS} defaultValue="createdAt" />
+          <PageSizeSelect defaultValue={50} options={[25, 50, 100]} />
+          <CsvExportButton
+            getRows={exportRows}
+            columns={[
+              { header: 'Customer', value: (r) => String(r['customer'] ?? '') },
+              { header: 'Email', value: (r) => String(r['email'] ?? '') },
+              { header: 'Plan', value: (r) => String(r['plan'] ?? '') },
+              { header: 'Amount', value: (r) => String(r['amount'] ?? '') },
+              { header: 'Cadence', value: (r) => String(r['cadence'] ?? '') },
+              { header: 'Status', value: (r) => String(r['status'] ?? '') },
+              { header: 'Next charge', value: (r) => String(r['nextCharge'] ?? '') },
+              { header: 'Started', value: (r) => String(r['started'] ?? '') },
+              { header: 'GoCardless id', value: (r) => String(r['gcSubscriptionId'] ?? '') },
+            ]}
+            fileNameBase="gocardless-plans"
+          />
+        </div>
       </div>
 
       {showNew ? (
@@ -257,130 +372,134 @@ export function PlansTab() {
         <p className="px-1 py-6 text-sm text-neutral-500">Loading plans…</p>
       ) : items.length === 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
-          <p className="text-sm font-medium text-neutral-700">
-            No {status === 'all' ? '' : `${statusLabel(status)} `}plans yet.
-          </p>
+          <p className="text-sm font-medium text-neutral-700">No plans match these filters.</p>
           <p className="mt-1 text-sm text-neutral-500">
-            Create one with “New plan”, or run the GoCardless import to pull the full history.
+            Adjust the filters above, create one with “New plan”, or run the import to pull the
+            full history.
           </p>
         </div>
       ) : (
-        <div className="rounded-lg border border-neutral-200 bg-white shadow-card">
-          <Table>
-            <Thead>
-              <Tr>
-                <Th>Customer</Th>
-                <Th>Plan</Th>
-                <Th className="text-right">Amount</Th>
-                <Th>Schedule</Th>
-                <Th>Next charge</Th>
-                <Th>Started</Th>
-                <Th>Status</Th>
-                <Th />
-              </Tr>
-            </Thead>
-            <Tbody>
-              {items.map((s) => (
-                <Tr key={s.gcSubscriptionId}>
-                  <Td>
-                    {s.customer?.contactId ? (
-                      <Link
-                        href={`/contacts/${s.customer.contactId}`}
-                        className="font-medium text-primary-700 hover:underline"
-                      >
-                        {s.customer.contactName ?? s.customer.displayName}
-                      </Link>
-                    ) : s.customer ? (
-                      <Link
-                        href={`/direct-debits/customers/${encodeURIComponent(s.customer.gcCustomerId)}`}
-                        className="font-medium text-neutral-700 hover:text-primary-700 hover:underline"
-                      >
-                        {s.customer.displayName}
-                      </Link>
-                    ) : (
-                      <span className="text-neutral-700">—</span>
-                    )}
-                  </Td>
-                  <Td>
-                    <span className="text-neutral-900">{s.name ?? '—'}</span>{' '}
-                    <code className="font-mono text-[11px] text-neutral-400">
-                      {s.gcSubscriptionId}
-                    </code>
-                  </Td>
-                  <Td className="text-right font-mono tabular-nums">
-                    {formatMoneyMinor(s.amountMinor, s.currency)}
-                  </Td>
-                  <Td className="text-neutral-600">{cadence(s)}</Td>
-                  <Td className="text-neutral-600">
-                    {s.nextChargeAt
-                      ? `${formatDate(s.nextChargeAt)}${
-                          s.nextChargeMinor
-                            ? ` · ${formatMoneyMinor(s.nextChargeMinor, s.currency)}`
-                            : ''
-                        }`
-                      : '—'}
-                  </Td>
-                  <Td className="text-neutral-600">{formatDate(s.startDate ?? s.gcCreatedAt)}</Td>
-                  <Td>
-                    <Badge tone={SUBSCRIPTION_TONE[s.status] ?? 'neutral'} dot>
-                      {statusLabel(s.status)}
-                    </Badge>
-                  </Td>
-                  <Td>
-                    <div className="flex justify-end gap-1">
-                      {s.status === 'active' ? (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() =>
-                            setAction({
-                              kind: 'pause',
-                              gcSubscriptionId: s.gcSubscriptionId,
-                              label: s.name ?? s.gcSubscriptionId,
-                            })
-                          }
-                        >
-                          Pause
-                        </Button>
-                      ) : null}
-                      {s.status === 'paused' ? (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() =>
-                            setAction({
-                              kind: 'resume',
-                              gcSubscriptionId: s.gcSubscriptionId,
-                              label: s.name ?? s.gcSubscriptionId,
-                            })
-                          }
-                        >
-                          Resume
-                        </Button>
-                      ) : null}
-                      {['active', 'paused', 'pending_customer_approval'].includes(s.status) ? (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          className="text-red-700"
-                          onClick={() =>
-                            setAction({
-                              kind: 'cancel',
-                              gcSubscriptionId: s.gcSubscriptionId,
-                              label: s.name ?? s.gcSubscriptionId,
-                            })
-                          }
-                        >
-                          Cancel
-                        </Button>
-                      ) : null}
-                    </div>
-                  </Td>
+        <>
+          <div className="rounded-lg border border-neutral-200 bg-white shadow-card">
+            <Table>
+              <Thead>
+                <Tr>
+                  <Th>Customer</Th>
+                  <Th>Plan</Th>
+                  <Th className="text-right">Amount</Th>
+                  <Th>Schedule</Th>
+                  <Th>Next charge</Th>
+                  <Th>Started</Th>
+                  <Th>Status</Th>
+                  <Th />
                 </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        </div>
+              </Thead>
+              <Tbody>
+                {items.map((s) => (
+                  <Tr key={s.gcSubscriptionId}>
+                    <Td>
+                      {s.customer?.contactId ? (
+                        <Link
+                          href={`/contacts/${s.customer.contactId}`}
+                          className="font-medium text-primary-700 hover:underline"
+                        >
+                          {s.customer.contactName ?? s.customer.displayName}
+                        </Link>
+                      ) : s.customer ? (
+                        <Link
+                          href={`/direct-debits/customers/${encodeURIComponent(s.customer.gcCustomerId)}`}
+                          className="font-medium text-neutral-700 hover:text-primary-700 hover:underline"
+                        >
+                          {s.customer.displayName}
+                        </Link>
+                      ) : (
+                        <span className="text-neutral-700">—</span>
+                      )}
+                    </Td>
+                    <Td>
+                      <span className="text-neutral-900">{s.name ?? '—'}</span>{' '}
+                      <code className="font-mono text-[11px] text-neutral-400">
+                        {s.gcSubscriptionId}
+                      </code>
+                    </Td>
+                    <Td className="text-right font-mono tabular-nums">
+                      {formatMoneyMinor(s.amountMinor, s.currency)}
+                    </Td>
+                    <Td className="text-neutral-600">{cadence(s)}</Td>
+                    <Td className="text-neutral-600">
+                      {s.nextChargeAt
+                        ? `${formatDate(s.nextChargeAt)}${
+                            s.nextChargeMinor
+                              ? ` · ${formatMoneyMinor(s.nextChargeMinor, s.currency)}`
+                              : ''
+                          }`
+                        : '—'}
+                    </Td>
+                    <Td className="text-neutral-600">
+                      {formatDate(s.startDate ?? s.gcCreatedAt)}
+                    </Td>
+                    <Td>
+                      <Badge tone={SUBSCRIPTION_TONE[s.status] ?? 'neutral'} dot>
+                        {statusLabel(s.status)}
+                      </Badge>
+                    </Td>
+                    <Td>
+                      <div className="flex justify-end gap-1">
+                        {s.status === 'active' ? (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() =>
+                              setAction({
+                                kind: 'pause',
+                                gcSubscriptionId: s.gcSubscriptionId,
+                                label: s.name ?? s.gcSubscriptionId,
+                              })
+                            }
+                          >
+                            Pause
+                          </Button>
+                        ) : null}
+                        {s.status === 'paused' ? (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() =>
+                              setAction({
+                                kind: 'resume',
+                                gcSubscriptionId: s.gcSubscriptionId,
+                                label: s.name ?? s.gcSubscriptionId,
+                              })
+                            }
+                          >
+                            Resume
+                          </Button>
+                        ) : null}
+                        {['active', 'paused', 'pending_customer_approval'].includes(s.status) ? (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            className="text-red-700"
+                            onClick={() =>
+                              setAction({
+                                kind: 'cancel',
+                                gcSubscriptionId: s.gcSubscriptionId,
+                                label: s.name ?? s.gcSubscriptionId,
+                              })
+                            }
+                          >
+                            Cancel
+                          </Button>
+                        ) : null}
+                      </div>
+                    </Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+          </div>
+          <PaginationBar page={page} pageSize={pageSize} total={total} shown={items.length} />
+        </>
       )}
     </div>
   )
@@ -412,6 +531,7 @@ function NewPlanForm({
     onSuccess: (res) => {
       toast.success(`Plan created (${statusLabel(res.status)}).`)
       void utils.gocardless.subscriptions.list.invalidate()
+      void utils.gocardless.subscriptions.statusCounts.invalidate()
       void utils.gocardless.overview.invalidate()
       onDone()
     },
