@@ -85,3 +85,43 @@ export async function loadContactComplaintCounts(
 
   return out
 }
+
+// Per-contact enquiry types ("Tutoring", "Summer Camp", "Online Courses",
+// "UCAT", …) — the classification categories carried by the contact's web
+// enquiries (Lead.categories on leads converted to the contact, ADR 0023).
+// Latest-first union so the most recent ask leads, capped so a serial
+// enquirer can't flood a list row. One batched query covers a whole page.
+
+export const MAX_ENQUIRY_TYPES = 6
+
+export async function loadContactEnquiryTypes(
+  db: Db,
+  contactIds: string[],
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  if (contactIds.length === 0) return out
+  for (const id of contactIds) out.set(id, [])
+
+  const leads = await db.lead.findMany({
+    where: {
+      convertedToContactId: { in: contactIds },
+      deletedAt: null,
+      categories: { isEmpty: false },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { convertedToContactId: true, categories: true },
+  })
+
+  for (const lead of leads) {
+    const id = lead.convertedToContactId
+    if (!id) continue
+    const entry = out.get(id)
+    if (!entry) continue
+    for (const category of lead.categories) {
+      if (entry.length >= MAX_ENQUIRY_TYPES) break
+      if (!entry.includes(category)) entry.push(category)
+    }
+  }
+
+  return out
+}

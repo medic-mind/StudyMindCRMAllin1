@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { displayMessageBody } from '@/lib/format/html-text'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { useConversationStream } from '@/lib/hooks/use-conversation-stream'
 import { trpc } from '@/lib/trpc/client'
@@ -805,13 +806,13 @@ function ReadingPane({
                 }`}
               >
                 <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-neutral-400">
-                  <span>{outbound ? 'You' : (head.contactName ?? 'Contact')}</span>
+                  <span>{outbound ? (m.senderName ?? 'You') : (m.senderName ?? head.contactName ?? 'Contact')}</span>
                   <time dateTime={m.occurredAt.toISOString()}>
                     {formatRelativeTime(m.occurredAt, now)}
                   </time>
                 </div>
                 <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
-                  {m.body ?? '(no content)'}
+                  {displayMessageBody(m.body) ?? '(no content)'}
                 </p>
                 {m.mailAttachments.length > 0 ? (
                   <ul className="mt-2 flex flex-wrap gap-1.5">

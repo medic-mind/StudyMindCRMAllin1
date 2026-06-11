@@ -7,11 +7,12 @@
 // internal-notes island (staff-only). CLAUDE.md §11, §20, §26.
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { ChevronLeftIcon, UserCircleIcon } from '@/components/ui/icon'
+import { displayMessageBody } from '@/lib/format/html-text'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
 
@@ -126,43 +127,76 @@ export function ThreadPane({
         </button>
       </header>
 
-      {/* Messages */}
+      {/* Labels + subject strip — the same chips Trengo shows on the ticket. */}
+      {head.tags.length > 0 || head.subject ? (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-neutral-100 bg-white px-4 py-1.5">
+          {head.subject ? (
+            <span className="truncate text-xs font-medium text-neutral-700">
+              {head.subject}
+            </span>
+          ) : null}
+          {head.tags.map((t) => (
+            <span
+              key={t}
+              className="rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[10px] font-medium text-primary-800"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Messages — customer on the left, us on the right, named senders and
+          day separators, the way the Trengo thread reads. */}
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 ? (
           <p className="text-center text-sm text-neutral-400">
             No messages on this conversation yet.
           </p>
         ) : (
-          messages.map((m) => {
+          messages.map((m, i) => {
             const outbound = m.direction === 'outbound'
+            const prev = messages[i - 1]
+            const newDay =
+              !prev || prev.occurredAt.toDateString() !== m.occurredAt.toDateString()
+            const sender = outbound
+              ? (m.senderName ?? 'You')
+              : m.direction === 'inbound'
+                ? (m.senderName ?? head.contactName ?? 'Customer')
+                : 'System'
             return (
-              <article
-                key={m.id}
-                className={`max-w-[42rem] rounded-2xl border p-3 text-sm shadow-sm ${
-                  outbound
-                    ? 'ml-auto rounded-br-sm border-primary-100 bg-primary-50 text-neutral-900'
-                    : 'mr-auto rounded-bl-sm border-neutral-200 bg-white text-neutral-900'
-                }`}
-              >
-                <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-neutral-400">
-                  <span>
-                    {outbound
-                      ? 'You'
-                      : m.direction === 'inbound'
-                        ? (head.contactName ?? 'Contact')
-                        : 'System'}
-                  </span>
-                  <time dateTime={m.occurredAt.toISOString()}>
-                    {formatRelativeTime(m.occurredAt, now)}
-                  </time>
-                </div>
-                <p className="whitespace-pre-wrap break-words">{m.body ?? '(no content)'}</p>
-                <Attachments
-                  messageId={m.id}
-                  attachments={m.attachments}
-                  mailAttachments={m.mailAttachments}
-                />
-              </article>
+              <Fragment key={m.id}>
+                {newDay ? <DaySeparator date={m.occurredAt} /> : null}
+                <article
+                  className={`max-w-[42rem] rounded-2xl border p-3 text-sm shadow-sm ${
+                    outbound
+                      ? 'ml-auto rounded-br-sm border-primary-100 bg-primary-50 text-neutral-900'
+                      : 'mr-auto rounded-bl-sm border-neutral-200 bg-white text-neutral-900'
+                  }`}
+                >
+                  <div className="mb-1 flex items-center justify-between gap-3 text-[11px] tracking-wide text-neutral-400">
+                    <span className="font-medium uppercase">
+                      {sender}
+                      {outbound ? (
+                        <span className="ml-1 normal-case text-primary-500">· sent by us</span>
+                      ) : m.direction === 'inbound' ? (
+                        <span className="ml-1 normal-case text-neutral-400">· customer</span>
+                      ) : null}
+                    </span>
+                    <time dateTime={m.occurredAt.toISOString()}>
+                      {formatRelativeTime(m.occurredAt, now)}
+                    </time>
+                  </div>
+                  <p className="whitespace-pre-wrap break-words">
+                    {displayMessageBody(m.body) ?? '(no content)'}
+                  </p>
+                  <Attachments
+                    messageId={m.id}
+                    attachments={m.attachments}
+                    mailAttachments={m.mailAttachments}
+                  />
+                </article>
+              </Fragment>
             )
           })
         )}
@@ -191,7 +225,13 @@ export function ThreadPane({
               status={head.status}
               channel={head.channel}
               contactName={head.contactName}
+              contactPhone={head.contactPhone}
               latestInteractionId={latestInteractionId}
+              replyWindowOpen={
+                head.channel === 'whatsapp' && head.replyDeadlineAt
+                  ? !!replyWindowOpen
+                  : null
+              }
             />
           ) : (
             <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-600">
@@ -201,6 +241,23 @@ export function ThreadPane({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function DaySeparator({ date }: { date: Date }) {
+  return (
+    <div className="flex items-center gap-3 py-1" role="separator">
+      <span className="h-px flex-1 bg-neutral-200" />
+      <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+        {new Intl.DateTimeFormat('en-GB', {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        }).format(date)}
+      </span>
+      <span className="h-px flex-1 bg-neutral-200" />
     </div>
   )
 }

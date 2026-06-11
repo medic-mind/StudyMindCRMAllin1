@@ -73,6 +73,7 @@ import {
   runDraft,
 } from '@studymind/ai'
 import { displayNameOf } from '@studymind/core/contact'
+import { loadContactEnquiryTypes } from '@studymind/core/stats'
 import { BusinessError } from '@studymind/core/errors'
 import { logger } from '@studymind/core/logger'
 
@@ -654,13 +655,17 @@ const cardRouter = router({
           updatedAt: true,
         },
       })
-      // Latest activity per backing contact (cheap follow-up query).
+      // Latest activity + enquiry types per backing contact (two cheap
+      // batched follow-up queries for the whole board).
       const contactIds = [...new Set(rows.map((r) => r.contact.id))]
-      const latest = await ctx.db.interaction.groupBy({
-        by: ['contactId'],
-        where: { contactId: { in: contactIds }, deletedAt: null },
-        _max: { occurredAt: true },
-      })
+      const [latest, enquiryTypes] = await Promise.all([
+        ctx.db.interaction.groupBy({
+          by: ['contactId'],
+          where: { contactId: { in: contactIds }, deletedAt: null },
+          _max: { occurredAt: true },
+        }),
+        loadContactEnquiryTypes(ctx.db, contactIds),
+      ])
       const latestByContact = new Map<string, Date | null>(
         latest.map((l) => [l.contactId as string, l._max.occurredAt ?? null]),
       )
@@ -675,6 +680,7 @@ const cardRouter = router({
         company: r.contact.companies[0]?.company ?? null,
         description: r.description,
         subject: r.subject ? { id: r.subject.id, name: r.subject.name } : null,
+        enquiryTypes: enquiryTypes.get(r.contact.id) ?? [],
         labels: r.labels.map((l) => l.label),
         lastActivityAt: latestByContact.get(r.contact.id) ?? null,
         dueAt: r.dueAt,

@@ -589,6 +589,12 @@ async function upsertTrengoInteraction(
         messageId: input.envelope.data.message_id ?? null,
         channel,
         body: input.envelope.data.body ?? null,
+        // Inbound rows carry the customer's Trengo display name so the
+        // thread shows WHO said it even before a Contact is matched.
+        ...(input.eventName === 'message.inbound' &&
+        input.envelope.data.contact?.name
+          ? { senderName: input.envelope.data.contact.name }
+          : {}),
         ...(leadCreated ? { leadId } : {}),
       },
     },

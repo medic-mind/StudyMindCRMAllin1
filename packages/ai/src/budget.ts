@@ -26,6 +26,7 @@ export type AiTaskCategory =
   | 'webinar_schedule_import'
   | 'knowledge_qa'
   | 'knowledge_edit'
+  | 'contact_name_extraction'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -64,6 +65,10 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   // AI editor for the knowledge base (ADR 0040): CEO / Senior Manager only,
   // low volume, but each proposal carries the whole document as context.
   knowledge_edit: { daily: 5, monthly: 75 },
+  // Last step of the Trengo name-resolution waterfall (§11) — only runs when
+  // the free routes (Trengo contact record, rule-based message extraction)
+  // both fail. Mini-tier, import-time only.
+  contact_name_extraction: { daily: 2, monthly: 40 },
 }
 
 interface UsageBucket {

@@ -31,6 +31,7 @@ import { inngest } from '@studymind/jobs'
 import { SLACK_API_BASE } from './client'
 import { getWatchedChannels } from './config'
 import { matchContactByCandidate } from './match'
+import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 
 interface BackfillRequestedData {
@@ -194,6 +195,9 @@ async function processSlackMessage(
     select: { id: true },
   })
   if (existing) return { matched: true }
+
+  // Free pre-filter (§32) — no AI spend on chatter that can't name a customer.
+  if (isSkippableSlackNoise(message.text)) return { matched: false }
 
   const { senderName: resolvedSender, channelName } = await resolveSlackNames({
     userId: message.user ?? null,

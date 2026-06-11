@@ -25,6 +25,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { matchContactByCandidate } from './match'
+import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
@@ -71,6 +72,18 @@ export const slackEventReceived = inngest.createFunction(
         })
       })
       return { skipped: true, reason: 'not_a_message' }
+    }
+
+    // Free pre-filter (§32): acks, reactions, emoji and bare links never
+    // reference a customer — skip them before any AI spend or API call.
+    if (isSkippableSlackNoise(message.text)) {
+      await step.run('mark-processed', async () => {
+        await db.providerEvent.update({
+          where: { id: providerEventRowId },
+          data: { processedAt: new Date() },
+        })
+      })
+      return { skipped: true, reason: 'noise' }
     }
 
     const occurredAt = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)

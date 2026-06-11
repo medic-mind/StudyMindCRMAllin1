@@ -38,6 +38,9 @@ interface CardData {
   company?: { id: string; name: string; color: string | null } | null
   description?: string | null
   subject: { id: string; name: string } | null
+  /** Enquiry types from the contact's web enquiries ("Tutoring", "Summer
+   * Camp", "Online Courses", …). */
+  enquiryTypes?: ReadonlyArray<string>
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
   dueAt?: Date | string | null

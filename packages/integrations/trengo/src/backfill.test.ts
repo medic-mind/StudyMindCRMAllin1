@@ -9,7 +9,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  buildUserNameMap,
   extractMessageBody,
+  extractTicketLabels,
   inferMessageDirection,
   listTicketsPage,
   normaliseTicketChannel,
@@ -157,15 +159,59 @@ describe('normaliseTicketRow', () => {
       channel: { type: 'WA_BUSINESS' },
       created_at: '2026-05-30 10:00:00',
       subject: 'Re: trial lesson',
+      labels: [{ id: 1, name: 'GCSE' }, { id: 2, name: 'Billing' }],
     })
     expect(t).toEqual({
       id: 9,
       channel: 'whatsapp',
       status: 'open',
       subject: 'Re: trial lesson',
+      labels: ['GCSE', 'Billing'],
+      labelsKnown: true,
       contact: { phone: '+447700900123', email: 'parent@example.com', name: 'Jo Smith' },
       createdAt: new Date('2026-05-30T10:00:00.000Z'),
     })
+  })
+
+  it('distinguishes "no labels" from "listing carried no labels key"', () => {
+    expect(normaliseTicketRow({ id: 1, labels: [] })?.labelsKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1, tags: [] })?.labelsKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1 })?.labelsKnown).toBe(false)
+  })
+})
+
+describe('extractTicketLabels', () => {
+  it('reads label objects and plain strings, deduped', () => {
+    expect(
+      extractTicketLabels([{ name: 'GCSE' }, 'Billing', { name: 'GCSE' }, ' Billing']),
+    ).toEqual(['GCSE', 'Billing'])
+  })
+
+  it('returns [] for missing/odd shapes', () => {
+    expect(extractTicketLabels(undefined)).toEqual([])
+    expect(extractTicketLabels('GCSE')).toEqual([])
+    expect(extractTicketLabels([null, 42, { id: 1 }])).toEqual([])
+  })
+})
+
+describe('buildUserNameMap', () => {
+  it('prefers full_name, then name, then first+last, then email', () => {
+    const map = buildUserNameMap([
+      { id: 1, full_name: 'Hamzah Khan', first_name: 'H', last_name: 'K' },
+      { id: 2, name: 'Ops Bot' },
+      { id: 3, first_name: 'Aisha', last_name: 'Begum' },
+      { id: 4, email: 'agent@studymind.co.uk' },
+    ])
+    expect(map).toEqual({
+      '1': 'Hamzah Khan',
+      '2': 'Ops Bot',
+      '3': 'Aisha Begum',
+      '4': 'agent@studymind.co.uk',
+    })
+  })
+
+  it('skips rows without a numeric id or any name', () => {
+    expect(buildUserNameMap([{ full_name: 'No Id' }, { id: 9 }, null, 'x'])).toEqual({})
   })
 })
 

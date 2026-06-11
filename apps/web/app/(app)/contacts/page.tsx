@@ -299,6 +299,8 @@ export default async function ContactsPage({
             kind: c.kind,
             companies: c.companies,
             labels: c.labels,
+            subjects: c.subjects,
+            enquiryTypes: c.enquiryTypes,
             bookingStatus: c.bookingStatus,
             hoursBooked: c.hoursBooked,
             hoursDelivered: c.hoursDelivered,

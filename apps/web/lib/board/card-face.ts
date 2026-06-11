@@ -7,6 +7,7 @@ export const CARD_FACE_FIELDS = [
   { key: 'contact', label: 'Phone & email' },
   { key: 'subject', label: 'Subject' },
   { key: 'company', label: 'Company' },
+  { key: 'enquiryType', label: 'Enquiry type' },
   { key: 'labels', label: 'Labels' },
   { key: 'description', label: 'Note preview' },
   { key: 'scheduledCall', label: 'Scheduled call' },

@@ -64,6 +64,7 @@ export function InboxCockpit({
 
   const [filter, setFilter] = useState<InboxFilter>(initialFilter)
   const [channel, setChannel] = useState<InboxChannel | null>(initialChannel)
+  const [tag, setTag] = useState<string | null>(null)
   const [unansweredOnly, setUnansweredOnly] = useState(false)
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
@@ -77,7 +78,7 @@ export function InboxCockpit({
   }, [rawQuery])
 
   const list = trpc.inbox.conversations.list.useQuery(
-    { filter, channel: channel ?? null, limit: 100 },
+    { filter, channel: channel ?? null, tag: tag ?? null, limit: 100 },
     { refetchOnWindowFocus: true },
   )
 
@@ -165,12 +166,17 @@ export function InboxCockpit({
       <FoldersRail
         filter={filter}
         channel={channel}
+        tag={tag}
         onFilter={(f) => {
           setFilter(f)
           setSelectedId(null)
         }}
         onChannel={(c) => {
           setChannel(c)
+          setSelectedId(null)
+        }}
+        onTag={(t) => {
+          setTag(t)
           setSelectedId(null)
         }}
       />
@@ -299,19 +305,29 @@ function emptyCopyFor(filter: InboxFilter): string {
 function FoldersRail({
   filter,
   channel,
+  tag,
   onFilter,
   onChannel,
+  onTag,
 }: {
   filter: InboxFilter
   channel: InboxChannel | null
+  tag: string | null
   onFilter: (f: InboxFilter) => void
   onChannel: (c: InboxChannel | null) => void
+  onTag: (t: string | null) => void
 }) {
+  // Trengo labels across the workspace — synced from tickets onto the
+  // Conversation heads; clicking one narrows the list server-side.
+  const tags = trpc.inbox.conversations.tags.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: false,
+  })
   return (
     <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-200 bg-neutral-50/60 p-3 md:flex">
       <div className="flex items-center gap-2 px-1 pt-1 text-sm font-semibold text-neutral-900">
         <InboxIcon size={16} className="text-neutral-500" />
-        Inbox
+        Trengo
       </div>
 
       <nav aria-label="Views" className="flex flex-col gap-0.5">
@@ -341,6 +357,27 @@ function FoldersRail({
           ))}
         </nav>
       </div>
+
+      {(tags.data?.length ?? 0) > 0 ? (
+        <div>
+          <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            Labels
+          </h2>
+          <nav aria-label="Labels" className="flex flex-col gap-0.5">
+            {tag !== null ? (
+              <RailItem label="Clear label filter" active={false} onClick={() => onTag(null)} />
+            ) : null}
+            {tags.data!.slice(0, 12).map((t) => (
+              <RailItem
+                key={t.name}
+                label={`${t.name} (${t.count})`}
+                active={tag === t.name}
+                onClick={() => onTag(tag === t.name ? null : t.name)}
+              />
+            ))}
+          </nav>
+        </div>
+      ) : null}
 
       <div className="mt-auto">
         <Link

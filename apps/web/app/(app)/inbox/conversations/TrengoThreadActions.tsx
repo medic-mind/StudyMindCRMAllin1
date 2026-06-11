@@ -140,10 +140,36 @@ export function TrengoThreadActions({
             </span>
           ))
         )}
-        {canTag ? (
+      </div>
+
+      {/* Add a label — the workspace's Trengo labels as one-click chips (an
+          in-app picker, not the browser's datalist dropdown), plus a free
+          input for brand-new labels (created in Trengo on first use). */}
+      {canTag ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-neutral-100 pt-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            Add label
+          </span>
+          {(labels.data ?? [])
+            .filter((l) => !tags.includes(l.name))
+            .slice(0, 10)
+            .map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  contactId &&
+                  ticketId !== null &&
+                  addLabel.mutate({ contactId, ticketId, label: l.name })
+                }
+                className="rounded-full border border-dashed border-neutral-300 bg-white px-2 py-0.5 text-xs text-neutral-600 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50"
+              >
+                + {l.name}
+              </button>
+            ))}
           <span className="inline-flex items-center gap-1">
             <input
-              list="trengo-label-options"
               value={newLabel}
               onChange={(e) => setNewLabel(e.target.value)}
               onKeyDown={(e) => {
@@ -152,14 +178,10 @@ export function TrengoThreadActions({
                   submitLabel()
                 }
               }}
-              placeholder="Add label…"
+              placeholder="New label…"
+              aria-label="New label name"
               className="w-28 rounded border border-neutral-300 bg-white px-2 py-0.5 text-xs"
             />
-            <datalist id="trengo-label-options">
-              {(labels.data ?? []).map((l) => (
-                <option key={l.id} value={l.name} />
-              ))}
-            </datalist>
             <button
               type="button"
               onClick={submitLabel}
@@ -169,8 +191,8 @@ export function TrengoThreadActions({
               Add
             </button>
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {/* Actions row */}
       <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-2">

@@ -525,6 +525,12 @@ export const interactionRouter = router({
           // Body may be empty when sending an attachment-only message.
           body: z.string().trim().max(4_000).default(''),
           attachments: z.array(TrengoAttachmentInput).max(10).optional(),
+          /** The exact ticket to reply on (the comms centre knows it from the
+           *  Conversation head). Without it we fall back to resolving the
+           *  contact's most recent conversation — which can miss imported
+           *  threads whose message payloads carry no recognised channel. */
+          ticketId: z.number().int().positive().optional(),
+          channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -544,7 +550,7 @@ export const interactionRouter = router({
 
         const seed = await ctx.db.interaction.findFirst({
           where: { id: input.interactionId, deletedAt: null },
-          select: { id: true, contactId: true },
+          select: { id: true, contactId: true, payload: true },
         })
         if (!seed?.contactId) {
           throw new TRPCError({
@@ -554,15 +560,47 @@ export const interactionRouter = router({
         }
         await enforceRestrictedAccess(ctx, seed.contactId, 'trengo-reply')
 
-        // Lazy imports keep the integration out of the unrelated tRPC bundle.
-        const { resolveActiveTrengoConversation } = await import(
-          '@studymind/integration-trengo/conversations'
-        )
-        const conv = await resolveActiveTrengoConversation(ctx.db, seed.contactId)
-        if (!conv) {
+        // Resolve the target ticket + channel: explicit input (comms centre)
+        // → the seed message's own payload → the contact's most recent
+        // conversation. The explicit path makes replies deterministic — the
+        // send lands on the ticket the agent is looking at.
+        const seedPayload = (seed.payload ?? {}) as Record<string, unknown>
+        const { isTrengoChannel } = await import('@studymind/integration-trengo/types')
+        const seedTicketId =
+          typeof seedPayload['ticketId'] === 'number'
+            ? (seedPayload['ticketId'] as number)
+            : null
+        const seedChannelRaw =
+          typeof seedPayload['channel'] === 'string'
+            ? (seedPayload['channel'] as string)
+            : null
+        let ticketId = input.ticketId ?? seedTicketId
+        let channel =
+          input.channel ??
+          (seedChannelRaw && isTrengoChannel(seedChannelRaw) ? seedChannelRaw : null)
+
+        if (ticketId === null || channel === null) {
+          // Lazy imports keep the integration out of the unrelated tRPC bundle.
+          const { resolveActiveTrengoConversation } = await import(
+            '@studymind/integration-trengo/conversations'
+          )
+          const conv = await resolveActiveTrengoConversation(ctx.db, seed.contactId)
+          if (ticketId === null && conv) ticketId = conv.ticketId
+          if (channel === null && conv && conv.ticketId === ticketId) {
+            channel = conv.channel
+          }
+        }
+        if (ticketId === null) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
             message: 'No open Trengo conversation for this contact to reply on.',
+          })
+        }
+        if (channel === null) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message:
+              'Could not determine this conversation’s channel — open it in Trengo once, or reply from there.',
           })
         }
 
@@ -571,8 +609,8 @@ export const interactionRouter = router({
           const result = await sendMessage({
             contactId: seed.contactId,
             agentId: user.id,
-            ticketId: conv.ticketId,
-            channel: conv.channel,
+            ticketId,
+            channel,
             body: input.body,
             requestId: ctx.requestId,
             ...(attachments.length > 0 ? { attachments } : {}),
@@ -584,14 +622,15 @@ export const interactionRouter = router({
             after: {
               interactionId: result.interactionId,
               trengoMessageId: result.trengoMessageId,
-              channel: conv.channel,
+              ticketId,
+              channel,
             },
           })
 
           return {
             interactionId: result.interactionId,
             trengoMessageId: result.trengoMessageId,
-            channel: conv.channel,
+            channel,
           }
         } catch (err) {
           // The Interaction stays in `pending_send` (handled inside
