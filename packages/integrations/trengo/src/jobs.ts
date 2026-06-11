@@ -16,6 +16,7 @@ import {
   type TrengoContactProposal,
 } from './contact-suggestions'
 import {
+  coerceTrengoId,
   isTrengoChannel,
   normaliseTrengoEvent,
   type TrengoChannel,
@@ -61,7 +62,10 @@ export const trengoEventReceived = inngest.createFunction(
       return { skipped: true, reason: 'unrecognised_event' }
     }
 
-    const occurredAt = new Date(envelope.occurred_at)
+    const occurredAtRaw = new Date(envelope.occurred_at)
+    const occurredAt = Number.isNaN(occurredAtRaw.getTime())
+      ? new Date()
+      : occurredAtRaw
 
     // Match → Contact / Family. CLAUDE.md §11.
     const match = await step.run('match', async () => matchTrengoEvent(envelope))
@@ -98,8 +102,8 @@ export const trengoEventReceived = inngest.createFunction(
       eventName === 'label.added' ||
       eventName === 'label.removed'
     ) {
-      const ticketId = envelope.data.ticket_id
-      if (typeof ticketId === 'number') {
+      const ticketId = coerceTrengoId(envelope.data.ticket_id)
+      if (ticketId !== null) {
         const echoType =
           eventName === 'ticket.closed'
             ? 'ticket_closed'
@@ -258,13 +262,11 @@ export const trengoEventReceived = inngest.createFunction(
     // with a single indexed query. Bodies stay in `Interaction`; this row is
     // the queryable state. We only upsert when the event carries a numeric
     // ticket id; otherwise there is nothing to key on.
-    if (typeof envelope.data.ticket_id === 'number') {
+    const headTicketId = coerceTrengoId(envelope.data.ticket_id)
+    if (headTicketId !== null) {
       // Phase 6: resolve the raw Trengo assignee id to a CRM User if we have
       // the mapping (User.trengoUserId — stamped at token-connect time).
-      const rawAssignee =
-        typeof envelope.data.assignee_id === 'number'
-          ? envelope.data.assignee_id
-          : null
+      const rawAssignee = coerceTrengoId(envelope.data.assignee_id)
       let assigneeUserId: string | null = null
       if (rawAssignee !== null) {
         const u = await step.run('resolve-assignee', async () =>
@@ -278,7 +280,7 @@ export const trengoEventReceived = inngest.createFunction(
 
       await step.run('upsert-conversation-head', async () =>
         applyEventToConversation(db, {
-          ticketId: envelope.data.ticket_id as number,
+          ticketId: headTicketId,
           eventName,
           occurredAt,
           channel: envelope.data.channel ?? null,
@@ -300,7 +302,7 @@ export const trengoEventReceived = inngest.createFunction(
       if (eventName === 'message.inbound') {
         await step.run('resurface-on-inbound', async () =>
           db.conversation.updateMany({
-            where: { trengoTicketId: envelope.data.ticket_id as number, status: 'snoozed' },
+            where: { trengoTicketId: headTicketId, status: 'snoozed' },
             data: { status: 'open', snoozedUntil: null },
           }),
         )
@@ -585,8 +587,8 @@ async function upsertTrengoInteraction(
         interactionType: input.eventName,
         trengoEventId: input.eventId,
         trengoEvent: input.envelope.event,
-        ticketId: input.envelope.data.ticket_id ?? null,
-        messageId: input.envelope.data.message_id ?? null,
+        ticketId: coerceTrengoId(input.envelope.data.ticket_id),
+        messageId: coerceTrengoId(input.envelope.data.message_id),
         channel,
         body: input.envelope.data.body ?? null,
         // Inbound rows carry the customer's Trengo display name so the

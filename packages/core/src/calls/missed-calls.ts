@@ -110,31 +110,43 @@ export function normalizeCalls(rows: ReadonlyArray<RawCall>): NormalizedCall[] {
  * BOTH inbound and outbound calls (outbound calls drive the auto-resolution).
  * A miss resolves to `called_back` when a later call to/from the same number
  * completes the loop: an OUTBOUND attempt (any outcome — we tried), or an
- * ANSWERED INBOUND (they rang again and got through). Resolution precedence:
- * a manual `dismissed` (spam) always wins; otherwise a detected resolution;
- * otherwise a manual `actioned`; otherwise outstanding. Result is newest-first.
+ * ANSWERED INBOUND (they rang again and got through). The number match is
+ * format-insensitive (phoneMatchKey); when the miss is linked to a CRM
+ * contact, a later outbound call linked to the SAME contact also resolves it
+ * (the agent rang the person back on their other number). Resolution
+ * precedence: a manual `dismissed` (spam) always wins; otherwise a detected
+ * resolution; otherwise a manual `actioned`; otherwise outstanding. Result is
+ * newest-first.
  */
 export function deriveMissedCalls(
   calls: ReadonlyArray<NormalizedCall>,
   reviewsByAircallId: ReadonlyMap<string, MissedCallReviewRow>,
 ): MissedCallResult[] {
-  // Index resolving calls by a format-insensitive number key → ascending
-  // timestamps, so a callback resolves a miss even when Aircall formatted the
-  // two legs differently (see phoneMatchKey). Outbound counts on any attempt;
-  // inbound only counts when it was actually answered.
+  // Index resolving calls by a format-insensitive number key AND by linked
+  // contact → ascending timestamps, so a callback resolves a miss even when
+  // Aircall formatted the two legs differently or the agent dialled the
+  // contact's other number. Outbound counts on any attempt; inbound only
+  // counts when it was actually answered.
   const outboundByNumber = new Map<string, number[]>()
+  const outboundByContact = new Map<string, number[]>()
   for (const c of calls) {
     const resolves =
       c.direction === 'outbound' || (c.direction === 'inbound' && isAnswered(c))
-    if (resolves) {
-      const key = phoneMatchKey(c.rawDigits)
-      if (!key) continue
+    if (!resolves) continue
+    const key = phoneMatchKey(c.rawDigits)
+    if (key) {
       const arr = outboundByNumber.get(key) ?? []
       arr.push(c.occurredAt.getTime())
       outboundByNumber.set(key, arr)
     }
+    if (c.direction === 'outbound' && c.contactId) {
+      const arr = outboundByContact.get(c.contactId) ?? []
+      arr.push(c.occurredAt.getTime())
+      outboundByContact.set(c.contactId, arr)
+    }
   }
   for (const arr of outboundByNumber.values()) arr.sort((a, b) => a - b)
+  for (const arr of outboundByContact.values()) arr.sort((a, b) => a - b)
 
   const missed = calls.filter((c) => c.direction === 'inbound' && !isAnswered(c))
 
@@ -142,11 +154,12 @@ export function deriveMissedCalls(
     .map((c): MissedCallResult => {
       let calledBackAt: Date | null = null
       const key = phoneMatchKey(c.rawDigits)
-      if (key) {
-        const times = outboundByNumber.get(key)
-        const after = times?.find((t) => t > c.occurredAt.getTime())
-        if (after != null) calledBackAt = new Date(after)
-      }
+      const candidateTimes = [
+        ...(key ? (outboundByNumber.get(key) ?? []) : []),
+        ...(c.contactId ? (outboundByContact.get(c.contactId) ?? []) : []),
+      ].sort((a, b) => a - b)
+      const after = candidateTimes.find((t) => t > c.occurredAt.getTime())
+      if (after != null) calledBackAt = new Date(after)
       const review = c.aircallCallId ? reviewsByAircallId.get(c.aircallCallId) ?? null : null
 
       let state: MissedCallState

@@ -16,6 +16,9 @@ import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
 
 const WINDOW_OPTIONS = [
+  // Quick sync: re-pulls the recent window to heal any missed webhook
+  // deliveries (idempotent — nothing duplicates, blanks get enriched).
+  { days: 7, label: 'Last 7 days (quick sync)' },
   { days: 243, label: 'Last 8 months' },
   { days: 365, label: 'Last 12 months' },
   { days: 730, label: 'Last 2 years' },

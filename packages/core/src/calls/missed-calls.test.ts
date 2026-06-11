@@ -85,6 +85,53 @@ describe('deriveMissedCalls', () => {
     expect(out[0]?.calledBackAt?.toISOString()).toBe('2026-06-01T11:00:00.000Z')
   })
 
+  it('resolves via the linked contact when the callback went to a DIFFERENT number', () => {
+    // The miss came from the customer's mobile; the agent rang them back on
+    // their other number. Both calls link to the same CRM contact, so the
+    // miss must still clear.
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 30,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900111',
+        contactId: 'contact_1',
+      }),
+      raw({
+        aircallCallId: 31,
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T10:00:00Z'),
+        rawDigits: '+442079460000',
+        contactId: 'contact_1',
+      }),
+    ])
+    const out = deriveMissedCalls(calls, noReviews)
+    expect(out[0]?.state).toBe('called_back')
+    expect(out[0]?.calledBackAt?.toISOString()).toBe('2026-06-01T10:00:00.000Z')
+  })
+
+  it('does not contact-resolve a miss with no linked contact', () => {
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 32,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900111',
+        contactId: null,
+      }),
+      raw({
+        aircallCallId: 33,
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T10:00:00Z'),
+        rawDigits: '+442079460000',
+        contactId: 'contact_1',
+      }),
+    ])
+    expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('outstanding')
+  })
+
   it('does not resolve from an outbound call BEFORE the miss', () => {
     const calls = normalizeCalls([
       raw({ aircallCallId: 1, direction: 'outbound', occurredAt: new Date('2026-06-01T08:00:00Z'), rawDigits: '+447700900222' }),

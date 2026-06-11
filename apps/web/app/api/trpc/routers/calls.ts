@@ -91,10 +91,15 @@ export const callsRouter = router({
         const from = input.from ?? new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
 
         // Load every call from `from` to now (both directions) so callbacks
-        // after `to` still resolve a miss. Bounded; payload carries rawDigits.
+        // after `to` still resolve a miss. Newest-first matters: the row cap
+        // must shed the OLDEST rows, never recent callbacks — an unordered
+        // findMany under the cap silently dropped an arbitrary subset, which
+        // is exactly a "they were called back but it still says outstanding"
+        // bug on busy windows.
         const rows = await ctx.db.interaction.findMany({
           where: { type: 'call', occurredAt: { gte: from, lte: now }, deletedAt: null },
           select: { id: true, occurredAt: true, contactId: true, payload: true },
+          orderBy: { occurredAt: 'desc' },
           take: 20000,
         })
 

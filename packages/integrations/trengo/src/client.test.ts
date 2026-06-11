@@ -73,14 +73,17 @@ describe('Trengo client — labels + notes', () => {
     )
   })
 
-  it('addInternalNote POSTs the body to the ticket notes collection', async () => {
+  it('addInternalNote POSTs both param spellings to the ticket notes collection', async () => {
     const fetchMock = makeFetch({ data: { id: 555 } })
     const client = await clientWith(fetchMock)
     const note = await client.addInternalNote(42, 'team only')
     expect(note).toEqual({ id: 555 })
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/tickets/42/notes'),
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ body: 'team only' }) }),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ note: 'team only', body: 'team only' }),
+      }),
     )
   })
 
@@ -168,5 +171,69 @@ describe('Trengo client — WhatsApp templates (call-summary wizard)', () => {
       params: [],
     })
     expect(res).toEqual({ ticketId: null, messageId: null })
+  })
+})
+
+// -----------------------------------------------------------------------------
+// Send message — THE bug that made replies fail in the field. Trengo's
+// documented endpoint validates a `message` param
+// (developers.trengo.com/reference/send-a-message); the original client sent
+// only `body`, so every reply was rejected as "message required" and sat in
+// pending_send forever. These tests pin the corrected wire shape.
+// -----------------------------------------------------------------------------
+
+describe('Trengo client — sendMessage / sendMediaMessage', () => {
+  it('POSTs the documented `message` param (legacy `body` rides along)', async () => {
+    const fetchMock = makeFetch({ message: { id: 88, ticket_id: 42 } })
+    const client = await clientWith(fetchMock)
+    const sent = await client.sendMessage({
+      ticketId: 42,
+      body: 'Hello there',
+      channel: 'whatsapp',
+      customFields: { interactionId: 'i_1', agentId: 'u_1' },
+    })
+    expect(sent.id).toBe(88)
+    expect(sent.ticket_id).toBe(42)
+    const call = fetchMock.mock.calls[0]!
+    expect(String(call[0])).toContain('/tickets/42/messages')
+    const body = JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>
+    expect(body['message']).toBe('Hello there')
+    expect(body['body']).toBe('Hello there')
+  })
+
+  it('tolerates the documented confirmation response (message is a STRING)', async () => {
+    const fetchMock = makeFetch({ message: 'The message has been sent.' })
+    const client = await clientWith(fetchMock)
+    const sent = await client.sendMessage({
+      ticketId: 42,
+      body: 'Hi',
+      channel: 'sms',
+    })
+    expect(sent.id).toBeNull()
+    expect(sent.ticket_id).toBe(42)
+  })
+
+  it('reads the created row when returned under data or the root', async () => {
+    const fetchMock = makeFetch({ data: { id: 7, ticket_id: 42 } })
+    const client = await clientWith(fetchMock)
+    const sent = await client.sendMessage({ ticketId: 42, body: 'x', channel: 'email' })
+    expect(sent.id).toBe(7)
+  })
+
+  it('sendMediaMessage POSTs multipart `file` to the documented media endpoint', async () => {
+    const fetchMock = makeFetch({ message: 'Media message sent' })
+    const client = await clientWith(fetchMock)
+    const sent = await client.sendMediaMessage({
+      ticketId: 42,
+      filename: 'doc.pdf',
+      contentType: 'application/pdf',
+      data: Buffer.from('hello'),
+    })
+    expect(sent.ticket_id).toBe(42)
+    const call = fetchMock.mock.calls[0]!
+    expect(String(call[0])).toContain('/tickets/42/messages/media')
+    const init = call[1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(init.body).toBeInstanceOf(FormData)
   })
 })

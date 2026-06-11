@@ -34,6 +34,14 @@ import {
 import type { TrengoChannel } from './types'
 
 const MAX_ATTEMPTS = 5
+/**
+ * Version of the outbound request shape. Bumped when a sender bug is fixed
+ * (v2: the documented `message` param on /tickets/:id/messages — v1 sent
+ * only `body` and every reply 422'd). Rows that exhausted their attempts
+ * under an OLDER shape get ONE fresh attempt budget: the failures were the
+ * sender's fault, not the row's.
+ */
+const SEND_SHAPE_VERSION = 2
 /** Skip rows whose last failure is too recent — give Trengo time to recover
  *  before pinging again. The Inngest cron runs every 5 minutes, so this is
  *  effectively a one-attempt-per-tick floor. */
@@ -60,6 +68,7 @@ interface RetryablePayload {
     params?: Array<{ key?: string; value?: string }>
   }
   attempts?: number
+  sendShape?: number
   lastError?: { code?: string; message?: string }
 }
 
@@ -109,11 +118,16 @@ export const trengoRetryPendingSend = inngest.createFunction(
 
     for (const row of candidates) {
       const payload = (row.payload ?? {}) as RetryablePayload
-      const attempts = typeof payload.attempts === 'number' ? payload.attempts : 0
+      let attempts = typeof payload.attempts === 'number' ? payload.attempts : 0
 
       if (attempts >= MAX_ATTEMPTS) {
-        exhausted += 1
-        continue
+        if (payload.sendShape === SEND_SHAPE_VERSION) {
+          exhausted += 1
+          continue
+        }
+        // Exhausted under an older (buggy) request shape — retry now with a
+        // fresh budget under the fixed sender.
+        attempts = 0
       }
       if (payload.lastError?.code === 'TOKEN_EXPIRED') {
         skipped += 1
@@ -300,6 +314,8 @@ async function bumpAttemptCounter(
   const payload = (row?.payload ?? {}) as Record<string, unknown>
   await db.interaction.update({
     where: { id: interactionId },
-    data: { payload: { ...payload, attempts: nextAttempts } },
+    data: {
+      payload: { ...payload, attempts: nextAttempts, sendShape: SEND_SHAPE_VERSION },
+    },
   })
 }

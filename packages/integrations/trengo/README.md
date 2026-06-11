@@ -20,14 +20,15 @@ real Trengo workspace from CI. They follow the Trengo v2 conventions and are
 **isolated to `client.ts`** + pinned by `client.test.ts`, so correcting any of
 them is a one-line change with no ripple:
 
-| Method | Assumed request |
+| Method | Request |
 |---|---|
-| `uploadMedia` | `POST /media` (multipart `file`) → `{ data: { id } }` |
-| `sendMessage` attachments | `POST /tickets/:id/messages` with `attachment_ids: number[]` |
+| `sendMessage` | **Documented** (developers.trengo.com/reference/send-a-message): `POST /tickets/:id/messages` with `message` as the text param — the original assumed shape sent only `body` and was rejected by the live API ("message required"), which is why replies sat in `pending_send`. We send `message` + legacy `body` together; the response is parsed defensively (`{message:{id}}`, `{data:{id}}`, root, or the documented string confirmation with no id). |
+| `sendMediaMessage` | **Documented** (developers.trengo.com/reference/send-media): `POST /tickets/:id/messages/media` (multipart `file`, one file per message). Replaces the assumed upload-to-`/media`-then-`attachment_ids` flow for outbound attachments. |
+| `uploadMedia` | LEGACY/assumed, no longer used by outbound: `POST /media` (multipart `file`) → `{ data: { id } }` |
 | `createConversation` (primary) | `POST /messages` with `{ channel, recipient, body, custom_fields }` → `{ message: { id, ticket_id } }` |
 | `createConversation` (fallback chain, runs when the primary is rejected 4xx) | `GET /channels` → pick by `type` (`WA_BUSINESS`/`SMS`/`EMAIL`/`CHAT`) → `POST /channels/:id/contacts {identifier}` (upserts by identifier) → `POST /tickets {channel_id, contact_id}` → `POST /tickets/:id/messages` |
 | `attachLabel` / `detachLabel` | `POST /tickets/:id/labels {label_id}` / `DELETE /tickets/:id/labels/:labelId` |
-| `addInternalNote` | `POST /tickets/:id/notes {body}` |
+| `addInternalNote` | `POST /tickets/:id/notes {note, body}` (both spellings — versions disagree on the param name) |
 | `listWaTemplates` | `GET /wa_templates` → `{ data: [{ id, title, message, status }] }` (approved WhatsApp HSM templates) |
 | `sendWaTemplate` | `POST /wa_sessions` with `{ recipient_phone_number, hsm_id, params: [{key:"{{1}}", value}] }` — starts/refreshes the WhatsApp session with a template (valid outside the 24h window) |
 | `listQuickReplies` | `GET /quick_replies` → `{ data: [{ id, title, message }] }` (canned responses — surfaced as the SMS templates) |

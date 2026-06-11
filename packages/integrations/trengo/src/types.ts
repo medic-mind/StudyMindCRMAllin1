@@ -37,17 +37,25 @@ export const TRENGO_EVENT_NAMES = [
 export type TrengoEventName = (typeof TRENGO_EVENT_NAMES)[number]
 
 const TRENGO_EVENT_ALIASES: Record<string, TrengoEventName> = {
-  // Older Trengo webhooks use these names; map to ours.
+  // Trengo's event spellings vary across versions and webhook templates
+  // ("INBOUND_MESSAGE", "Inbound message", "message.inbound", …). Keys here
+  // are the canonical lowercase-underscore form every raw value is folded to.
   message_created: 'message.inbound',
   message_inbound: 'message.inbound',
+  inbound_message: 'message.inbound',
+  message_received: 'message.inbound',
   message_outbound: 'message.outbound',
+  outbound_message: 'message.outbound',
+  message_sent: 'message.outbound',
   ticket_assigned: 'ticket.assigned',
   ticket_closed: 'ticket.closed',
   ticket_reopened: 'ticket.reopened',
   label_attached: 'label.added',
   label_added: 'label.added',
+  ticket_label_added: 'label.added',
   label_detached: 'label.removed',
   label_removed: 'label.removed',
+  ticket_label_removed: 'label.removed',
   contact_updated: 'contact.updated',
 }
 
@@ -55,7 +63,28 @@ export function normaliseTrengoEvent(raw: string): TrengoEventName | null {
   if ((TRENGO_EVENT_NAMES as readonly string[]).includes(raw)) {
     return raw as TrengoEventName
   }
-  return TRENGO_EVENT_ALIASES[raw] ?? null
+  // Case/separator-insensitive fold: "INBOUND_MESSAGE" / "Inbound message" /
+  // "message.inbound" all reach the alias table. An unrecognised name still
+  // returns null (skipped + logged upstream) — we fail closed on semantics,
+  // not on spelling (§8).
+  const key = raw.trim().toLowerCase().replace(/[\s.-]+/g, '_')
+  return TRENGO_EVENT_ALIASES[key] ?? null
+}
+
+/**
+ * Trengo ids (ticket_id, message_id, assignee_id) arrive as numbers from
+ * some workspaces and as numeric strings from others (webhook payload
+ * templates stringify). Everything downstream keys on the NUMBER — the
+ * Conversation head's unique trengoTicketId, the thread join on
+ * payload.ticketId — so a stringly id silently orphaned the message from
+ * its conversation. Fold both forms.
+ */
+export function coerceTrengoId(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return Number(value.trim())
+  }
+  return null
 }
 
 // -----------------------------------------------------------------------------

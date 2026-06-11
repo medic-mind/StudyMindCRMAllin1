@@ -20,8 +20,16 @@ export interface TrengoSendMessageInput {
   /** Custom-field metadata that lets us reconcile Trengo events to our
    *  Interaction id. CLAUDE.md §11. */
   customFields?: Record<string, string>
-  /** Trengo media ids to attach (uploaded first via `uploadMedia`). */
-  attachmentIds?: number[]
+}
+
+/** A media (file) message on a ticket — Trengo's documented
+ *  `POST /tickets/:id/messages/media` (multipart `file`). One file per
+ *  message, the way Trengo's own composer sends attachments. */
+export interface TrengoSendMediaInput {
+  ticketId: number
+  filename: string
+  contentType: string
+  data: Buffer
 }
 
 export interface TrengoMediaResource {
@@ -42,9 +50,6 @@ export interface TrengoCreateConversationInput {
   recipient: string
   body: string
   customFields?: Record<string, string>
-  /** Trengo media ids to attach to the first message (uploaded first via
-   *  `uploadMedia`). */
-  attachmentIds?: number[]
 }
 
 /** Our channel kind → Trengo's channel `type` tag (GET /channels). */
@@ -61,7 +66,9 @@ export interface TrengoCreateConversationResult {
 }
 
 export interface TrengoMessageResource {
-  id: number
+  /** Null when Trengo's response carried no message id (the documented
+   *  response is a confirmation like `{"message":"..."}`). */
+  id: number | null
   ticket_id: number
   body: string
   direction: 'outbound'
@@ -129,6 +136,8 @@ export interface TrengoClient {
   readonly baseUrl: string
   readonly agentId: string
   sendMessage(input: TrengoSendMessageInput): Promise<TrengoMessageResource>
+  /** Send one file on a ticket (documented `POST /tickets/:id/messages/media`). */
+  sendMediaMessage(input: TrengoSendMediaInput): Promise<TrengoMessageResource>
   assignTicket(ticketId: number, assigneeUserId: number): Promise<TrengoTicketResource>
   closeTicket(ticketId: number): Promise<TrengoTicketResource>
   reopenTicket(ticketId: number): Promise<TrengoTicketResource>
@@ -256,22 +265,69 @@ export async function createClientForAgent(
 
   // Hoisted so createConversation's fallback chain can reuse them without
   // relying on `this` inside the returned literal.
+  /**
+   * Normalise the send-message response. The documented response is a plain
+   * confirmation (`{"message":"…"}` — a STRING, no id); some workspaces
+   * return the created row under `message` / `data` / the root. The old code
+   * assumed `{ message: { id } }` and crashed reading `.id` off a string.
+   */
+  function normaliseSentMessage(res: unknown, ticketId: number): TrengoMessageResource {
+    const root = (res ?? {}) as Record<string, unknown>
+    const msg = root['message']
+    const candidate =
+      msg !== null && typeof msg === 'object'
+        ? (msg as Record<string, unknown>)
+        : ((root['data'] ?? root) as Record<string, unknown>)
+    return {
+      id: typeof candidate['id'] === 'number' ? candidate['id'] : null,
+      ticket_id:
+        typeof candidate['ticket_id'] === 'number'
+          ? (candidate['ticket_id'] as number)
+          : ticketId,
+      body: typeof candidate['body'] === 'string' ? (candidate['body'] as string) : '',
+      direction: 'outbound',
+    }
+  }
+
   async function sendMessageImpl(
     input: TrengoSendMessageInput,
   ): Promise<TrengoMessageResource> {
-    const res = await request<{ message: TrengoMessageResource }>(
-      'POST',
-      `/tickets/${input.ticketId}/messages`,
-      {
-        body: input.body,
-        channel: input.channel,
-        custom_fields: input.customFields ?? {},
-        ...(input.attachmentIds && input.attachmentIds.length > 0
-          ? { attachment_ids: input.attachmentIds }
-          : {}),
-      },
-    )
-    return res.message
+    // THE field Trengo's documented endpoint validates is `message`
+    // (developers.trengo.com/reference/send-a-message) — sending only `body`
+    // was rejected as "message required" and every reply 422'd. `body` rides
+    // along for any older workspace that accepted the legacy shape; unknown
+    // fields are ignored.
+    const res = await request<unknown>('POST', `/tickets/${input.ticketId}/messages`, {
+      message: input.body,
+      body: input.body,
+      channel: input.channel,
+      custom_fields: input.customFields ?? {},
+    })
+    return normaliseSentMessage(res, input.ticketId)
+  }
+
+  async function sendMediaMessageImpl(
+    input: TrengoSendMediaInput,
+  ): Promise<TrengoMessageResource> {
+    // Documented `POST /tickets/:id/messages/media` — multipart `file`, one
+    // file per message (developers.trengo.com/reference/send-media). The old
+    // upload-to-/media-then-attachment_ids flow was never a documented shape.
+    const form = new FormData()
+    const blob = new Blob([input.data as unknown as BlobPart], {
+      type: input.contentType,
+    })
+    form.append('file', blob, input.filename)
+    const res = await fetchImpl(`${baseUrl}/tickets/${input.ticketId}/messages/media`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      body: form,
+    })
+    const text = await res.text()
+    const parsed = text ? (JSON.parse(text) as unknown) : null
+    if (!res.ok) {
+      throw new TrengoApiError(res.status, `/tickets/${input.ticketId}/messages/media`, parsed)
+    }
+    return normaliseSentMessage(parsed, input.ticketId)
   }
 
   async function listChannelsImpl(): Promise<TrengoChannelResource[]> {
@@ -284,6 +340,7 @@ export async function createClientForAgent(
     agentId: opts.agentId,
     request,
     sendMessage: sendMessageImpl,
+    sendMediaMessage: sendMediaMessageImpl,
     async assignTicket(ticketId, assigneeUserId) {
       const res = await request<{ ticket: TrengoTicketResource }>(
         'PATCH',
@@ -331,7 +388,9 @@ export async function createClientForAgent(
       const res = await request<{ data?: { id: number }; id?: number }>(
         'POST',
         `/tickets/${ticketId}/notes`,
-        { body },
+        // Both spellings — Trengo versions disagree on the param name and
+        // ignore the one they don't validate.
+        { note: body, body },
       )
       return { id: res.data?.id ?? res.id ?? 0 }
     },
@@ -440,9 +499,6 @@ export async function createClientForAgent(
         body: input.body,
         channel: input.channel,
         ...(input.customFields ? { customFields: input.customFields } : {}),
-        ...(input.attachmentIds && input.attachmentIds.length > 0
-          ? { attachmentIds: input.attachmentIds }
-          : {}),
       })
       return { ticketId, messageId: message.id ?? null }
     },
