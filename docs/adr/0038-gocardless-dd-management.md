@@ -180,3 +180,23 @@ The last two GoCardless dashboard areas land in the workspace:
   replay log (no new storage), parses each event's links, and resolves them
   to customers through the mirror — the CRM's Events screen. Filterable by
   resource, keyset "load older" pagination.
+
+## Amendment (2026-06-11, fifth) — proper list system on every table
+
+The workspace lists graduated from single-page feeds to real tables, all
+URL-driven via the shared list-controls primitives (CLAUDE.md §26):
+
+- Offset paging with true totals ("Showing 1–50 of 1,234"), page-size
+  select, and whitelisted column sorting (nullable columns sort nulls
+  last) on plans, payments, customers, mandates and payouts.
+- Filters: status/state chips with live counts that respect the other
+  filters (shared where-builders keep chips and rows in agreement),
+  customer search on every list, charge/arrival date ranges, £ amount
+  ranges, plan cadence; payments/payouts also show the filtered-set value.
+- A flat **Mandates** sub-view on the Customers tab (state chips + counts,
+  search via mandate id/reference or the customer mirror, audited cancel).
+- CSV export per list honouring the current filters + sort (5000-row cap,
+  the §37 convention).
+- Cursor pagination on these mirrors was replaced by offset paging — an
+  operator table needs arbitrary sorts and jumpable pages; the keyset
+  cursor convention remains for timeline-shaped feeds (the Activity tab).
