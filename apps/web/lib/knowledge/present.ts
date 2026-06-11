@@ -6,6 +6,7 @@
 // (`toRenderTree`); this layer is web-only display intelligence.
 
 import type { KnowledgeValue } from '@studymind/core/knowledge'
+import { humaniseKey } from '@studymind/core/knowledge'
 
 export type Scalar = string | number | boolean | null
 export type KnowledgeObject = { [key: string]: KnowledgeValue }
@@ -190,4 +191,110 @@ export function extractSummary(obj: KnowledgeObject): {
     }
   }
   return { summary: null, rest: obj }
+}
+
+// ── Further display intelligence ───────────────────────────────────────────
+
+/** Keys whose scalar arrays are sequential actions → numbered steps. */
+const STEP_KEYS = new Set([
+  'guidance',
+  'steps',
+  'process',
+  'howitworks',
+  'flow',
+  'checklist',
+  'sequence',
+  'playbook',
+  'stepladder',
+])
+
+export function isStepKey(key: string | undefined): boolean {
+  if (!key) return false
+  return STEP_KEYS.has(key.toLowerCase().replace(/[^a-z]/g, ''))
+}
+
+/** Stable DOM anchor for a section key (TOC + deep links). */
+export function anchorId(key: string): string {
+  return `k-${key.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}`
+}
+
+export interface TocEntry {
+  id: string
+  label: string
+}
+
+/** "On this page" entries — one per complex top-level key of a section. */
+export function tocFor(data: KnowledgeValue): TocEntry[] {
+  if (!isObject(data)) return []
+  const { rest } = extractSummary(data)
+  const { complex } = partitionEntries(rest)
+  return complex.map(([key]) => ({ id: anchorId(key), label: humaniseKey(key) }))
+}
+
+/**
+ * Catalogue detection: an object section whose complex entries are ALL
+ * objects and numerous (products, hubs, brands) reads far better as a grid
+ * of record cards than as a stack of full-width titled sections.
+ */
+export function asRecordGrid(
+  entries: Array<[string, KnowledgeValue]>,
+): Array<[string, KnowledgeObject]> | null {
+  if (entries.length < 5) return null
+  const objs: Array<[string, KnowledgeObject]> = []
+  for (const [key, value] of entries) {
+    if (!isObject(value)) return null
+    objs.push([key, value])
+  }
+  return objs
+}
+
+/** Short categorical fields worth lifting into a header pill on a card. */
+const BADGE_KEYS = new Set([
+  'tone',
+  'status',
+  'brand',
+  'level',
+  'channel',
+  'type',
+  'category',
+  'audience',
+  'kind',
+  'format',
+])
+const MAX_BADGE_LEN = 26
+
+export interface CardParts {
+  title: string | null
+  /** [label, value] pairs for the header badge row (stats + categorical). */
+  badges: Array<[string, string]>
+  rest: KnowledgeObject
+}
+
+/** Split a record into a card title, header badges and the remaining body. */
+export function cardParts(obj: KnowledgeObject, fallbackTitle?: string | null): CardParts {
+  const titleKey = pickTitleKey(obj)
+  const title = titleKey ? scalarText(obj[titleKey] as Scalar) : (fallbackTitle ?? null)
+
+  const badges: Array<[string, string]> = []
+  const rest: KnowledgeObject = {}
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === titleKey) continue
+    if (isScalar(value) && badges.length < 4) {
+      const text = scalarText(value)
+      const categorical = BADGE_KEYS.has(key.toLowerCase()) && text.length <= MAX_BADGE_LEN
+      if (looksLikeStat(text) || categorical) {
+        badges.push([humaniseKey(key), text])
+        continue
+      }
+    }
+    rest[key] = value
+  }
+  return { title, badges, rest }
+}
+
+/** Entry count for a section's index card ("31 entries"). */
+export function sectionItemCount(data: KnowledgeValue | undefined): number | null {
+  if (Array.isArray(data)) return data.length
+  if (isObject(data)) return Object.keys(data).length
+  return null
 }

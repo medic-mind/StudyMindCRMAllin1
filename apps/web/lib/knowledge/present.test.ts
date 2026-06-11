@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  anchorId,
   asGlossaryRecord,
+  asRecordGrid,
   asStatRecord,
+  cardParts,
   classifyArray,
   extractSummary,
+  isStepKey,
   looksLikeStat,
   partitionEntries,
   pickTitleKey,
+  sectionItemCount,
+  tocFor,
 } from './present'
 
 describe('looksLikeStat', () => {
@@ -143,5 +149,95 @@ describe('pickTitleKey', () => {
   it('prefers name/title/tier over other keys', () => {
     expect(pickTitleKey({ tier: 'Gold', hours: 100 })).toBe('tier')
     expect(pickTitleKey({ hours: 100 })).toBeNull()
+  })
+})
+
+describe('isStepKey', () => {
+  it('recognises sequential keys in any casing', () => {
+    for (const key of ['guidance', 'steps', 'howItWorks', 'process', 'checklist', 'stepLadder']) {
+      expect(isStepKey(key), key).toBe(true)
+    }
+  })
+
+  it('rejects non-sequential keys and undefined', () => {
+    expect(isStepKey('includes')).toBe(false)
+    expect(isStepKey(undefined)).toBe(false)
+  })
+})
+
+describe('anchorId + tocFor', () => {
+  it('builds stable anchors from keys', () => {
+    expect(anchorId('moneyBackGuarantee')).toBe('k-moneybackguarantee')
+    expect(anchorId('ucat-1to1')).toBe('k-ucat-1to1')
+  })
+
+  it('lists complex keys of an object section, skipping the summary', () => {
+    const toc = tocFor({
+      summary: 'Intro',
+      brand: 'medicmind',
+      tiers: [],
+      moneyBackGuarantee: { amount: '£500' },
+    })
+    expect(toc).toEqual([
+      { id: 'k-tiers', label: 'Tiers' },
+      { id: 'k-moneybackguarantee', label: 'Money back guarantee' },
+    ])
+  })
+
+  it('returns nothing for arrays and scalars', () => {
+    expect(tocFor([{ term: 'X', definition: 'y' }])).toEqual([])
+    expect(tocFor('text')).toEqual([])
+  })
+})
+
+describe('asRecordGrid', () => {
+  it('detects a catalogue (5+ object entries)', () => {
+    const entries = Object.entries({
+      a: { name: 'A' },
+      b: { name: 'B' },
+      c: { name: 'C' },
+      d: { name: 'D' },
+      e: { name: 'E' },
+    })
+    expect(asRecordGrid(entries)?.length).toBe(5)
+  })
+
+  it('rejects small or mixed entry sets', () => {
+    expect(asRecordGrid(Object.entries({ a: { x: 1 }, b: { x: 2 } }))).toBeNull()
+    expect(
+      asRecordGrid(
+        Object.entries({ a: { x: 1 }, b: { x: 2 }, c: { x: 3 }, d: { x: 4 }, e: ['list'] }),
+      ),
+    ).toBeNull()
+  })
+})
+
+describe('cardParts', () => {
+  it('lifts stat and categorical scalars into badges', () => {
+    const { title, badges, rest } = cardParts({
+      title: 'Anxious teen reluctant to engage',
+      tone: 'soft',
+      hours: 60,
+      guidance: ['a'],
+    })
+    expect(title).toBe('Anxious teen reluctant to engage')
+    expect(badges).toEqual([
+      ['Tone', 'soft'],
+      ['Hours', '60'],
+    ])
+    expect(Object.keys(rest)).toEqual(['guidance'])
+  })
+
+  it('falls back to the provided title when no title key exists', () => {
+    expect(cardParts({ hours: 60 }, 'UCAT 1to1').title).toBe('UCAT 1to1')
+  })
+})
+
+describe('sectionItemCount', () => {
+  it('counts array items and object keys', () => {
+    expect(sectionItemCount([1, 2, 3])).toBe(3)
+    expect(sectionItemCount({ a: 1, b: 2 })).toBe(2)
+    expect(sectionItemCount('text')).toBeNull()
+    expect(sectionItemCount(undefined)).toBeNull()
   })
 })
