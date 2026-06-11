@@ -6,6 +6,7 @@ import { createHmac } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
+import { coerceTrengoId, normaliseTrengoEvent } from './types'
 import { verifyAndParse } from './webhook'
 
 const SECRET = 'whsec_trengo_unit'
@@ -69,5 +70,49 @@ describe('verifyAndParse (Trengo)', () => {
     expect(verifyAndParse(RAW, '1700000000;', { webhookSecret: SECRET }).ok).toBe(
       false,
     )
+  })
+})
+
+// -----------------------------------------------------------------------------
+// Inbound normalisation — event-name folding + id coercion. These are the
+// quiet droppers: an unrecognised spelling skipped the event entirely, and a
+// stringly ticket_id orphaned the message from its conversation head.
+// -----------------------------------------------------------------------------
+
+describe('normaliseTrengoEvent', () => {
+  it('accepts canonical names directly', () => {
+    expect(normaliseTrengoEvent('message.inbound')).toBe('message.inbound')
+    expect(normaliseTrengoEvent('contact.updated')).toBe('contact.updated')
+  })
+
+  it('folds case and separators (workspace template spellings)', () => {
+    expect(normaliseTrengoEvent('INBOUND_MESSAGE')).toBe('message.inbound')
+    expect(normaliseTrengoEvent('Inbound message')).toBe('message.inbound')
+    expect(normaliseTrengoEvent('OUTBOUND_MESSAGE')).toBe('message.outbound')
+    expect(normaliseTrengoEvent('Message.Inbound')).toBe('message.inbound')
+    expect(normaliseTrengoEvent('TICKET_CLOSED')).toBe('ticket.closed')
+    expect(normaliseTrengoEvent('ticket-label-added')).toBe('label.added')
+  })
+
+  it('returns null for genuinely unknown events (fail closed on semantics)', () => {
+    expect(normaliseTrengoEvent('voice.call_started')).toBeNull()
+    expect(normaliseTrengoEvent('')).toBeNull()
+  })
+})
+
+describe('coerceTrengoId', () => {
+  it('passes numbers through and parses numeric strings', () => {
+    expect(coerceTrengoId(12345)).toBe(12345)
+    expect(coerceTrengoId('12345')).toBe(12345)
+    expect(coerceTrengoId(' 678 ')).toBe(678)
+  })
+
+  it('rejects non-numeric shapes', () => {
+    expect(coerceTrengoId('12a45')).toBeNull()
+    expect(coerceTrengoId('')).toBeNull()
+    expect(coerceTrengoId(null)).toBeNull()
+    expect(coerceTrengoId(undefined)).toBeNull()
+    expect(coerceTrengoId(Number.NaN)).toBeNull()
+    expect(coerceTrengoId({ id: 1 })).toBeNull()
   })
 })

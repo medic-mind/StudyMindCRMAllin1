@@ -190,6 +190,17 @@ export function ThreadPane({
                   <p className="whitespace-pre-wrap break-words">
                     {displayMessageBody(m.body) ?? '(no content)'}
                   </p>
+                  {m.sendStatus === 'sending' ? (
+                    <p className="mt-1 text-[11px] font-medium text-amber-700">
+                      Sending… (retries automatically until Trengo accepts it)
+                    </p>
+                  ) : m.sendStatus === 'failed' ? (
+                    <p className="mt-1 text-[11px] font-medium text-red-700">
+                      Not delivered — Trengo said: {m.sendError ?? 'unknown error'}. It
+                      retries every 5 minutes; if this keeps failing, check your token
+                      in Account → Trengo.
+                    </p>
+                  ) : null}
                   <Attachments
                     messageId={m.id}
                     attachments={m.attachments}

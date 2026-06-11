@@ -312,7 +312,18 @@ export const inboxRouter = router({
                   where: {
                     deletedAt: null,
                     type: 'message',
-                    payload: { path: ['ticketId'], equals: head.trengoTicketId },
+                    // Tolerate both id shapes: some Trengo workspaces send
+                    // numeric strings, and older rows were stored that way —
+                    // a strict number match left those messages invisible.
+                    OR: [
+                      { payload: { path: ['ticketId'], equals: head.trengoTicketId } },
+                      {
+                        payload: {
+                          path: ['ticketId'],
+                          equals: String(head.trengoTicketId),
+                        },
+                      },
+                    ],
                   },
                   orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
                   take: 100,
@@ -418,6 +429,27 @@ export const inboxRouter = router({
           const senderName =
             payloadSender ??
             (r.createdById ? (authorNameById.get(r.createdById) ?? null) : null)
+          // Send state of CRM-sent messages (two-phase outbound): pending_send
+          // with an error = failed (the retry cron keeps trying); pending_send
+          // without one = in flight. Surfacing this is what makes a stuck
+          // send VISIBLE in the thread instead of silently looking sent.
+          const rawStatus =
+            typeof payload['status'] === 'string' ? (payload['status'] as string) : null
+          const lastError = payload['lastError']
+          const sendError =
+            lastError !== null &&
+            typeof lastError === 'object' &&
+            typeof (lastError as Record<string, unknown>)['message'] === 'string'
+              ? ((lastError as Record<string, unknown>)['message'] as string)
+              : null
+          const sendStatus: 'sending' | 'failed' | 'sent' | null =
+            rawStatus === 'pending_send'
+              ? sendError
+                ? 'failed'
+                : 'sending'
+              : rawStatus === 'sent'
+                ? 'sent'
+                : null
           return {
             id: r.id,
             occurredAt: r.occurredAt,
@@ -425,6 +457,8 @@ export const inboxRouter = router({
             body: body ?? r.summary,
             authorId: r.createdById,
             senderName,
+            sendStatus,
+            sendError,
             attachments,
             mailAttachments,
           }
