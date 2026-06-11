@@ -519,6 +519,55 @@ export const adminIntegrationsRouter = router({
         }
       }
 
+      // Trengo: how much message history has actually landed, so "I cannot
+      // see any conversations" can be pinned to import-not-run vs
+      // import-failed vs webhook-not-delivering at a glance (CLAUDE.md §11).
+      let trengoStats: {
+        totalMessages: number
+        last7dMessages: number
+        last24hMessages: number
+        lastMessageAt: Date | null
+        conversationHeads: number
+        contactsFromImport: number
+      } | null = null
+      if (input.provider === 'trengo') {
+        const sevenDaysAgo = new Date(nowMs - 7 * oneDayMs)
+        const oneDayAgo = new Date(nowMs - oneDayMs)
+        const [
+          totalMessages,
+          last7dMessages,
+          last24hMessages,
+          lastMessage,
+          conversationHeads,
+          contactsFromImport,
+        ] = await Promise.all([
+          ctx.db.interaction.count({ where: { type: 'message', deletedAt: null } }),
+          ctx.db.interaction.count({
+            where: { type: 'message', deletedAt: null, occurredAt: { gte: sevenDaysAgo } },
+          }),
+          ctx.db.interaction.count({
+            where: { type: 'message', deletedAt: null, occurredAt: { gte: oneDayAgo } },
+          }),
+          ctx.db.interaction.findFirst({
+            where: { type: 'message', deletedAt: null },
+            orderBy: { occurredAt: 'desc' },
+            select: { occurredAt: true },
+          }),
+          ctx.db.conversation.count({ where: { trengoTicketId: { not: null } } }),
+          ctx.db.contact.count({
+            where: { referralSource: 'Trengo import', deletedAt: null },
+          }),
+        ])
+        trengoStats = {
+          totalMessages,
+          last7dMessages,
+          last24hMessages,
+          lastMessageAt: lastMessage?.occurredAt ?? null,
+          conversationHeads,
+          contactsFromImport,
+        }
+      }
+
       // Background-job (Inngest) health — Inngest is the engine that runs every
       // import job (backfill, the 10-min sync, webhook processing). A backfill
       // stuck `pending` past a few minutes means the worker isn't picking jobs
@@ -567,10 +616,90 @@ export const adminIntegrationsRouter = router({
         recentCronRuns,
         perAgent,
         importStats,
+        trengoStats,
         backgroundJobs,
         setupSteps: cfg.setupSteps,
       }
     }),
+
+  /**
+   * Live Trengo connectivity probe (CEO / Senior Manager). Calls the Trengo
+   * REST API with the CALLER's own per-agent token (CLAUDE.md §11 — there is
+   * no shared service token) and reports whether the token works and how many
+   * tickets Trengo can see — so "nothing is importing" can be pinned to
+   * token, webhook, or an empty workspace. Read-only against Trengo; audited.
+   */
+  probeTrengo: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    if (!TEST_ROLES.has(user.role)) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
+    }
+    const result = await (async (): Promise<
+      | {
+          ok: true
+          trengoEmail: string | null
+          ticketsVisible: number | null
+        }
+      | { ok: false; error: string }
+    > => {
+      try {
+        const { createClientForAgent, TrengoApiError } = await import(
+          '@studymind/integration-trengo/client'
+        )
+        const client = await createClientForAgent({
+          agentId: user.id,
+          purpose: 'trengo.probe',
+          requestId: ctx.requestId,
+        })
+        const me = await client.request<{ data?: { email?: string }; email?: string }>(
+          'GET',
+          '/me',
+        )
+        let ticketsVisible: number | null = null
+        try {
+          const res = await client.request<{
+            data?: unknown[]
+            meta?: { total?: number }
+          }>('GET', '/tickets?page=1')
+          ticketsVisible =
+            res.meta?.total ?? (Array.isArray(res.data) ? res.data.length : null)
+        } catch (err) {
+          // Same fallback the import uses: an older workspace may expose the
+          // legacy /conversations listing instead of the documented /tickets.
+          if (!(err instanceof TrengoApiError && (err.status === 404 || err.status === 405))) {
+            throw err
+          }
+          const res = await client.request<{
+            data?: unknown[]
+            meta?: { total?: number }
+          }>('GET', '/conversations?page=1')
+          ticketsVisible =
+            res.meta?.total ?? (Array.isArray(res.data) ? res.data.length : null)
+        }
+        return {
+          ok: true,
+          trengoEmail: me.data?.email ?? me.email ?? null,
+          ticketsVisible,
+        }
+      } catch (err) {
+        const { BusinessError } = await import('@studymind/core')
+        if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+          return {
+            ok: false,
+            error:
+              'No valid Trengo token for your account — connect one under Account → Trengo, then retry.',
+          }
+        }
+        return { ok: false, error: err instanceof Error ? err.message : 'unknown error' }
+      }
+    })()
+    await ctx.audit({
+      action: 'admin.integration_tested',
+      target: { type: 'Integration', id: 'trengo' },
+      after: { probe: 'trengo_api_live', ok: result.ok },
+    })
+    return result
+  }),
 
   /**
    * Live Aircall connectivity probe (CEO / Senior Manager). Unlike `test`

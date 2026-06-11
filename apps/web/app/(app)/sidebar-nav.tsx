@@ -73,7 +73,9 @@ const ICONS: Record<string, IconComp> = {
   '/inbox': InboxIcon,
   '/mail': MailIcon,
   '/calls': PhoneIcon,
-  // Internal — staff↔staff (distinct glyph from the customer Inbox).
+  // Slack — its own category (customer mentions spotted in Slack).
+  '/inbox/slack-mentions': HashIcon,
+  // Internal — staff↔staff (distinct glyph from the customer Trengo inbox).
   '/messages': HashIcon,
   // Work.
   '/leads': UserPlusIcon,
@@ -102,6 +104,8 @@ const SECTION: Record<string, string> = {
   '/inbox': 'Communications',
   '/mail': 'Communications',
   '/calls': 'Communications',
+  // Slack — its own category per ops request (June 2026).
+  '/inbox/slack-mentions': 'Slack',
   // Internal — staff↔staff only.
   '/messages': 'Internal',
   // Work — CRM records.
@@ -121,6 +125,7 @@ const SECTION: Record<string, string> = {
 const SECTION_ORDER = [
   'Overview',
   'Communications',
+  'Slack',
   'Internal',
   'Work',
   'Operations',
@@ -134,6 +139,14 @@ function isActive(pathname: string, href: string): boolean {
 
 export function SidebarNav({ items }: Props) {
   const pathname = usePathname() ?? ''
+
+  // Longest matching prefix wins, so nested top-level items (e.g. Slack
+  // mentions at /inbox/slack-mentions vs Trengo at /inbox) never both light
+  // up for the same page.
+  const activeHref = items.reduce<string | null>((best, it) => {
+    if (!isActive(pathname, it.href)) return best
+    return !best || it.href.length > best.length ? it.href : best
+  }, null)
 
   // Bucket items into sections; preserve incoming order within each bucket.
   // An item with no SECTION entry MUST still render — default it to a real,
@@ -159,7 +172,7 @@ export function SidebarNav({ items }: Props) {
               {section}
             </div>
             {group.map((item) => {
-              const active = isActive(pathname, item.href)
+              const active = item.href === activeHref
               const Icon = ICONS[item.href]
               return (
                 <div key={item.href} className="flex flex-col">

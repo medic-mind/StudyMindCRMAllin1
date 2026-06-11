@@ -130,16 +130,17 @@ export const adminBackfillRouter = router({
 
   /**
    * Manual Trengo history import for the calling agent. Unlike the 90-day
-   * auto-on-connect backfill, this defaults to an ~8-month window and CREATES
-   * a Contact for senders not already in the CRM (the explicit, operator-
-   * confirmed exception to §11's webhook default). It runs through the
-   * caller's own per-agent Trengo token, so they must have connected one.
+   * auto-on-connect backfill, this defaults to an ~8-month window (operator
+   * can widen it to 5 years — effectively "everything") and CREATES a Contact
+   * for senders not already in the CRM (the explicit, operator-confirmed
+   * exception to §11's webhook default). It runs through the caller's own
+   * per-agent Trengo token, so they must have connected one.
    * CEO | Senior Manager only.
    */
   trengoImport: auditedProcedure
     .input(
       z.object({
-        windowDays: z.number().int().min(1).max(366).default(243),
+        windowDays: z.number().int().min(1).max(1825).default(243),
         createContacts: z.boolean().default(true),
       }),
     )

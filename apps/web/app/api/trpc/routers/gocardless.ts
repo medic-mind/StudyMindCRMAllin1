@@ -181,15 +181,120 @@ async function resolveCustomerIdsForQuery(
   return rows.map((r) => r.gcCustomerId)
 }
 
-const Cursor = z.object({ id: z.string(), createdAt: z.date() }).nullish()
+// -----------------------------------------------------------------------------
+// Offset paging + whitelisted sorting for the workspace lists (the "proper
+// list system": page/pageSize/sortBy/sortDir live in the URL via the shared
+// list-controls primitives; every list returns a total for the count bar).
+// -----------------------------------------------------------------------------
 
-function cursorWhere(cursor: { id: string; createdAt: Date } | null | undefined) {
-  if (!cursor) return {}
+const PageInput = {
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(50),
+}
+
+const SortDir = z.enum(['asc', 'desc'])
+
+function pageArgs(input: { page: number; pageSize: number }) {
+  return { skip: (input.page - 1) * input.pageSize, take: input.pageSize }
+}
+
+/**
+ * Build a Prisma orderBy for a whitelisted sort field, with a stable id
+ * tiebreak. Nullable columns sort nulls last in either direction so empty
+ * values never crowd the top of the list.
+ */
+function buildOrderBy(
+  field: string,
+  dir: 'asc' | 'desc',
+  nullableFields: ReadonlySet<string>,
+): Array<Record<string, unknown>> {
+  const primary = nullableFields.has(field)
+    ? { [field]: { sort: dir, nulls: 'last' } }
+    : { [field]: dir }
+  return [primary, { id: 'desc' }]
+}
+
+const NULLABLE_PAYMENT_SORTS = new Set(['chargeDate', 'gcCreatedAt'])
+const NULLABLE_SUBSCRIPTION_SORTS = new Set(['nextChargeAt', 'startDate', 'name', 'gcCreatedAt'])
+const NULLABLE_CUSTOMER_SORTS = new Set(['givenName', 'email', 'gcCreatedAt'])
+const NULLABLE_PAYOUT_SORTS = new Set(['arrivalDate', 'gcCreatedAt'])
+const NULLABLE_MANDATE_SORTS = new Set(['nextPossibleChargeDate', 'gcCreatedAt'])
+
+type AnyDb = Prisma.TransactionClient | import('@prisma/client').PrismaClient
+
+function amountWhere(min: number | undefined, max: number | undefined) {
+  if (min === undefined && max === undefined) return {}
   return {
-    OR: [
-      { createdAt: { lt: cursor.createdAt } },
-      { AND: [{ createdAt: cursor.createdAt }, { id: { lt: cursor.id } }] },
-    ],
+    amountMinor: {
+      ...(min !== undefined ? { gte: min } : {}),
+      ...(max !== undefined ? { lte: max } : {}),
+    },
+  }
+}
+
+/**
+ * Shared where-builder for the subscriptions list + its status-count strip,
+ * so the chip numbers always agree with the rows on screen. Returns null
+ * when a free-text customer search matches nobody (empty result, no query).
+ */
+async function buildSubscriptionWhere(
+  db: AnyDb,
+  input: {
+    status: string
+    gcCustomerId?: string
+    q?: string
+    intervalUnit?: string
+    amountMinMinor?: number
+    amountMaxMinor?: number
+  },
+) {
+  const searchIds = input.gcCustomerId
+    ? null
+    : await resolveCustomerIdsForQuery(db, input.q)
+  if (searchIds !== null && searchIds.length === 0) return null
+  return {
+    deletedAt: null,
+    ...(input.status !== 'all' ? { status: input.status as GcSubscriptionState } : {}),
+    ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
+    ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
+    ...(input.intervalUnit ? { intervalUnit: input.intervalUnit } : {}),
+    ...amountWhere(input.amountMinMinor, input.amountMaxMinor),
+  }
+}
+
+/** Shared where-builder for the payments list + its status-count strip. */
+async function buildPaymentWhere(
+  db: AnyDb,
+  input: {
+    status: string
+    gcCustomerId?: string
+    gcSubscriptionId?: string
+    q?: string
+    chargeDateFrom?: Date
+    chargeDateTo?: Date
+    amountMinMinor?: number
+    amountMaxMinor?: number
+  },
+) {
+  const searchIds = input.gcCustomerId
+    ? null
+    : await resolveCustomerIdsForQuery(db, input.q)
+  if (searchIds !== null && searchIds.length === 0) return null
+  return {
+    deletedAt: null,
+    ...(input.status !== 'all' ? { status: input.status as GcPaymentState } : {}),
+    ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
+    ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
+    ...(input.gcSubscriptionId ? { gcSubscriptionId: input.gcSubscriptionId } : {}),
+    ...(input.chargeDateFrom || input.chargeDateTo
+      ? {
+          chargeDate: {
+            ...(input.chargeDateFrom ? { gte: input.chargeDateFrom } : {}),
+            ...(input.chargeDateTo ? { lte: input.chargeDateTo } : {}),
+          },
+        }
+      : {}),
+    ...amountWhere(input.amountMinMinor, input.amountMaxMinor),
   }
 }
 
@@ -220,13 +325,23 @@ const PAYMENT_STATUSES = [
 // Input schemas
 // -----------------------------------------------------------------------------
 
-const SubscriptionListInput = z.object({
-  status: z.enum([...SUBSCRIPTION_STATUSES, 'all']).default('all'),
+const SubscriptionFilterInput = {
   gcCustomerId: z.string().optional(),
   /** Customer search — matches the GoCardless dashboard's list search. */
   q: z.string().trim().max(120).optional(),
-  cursor: Cursor,
-  limit: z.number().min(1).max(100).default(50),
+  intervalUnit: z.enum(['weekly', 'monthly', 'yearly']).optional(),
+  amountMinMinor: z.number().int().min(0).optional(),
+  amountMaxMinor: z.number().int().min(0).optional(),
+}
+
+const SubscriptionListInput = z.object({
+  status: z.enum([...SUBSCRIPTION_STATUSES, 'all']).default('all'),
+  ...SubscriptionFilterInput,
+  sortBy: z
+    .enum(['createdAt', 'gcCreatedAt', 'amountMinor', 'nextChargeAt', 'startDate', 'name'])
+    .default('createdAt'),
+  sortDir: SortDir.default('desc'),
+  ...PageInput,
 })
 
 const SubscriptionCreateInput = z.object({
@@ -253,21 +368,31 @@ const SubscriptionActionInput = z.object({
   reason: z.string().trim().min(2).max(500).optional(),
 })
 
-const PaymentListInput = z.object({
-  status: z.enum([...PAYMENT_STATUSES, 'all']).default('all'),
+const PaymentFilterInput = {
   gcCustomerId: z.string().optional(),
   gcSubscriptionId: z.string().optional(),
   /** Customer search — matches the GoCardless dashboard's list search. */
   q: z.string().trim().max(120).optional(),
-  cursor: Cursor,
-  limit: z.number().min(1).max(100).default(50),
+  chargeDateFrom: z.date().optional(),
+  chargeDateTo: z.date().optional(),
+  amountMinMinor: z.number().int().min(0).optional(),
+  amountMaxMinor: z.number().int().min(0).optional(),
+}
+
+const PaymentListInput = z.object({
+  status: z.enum([...PAYMENT_STATUSES, 'all']).default('all'),
+  ...PaymentFilterInput,
+  sortBy: z
+    .enum(['chargeDate', 'amountMinor', 'createdAt', 'gcCreatedAt'])
+    .default('chargeDate'),
+  sortDir: SortDir.default('desc'),
+  ...PageInput,
 })
 
-/** Shared input for the per-status count strips above the list tables. */
-const StatusCountsInput = z.object({
-  gcCustomerId: z.string().optional(),
-  q: z.string().trim().max(120).optional(),
-})
+/** Per-status count strips share the list filters (minus status itself), so
+ * the chip numbers always describe the filtered set on screen. */
+const PaymentCountsInput = z.object(PaymentFilterInput)
+const SubscriptionCountsInput = z.object(SubscriptionFilterInput)
 
 const PaymentCreateInput = z.object({
   gcMandateId: z.string().min(3).max(120),
@@ -287,22 +412,154 @@ const PaymentActionInput = z.object({
 const CustomerListInput = z.object({
   q: z.string().trim().max(120).optional(),
   link: z.enum(['all', 'linked', 'unlinked']).default('all'),
-  cursor: Cursor,
-  limit: z.number().min(1).max(100).default(50),
+  sortBy: z.enum(['createdAt', 'gcCreatedAt', 'givenName', 'email']).default('createdAt'),
+  sortDir: SortDir.default('desc'),
+  ...PageInput,
 })
+
+const MANDATE_STATES = [
+  'pending_submission',
+  'submitted',
+  'active',
+  'failed',
+  'cancelled',
+  'expired',
+  'replaced',
+] as const
 
 const MandateListInput = z.object({
   gcCustomerId: z.string().optional(),
   chargeableOnly: z.boolean().default(false),
+  state: z.enum([...MANDATE_STATES, 'all']).default('all'),
+  /** Matches mandate id / reference, or falls through to customer search. */
   q: z.string().trim().max(120).optional(),
-  cursor: Cursor,
-  limit: z.number().min(1).max(100).default(50),
+  sortBy: z
+    .enum(['createdAt', 'gcCreatedAt', 'nextPossibleChargeDate'])
+    .default('createdAt'),
+  sortDir: SortDir.default('desc'),
+  ...PageInput,
 })
 
 // Mandate states a plan/payment can be raised against.
 const CHARGEABLE_MANDATE_STATES = ['pending_submission', 'submitted', 'active'] as const
 
 export const gocardlessRouter = router({
+  /**
+   * The Direct Debit picture for ONE customer-CRM contact — powers the
+   * "Direct Debit" panel on /contacts/[id]. Read-only and open to all staff
+   * (§20.1 contact.read; the same page already shows payments to every
+   * role). Resolution: GcCustomers linked to the contact directly, else via
+   * any family the contact belongs to.
+   */
+  contactSummary: protectedProcedure
+    .input(z.object({ contactId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      requireUser(ctx)
+      const familyIds = (
+        await ctx.db.familyMember.findMany({
+          where: { contactId: input.contactId },
+          select: { familyId: true },
+        })
+      ).map((m) => m.familyId)
+
+      const customers = await ctx.db.gcCustomer.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { contactId: input.contactId },
+            ...(familyIds.length > 0 ? [{ familyId: { in: familyIds } }] : []),
+          ],
+        },
+        orderBy: [{ createdAt: 'asc' }],
+        take: 5,
+        select: {
+          gcCustomerId: true,
+          email: true,
+          givenName: true,
+          familyName: true,
+          companyName: true,
+        },
+      })
+      const customerIds = customers.map((c) => c.gcCustomerId)
+
+      const [mandates, subscriptions, payments, setupLinks] = await Promise.all([
+        customerIds.length > 0
+          ? ctx.db.gcMandate.findMany({
+              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+              orderBy: [{ createdAt: 'desc' }],
+              take: 10,
+              select: {
+                gcMandateId: true,
+                state: true,
+                reference: true,
+                scheme: true,
+                nextPossibleChargeDate: true,
+              },
+            })
+          : Promise.resolve([]),
+        customerIds.length > 0
+          ? ctx.db.gcSubscription.findMany({
+              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+              orderBy: [{ createdAt: 'desc' }],
+              take: 10,
+              select: {
+                gcSubscriptionId: true,
+                name: true,
+                status: true,
+                amountMinor: true,
+                currency: true,
+                intervalUnit: true,
+                interval: true,
+                dayOfMonth: true,
+                nextChargeAt: true,
+              },
+            })
+          : Promise.resolve([]),
+        customerIds.length > 0
+          ? ctx.db.gcPayment.findMany({
+              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+              orderBy: [{ chargeDate: 'desc' }, { createdAt: 'desc' }],
+              take: 5,
+              select: {
+                gcPaymentId: true,
+                status: true,
+                amountMinor: true,
+                currency: true,
+                description: true,
+                chargeDate: true,
+              },
+            })
+          : Promise.resolve([]),
+        ctx.db.mandateSetupLink.findMany({
+          where: { contactId: input.contactId, deletedAt: null },
+          orderBy: [{ createdAt: 'desc' }],
+          take: 5,
+          select: {
+            id: true,
+            status: true,
+            emailTo: true,
+            emailedAt: true,
+            openCount: true,
+            expiresAt: true,
+            completedAt: true,
+          },
+        }),
+      ])
+
+      return {
+        customers: customers.map((c) => ({
+          gcCustomerId: c.gcCustomerId,
+          name:
+            [c.givenName, c.familyName].filter(Boolean).join(' ') || c.companyName || null,
+          email: c.email,
+        })),
+        mandates,
+        subscriptions,
+        payments,
+        setupLinks,
+      }
+    }),
+
   // Master dashboard for the Direct Debits section (ADR 0038). One query
   // feeds the whole Overview tab: headline KPIs, the needs-attention queues,
   // and the upcoming-collections list.
@@ -455,41 +712,42 @@ export const gocardlessRouter = router({
   customers: router({
     list: protectedProcedure.input(CustomerListInput).query(async ({ ctx, input }) => {
       assertFinanceRole(requireUser(ctx))
-      const rows = await ctx.db.gcCustomer.findMany({
-        where: {
-          deletedAt: null,
-          ...(input.link === 'linked' ? { contactId: { not: null } } : {}),
-          ...(input.link === 'unlinked' ? { contactId: null } : {}),
-          ...(input.q
-            ? {
-                OR: [
-                  { email: { contains: input.q, mode: 'insensitive' } },
-                  { givenName: { contains: input.q, mode: 'insensitive' } },
-                  { familyName: { contains: input.q, mode: 'insensitive' } },
-                  { companyName: { contains: input.q, mode: 'insensitive' } },
-                ],
-              }
-            : {}),
-          ...cursorWhere(input.cursor),
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
-        select: {
-          id: true,
-          gcCustomerId: true,
-          email: true,
-          givenName: true,
-          familyName: true,
-          companyName: true,
-          contactId: true,
-          familyId: true,
-          gcCreatedAt: true,
-          createdAt: true,
-          contact: { select: { firstName: true, lastName: true } },
-        },
-      })
-      const hasMore = rows.length > input.limit
-      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      const where = {
+        deletedAt: null,
+        ...(input.link === 'linked' ? { contactId: { not: null } } : {}),
+        ...(input.link === 'unlinked' ? { contactId: null } : {}),
+        ...(input.q
+          ? {
+              OR: [
+                { email: { contains: input.q, mode: 'insensitive' as const } },
+                { givenName: { contains: input.q, mode: 'insensitive' as const } },
+                { familyName: { contains: input.q, mode: 'insensitive' as const } },
+                { companyName: { contains: input.q, mode: 'insensitive' as const } },
+              ],
+            }
+          : {}),
+      }
+      const [total, sliced] = await Promise.all([
+        ctx.db.gcCustomer.count({ where }),
+        ctx.db.gcCustomer.findMany({
+          where,
+          orderBy: buildOrderBy(input.sortBy, input.sortDir, NULLABLE_CUSTOMER_SORTS),
+          ...pageArgs(input),
+          select: {
+            id: true,
+            gcCustomerId: true,
+            email: true,
+            givenName: true,
+            familyName: true,
+            companyName: true,
+            contactId: true,
+            familyId: true,
+            gcCreatedAt: true,
+            createdAt: true,
+            contact: { select: { firstName: true, lastName: true } },
+          },
+        }),
+      ])
 
       // Per-page rollups so the table can show what each customer carries.
       const ids = sliced.map((r) => r.gcCustomerId)
@@ -508,7 +766,6 @@ export const gocardlessRouter = router({
       const mandatesBy = new Map(mandateCounts.map((m) => [m.gcCustomerId, m._count._all]))
       const subsBy = new Map(subCounts.map((s) => [s.gcCustomerId, s._count._all]))
 
-      const last = sliced[sliced.length - 1]
       return {
         items: sliced.map((r) => ({
           gcCustomerId: r.gcCustomerId,
@@ -526,9 +783,36 @@ export const gocardlessRouter = router({
           createdAt: r.createdAt,
           id: r.id,
         })),
-        nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
+        total,
+        page: input.page,
+        pageSize: input.pageSize,
       }
     }),
+
+    /** Linked/unlinked counts for the Customers filter strip. */
+    linkCounts: protectedProcedure
+      .input(z.object({ q: z.string().trim().max(120).optional() }))
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const baseWhere = {
+          deletedAt: null,
+          ...(input.q
+            ? {
+                OR: [
+                  { email: { contains: input.q, mode: 'insensitive' as const } },
+                  { givenName: { contains: input.q, mode: 'insensitive' as const } },
+                  { familyName: { contains: input.q, mode: 'insensitive' as const } },
+                  { companyName: { contains: input.q, mode: 'insensitive' as const } },
+                ],
+              }
+            : {}),
+        }
+        const [total, linked] = await Promise.all([
+          ctx.db.gcCustomer.count({ where: baseWhere }),
+          ctx.db.gcCustomer.count({ where: { ...baseWhere, contactId: { not: null } } }),
+        ])
+        return { total, linked, unlinked: total - linked }
+      }),
 
     link: auditedProcedure
       .input(
@@ -697,43 +981,54 @@ export const gocardlessRouter = router({
   mandates: router({
     list: protectedProcedure.input(MandateListInput).query(async ({ ctx, input }) => {
       assertFinanceRole(requireUser(ctx))
-      const rows = await ctx.db.gcMandate.findMany({
-        where: {
-          deletedAt: null,
-          ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
-          ...(input.chargeableOnly ? { state: { in: [...CHARGEABLE_MANDATE_STATES] } } : {}),
-          ...(input.q
-            ? {
-                OR: [
-                  { gcMandateId: { contains: input.q, mode: 'insensitive' } },
-                  { reference: { contains: input.q, mode: 'insensitive' } },
-                ],
-              }
-            : {}),
-          ...cursorWhere(input.cursor),
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
-        select: {
-          id: true,
-          gcMandateId: true,
-          state: true,
-          gcCustomerId: true,
-          reference: true,
-          scheme: true,
-          nextPossibleChargeDate: true,
-          familyId: true,
-          gcCreatedAt: true,
-          createdAt: true,
-        },
-      })
-      const hasMore = rows.length > input.limit
-      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      // A free-text query matches the mandate id/reference directly, or
+      // falls through to the customer mirror so "Sarah" finds her mandates.
+      const searchIds = input.gcCustomerId
+        ? null
+        : await resolveCustomerIdsForQuery(ctx.db, input.q)
+      const where = {
+        deletedAt: null,
+        ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
+        ...(input.chargeableOnly ? { state: { in: [...CHARGEABLE_MANDATE_STATES] } } : {}),
+        ...(input.state !== 'all' && !input.chargeableOnly
+          ? { state: input.state }
+          : {}),
+        ...(input.q && !input.gcCustomerId
+          ? {
+              OR: [
+                { gcMandateId: { contains: input.q, mode: 'insensitive' as const } },
+                { reference: { contains: input.q, mode: 'insensitive' as const } },
+                ...(searchIds && searchIds.length > 0
+                  ? [{ gcCustomerId: { in: searchIds } }]
+                  : []),
+              ],
+            }
+          : {}),
+      }
+      const [total, sliced] = await Promise.all([
+        ctx.db.gcMandate.count({ where }),
+        ctx.db.gcMandate.findMany({
+          where,
+          orderBy: buildOrderBy(input.sortBy, input.sortDir, NULLABLE_MANDATE_SORTS),
+          ...pageArgs(input),
+          select: {
+            id: true,
+            gcMandateId: true,
+            state: true,
+            gcCustomerId: true,
+            reference: true,
+            scheme: true,
+            nextPossibleChargeDate: true,
+            familyId: true,
+            gcCreatedAt: true,
+            createdAt: true,
+          },
+        }),
+      ])
       const customers = await loadCustomerSummaries(
         ctx.db,
         sliced.map((r) => r.gcCustomerId ?? ''),
       )
-      const last = sliced[sliced.length - 1]
       return {
         items: sliced.map((r) => ({
           gcMandateId: r.gcMandateId,
@@ -747,9 +1042,44 @@ export const gocardlessRouter = router({
           id: r.id,
           createdAt: r.createdAt,
         })),
-        nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
+        total,
+        page: input.page,
+        pageSize: input.pageSize,
       }
     }),
+
+    /** Per-state counts for the Mandates filter strip. */
+    stateCounts: protectedProcedure
+      .input(z.object({ q: z.string().trim().max(120).optional() }))
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const searchIds = await resolveCustomerIdsForQuery(ctx.db, input.q)
+        const rows = await ctx.db.gcMandate.groupBy({
+          by: ['state'],
+          where: {
+            deletedAt: null,
+            ...(input.q
+              ? {
+                  OR: [
+                    { gcMandateId: { contains: input.q, mode: 'insensitive' as const } },
+                    { reference: { contains: input.q, mode: 'insensitive' as const } },
+                    ...(searchIds && searchIds.length > 0
+                      ? [{ gcCustomerId: { in: searchIds } }]
+                      : []),
+                  ],
+                }
+              : {}),
+          },
+          _count: { _all: true },
+        })
+        const counts: Record<string, number> = {}
+        let total = 0
+        for (const row of rows) {
+          counts[row.state] = row._count._all
+          total += row._count._all
+        }
+        return { counts, total }
+      }),
 
     cancel: auditedProcedure
       .input(
@@ -1031,32 +1361,26 @@ export const gocardlessRouter = router({
   subscriptions: router({
     list: protectedProcedure.input(SubscriptionListInput).query(async ({ ctx, input }) => {
       assertFinanceRole(requireUser(ctx))
-      // An exact customer filter wins over free-text search.
-      const searchIds = input.gcCustomerId
-        ? null
-        : await resolveCustomerIdsForQuery(ctx.db, input.q)
-      if (searchIds !== null && searchIds.length === 0) {
-        return { items: [], nextCursor: null }
+      const where = await buildSubscriptionWhere(ctx.db, input)
+      if (where === null) {
+        return { items: [], total: 0, page: input.page, pageSize: input.pageSize }
       }
-      const rows = await ctx.db.gcSubscription.findMany({
-        where: {
-          deletedAt: null,
-          ...(input.status !== 'all' ? { status: input.status as GcSubscriptionState } : {}),
-          ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
-          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
-          ...cursorWhere(input.cursor),
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
-      })
-      const hasMore = rows.length > input.limit
-      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      const [total, sliced] = await Promise.all([
+        ctx.db.gcSubscription.count({ where }),
+        ctx.db.gcSubscription.findMany({
+          where,
+          orderBy: buildOrderBy(input.sortBy, input.sortDir, NULLABLE_SUBSCRIPTION_SORTS),
+          ...pageArgs(input),
+        }),
+      ])
       const customers = await loadCustomerSummaries(
         ctx.db,
         sliced.map((r) => r.gcCustomerId ?? ''),
       )
-      const last = sliced[sliced.length - 1]
       return {
+        total,
+        page: input.page,
+        pageSize: input.pageSize,
         items: sliced.map((r) => ({
           gcSubscriptionId: r.gcSubscriptionId,
           name: r.name,
@@ -1076,36 +1400,29 @@ export const gocardlessRouter = router({
           id: r.id,
           createdAt: r.createdAt,
         })),
-        nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
       }
     }),
 
     /** Per-status counts for the list's filter strip (GoCardless-style tabs). */
-    statusCounts: protectedProcedure.input(StatusCountsInput).query(async ({ ctx, input }) => {
-      assertFinanceRole(requireUser(ctx))
-      const searchIds = input.gcCustomerId
-        ? null
-        : await resolveCustomerIdsForQuery(ctx.db, input.q)
-      if (searchIds !== null && searchIds.length === 0) {
-        return { counts: {}, total: 0 }
-      }
-      const rows = await ctx.db.gcSubscription.groupBy({
-        by: ['status'],
-        where: {
-          deletedAt: null,
-          ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
-          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
-        },
-        _count: { _all: true },
-      })
-      const counts: Record<string, number> = {}
-      let total = 0
-      for (const row of rows) {
-        counts[row.status] = row._count._all
-        total += row._count._all
-      }
-      return { counts, total }
-    }),
+    statusCounts: protectedProcedure
+      .input(SubscriptionCountsInput)
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const where = await buildSubscriptionWhere(ctx.db, { ...input, status: 'all' })
+        if (where === null) return { counts: {}, total: 0 }
+        const rows = await ctx.db.gcSubscription.groupBy({
+          by: ['status'],
+          where,
+          _count: { _all: true },
+        })
+        const counts: Record<string, number> = {}
+        let total = 0
+        for (const row of rows) {
+          counts[row.status] = row._count._all
+          total += row._count._all
+        }
+        return { counts, total }
+      }),
 
     create: auditedProcedure.input(SubscriptionCreateInput).mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
@@ -1208,32 +1525,35 @@ export const gocardlessRouter = router({
   payments: router({
     list: protectedProcedure.input(PaymentListInput).query(async ({ ctx, input }) => {
       assertFinanceRole(requireUser(ctx))
-      const searchIds = input.gcCustomerId
-        ? null
-        : await resolveCustomerIdsForQuery(ctx.db, input.q)
-      if (searchIds !== null && searchIds.length === 0) {
-        return { items: [], nextCursor: null }
+      const where = await buildPaymentWhere(ctx.db, input)
+      if (where === null) {
+        return {
+          items: [],
+          total: 0,
+          totalAmountMinor: 0,
+          page: input.page,
+          pageSize: input.pageSize,
+        }
       }
-      const rows = await ctx.db.gcPayment.findMany({
-        where: {
-          deletedAt: null,
-          ...(input.status !== 'all' ? { status: input.status as GcPaymentState } : {}),
-          ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
-          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
-          ...(input.gcSubscriptionId ? { gcSubscriptionId: input.gcSubscriptionId } : {}),
-          ...cursorWhere(input.cursor),
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
-      })
-      const hasMore = rows.length > input.limit
-      const sliced = hasMore ? rows.slice(0, input.limit) : rows
+      const [total, amountAgg, sliced] = await Promise.all([
+        ctx.db.gcPayment.count({ where }),
+        // Filtered-set value so the toolbar can show "1,234 payments · £56,789".
+        ctx.db.gcPayment.aggregate({ where, _sum: { amountMinor: true } }),
+        ctx.db.gcPayment.findMany({
+          where,
+          orderBy: buildOrderBy(input.sortBy, input.sortDir, NULLABLE_PAYMENT_SORTS),
+          ...pageArgs(input),
+        }),
+      ])
       const customers = await loadCustomerSummaries(
         ctx.db,
         sliced.map((r) => r.gcCustomerId ?? ''),
       )
-      const last = sliced[sliced.length - 1]
       return {
+        total,
+        totalAmountMinor: amountAgg._sum.amountMinor ?? 0,
+        page: input.page,
+        pageSize: input.pageSize,
         items: sliced.map((r) => ({
           gcPaymentId: r.gcPaymentId,
           status: r.status,
@@ -1248,26 +1568,19 @@ export const gocardlessRouter = router({
           id: r.id,
           createdAt: r.createdAt,
         })),
-        nextCursor: hasMore && last ? { id: last.id, createdAt: last.createdAt } : null,
       }
     }),
 
     /** Per-status counts for the list's filter strip (GoCardless-style tabs). */
-    statusCounts: protectedProcedure.input(StatusCountsInput).query(async ({ ctx, input }) => {
+    statusCounts: protectedProcedure.input(PaymentCountsInput).query(async ({ ctx, input }) => {
       assertFinanceRole(requireUser(ctx))
-      const searchIds = input.gcCustomerId
-        ? null
-        : await resolveCustomerIdsForQuery(ctx.db, input.q)
-      if (searchIds !== null && searchIds.length === 0) {
+      const where = await buildPaymentWhere(ctx.db, { ...input, status: 'all' })
+      if (where === null) {
         return { counts: {}, total: 0 }
       }
       const rows = await ctx.db.gcPayment.groupBy({
         by: ['status'],
-        where: {
-          deletedAt: null,
-          ...(input.gcCustomerId ? { gcCustomerId: input.gcCustomerId } : {}),
-          ...(searchIds !== null ? { gcCustomerId: { in: searchIds } } : {}),
-        },
+        where,
         _count: { _all: true },
       })
       const counts: Record<string, number> = {}
@@ -1348,6 +1661,261 @@ export const gocardlessRouter = router({
         rethrowGcError(err)
       }
     }),
+  }),
+
+  // Payouts (parity pass 2): the batch transfers of collected funds to the
+  // merchant bank account, with per-payout drill-down into the payments that
+  // made it up (joined via GcPayment.gcPayoutId).
+  payouts: router({
+    list: protectedProcedure
+      .input(
+        z.object({
+          status: z.enum(['all', 'pending', 'paid', 'bounced']).default('all'),
+          arrivalFrom: z.date().optional(),
+          arrivalTo: z.date().optional(),
+          sortBy: z.enum(['arrivalDate', 'amountMinor', 'createdAt']).default('arrivalDate'),
+          sortDir: SortDir.default('desc'),
+          ...PageInput,
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const where = {
+          deletedAt: null,
+          ...(input.status !== 'all' ? { status: input.status } : {}),
+          ...(input.arrivalFrom || input.arrivalTo
+            ? {
+                arrivalDate: {
+                  ...(input.arrivalFrom ? { gte: input.arrivalFrom } : {}),
+                  ...(input.arrivalTo ? { lte: input.arrivalTo } : {}),
+                },
+              }
+            : {}),
+        }
+        const [total, amountAgg, sliced] = await Promise.all([
+          ctx.db.gcPayout.count({ where }),
+          ctx.db.gcPayout.aggregate({ where, _sum: { amountMinor: true } }),
+          ctx.db.gcPayout.findMany({
+            where,
+            orderBy: buildOrderBy(input.sortBy, input.sortDir, NULLABLE_PAYOUT_SORTS),
+            ...pageArgs(input),
+          }),
+        ])
+
+        // Settled-payment rollup per payout on this page.
+        const ids = sliced.map((r) => r.gcPayoutId)
+        const paymentCounts = await ctx.db.gcPayment.groupBy({
+          by: ['gcPayoutId'],
+          where: { gcPayoutId: { in: ids }, deletedAt: null },
+          _count: { _all: true },
+        })
+        const countsBy = new Map(paymentCounts.map((p) => [p.gcPayoutId, p._count._all]))
+
+        return {
+          total,
+          totalAmountMinor: amountAgg._sum.amountMinor ?? 0,
+          page: input.page,
+          pageSize: input.pageSize,
+          items: sliced.map((r) => ({
+            gcPayoutId: r.gcPayoutId,
+            status: r.status,
+            amountMinor: r.amountMinor,
+            currency: r.currency,
+            deductedFeesMinor: r.deductedFeesMinor,
+            reference: r.reference,
+            payoutType: r.payoutType,
+            arrivalDate: r.arrivalDate,
+            gcCreatedAt: r.gcCreatedAt,
+            paymentCount: countsBy.get(r.gcPayoutId) ?? 0,
+            id: r.id,
+            createdAt: r.createdAt,
+          })),
+        }
+      }),
+
+    detail: protectedProcedure
+      .input(z.object({ gcPayoutId: z.string().min(3).max(120) }))
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const payout = await ctx.db.gcPayout.findFirst({
+          where: { gcPayoutId: input.gcPayoutId, deletedAt: null },
+        })
+        if (!payout) throw new TRPCError({ code: 'NOT_FOUND', message: 'payout not found' })
+
+        const payments = await ctx.db.gcPayment.findMany({
+          where: { gcPayoutId: input.gcPayoutId, deletedAt: null },
+          orderBy: [{ chargeDate: 'desc' }, { id: 'desc' }],
+          take: 200,
+          select: {
+            gcPaymentId: true,
+            status: true,
+            amountMinor: true,
+            currency: true,
+            description: true,
+            chargeDate: true,
+            gcCustomerId: true,
+          },
+        })
+        const customers = await loadCustomerSummaries(
+          ctx.db,
+          payments.map((p) => p.gcCustomerId ?? ''),
+        )
+        return {
+          payout: {
+            gcPayoutId: payout.gcPayoutId,
+            status: payout.status,
+            amountMinor: payout.amountMinor,
+            currency: payout.currency,
+            deductedFeesMinor: payout.deductedFeesMinor,
+            reference: payout.reference,
+            payoutType: payout.payoutType,
+            arrivalDate: payout.arrivalDate,
+            gcCreatedAt: payout.gcCreatedAt,
+          },
+          payments: payments.map((p) => ({
+            gcPaymentId: p.gcPaymentId,
+            status: p.status,
+            amountMinor: p.amountMinor,
+            currency: p.currency,
+            description: p.description,
+            chargeDate: p.chargeDate,
+            customer: p.gcCustomerId ? (customers.get(p.gcCustomerId) ?? null) : null,
+          })),
+          settledTotalMinor: payments.reduce((s, p) => s + p.amountMinor, 0),
+        }
+      }),
+  }),
+
+  // Activity feed (parity pass 2): every GoCardless webhook event we have
+  // ever received, straight from the ProviderEvent replay log — the CRM's
+  // version of the GoCardless dashboard Events screen.
+  events: router({
+    list: protectedProcedure
+      .input(
+        z.object({
+          resourceType: z
+            .enum(['all', 'payments', 'mandates', 'subscriptions', 'payouts'])
+            .default('all'),
+          cursor: z.object({ id: z.string(), receivedAt: z.date() }).nullish(),
+          limit: z.number().min(1).max(100).default(50),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        assertFinanceRole(requireUser(ctx))
+        const rows = await ctx.db.providerEvent.findMany({
+          where: {
+            provider: 'gocardless',
+            ...(input.resourceType !== 'all'
+              ? { type: { startsWith: `${input.resourceType}/` } }
+              : {}),
+            ...(input.cursor
+              ? {
+                  OR: [
+                    { receivedAt: { lt: input.cursor.receivedAt } },
+                    {
+                      AND: [
+                        { receivedAt: input.cursor.receivedAt },
+                        { id: { lt: input.cursor.id } },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
+          },
+          orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+          take: input.limit + 1,
+          select: { id: true, eventId: true, type: true, raw: true, receivedAt: true },
+        })
+        const hasMore = rows.length > input.limit
+        const sliced = hasMore ? rows.slice(0, input.limit) : rows
+
+        // Resolve each event's primary resource to a customer through the
+        // mirror, so the feed reads as people rather than ids.
+        const parsed = sliced.map((row) => {
+          const raw = row.raw as {
+            links?: Record<string, string | undefined>
+            details?: { description?: string }
+          } | null
+          return {
+            id: row.id,
+            eventId: row.eventId,
+            type: row.type,
+            receivedAt: row.receivedAt,
+            links: raw?.links ?? {},
+            description: raw?.details?.description ?? null,
+          }
+        })
+
+        const paymentIds = new Set<string>()
+        const mandateIds = new Set<string>()
+        const subscriptionIds = new Set<string>()
+        for (const e of parsed) {
+          if (e.links['payment']) paymentIds.add(e.links['payment'])
+          if (e.links['mandate']) mandateIds.add(e.links['mandate'])
+          if (e.links['subscription']) subscriptionIds.add(e.links['subscription'])
+        }
+        const [paymentRows, mandateRows, subscriptionRows] = await Promise.all([
+          paymentIds.size > 0
+            ? ctx.db.gcPayment.findMany({
+                where: { gcPaymentId: { in: Array.from(paymentIds) } },
+                select: { gcPaymentId: true, gcCustomerId: true, amountMinor: true, currency: true },
+              })
+            : Promise.resolve([]),
+          mandateIds.size > 0
+            ? ctx.db.gcMandate.findMany({
+                where: { gcMandateId: { in: Array.from(mandateIds) } },
+                select: { gcMandateId: true, gcCustomerId: true },
+              })
+            : Promise.resolve([]),
+          subscriptionIds.size > 0
+            ? ctx.db.gcSubscription.findMany({
+                where: { gcSubscriptionId: { in: Array.from(subscriptionIds) } },
+                select: { gcSubscriptionId: true, gcCustomerId: true, name: true },
+              })
+            : Promise.resolve([]),
+        ])
+        const paymentBy = new Map(paymentRows.map((p) => [p.gcPaymentId, p]))
+        const mandateBy = new Map(mandateRows.map((m) => [m.gcMandateId, m]))
+        const subscriptionBy = new Map(subscriptionRows.map((s) => [s.gcSubscriptionId, s]))
+
+        const customerIds = [
+          ...paymentRows.map((p) => p.gcCustomerId ?? ''),
+          ...mandateRows.map((m) => m.gcCustomerId ?? ''),
+          ...subscriptionRows.map((s) => s.gcCustomerId ?? ''),
+        ]
+        const customers = await loadCustomerSummaries(ctx.db, customerIds)
+
+        const last = sliced[sliced.length - 1]
+        return {
+          items: parsed.map((e) => {
+            const payment = e.links['payment'] ? paymentBy.get(e.links['payment']) : undefined
+            const mandate = e.links['mandate'] ? mandateBy.get(e.links['mandate']) : undefined
+            const subscription = e.links['subscription']
+              ? subscriptionBy.get(e.links['subscription'])
+              : undefined
+            const gcCustomerId =
+              payment?.gcCustomerId ?? subscription?.gcCustomerId ?? mandate?.gcCustomerId ?? null
+            return {
+              id: e.id,
+              eventId: e.eventId,
+              type: e.type,
+              receivedAt: e.receivedAt,
+              description: e.description,
+              resourceId:
+                e.links['payment'] ??
+                e.links['subscription'] ??
+                e.links['mandate'] ??
+                e.links['payout'] ??
+                null,
+              amountMinor: payment?.amountMinor ?? null,
+              currency: payment?.currency ?? null,
+              planName: subscription?.name ?? null,
+              customer: gcCustomerId ? (customers.get(gcCustomerId) ?? null) : null,
+            }
+          }),
+          nextCursor: hasMore && last ? { id: last.id, receivedAt: last.receivedAt } : null,
+        }
+      }),
   }),
 
   import: router({

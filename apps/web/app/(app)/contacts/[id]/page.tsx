@@ -8,9 +8,11 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { ReactNode } from 'react'
 
+import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
+import { ContactDirectDebitPanel } from '@/components/finance/gocardless/ContactDirectDebitPanel'
 import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { ComposeEmailButton } from '@/components/mail/compose-email'
@@ -124,6 +126,10 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }):
 export default async function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const caller = await createServerCaller()
+  const me = await getCurrentUser()
+  // Money actions (send a DD setup link) mirror the gocardless router's
+  // finance gate; everyone else sees the panel read-only (§20.1).
+  const canManageDirectDebit = ['ceo', 'senior_manager', 'manager'].includes(me?.role ?? '')
 
   let contact
   try {
@@ -418,6 +424,14 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
 
           <SectionCard id="section-payments" title="Payments" icon={<CoinsIcon size={16} />}>
             <PaymentsPanel target={{ contactId: contact.id }} />
+          </SectionCard>
+
+          <SectionCard
+            id="section-direct-debit"
+            title="Direct Debit"
+            icon={<CoinsIcon size={16} />}
+          >
+            <ContactDirectDebitPanel contactId={contact.id} canManage={canManageDirectDebit} />
           </SectionCard>
 
           <SectionCard

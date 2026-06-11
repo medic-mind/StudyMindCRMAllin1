@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { sanitiseUserContent } from '../sanitise'
 import { SAFEGUARDING_GUARDRAIL } from './style/safeguarding'
 
-export const VERSION = '2026-06-05.1'
+export const VERSION = '2026-06-11.1'
 
 /** Operational categories for archived Slack mentions about a customer. Keeps
  * the internal record sortable (ADR 0034). */
@@ -54,10 +54,11 @@ references one. Return JSON matching the provided schema and nothing else.
 ${SAFEGUARDING_GUARDRAIL}
 
 Definitions:
-- candidateContactIdentifier: any name, email, or UK phone number that the
-  message refers to (a parent, student, tutor, or LA caseworker). Each field
-  is independent: include what is present, set the others to null. If the
-  message references no person, set all three to null.
+- candidateContactIdentifier: any name, email, or phone number (any country,
+  however it is typed) that the message refers to (a parent, student, tutor,
+  or LA caseworker). Each field is independent: include what is present, set
+  the others to null. Prefer the customer's FULL name when the message gives
+  one. If the message references no person, set all three to null.
 - summary: one or two sentences. No PII beyond what already appears in the
   message. Past tense.
 - category: the kind of matter the message is about, one of: billing,

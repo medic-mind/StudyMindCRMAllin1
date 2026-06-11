@@ -14,6 +14,7 @@ export {
   upsertGcCustomerMirror,
   upsertGcMandateMirror,
   upsertGcPaymentMirror,
+  upsertGcPayoutMirror,
   upsertGcSubscriptionMirror,
   type ContactMatchCandidate,
   type GcPaymentStateValue,
@@ -23,6 +24,7 @@ export {
   type UpsertGcCustomerResult,
   type UpsertGcMandateMirrorInput,
   type UpsertGcPaymentMirrorInput,
+  type UpsertGcPayoutInput,
   type UpsertGcSubscriptionInput,
 } from './gc-mirror'
 export {

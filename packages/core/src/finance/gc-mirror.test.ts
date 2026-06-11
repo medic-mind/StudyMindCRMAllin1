@@ -11,6 +11,7 @@ import {
   pickUnambiguousContact,
   upsertGcCustomerMirror,
   upsertGcMandateMirror,
+  upsertGcPayoutMirror,
   upsertGcSubscriptionMirror,
 } from './gc-mirror'
 
@@ -28,6 +29,7 @@ function makeFakeDb(opts: {
   const gcCustomers: FakeRow[] = []
   const gcMandates: FakeRow[] = []
   const gcSubscriptions: FakeRow[] = []
+  const gcPayouts: FakeRow[] = []
 
   const db = {
     contact: {
@@ -129,7 +131,27 @@ function makeFakeDb(opts: {
         return Promise.resolve({ id: row.id })
       },
     },
-    _state: { gcCustomers, gcMandates, gcSubscriptions },
+    gcPayout: {
+      upsert: ({
+        where,
+        create,
+        update,
+      }: {
+        where: { gcPayoutId: string }
+        create: Record<string, unknown>
+        update: Record<string, unknown>
+      }) => {
+        const existing = gcPayouts.find((p) => p['gcPayoutId'] === where.gcPayoutId)
+        if (existing) {
+          Object.assign(existing, update)
+          return Promise.resolve({ id: existing.id })
+        }
+        const row = { ...create } as FakeRow
+        gcPayouts.push(row)
+        return Promise.resolve({ id: row.id })
+      },
+    },
+    _state: { gcCustomers, gcMandates, gcSubscriptions, gcPayouts },
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test fake
   return db as any
@@ -271,6 +293,28 @@ describe('upsertGcSubscriptionMirror', () => {
     expect(db._state.gcSubscriptions).toHaveLength(1)
     expect(db._state.gcSubscriptions[0]['status']).toBe('cancelled')
     expect(db._state.gcSubscriptions[0]['currency']).toBe('GBP')
+  })
+})
+
+describe('upsertGcPayoutMirror', () => {
+  it('is idempotent on the GoCardless payout id and stores status as text', async () => {
+    const db = makeFakeDb({})
+    await upsertGcPayoutMirror(db, {
+      gcPayoutId: 'PO1',
+      status: 'pending',
+      amountMinor: 50_000,
+      currency: 'gbp',
+    })
+    await upsertGcPayoutMirror(db, {
+      gcPayoutId: 'PO1',
+      status: 'paid',
+      amountMinor: 50_000,
+      currency: 'gbp',
+      arrivalDate: new Date('2026-06-12T00:00:00Z'),
+    })
+    expect(db._state.gcPayouts).toHaveLength(1)
+    expect(db._state.gcPayouts[0]['status']).toBe('paid')
+    expect(db._state.gcPayouts[0]['currency']).toBe('GBP')
   })
 })
 

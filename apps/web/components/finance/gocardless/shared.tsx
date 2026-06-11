@@ -4,6 +4,7 @@
 // formatting, and the customer → mandate picker used by the plan and one-off
 // payment forms.
 
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
 import { Badge, type BadgeTone } from '@/components/ui/badge'
@@ -54,6 +55,104 @@ export function formatDate(value: Date | string | null | undefined): string {
 
 export function statusLabel(value: string): string {
   return value.replaceAll('_', ' ')
+}
+
+/**
+ * URL-driven list state for the workspace tables (CLAUDE.md §26 — filters
+ * live in the URL so a filtered+sorted+paged view is shareable). `set`
+ * resets `page` so a filter change never strands you on an empty page.
+ */
+export function useListParams() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  const get = (key: string, fallback = ''): string => searchParams.get(key) ?? fallback
+
+  const set = (patch: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString())
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null || value === '') params.delete(key)
+      else params.set(key, value)
+    }
+    params.delete('page')
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }
+
+  return { get, set, searchParams }
+}
+
+/** Parse list paging/sorting URL params with sane bounds. */
+export function readPageSort(
+  get: (key: string, fallback?: string) => string,
+  defaults: { sortBy: string; pageSize?: number },
+) {
+  const page = Math.max(1, Number(get('page')) || 1)
+  const rawSize = Number(get('pageSize')) || defaults.pageSize || 50
+  const pageSize = Math.min(100, Math.max(1, rawSize))
+  const sortBy = get('sortBy', defaults.sortBy) || defaults.sortBy
+  const sortDir: 'asc' | 'desc' = get('sortDir') === 'asc' ? 'asc' : 'desc'
+  return { page, pageSize, sortBy, sortDir }
+}
+
+/** Parse a YYYY-MM-DD URL param into a Date (UTC midnight); else undefined. */
+export function readDateParam(value: string, endOfDay = false): Date | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined
+  const parsed = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`)
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed
+}
+
+/** Parse a £ URL param ("12.50") into integer pence; else undefined. */
+export function readPoundsParam(value: string): number | undefined {
+  if (!/^\d+(\.\d{1,2})?$/.test(value)) return undefined
+  const minor = Math.round(Number(value) * 100)
+  return Number.isFinite(minor) ? minor : undefined
+}
+
+/**
+ * Debounced URL-writing input — the building block for the date / amount
+ * range filters on the workspace tables.
+ */
+export function ParamInput({
+  param,
+  type = 'text',
+  placeholder,
+  label,
+  width = 'w-28',
+}: {
+  param: string
+  type?: 'text' | 'date'
+  placeholder?: string
+  label: string
+  width?: string
+}) {
+  const { get, set } = useListParams()
+  const urlValue = get(param)
+  const [value, setValue] = useState(urlValue)
+
+  // Sync from the URL (e.g. a cleared filter elsewhere) without stomping on
+  // active typing; debounce writes back so typing doesn't hammer the router.
+  useEffect(() => {
+    setValue((current) => (current === urlValue ? current : urlValue))
+  }, [urlValue])
+
+  useEffect(() => {
+    if (value === urlValue) return
+    const t = setTimeout(() => set({ [param]: value || null }), 350)
+    return () => clearTimeout(t)
+  }, [value, urlValue, param, set])
+
+  return (
+    <Input
+      type={type}
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      placeholder={placeholder}
+      aria-label={label}
+      className={`h-8 ${width} text-xs`}
+    />
+  )
 }
 
 export function FilterChips<T extends string>({
@@ -118,11 +217,11 @@ export function CustomerMandatePicker({
   }, [q])
 
   const customers = trpc.gocardless.customers.list.useQuery(
-    { q: debounced, link: 'all', limit: 6 },
+    { q: debounced, link: 'all', pageSize: 6 },
     { enabled: !customer && debounced.trim().length >= 2 },
   )
   const mandates = trpc.gocardless.mandates.list.useQuery(
-    { gcCustomerId: customer?.gcCustomerId ?? '', chargeableOnly: true, limit: 10 },
+    { gcCustomerId: customer?.gcCustomerId ?? '', chargeableOnly: true, pageSize: 10 },
     { enabled: customer !== null },
   )
 

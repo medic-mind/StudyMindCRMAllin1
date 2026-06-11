@@ -166,3 +166,37 @@ architecture (visuals stay on StudyMind design tokens, §4):
   customer mirror), and a `?customer=` deep-link filter set by the record's
   action buttons — which also prefills the New-plan / Collect-payment
   mandate pickers so "create for this customer" is one click.
+
+## Amendment (2026-06-11, fourth) — payouts + activity feed
+
+The last two GoCardless dashboard areas land in the workspace:
+
+- **Payouts**: `GcPayout` mirror (status as normalised text, §15) plus
+  `GcPayment.gcPayoutId` (links.payout, only ever set forward). Webhook
+  `payouts/paid` and a `payouts` backfill phase keep it complete. UI: a
+  Payouts tab (status chips, fees, settled-payment counts) and a per-payout
+  drill-down listing the customer payments inside the transfer.
+- **Activity feed**: `gocardless.events.list` reads the `ProviderEvent`
+  replay log (no new storage), parses each event's links, and resolves them
+  to customers through the mirror — the CRM's Events screen. Filterable by
+  resource, keyset "load older" pagination.
+
+## Amendment (2026-06-11, fifth) — proper list system on every table
+
+The workspace lists graduated from single-page feeds to real tables, all
+URL-driven via the shared list-controls primitives (CLAUDE.md §26):
+
+- Offset paging with true totals ("Showing 1–50 of 1,234"), page-size
+  select, and whitelisted column sorting (nullable columns sort nulls
+  last) on plans, payments, customers, mandates and payouts.
+- Filters: status/state chips with live counts that respect the other
+  filters (shared where-builders keep chips and rows in agreement),
+  customer search on every list, charge/arrival date ranges, £ amount
+  ranges, plan cadence; payments/payouts also show the filtered-set value.
+- A flat **Mandates** sub-view on the Customers tab (state chips + counts,
+  search via mandate id/reference or the customer mirror, audited cancel).
+- CSV export per list honouring the current filters + sort (5000-row cap,
+  the §37 convention).
+- Cursor pagination on these mirrors was replaced by offset paging — an
+  operator table needs arbitrary sorts and jumpable pages; the keyset
+  cursor convention remains for timeline-shaped feeds (the Activity tab).

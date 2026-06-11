@@ -22,6 +22,10 @@ const SUBTITLES: Record<DdTab, string> = {
     'Every GoCardless payment with its live status. Collect one-offs, retry failures, cancel pending collections.',
   customers:
     'Every GoCardless customer and mandate, plus Direct Debit sign-up links — emailed automatically with a 3-day reminder.',
+  payouts:
+    'Bank transfers of collected funds to StudyMind, with the customer payments inside each one.',
+  activity:
+    'Every GoCardless event the moment it happens — payments, mandates, plans and payouts, newest first.',
   issues:
     'Families that have defaulted on a Direct Debit, sorted by outstanding balance. Nothing here is auto-chased.',
 }

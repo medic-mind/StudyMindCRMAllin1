@@ -30,6 +30,8 @@ import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE } from './client'
 import { getWatchedChannels } from './config'
+import { matchContactByCandidate } from './match'
+import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 
 interface BackfillRequestedData {
@@ -194,6 +196,9 @@ async function processSlackMessage(
   })
   if (existing) return { matched: true }
 
+  // Free pre-filter (§32) — no AI spend on chatter that can't name a customer.
+  if (isSkippableSlackNoise(message.text)) return { matched: false }
+
   const { senderName: resolvedSender, channelName } = await resolveSlackNames({
     userId: message.user ?? null,
     channelId,
@@ -218,23 +223,9 @@ async function processSlackMessage(
 
   if (parsed.confidence < MATCH_THRESHOLD) return { matched: false }
 
-  const email = parsed.candidateContactIdentifier.email?.trim().toLowerCase() ?? null
-  const phone = parsed.candidateContactIdentifier.phone?.trim() ?? null
-  let contactId: string | null = null
-  if (email) {
-    const c = await db.contact.findFirst({
-      where: { email, deletedAt: null },
-      select: { id: true },
-    })
-    if (c) contactId = c.id
-  }
-  if (!contactId && phone && phone.startsWith('+')) {
-    const c = await db.contact.findFirst({
-      where: { phoneE164: phone, deletedAt: null },
-      select: { id: true },
-    })
-    if (c) contactId = c.id
-  }
+  // Shared matcher: email → phone variants → unambiguous full name (§12).
+  const match = await matchContactByCandidate(db, parsed.candidateContactIdentifier)
+  const contactId = match.contactId
   if (!contactId) return { matched: false }
 
   const occurredAt = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
@@ -260,6 +251,7 @@ async function processSlackMessage(
         sentiment: parsed.sentiment,
         suggestedNextAction: parsed.suggestedNextAction,
         confidence: parsed.confidence,
+        matchedVia: match.via,
         promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
       },
     },

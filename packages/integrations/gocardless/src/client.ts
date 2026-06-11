@@ -15,6 +15,7 @@ import type {
   GcListMeta,
   GcMandateResource,
   GcPaymentResource,
+  GcPayoutResource,
   GcRedirectFlowResource,
   GcSubscriptionResource,
 } from './types'
@@ -61,8 +62,15 @@ export interface GocardlessClient {
     params?: GcListParams & { customer?: string; mandate?: string; status?: string },
   ): Promise<GcList<GcSubscriptionResource>>
   listPayments(
-    params?: GcListParams & { customer?: string; mandate?: string; subscription?: string },
+    params?: GcListParams & {
+      customer?: string
+      mandate?: string
+      subscription?: string
+      payout?: string
+    },
   ): Promise<GcList<GcPaymentResource>>
+  listPayouts(params?: GcListParams & { status?: string }): Promise<GcList<GcPayoutResource>>
+  getPayout(payoutId: string): Promise<GcPayoutResource>
 
   // Mutations (ADR 0038). All carry an Idempotency-Key supplied by the caller
   // so Inngest/tRPC retries never double-act (CLAUDE.md §2, §17).
@@ -284,7 +292,19 @@ export function createClient(opts: GocardlessClientOptions = {}): GocardlessClie
         customer: params.customer,
         mandate: params.mandate,
         subscription: params.subscription,
+        payout: params.payout,
       })
+    },
+    listPayouts(params = {}) {
+      return list<GcPayoutResource>('/payouts', 'payouts', {
+        after: params.after,
+        limit: params.limit ?? 200,
+        status: params.status,
+      })
+    },
+    async getPayout(payoutId) {
+      const res = await request<{ payouts: GcPayoutResource }>('GET', `/payouts/${payoutId}`)
+      return res.payouts
     },
 
     async createSubscription(input, idempotencyKey) {
