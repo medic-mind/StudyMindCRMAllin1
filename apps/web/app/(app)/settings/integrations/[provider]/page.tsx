@@ -23,6 +23,7 @@ import { AircallProbeButton } from './AircallProbeButton'
 import { BackfillButton } from './BackfillButton'
 import { CancelBackfillButton } from './CancelBackfillButton'
 import { TrengoImportButton } from './TrengoImportButton'
+import { TrengoProbeButton } from './TrengoProbeButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
 
 const BACKFILL_PROVIDERS = new Set(['gmail', 'aircall', 'trengo', 'slack'])
@@ -205,6 +206,68 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   { label: 'Last 7 days', value: String(detail.importStats.last7dCalls) },
                   { label: 'Last 24 hours', value: String(detail.importStats.last24hCalls) },
                   { label: 'Most recent call', value: formatDateTime(detail.importStats.lastCallAt) },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2"
+                  >
+                    <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                      {s.label}
+                    </dt>
+                    <dd className="mt-0.5 font-mono text-sm tabular-nums text-neutral-900">
+                      {s.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+
+          {provider === 'trengo' && detail.trengoStats ? (
+            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
+                    Message import health
+                  </h2>
+                  <p className="mt-1 max-w-xl text-xs text-neutral-500">
+                    Messages mirrored from Trengo (live webhooks + history
+                    imports). If everything reads 0, run an import below and
+                    check the result in the history table; if new messages
+                    never appear, the Trengo webhook must point at{' '}
+                    <code className="font-mono">/api/webhooks/trengo</code> with
+                    the secret set. Use “Test Trengo connection” to check your
+                    API token directly.
+                  </p>
+                </div>
+                {canTest ? <TrengoProbeButton /> : null}
+              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                {[
+                  {
+                    label: 'Messages in CRM',
+                    value: String(detail.trengoStats.totalMessages),
+                  },
+                  {
+                    label: 'Last 7 days',
+                    value: String(detail.trengoStats.last7dMessages),
+                  },
+                  {
+                    label: 'Last 24 hours',
+                    value: String(detail.trengoStats.last24hMessages),
+                  },
+                  {
+                    label: 'Most recent message',
+                    value: formatDateTime(detail.trengoStats.lastMessageAt),
+                  },
+                  {
+                    label: 'Conversations (comms centre)',
+                    value: String(detail.trengoStats.conversationHeads),
+                  },
+                  {
+                    label: 'Contacts from import',
+                    value: String(detail.trengoStats.contactsFromImport),
+                  },
                 ].map((s) => (
                   <div
                     key={s.label}
@@ -536,7 +599,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                 {SHARED_TOKEN_BACKFILL.has(provider)
                   ? 'Pulls the last 90 days of history and creates retroactive timeline entries for matched contacts.'
                   : provider === 'trengo'
-                    ? 'A 90-day import runs automatically on first connect (matched contacts only). “Import last 8 months” pulls a longer window and creates a Contact for each unknown sender, tagged “Trengo import” so the batch stays reviewable.'
+                    ? 'A 90-day import runs automatically on first connect (matched contacts only). “Import history” pulls a selectable window — up to everything (5 years) — and creates a Contact for each unknown sender, tagged “Trengo import” so the batch stays reviewable. Imported conversations land in the comms centre, the inbox, and each contact’s timeline.'
                     : 'A 90-day historic import runs automatically the first time an agent connects.'}
               </p>
               {backfillRuns.length === 0 ? (

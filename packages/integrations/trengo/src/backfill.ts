@@ -1,9 +1,16 @@
-// Trengo 90-day historic backfill worker (ADR 0017).
+// Trengo historic backfill worker (ADR 0017).
 //
-// Uses the agent's own Trengo token to walk `/conversations?created_at_after`,
-// fetch each conversation's messages, match the conversation's contact to a
-// CRM Contact by phone+email, and persist `message` Interactions. Idempotent
-// on Trengo message id.
+// Walks Trengo's documented ticket listing (`GET /tickets?page=N` —
+// developers.trengo.com/reference/list-all-tickets; the legacy
+// `/conversations` path is kept as a fallback for older workspaces), fetches
+// each ticket's messages (`GET /tickets/:id/messages`), matches the
+// counterparty to a CRM Contact by phone+email, and persists `message`
+// Interactions (idempotent on Trengo message id).
+//
+// Each imported ticket is ALSO replayed onto the `Conversation` head via the
+// same merger the live webhook uses, so the comms centre / unified inbox
+// shows the imported history immediately — without waiting for the separate
+// conversation-heads migration job.
 
 import { createId } from '@paralleldrive/cuid2'
 
@@ -17,7 +24,9 @@ import { splitDisplayName } from '@studymind/core/contact/from-call'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { createClientForAgent, type TrengoClient } from './client'
+import { createClientForAgent, TrengoApiError, type TrengoClient } from './client'
+import { applyEventToConversation } from './conversation-head'
+import { isTrengoChannel, type TrengoChannel } from './types'
 
 interface BackfillRequestedData {
   jobId: string
@@ -34,27 +43,262 @@ interface BackfillRequestedData {
   createContacts?: boolean
 }
 
-interface TrengoConvSummary {
-  id: number
-  channel?: string
-  contact?: { phone?: string; email?: string; name?: string }
+/** Which listing endpoint a run has settled on. `tickets` is the documented
+ *  Trengo v2 path; `conversations` is the legacy assumed path kept as a
+ *  fallback. Decided once on the first page and sticky for the run. */
+export type TrengoListEndpoint = 'tickets' | 'conversations'
+
+/** Hard ceilings so a malformed pagination response can never loop forever. */
+const MAX_TICKET_PAGES = 2000
+const MAX_MESSAGE_PAGES = 20
+
+// -----------------------------------------------------------------------------
+// Pure parsing helpers (exported for tests).
+// -----------------------------------------------------------------------------
+
+/**
+ * Trengo timestamps arrive either as ISO 8601 or as `YYYY-MM-DD HH:mm:ss`
+ * (no timezone — treated as UTC, matching how the webhook envelope's
+ * occurred_at is handled). Returns null when unparseable.
+ */
+export function parseTrengoDate(raw: unknown): Date | null {
+  if (typeof raw !== 'string' || raw.trim() === '') return null
+  const s = raw.trim()
+  const candidate = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)
+    ? `${s.replace(' ', 'T')}Z`
+    : s
+  const d = new Date(candidate)
+  return Number.isNaN(d.getTime()) ? null : d
 }
 
-interface TrengoMessageRow {
-  id: number
-  ticket_id?: number
-  conversation_id?: number
-  body?: string
-  channel?: string
-  direction?: string
-  created_at?: string
-  contact?: { phone?: string; email?: string; name?: string }
+/** Trengo channel `type` tags (GET /channels) → our channel enum. */
+const CHANNEL_TYPE_TO_CHANNEL: Record<string, TrengoChannel> = {
+  WA_BUSINESS: 'whatsapp',
+  WHATSAPP: 'whatsapp',
+  SMS: 'sms',
+  EMAIL: 'email',
+  CHAT: 'web_chat',
+  WEB_CHAT: 'web_chat',
 }
+
+/**
+ * Normalise the channel however the listing returned it — a lowercase name
+ * ("whatsapp"), a Trengo type tag ("WA_BUSINESS"), or a channel object
+ * (`{ name, type }`). Unknown channels (Facebook, Telegram, …) return null:
+ * the message still imports, only the typed channel chip is absent.
+ */
+export function normaliseTicketChannel(raw: unknown): TrengoChannel | null {
+  if (typeof raw === 'string') {
+    const lower = raw.toLowerCase()
+    if (isTrengoChannel(lower)) return lower
+    return CHANNEL_TYPE_TO_CHANNEL[raw.toUpperCase()] ?? null
+  }
+  if (raw !== null && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>
+    for (const key of ['type', 'name'] as const) {
+      const v = o[key]
+      if (typeof v === 'string') {
+        const c = normaliseTicketChannel(v)
+        if (c) return c
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Infer message direction from the REST shape. The webhook gives a
+ * `direction` field; the REST listing varies by version, so we fall through
+ * `direction` → `type` → "an agent (user_id) sent it" → inbound.
+ */
+export function inferMessageDirection(
+  m: Record<string, unknown>,
+): 'message.inbound' | 'message.outbound' {
+  for (const key of ['direction', 'type'] as const) {
+    const v = m[key]
+    if (typeof v === 'string') {
+      const lower = v.toLowerCase()
+      if (lower === 'outbound') return 'message.outbound'
+      if (lower === 'inbound') return 'message.inbound'
+    }
+  }
+  if (m['user_id'] != null && m['contact_id'] == null) return 'message.outbound'
+  return 'message.inbound'
+}
+
+/** Message text however the API spells it (`body`, `message`, `text`). */
+export function extractMessageBody(m: Record<string, unknown>): string | null {
+  for (const key of ['body', 'message', 'text'] as const) {
+    const v = m[key]
+    if (typeof v === 'string' && v.trim() !== '') return v
+  }
+  return null
+}
+
+export interface ParsedListPage<T> {
+  rows: T[]
+  hasNext: boolean
+  /** Total rows across all pages when the API reports it (`meta.total`). */
+  total: number | null
+}
+
+/**
+ * Parse a paginated Trengo list response (`{ data, meta, links }` per
+ * developers.trengo.com/docs/pagination-1; a bare array is accepted too).
+ * An empty page never reports hasNext so a malformed meta cannot loop.
+ */
+export function parseListResponse<T>(res: unknown, page: number): ParsedListPage<T> {
+  if (Array.isArray(res)) {
+    return { rows: res as T[], hasNext: false, total: res.length }
+  }
+  const o = (res ?? {}) as Record<string, unknown>
+  const rows = Array.isArray(o['data']) ? (o['data'] as T[]) : []
+  const meta = (o['meta'] ?? {}) as Record<string, unknown>
+  const links = (o['links'] ?? {}) as Record<string, unknown>
+  const lastPage = typeof meta['last_page'] === 'number' ? meta['last_page'] : null
+  const total = typeof meta['total'] === 'number' ? meta['total'] : null
+  const hasNext =
+    rows.length > 0 &&
+    (lastPage !== null
+      ? page < lastPage
+      : typeof links['next'] === 'string' && links['next'] !== '')
+  return { rows, hasNext, total }
+}
+
+export interface TrengoTicketRow {
+  id: number
+  status?: string
+  subject?: string | null
+  channel?: unknown
+  channels?: unknown
+  contact?: { phone?: string; email?: string; name?: string }
+  created_at?: string
+  [key: string]: unknown
+}
+
+export interface NormalisedTicket {
+  id: number
+  channel: TrengoChannel | null
+  /** Trengo statuses (OPEN / ASSIGNED / CLOSED / …) folded to our two. */
+  status: 'open' | 'closed'
+  subject: string | null
+  contact: { phone: string | null; email: string | null; name: string | null }
+  createdAt: Date | null
+}
+
+/** Fold a raw ticket row to the fields the import needs. Null on rows with
+ *  no usable numeric id. */
+export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const t = raw as TrengoTicketRow
+  if (typeof t.id !== 'number') return null
+  const channel =
+    normaliseTicketChannel(t.channel) ??
+    (Array.isArray(t.channels) ? normaliseTicketChannel(t.channels[0]) : null)
+  return {
+    id: t.id,
+    channel,
+    status:
+      typeof t.status === 'string' && t.status.toLowerCase() === 'closed'
+        ? 'closed'
+        : 'open',
+    subject: typeof t.subject === 'string' && t.subject.trim() !== '' ? t.subject : null,
+    contact: {
+      phone: t.contact?.phone?.trim() || null,
+      email: t.contact?.email?.trim().toLowerCase() || null,
+      name: t.contact?.name?.trim() || null,
+    },
+    createdAt: parseTrengoDate(t.created_at),
+  }
+}
+
+/** Window check — a ticket with no parseable created_at imports anyway
+ *  (fail open: losing history is worse than importing a little extra). */
+export function ticketWithinWindow(createdAt: Date | null, windowFrom: Date): boolean {
+  return createdAt === null || createdAt.getTime() >= windowFrom.getTime()
+}
+
+// -----------------------------------------------------------------------------
+// Fetch layer.
+// -----------------------------------------------------------------------------
+
+type RequestFn = <T>(method: string, path: string) => Promise<T>
+
+export interface TicketPageResult {
+  rows: TrengoTicketRow[]
+  hasNext: boolean
+  total: number | null
+  endpoint: TrengoListEndpoint
+}
+
+/**
+ * Fetch one page of the ticket listing. Tries the documented `/tickets`
+ * first; when the workspace rejects it with a 404/405 (and no endpoint has
+ * been decided yet), falls back to the legacy `/conversations` path once and
+ * the caller pins the choice for the rest of the run.
+ */
+export async function listTicketsPage(
+  request: RequestFn,
+  page: number,
+  endpoint: TrengoListEndpoint | null,
+  since: string,
+): Promise<TicketPageResult> {
+  const tryTickets = endpoint === null || endpoint === 'tickets'
+  if (tryTickets) {
+    try {
+      const res = await request<unknown>('GET', `/tickets?page=${page}&per_page=50`)
+      const parsed = parseListResponse<TrengoTicketRow>(res, page)
+      return { ...parsed, endpoint: 'tickets' }
+    } catch (err) {
+      const status = err instanceof TrengoApiError ? err.status : 0
+      const canFallBack = endpoint === null && (status === 404 || status === 405)
+      if (!canFallBack) throw err
+    }
+  }
+  const res = await request<unknown>(
+    'GET',
+    `/conversations?created_at_after=${since}&page=${page}&per_page=50`,
+  )
+  const parsed = parseListResponse<TrengoTicketRow>(res, page)
+  return { ...parsed, endpoint: 'conversations' }
+}
+
+/** All messages on one ticket, walking the paginated listing. A 404 on the
+ *  messages path (ticket deleted between listing and fetch) yields []. */
+async function fetchTicketMessages(
+  request: RequestFn,
+  endpoint: TrengoListEndpoint,
+  ticketId: number,
+): Promise<Array<Record<string, unknown>>> {
+  const base =
+    endpoint === 'tickets'
+      ? `/tickets/${ticketId}/messages`
+      : `/conversations/${ticketId}/messages`
+  const out: Array<Record<string, unknown>> = []
+  let page = 1
+  for (;;) {
+    let res: unknown
+    try {
+      res = await request<unknown>('GET', `${base}?page=${page}&per_page=200`)
+    } catch (err) {
+      if (err instanceof TrengoApiError && err.status === 404) return out
+      throw err
+    }
+    const parsed = parseListResponse<Record<string, unknown>>(res, page)
+    out.push(...parsed.rows)
+    if (!parsed.hasNext || page >= MAX_MESSAGE_PAGES) return out
+    page += 1
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Inngest function.
+// -----------------------------------------------------------------------------
 
 export const trengoBackfillRequested = inngest.createFunction(
   {
     id: 'trengo/backfill.requested',
-    name: 'Backfill last 90 days of Trengo conversations',
+    name: 'Backfill historic Trengo conversations',
     concurrency: { limit: 2 },
     retries: 4,
   },
@@ -82,27 +326,33 @@ export const trengoBackfillRequested = inngest.createFunction(
         purpose: 'trengo.backfill',
         requestId: jobId,
       })
-      const since = new Date(windowFrom).toISOString().slice(0, 10) // YYYY-MM-DD
+      const windowFromDate = new Date(windowFrom)
+      const since = windowFromDate.toISOString().slice(0, 10) // YYYY-MM-DD
 
+      let endpoint: TrengoListEndpoint | null = null
       let keepPaging = true
-      while (keepPaging) {
-        const convs = await step.run(`list-conversations-${page}`, async () => {
-          const res = await client.request<{ data: TrengoConvSummary[]; meta?: { last_page?: number } }>(
-            'GET',
-            `/conversations?created_at_after=${since}&page=${page}&per_page=50`,
-          )
-          return {
-            rows: res.data ?? [],
-            hasNext: !!res.meta?.last_page && page < res.meta.last_page,
-          }
-        })
+      while (keepPaging && page <= MAX_TICKET_PAGES) {
+        const currentEndpoint: TrengoListEndpoint | null = endpoint
+        const ticketsPage = (await step.run(
+          `list-tickets-${page}`,
+          async (): Promise<TicketPageResult> =>
+            listTicketsPage(client.request, page, currentEndpoint, since),
+        )) as TicketPageResult
+        endpoint = ticketsPage.endpoint
 
-        for (const conv of convs.rows) {
+        for (const raw of ticketsPage.rows) {
+          const ticket = normaliseTicketRow(raw)
+          if (!ticket) continue
+          // The documented /tickets listing has no server-side date filter,
+          // so the window is enforced here. Out-of-window tickets cost one
+          // listing row and nothing else.
+          if (!ticketWithinWindow(ticket.createdAt, windowFromDate)) continue
           try {
-            const result = await step.run(`conv-${conv.id}`, async () =>
-              processConversation({
+            const result = await step.run(`conv-${ticket.id}`, async () =>
+              processTicket({
                 client,
-                conv,
+                endpoint: ticketsPage.endpoint,
+                ticket,
                 jobId,
                 createContacts,
                 actorId: agentId,
@@ -113,11 +363,14 @@ export const trengoBackfillRequested = inngest.createFunction(
             skipped += result.skipped
             created += result.created
           } catch (err) {
-            // One conversation that fails (a contact write clash, an odd
-            // message shape) must not abort the whole import. Skip it and keep
+            // One ticket that fails (a contact write clash, an odd message
+            // shape) must not abort the whole import. Skip it and keep
             // paging so the rest of the history lands.
             skipped += 1
-            logger.warn({ jobId, convId: conv.id, err }, 'trengo backfill: skipped a conversation that failed to import')
+            logger.warn(
+              { jobId, ticketId: ticket.id, err },
+              'trengo backfill: skipped a ticket that failed to import',
+            )
           }
         }
         await step.run(`progress-${page}`, async () =>
@@ -125,10 +378,11 @@ export const trengoBackfillRequested = inngest.createFunction(
             processed,
             matched,
             skipped,
-            lastEventId: convs.rows[convs.rows.length - 1]?.id?.toString() ?? null,
+            lastEventId:
+              ticketsPage.rows[ticketsPage.rows.length - 1]?.id?.toString() ?? null,
           }),
         )
-        keepPaging = convs.hasNext
+        keepPaging = ticketsPage.hasNext
         page += 1
       }
 
@@ -141,7 +395,7 @@ export const trengoBackfillRequested = inngest.createFunction(
           requestId: jobId,
         }),
       )
-      return { ok: true, processed, matched, skipped, created }
+      return { ok: true, processed, matched, skipped, created, endpoint }
     } catch (err) {
       logger.error({ jobId, agentId, err }, 'trengo backfill failed')
       await markBackfillFailed(
@@ -155,9 +409,10 @@ export const trengoBackfillRequested = inngest.createFunction(
   },
 )
 
-interface ProcessConversationInput {
+interface ProcessTicketInput {
   client: TrengoClient
-  conv: TrengoConvSummary
+  endpoint: TrengoListEndpoint
+  ticket: NormalisedTicket
   jobId: string
   /** Manual import: create a Contact for a sender not already in the CRM. */
   createContacts: boolean
@@ -165,14 +420,14 @@ interface ProcessConversationInput {
   actorId: string | null
 }
 
-async function processConversation(
-  input: ProcessConversationInput,
+async function processTicket(
+  input: ProcessTicketInput,
 ): Promise<{ processed: number; matched: number; skipped: number; created: number }> {
-  const { client, conv, createContacts } = input
+  const { client, endpoint, ticket, createContacts } = input
 
-  // Match conversation contact (phone first, email fallback — §11).
-  const phone = conv.contact?.phone?.trim() ?? null
-  const email = conv.contact?.email?.trim().toLowerCase() ?? null
+  // Match the ticket's contact (phone first, email fallback — §11).
+  const phone = ticket.contact.phone
+  const email = ticket.contact.email
   let contactId: string | null = null
   let familyId: string | null = null
   if (phone && phone.startsWith('+')) {
@@ -207,22 +462,23 @@ async function processConversation(
   // finds it, message Interactions dedupe on trengoMessageId).
   let created = 0
   if (!contactId && createContacts) {
-    const newId = await createContactFromConversation(conv, input.actorId)
+    const newId = await createContactFromTicket(ticket, input.actorId)
     if (newId) {
       contactId = newId
       created = 1
     }
   }
 
-  // Pull messages for this conversation.
-  const res = await client.request<{ data: TrengoMessageRow[] }>(
-    'GET',
-    `/conversations/${conv.id}/messages?per_page=200`,
-  )
-  const messages = res.data ?? []
+  const messages = await fetchTicketMessages(client.request, endpoint, ticket.id)
   let processed = 0
   let matched = 0
   let skipped = 0
+  // Every message (newly written or already present) is collected so the
+  // conversation-head replay below converges on re-runs too.
+  const headEvents: Array<{
+    direction: 'message.inbound' | 'message.outbound'
+    occurredAt: Date
+  }> = []
 
   for (const m of messages) {
     processed += 1
@@ -230,56 +486,101 @@ async function processConversation(
       skipped += 1
       continue
     }
+    const messageId = typeof m['id'] === 'number' ? m['id'] : null
+    if (messageId === null) {
+      skipped += 1
+      continue
+    }
+    const direction = inferMessageDirection(m)
+    const occurredAt = parseTrengoDate(m['created_at']) ?? new Date()
+    headEvents.push({ direction, occurredAt })
+
     const existing = await db.interaction.findFirst({
-      where: { payload: { path: ['trengoMessageId'], equals: m.id } },
+      where: { payload: { path: ['trengoMessageId'], equals: messageId } },
       select: { id: true },
     })
     if (existing) {
       matched += 1
       continue
     }
-    const direction =
-      m.direction === 'outbound' ? 'message.outbound' : 'message.inbound'
+    const body = extractMessageBody(m)
+    const ticketIdOnMessage =
+      typeof m['ticket_id'] === 'number'
+        ? m['ticket_id']
+        : typeof m['conversation_id'] === 'number'
+          ? m['conversation_id']
+          : ticket.id
     await db.interaction.create({
       data: {
         id: createId(),
         type: 'message',
         contactId,
         familyId,
-        occurredAt: m.created_at ? new Date(m.created_at) : new Date(),
-        summary: (m.body ?? '').slice(0, 280),
+        occurredAt,
+        summary: (body ?? '').slice(0, 280),
         payload: {
           backfill: true,
           interactionType: direction,
-          trengoMessageId: m.id,
-          ticketId: m.ticket_id ?? conv.id,
-          channel: m.channel ?? conv.channel ?? null,
-          body: m.body ?? null,
+          trengoMessageId: messageId,
+          ticketId: ticketIdOnMessage,
+          channel: normaliseTicketChannel(m['channel']) ?? ticket.channel,
+          body,
         },
       },
     })
     matched += 1
   }
+
+  // Replay the ticket onto the Conversation head (ADR 0020 Phase 2) so the
+  // comms centre / unified inbox lists the imported history immediately. The
+  // merger is monotonic and keyed on trengoTicketId, so replays converge.
+  // Heads are only built for tickets that have a CRM home (matched/created
+  // contact) — a skipped-unmatched ticket must not become a ghost row.
+  if (contactId && headEvents.length > 0) {
+    headEvents.sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
+    for (const ev of headEvents) {
+      await applyEventToConversation(db, {
+        ticketId: ticket.id,
+        eventName: ev.direction,
+        occurredAt: ev.occurredAt,
+        channel: ticket.channel,
+        contactId,
+        familyId,
+        subject: ticket.subject,
+      })
+    }
+    if (ticket.status === 'closed') {
+      const lastAt = headEvents[headEvents.length - 1]!.occurredAt
+      await applyEventToConversation(db, {
+        ticketId: ticket.id,
+        eventName: 'ticket.closed',
+        occurredAt: lastAt,
+        channel: ticket.channel,
+        contactId,
+        familyId,
+      })
+    }
+  }
+
   return { processed, matched, skipped, created }
 }
 
 /**
- * Create a lightweight Contact from a Trengo conversation's sender details.
+ * Create a lightweight Contact from a Trengo ticket's sender details.
  * Returns the new id, or null when there is nothing to key the row on (no
  * E.164 phone and no email) — we never make nameless ghost rows. Mirrors the
- * call-channel onboarding (`resolveOrCreateContactForCall`): `kind: 'parent'`
- * is the education-CRM default an agent recategorises.
+ * call-channel onboarding (`resolveOrCreateContactForCall`).
  */
-async function createContactFromConversation(
-  conv: TrengoConvSummary,
+async function createContactFromTicket(
+  ticket: NormalisedTicket,
   actorId: string | null,
 ): Promise<string | null> {
-  const phone = conv.contact?.phone?.trim() ?? null
-  const email = conv.contact?.email?.trim().toLowerCase() ?? null
+  const phone = ticket.contact.phone
+  const email = ticket.contact.email
   const hasPhone = !!phone && phone.startsWith('+')
   if (!hasPhone && !email) return null
 
-  const name = conv.contact?.name?.trim() ?? ''
+  const name = ticket.contact.name ?? ''
   const split = name ? splitDisplayName(name) : { firstName: '', lastName: null }
   const id = createId()
   await db.contact.create({
