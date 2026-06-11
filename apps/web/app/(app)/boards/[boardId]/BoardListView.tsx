@@ -38,6 +38,9 @@ interface CardData {
   company?: { id: string; name: string; color: string | null } | null
   description?: string | null
   subject: { id: string; name: string } | null
+  /** Enquiry types from the contact's web enquiries ("Tutoring", "Summer
+   * Camp", "Online Courses", …). */
+  enquiryTypes?: ReadonlyArray<string>
   labels: ReadonlyArray<LabelChip>
   lastActivityAt: string | Date | null
   dueAt?: Date | string | null
@@ -221,6 +224,18 @@ export function BoardListView({
                         <td className="px-3 py-2 align-top">
                           <div className="flex flex-wrap items-center gap-1">
                             {card.subject ? <Badge tone="info">{card.subject.name}</Badge> : null}
+                            {(card.enquiryTypes ?? [])
+                              .filter((t) => t !== card.subject?.name)
+                              .slice(0, 3)
+                              .map((t) => (
+                                <span
+                                  key={t}
+                                  className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-inset ring-amber-100"
+                                  title="What they enquired about"
+                                >
+                                  {t}
+                                </span>
+                              ))}
                             {card.company ? (
                               <span
                                 className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] font-medium text-neutral-700"

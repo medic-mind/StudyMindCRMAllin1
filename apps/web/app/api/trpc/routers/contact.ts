@@ -52,7 +52,11 @@ import {
 } from '@studymind/core/contact'
 
 import { logger } from '@studymind/core/logger'
-import { loadContactCommsCounts, loadContactComplaintCounts } from '@studymind/core/stats'
+import {
+  loadContactCommsCounts,
+  loadContactComplaintCounts,
+  loadContactEnquiryTypes,
+} from '@studymind/core/stats'
 
 import { mergeContacts } from '@/lib/services/contact-merge'
 import { findMergeCandidates } from '@/lib/services/merge-suggestions'
@@ -308,6 +312,9 @@ export const contactRouter = router({
           labels: {
             include: { label: { select: { id: true, name: true, color: true } } },
           },
+          subjects: {
+            include: { subject: { select: { id: true, name: true } } },
+          },
           bookingProfile: { select: { hoursRemaining: true, nextHoursExpiryAt: true } },
         },
       }),
@@ -316,14 +323,22 @@ export const contactRouter = router({
     const hasMore = !usingOffset && rows.length > input.limit
     const sliced = hasMore ? rows.slice(0, input.limit) : rows
     const pageIds = sliced.map((r) => r.id)
-    // Two batched groupBys for the whole page: comms counts + active
-    // complaints. One extra query each, regardless of page size.
-    const [counts, complaints] = await Promise.all([
+    // Three batched reads for the whole page: comms counts, active
+    // complaints, and enquiry types. One extra query each, regardless of
+    // page size.
+    const [counts, complaints, enquiryTypes] = await Promise.all([
       loadContactCommsCounts(ctx.db, pageIds),
       loadContactComplaintCounts(ctx.db, pageIds),
+      loadContactEnquiryTypes(ctx.db, pageIds),
     ])
     const items: ContactSummary[] = sliced.map((r) =>
-      toContactSummary(r, counts.get(r.id), new Date(), complaints.get(r.id) ?? 0),
+      toContactSummary(
+        r,
+        counts.get(r.id),
+        new Date(),
+        complaints.get(r.id) ?? 0,
+        enquiryTypes.get(r.id) ?? [],
+      ),
     )
     const last = sliced[sliced.length - 1]
     const nextCursor = hasMore && last ? { id: last.id, createdAt: last.createdAt } : null
@@ -384,7 +399,8 @@ export const contactRouter = router({
         },
       })
       if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      return toContactDetail(row)
+      const enquiryTypes = (await loadContactEnquiryTypes(ctx.db, [row.id])).get(row.id) ?? []
+      return toContactDetail(row, enquiryTypes)
     }),
 
   create: auditedProcedure.input(ContactCreateInput).mutation(async ({ ctx, input }) => {
@@ -1060,9 +1076,7 @@ export const contactRouter = router({
               attachments,
               ...(input.channelBodies ? { channelBodies: input.channelBodies } : {}),
               ...(input.emailSubject ? { emailSubject: input.emailSubject } : {}),
-              ...(input.whatsappTemplate
-                ? { whatsappTemplate: input.whatsappTemplate }
-                : {}),
+              ...(input.whatsappTemplate ? { whatsappTemplate: input.whatsappTemplate } : {}),
               senders,
             },
             { actorId: user.id, requestId: ctx.requestId },
@@ -1086,9 +1100,7 @@ export const contactRouter = router({
     waTemplates: protectedProcedure.query(async ({ ctx }) => {
       const user = requireUser(ctx)
       try {
-        const { listWhatsAppTemplates } = await import(
-          '@studymind/integration-trengo/outbound'
-        )
+        const { listWhatsAppTemplates } = await import('@studymind/integration-trengo/outbound')
         const templates = await listWhatsAppTemplates(user.id, ctx.requestId)
         return { available: true as const, templates }
       } catch (err) {

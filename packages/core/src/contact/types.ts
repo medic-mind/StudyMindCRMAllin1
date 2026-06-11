@@ -24,18 +24,10 @@ export const ContactKind = z.enum([
 export type ContactKind = z.infer<typeof ContactKind>
 
 /** Booking lifecycle relative to booking.studymind.co.uk (CLAUDE.md §15). */
-export const ContactBookingStatus = z.enum([
-  'lead',
-  'registered_no_hours',
-  'registered_with_hours',
-])
+export const ContactBookingStatus = z.enum(['lead', 'registered_no_hours', 'registered_with_hours'])
 export type ContactBookingStatus = z.infer<typeof ContactBookingStatus>
 
-const NameField = z
-  .string()
-  .trim()
-  .min(1)
-  .max(120)
+const NameField = z.string().trim().min(1).max(120)
 
 export const Contact = z.object({
   id: z.string(),
@@ -107,6 +99,11 @@ export const ContactSummary = z.object({
   complaintCount: z.number().default(0),
   /** Applied shared-catalogue labels (custom tags). */
   labels: LabelRef.array(),
+  /** Subject tags (synced from the latest enquiry / set by agents). */
+  subjects: SubjectRef.array().default([]),
+  /** Enquiry types from the contact's web enquiries ("Tutoring", "Summer
+   * Camp", "Online Courses", …) — Lead.categories, latest-first. */
+  enquiryTypes: z.array(z.string()).default([]),
   /** Derived hours-risk level + score (CLAUDE.md §6.4 pattern). `none` when
    *  the customer holds no meaningful unused balance. */
   riskLevel: z.enum(['none', 'low', 'medium', 'high']),

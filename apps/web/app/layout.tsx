@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
-import { Toaster } from 'sonner'
 
+import { AppToaster } from '@/components/ui/app-toaster'
 import { TrpcProvider } from '@/lib/trpc/Provider'
 
 import './globals.css'
@@ -25,9 +25,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en-GB" className={inter.variable}>
       <body>
         <TrpcProvider>{children}</TrpcProvider>
-        {/* Top-centre, dismissable, 5s — action confirmations must be
-            impossible to miss while the agent's eyes are mid-page. */}
-        <Toaster richColors position="top-center" closeButton duration={5000} />
+        {/* Bottom-right, light, auto-dismissing — the single audited
+            notification surface. Styling + rationale live in AppToaster. */}
+        <AppToaster />
       </body>
     </html>
   )

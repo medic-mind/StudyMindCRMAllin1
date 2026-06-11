@@ -88,6 +88,7 @@ export default async function BoardPage({ params, searchParams }: PageProps) {
     company: c.company,
     description: c.description,
     subject: c.subject,
+    enquiryTypes: c.enquiryTypes,
     labels: c.labels,
     lastActivityAt: c.lastActivityAt,
     dueAt: c.dueAt,
