@@ -664,6 +664,10 @@ export const interactionRouter = router({
         z.object({
           contactId: z.string().min(1),
           channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']),
+          /** Exact Trengo channel (sender line) to send from — workspaces run
+           *  several channels per type, and an unpicked send went from an
+           *  arbitrary one. */
+          trengoChannelId: z.number().int().positive().optional(),
           body: z.string().trim().min(1).max(4_000),
         }),
       )
@@ -702,6 +706,9 @@ export const interactionRouter = router({
             contactId: contact.id,
             agentId: user.id,
             channel: input.channel,
+            ...(input.trengoChannelId
+              ? { trengoChannelId: input.trengoChannelId }
+              : {}),
             recipient,
             body: input.body,
             requestId: ctx.requestId,
@@ -799,6 +806,16 @@ export const interactionRouter = router({
     // "templates" in the new-conversation composer. Graceful: a missing token
     // returns available:false instead of erroring, so the UI falls back to
     // free text.
+    /** The workspace's Trengo channels (sender lines/mailboxes) — drives the
+     *  composer's "send from" picker. Graceful: no token → available:false. */
+    channels: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      const { listTrengoChannels } = await import(
+        '@studymind/integration-trengo/outbound'
+      )
+      return listTrengoChannels(user.id, ctx.requestId)
+    }),
+
     quickReplies: protectedProcedure.query(async ({ ctx }) => {
       const user = requireUser(ctx)
       try {

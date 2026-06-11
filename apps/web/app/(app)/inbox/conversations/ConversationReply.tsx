@@ -124,6 +124,21 @@ export function ConversationReply({
     { staleTime: 5 * 60_000, retry: false },
   )
 
+  // Workspace sender lines — when the workspace runs several channels of the
+  // picked type (Study Mind Support, MM ANZ, …), the agent chooses which one
+  // the message goes from, exactly like Trengo's own composer.
+  const sendingSeparateSmsPre = sendVia === 'sms' && threadChannel !== 'sms'
+  const workspaceChannels = trpc.interaction.trengo.channels.useQuery(undefined, {
+    enabled: sendingSeparateSmsPre,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  const [fromChannelId, setFromChannelId] = useState<number | null>(null)
+  const smsChannels =
+    workspaceChannels.data?.available === true
+      ? workspaceChannels.data.channels.filter((c) => c.kind === 'sms')
+      : []
+
   const [files, setFiles] = useState<File[]>([])
   const [reading, setReading] = useState(false)
 
@@ -232,7 +247,12 @@ export function ConversationReply({
   const handleSend = async () => {
     if (sendDisabled) return
     if (sendingSeparateSms) {
-      sendSms.mutate({ contactId, channel: 'sms', body })
+      sendSms.mutate({
+        contactId,
+        channel: 'sms',
+        body,
+        ...(fromChannelId ? { trengoChannelId: fromChannelId } : {}),
+      })
       return
     }
     if (mode === 'template') {
@@ -326,11 +346,32 @@ export function ConversationReply({
 
       <div className="p-3">
         {sendingSeparateSms ? (
-          <p className="mb-2 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs text-sky-900">
-            Sends a text message to{' '}
-            <span className="font-mono">{contactPhone ?? 'this contact'}</span> — it
-            starts a separate SMS conversation in Trengo, not a WhatsApp message.
-          </p>
+          <div className="mb-2 space-y-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs text-sky-900">
+            <p>
+              Sends a text message to{' '}
+              <span className="font-mono">{contactPhone ?? 'this contact'}</span> — it
+              starts a separate SMS conversation in Trengo, not a WhatsApp message.
+            </p>
+            {smsChannels.length > 1 ? (
+              <label className="flex items-center gap-1.5">
+                <span className="font-medium">Send from</span>
+                <select
+                  value={fromChannelId ?? ''}
+                  onChange={(e) =>
+                    setFromChannelId(e.target.value ? Number(e.target.value) : null)
+                  }
+                  className="rounded border border-sky-300 bg-white px-1.5 py-0.5 text-xs text-neutral-900"
+                >
+                  <option value="">Workspace default</option>
+                  {smsChannels.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
         ) : null}
         {!sendingSeparateSms && windowClosed && mode === 'text' ? (
           <p className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">

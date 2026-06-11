@@ -50,6 +50,11 @@ export interface TrengoCreateConversationInput {
   recipient: string
   body: string
   customFields?: Record<string, string>
+  /** Exact Trengo channel (sender line/mailbox) to send from. Workspaces run
+   *  several channels per type (Study Mind Support, MM ANZ, …) — without this
+   *  the fallback chain picked the FIRST matching type, i.e. an arbitrary
+   *  sender identity. */
+  channelId?: number
 }
 
 /** Our channel kind → Trengo's channel `type` tag (GET /channels). */
@@ -439,6 +444,7 @@ export async function createClientForAgent(
           data?: { ticket_id?: number; id?: number }
         }>('POST', '/messages', {
           channel: input.channel,
+          ...(input.channelId ? { channel_id: input.channelId } : {}),
           recipient: input.recipient,
           body: input.body,
           custom_fields: input.customFields ?? {},
@@ -459,9 +465,10 @@ export async function createClientForAgent(
       // (2) Documented chain.
       const channels = await listChannelsImpl()
       const wanted = CHANNEL_TYPE_FOR[input.channel]
-      const channelRow =
-        channels.find((c) => (c.type ?? '').toUpperCase() === wanted) ??
-        channels.find((c) => (c.type ?? '').toUpperCase().includes(wanted))
+      const channelRow = input.channelId
+        ? { id: input.channelId }
+        : (channels.find((c) => (c.type ?? '').toUpperCase() === wanted) ??
+          channels.find((c) => (c.type ?? '').toUpperCase().includes(wanted)))
       if (!channelRow) {
         throw new TrengoApiError(404, '/channels', {
           reason: `No ${input.channel} channel found in the Trengo workspace`,

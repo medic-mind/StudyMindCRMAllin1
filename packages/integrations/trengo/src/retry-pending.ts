@@ -42,6 +42,15 @@ const MAX_ATTEMPTS = 5
  * sender's fault, not the row's.
  */
 const SEND_SHAPE_VERSION = 2
+/**
+ * A customer-facing message that has sat unsent for longer than this is NOT
+ * auto-sent on recovery — a reply drafted yesterday going out now hits the
+ * customer out of context, and a recovered backlog becomes a flurry of
+ * out-of-date messages (§3: no surprise auto-sends). It is marked failed,
+ * visibly, and the agent decides whether to resend. State syncs (close /
+ * reopen / labels / assign) are not customer-visible and stay retryable.
+ */
+const MAX_MESSAGE_AGE_MS = 24 * 60 * 60 * 1000
 /** Skip rows whose last failure is too recent — give Trengo time to recover
  *  before pinging again. The Inngest cron runs every 5 minutes, so this is
  *  effectively a one-attempt-per-tick floor. */
@@ -61,6 +70,7 @@ interface RetryablePayload {
   label?: string
   internalNote?: boolean
   newConversation?: boolean
+  trengoChannelId?: number
   recipient?: string
   waTemplate?: {
     id?: number
@@ -106,6 +116,7 @@ export const trengoRetryPendingSend = inngest.createFunction(
           id: true,
           type: true,
           contactId: true,
+          occurredAt: true,
           payload: true,
         },
       }),
@@ -119,6 +130,38 @@ export const trengoRetryPendingSend = inngest.createFunction(
     for (const row of candidates) {
       const payload = (row.payload ?? {}) as RetryablePayload
       let attempts = typeof payload.attempts === 'number' ? payload.attempts : 0
+
+      // Stale customer-visible messages are never auto-sent — mark them
+      // failed (visible in the thread) and move on.
+      if (
+        row.type === 'message' &&
+        Date.now() - new Date(row.occurredAt).getTime() > MAX_MESSAGE_AGE_MS
+      ) {
+        await step.run(`mark-stale-${row.id}`, async () => {
+          const fresh = await db.interaction.findUnique({
+            where: { id: row.id },
+            select: { payload: true },
+          })
+          const p = (fresh?.payload ?? {}) as Record<string, unknown>
+          await db.interaction.update({
+            where: { id: row.id },
+            data: {
+              payload: {
+                ...p,
+                attempts: MAX_ATTEMPTS,
+                sendShape: SEND_SHAPE_VERSION,
+                lastError: {
+                  code: 'STALE_NOT_SENT',
+                  message:
+                    'Expired before it could be sent — not auto-sent a day later to avoid messaging the customer out of context. Resend it if still relevant.',
+                },
+              },
+            },
+          })
+        })
+        exhausted += 1
+        continue
+      }
 
       if (attempts >= MAX_ATTEMPTS) {
         if (payload.sendShape === SEND_SHAPE_VERSION) {
@@ -191,6 +234,9 @@ export const trengoRetryPendingSend = inngest.createFunction(
             contactId: row.contactId,
             agentId: payload.agentId,
             channel: payload.channel as TrengoChannel,
+            ...(typeof payload.trengoChannelId === 'number'
+              ? { trengoChannelId: payload.trengoChannelId }
+              : {}),
             recipient: payload.recipient,
             body: payload.body,
             requestId: payload.outboundRequestId,

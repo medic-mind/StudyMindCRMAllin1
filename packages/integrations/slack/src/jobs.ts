@@ -25,6 +25,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { matchContactByCandidate } from './match'
+import { extractContactSignals, slackTextToPlain } from './extract'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 import { buildSlackPermalink } from './permalink'
@@ -100,24 +101,114 @@ export const slackEventReceived = inngest.createFunction(
     const channelName = resolved.channelName
     const permalink = buildSlackPermalink(message.channel, message.ts, message.thread_ts ?? null)
 
-    // 1. AI parse. Sanitise the user content first (§18).
+    // 1. Deterministic pre-match — cheapest route FIRST (§32; AI is the last
+    //    resort). The team's call-log format carries the customer's phone or
+    //    email verbatim, so a regex + the shared matcher resolves most
+    //    mentions for free — and keeps the archive working when the AI
+    //    provider is down, unconfigured, or over budget.
+    const plainText = slackTextToPlain(message.text)
+    const signals = extractContactSignals(message.text)
+    if (signals.email || signals.phone) {
+      const rulesMatch = await step.run('match-contact-rules', async () =>
+        matchContactByCandidate(db, {
+          name: null,
+          email: signals.email,
+          phone: signals.phone,
+        }),
+      )
+      if (rulesMatch.contactId) {
+        const contactId = rulesMatch.contactId
+        const interaction = await step.run('upsert-interaction-rules', async () => {
+          const existing = await db.interaction.findFirst({
+            where: { payload: { path: ['slackEventId'], equals: eventId } },
+            select: { id: true },
+          })
+          if (existing) return existing
+          return db.interaction.create({
+            data: {
+              id: createId(),
+              type: 'slack_summary',
+              contactId,
+              occurredAt,
+              summary: plainText.slice(0, 280),
+              payload: {
+                event: 'slack.message_summarised',
+                slackEventId: eventId,
+                slackTs: message.ts,
+                channelId: message.channel,
+                channelName,
+                permalink,
+                ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
+                messageText: message.text,
+                senderName,
+                category: 'general',
+                sentiment: 'neutral',
+                suggestedNextAction: null,
+                confidence: 1,
+                matchedVia: rulesMatch.via,
+                promptVersion: 'rules-v1',
+              },
+            },
+            select: { id: true },
+          })
+        })
+        await step.run('audit-rules', async () => {
+          await writeAuditLogEntry(db, {
+            actorId: null,
+            action: 'slack.message_summarised',
+            target: { type: 'Contact', id: contactId },
+            requestId: eventId,
+            after: { interactionId: interaction.id, matchedVia: rulesMatch.via, rules: true },
+          })
+        })
+        await step.run('mark-processed', async () => {
+          await db.providerEvent.update({
+            where: { id: providerEventRowId },
+            data: { processedAt: new Date() },
+          })
+        })
+        return { ok: true, interactionId: interaction.id, matchedVia: 'rules' }
+      }
+    }
+
+    // 2. AI parse (LAST — only when the free route found no unique contact).
+    //    Sanitise the user content first (§18). An AI failure (no key, over
+    //    budget, provider down) must never dead-letter the mention into
+    //    nothing — it parks in the triage tray instead.
     const safeText = sanitiseUserContent(message.text)
     const prompt = buildSlackSummaryPrompt({
       channelName,
       authorDisplayName: senderName,
       text: safeText,
     })
-    const parsed: SlackSummary = await step.run('ai-parse', async () =>
-      runStructured({
-        task: 'slack_summary',
-        promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
-        schema: slackSummarySchema,
-        schemaName: 'slack_summary',
-        system: prompt.system,
-        user: prompt.user,
-        ctx: { eventId, channelId: message.channel },
-      }),
-    )
+    let parsed: SlackSummary
+    try {
+      parsed = await step.run('ai-parse', async () =>
+        runStructured({
+          task: 'slack_summary',
+          promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
+          schema: slackSummarySchema,
+          schemaName: 'slack_summary',
+          system: prompt.system,
+          user: prompt.user,
+          ctx: { eventId, channelId: message.channel },
+        }),
+      )
+    } catch (err) {
+      logger.warn({ eventId, err }, 'slack ai-parse failed — parking for human triage')
+      parsed = {
+        candidateContactIdentifier: {
+          name: null,
+          email: signals.email,
+          phone: signals.phone,
+        },
+        summary: plainText.slice(0, 600) || 'Slack message',
+        category: 'general',
+        sentiment: 'neutral',
+        suggestedNextAction: null,
+        confidence: 0,
+      }
+    }
 
     // 2. If confidence below threshold, park as UnassignedSummary and stop.
     if (parsed.confidence < SLACK_MATCH_THRESHOLD) {
