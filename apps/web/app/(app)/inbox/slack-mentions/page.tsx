@@ -16,7 +16,6 @@ export default function SlackMentionsPage() {
         title="Unassigned Slack mentions"
         subtitle="Customer references picked up in watched Slack channels that need a human to match. Assigning one saves the original message on that customer's timeline."
         breadcrumbs={[
-          { label: 'Inbox', href: '/inbox' },
           { label: 'Slack mentions', href: '/inbox/slack-mentions' },
         ]}
       />

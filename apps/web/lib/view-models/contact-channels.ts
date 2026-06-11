@@ -405,6 +405,20 @@ const TRENGO_LIFECYCLE_TYPES = [
   'label_removed',
 ] as const
 
+/** One message inside a contact-page conversation preview — enough to render
+ *  a Trengo-style mini thread (who said what, when). Bodies stay plain. */
+export interface TrengoConversationMessage {
+  id: string
+  direction: 'inbound' | 'outbound' | null
+  body: string | null
+  occurredAt: Date
+  /** Trengo display name: the customer for inbound, the agent for outbound. */
+  senderName: string | null
+}
+
+/** How many recent messages each contact-page conversation card carries. */
+const CONVERSATION_PREVIEW_MESSAGES = 8
+
 export interface TrengoConversation {
   conversationId: string
   channel: TrengoChannel
@@ -420,6 +434,9 @@ export interface TrengoConversation {
   latestStatus: 'sending' | 'failed' | 'sent' | null
   /** The provider's actual error message for a failed send. */
   latestError: string | null
+  /** The newest messages, oldest-first, for the inline thread preview —
+   *  customer replies AND our sends, clearly attributed. */
+  messages: TrengoConversationMessage[]
 }
 
 export async function trengoConversationsForContact(
@@ -461,12 +478,30 @@ export async function trengoConversationsForContact(
         replyDeadlineAt: null,
         latestStatus: null,
         latestError: null,
+        messages: [],
       }
       convs.set(ticketId, c)
       order.push(ticketId)
     }
     if (r.type === 'message') {
       c.messageCount += 1
+      // Rows iterate newest-first, so the first N message rows per
+      // conversation are its newest N — reversed to oldest-first below.
+      if (c.messages.length < CONVERSATION_PREVIEW_MESSAGES) {
+        const it = asString(p['interactionType'])
+        c.messages.push({
+          id: r.id,
+          direction:
+            it === 'message.inbound'
+              ? 'inbound'
+              : it === 'message.outbound'
+                ? 'outbound'
+                : null,
+          body: asString(p['body']) ?? r.summary,
+          occurredAt: r.occurredAt,
+          senderName: asString(p['senderName']),
+        })
+      }
       // Rows iterate newest-first, so the first message row per conversation
       // is its newest message — that's whose send state the card shows.
       if (c.latestStatus === null && c.latestError === null && c.messageCount === 1) {
@@ -506,6 +541,7 @@ export async function trengoConversationsForContact(
     .map((k) => convs.get(k))
     .filter((c): c is TrengoConversation => !!c)
     .sort((a, b) => b.latestAt.getTime() - a.latestAt.getTime())
+  for (const c of ordered) c.messages.reverse()
 
   const hasMore = ordered.length > limit
   const sliced = hasMore ? ordered.slice(0, limit) : ordered

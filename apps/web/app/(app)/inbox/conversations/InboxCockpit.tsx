@@ -311,7 +311,7 @@ function FoldersRail({
     <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-200 bg-neutral-50/60 p-3 md:flex">
       <div className="flex items-center gap-2 px-1 pt-1 text-sm font-semibold text-neutral-900">
         <InboxIcon size={16} className="text-neutral-500" />
-        Inbox
+        Trengo
       </div>
 
       <nav aria-label="Views" className="flex flex-col gap-0.5">

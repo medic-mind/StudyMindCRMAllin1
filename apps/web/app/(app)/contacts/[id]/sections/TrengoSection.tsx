@@ -1,9 +1,14 @@
-// Trengo conversations section. RSC card list; the WhatsApp 24h reply
-// deadline is surfaced as an inline pill so agents know when the window
-// closes. Per-card Close / Reopen actions are mounted as a client island
-// (TrengoConversationActions) so the state change PATCHes Trengo via the
-// audited outbound and updates immediately on success.
+// Trengo conversations section. RSC card list rendered as Trengo-style mini
+// threads: the customer's messages on the left (named), ours on the right
+// (named agent, primary tint) — so it is always obvious who said what. The
+// WhatsApp 24h reply deadline is surfaced as an inline pill so agents know
+// when the window closes. Per-card Close / Reopen actions are mounted as a
+// client island (TrengoConversationActions) so the state change PATCHes
+// Trengo via the audited outbound and updates immediately on success.
 
+import Link from 'next/link'
+
+import { displayMessageBody } from '@/lib/format/html-text'
 import type { TrengoConversation } from '@/lib/view-models/contact-channels'
 
 import { StartTrengoConversation } from './StartTrengoConversation'
@@ -21,6 +26,8 @@ const CHANNEL_LABEL: Record<string, string> = {
   web_chat: 'Web chat',
 }
 
+const PREVIEW_BODY_CHARS = 600
+
 export function TrengoSection({ contactId, conversations }: Props): JSX.Element {
   if (conversations.length === 0) {
     return (
@@ -36,7 +43,13 @@ export function TrengoSection({ contactId, conversations }: Props): JSX.Element 
   const now = Date.now()
   return (
     <div className="space-y-3">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <Link
+          href="/inbox/conversations"
+          className="text-xs text-primary-700 hover:underline"
+        >
+          Open the Trengo inbox →
+        </Link>
         <StartTrengoConversation contactId={contactId} />
       </div>
       <ol className="space-y-2">
@@ -88,9 +101,52 @@ export function TrengoSection({ contactId, conversations }: Props): JSX.Element 
                 }).format(new Date(c.latestAt))}
               </time>
             </div>
-            {c.latestSnippet && (
+
+            {/* The thread itself — customer left, us right, named senders. */}
+            {c.messages.length > 0 ? (
+              <ol className="mt-2 space-y-1.5">
+                {c.messages.map((m) => {
+                  const outbound = m.direction === 'outbound'
+                  const body = displayMessageBody(m.body)
+                  const truncated =
+                    body && body.length > PREVIEW_BODY_CHARS
+                      ? `${body.slice(0, PREVIEW_BODY_CHARS)}…`
+                      : body
+                  return (
+                    <li
+                      key={m.id}
+                      className={`max-w-[85%] rounded-lg border px-2.5 py-1.5 text-sm ${
+                        outbound
+                          ? 'ml-auto rounded-br-sm border-primary-100 bg-primary-50 text-neutral-900'
+                          : 'mr-auto rounded-bl-sm border-neutral-200 bg-neutral-50 text-neutral-900'
+                      }`}
+                    >
+                      <div className="mb-0.5 flex items-baseline justify-between gap-3 text-[10px] text-neutral-500">
+                        <span className="font-semibold uppercase tracking-wide">
+                          {outbound
+                            ? `${m.senderName ?? 'StudyMind'} · us`
+                            : `${m.senderName ?? 'Customer'} · customer`}
+                        </span>
+                        <time dateTime={new Date(m.occurredAt).toISOString()}>
+                          {new Intl.DateTimeFormat('en-GB', {
+                            day: 'numeric',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          }).format(new Date(m.occurredAt))}
+                        </time>
+                      </div>
+                      <p className="whitespace-pre-wrap break-words">
+                        {truncated ?? '(no content)'}
+                      </p>
+                    </li>
+                  )
+                })}
+              </ol>
+            ) : c.latestSnippet ? (
               <p className="mt-1 text-sm text-neutral-800">{c.latestSnippet}</p>
-            )}
+            ) : null}
+
             {c.latestError && (
               <p className="mt-1 text-xs text-red-700">
                 Trengo rejected the send: {c.latestError}. It retries automatically

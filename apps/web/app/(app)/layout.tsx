@@ -40,18 +40,18 @@ function buildNav(role: Role): NavItem[] {
   // sidebar stays focused on actual work surfaces.
   const items: NavItemDef[] = [
     { href: '/', label: 'Dashboard' },
-    // Communications — customer channels. Inbox is the unified cross-channel
-    // customer view (WhatsApp / SMS / web-chat / email); Mail is the focused
-    // email client. Both are customer-facing.
+    // Communications — customer channels. Trengo is the unified cross-channel
+    // customer inbox (WhatsApp / SMS / web-chat / email, synced with Trengo);
+    // Mail is the focused email client. Both are customer-facing.
     {
       href: '/inbox',
-      label: 'Inbox',
-      children: [
-        { href: '/inbox', label: 'Conversations' },
-        { href: '/inbox/slack-mentions', label: 'Slack mentions' },
-      ],
+      label: 'Trengo',
+      children: [{ href: '/inbox', label: 'Conversations' }],
     },
     { href: '/mail', label: 'Mail' },
+    // Slack — its own category: the triage tray for customer mentions the AI
+    // spotted in watched Slack channels (ADR 0034).
+    { href: '/inbox/slack-mentions', label: 'Slack mentions' },
     // Calls — the missed-calls queue (inbound calls to follow up; calling back
     // clears them automatically, CLAUDE.md §10) and the full Aircall call
     // history. Operational, so all call-handling staff.

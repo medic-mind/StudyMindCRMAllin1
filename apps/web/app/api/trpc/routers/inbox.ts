@@ -319,6 +319,25 @@ export const inboxRouter = router({
                   },
                 })
 
+        // Resolve CRM authors (replies sent from the CRM carry createdById)
+        // in one batch so each outbound bubble can name its sender.
+        const authorIds = [
+          ...new Set(
+            messageRows
+              .map((r) => r.createdById)
+              .filter((x): x is string => typeof x === 'string' && x !== ''),
+          ),
+        ]
+        const authors = authorIds.length
+          ? await ctx.db.user.findMany({
+              where: { id: { in: authorIds } },
+              select: { id: true, name: true, email: true },
+            })
+          : []
+        const authorNameById = new Map(
+          authors.map((u) => [u.id, u.name ?? u.email] as const),
+        )
+
         const messages = messageRows.map((r) => {
           const payload = (r.payload as Record<string, unknown> | null) ?? {}
           const interactionType =
@@ -382,12 +401,24 @@ export const inboxRouter = router({
               stored: typeof a['s3Key'] === 'string' && (a['s3Key'] as string).length > 0,
             }))
             .filter((a) => a.stored)
+          // Sender attribution: imported/webhook rows carry the Trengo name
+          // (payload.senderName — agent for outbound, customer for inbound);
+          // CRM-sent replies resolve their author from createdById.
+          const payloadSender =
+            typeof payload['senderName'] === 'string' &&
+            (payload['senderName'] as string).trim() !== ''
+              ? (payload['senderName'] as string)
+              : null
+          const senderName =
+            payloadSender ??
+            (r.createdById ? (authorNameById.get(r.createdById) ?? null) : null)
           return {
             id: r.id,
             occurredAt: r.occurredAt,
             direction,
             body: body ?? r.summary,
             authorId: r.createdById,
+            senderName,
             attachments,
             mailAttachments,
           }

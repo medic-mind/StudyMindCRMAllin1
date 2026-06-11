@@ -3,14 +3,32 @@
 // .close, .reopen) — no new server code. Virtual Assistants see the
 // composer disabled per server-side FORBIDDEN; we surface the same intent
 // in the UI by hiding the send button on the error toast.
+//
+// WhatsApp replies additionally offer the workspace's APPROVED Trengo
+// templates (HSM) with inline {{n}} fill-in + live preview — the same
+// composer Trengo shows, and the only send WhatsApp accepts once the
+// 24-hour customer-service window has closed. Sent via the existing
+// interaction.trengo.startWhatsappTemplate (audited, /wa_sessions).
 
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
+import {
+  missingWaParams,
+  parseWaTemplateSegments,
+  renderWaTemplate,
+} from '@/components/contact/wa-template'
 import { trpc } from '@/lib/trpc/client'
+
+interface WaTemplate {
+  id: number
+  title: string
+  body: string
+  params: string[]
+}
 
 interface Props {
   conversationId: string
@@ -26,6 +44,9 @@ interface Props {
    *  against. Null when there are no messages yet (rare; we still allow
    *  the send to create the first outbound). */
   latestInteractionId: string | null
+  /** WhatsApp 24h customer-service window: true = open (free text allowed),
+   *  false = closed (only approved templates deliver), null = not WhatsApp. */
+  replyWindowOpen?: boolean | null
 }
 
 /** Substitute the supported placeholders with the contact's details. */
@@ -45,10 +66,25 @@ export function ConversationReply({
   channel,
   contactName,
   latestInteractionId,
+  replyWindowOpen = null,
 }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
   const [body, setBody] = useState('')
+
+  // WhatsApp: default to the template composer when the 24h window has
+  // closed — free text would be rejected by WhatsApp, templates deliver.
+  const isWhatsapp = channel === 'whatsapp'
+  const [mode, setMode] = useState<'text' | 'template'>(
+    isWhatsapp && replyWindowOpen === false ? 'template' : 'text',
+  )
+  const [waTemplate, setWaTemplate] = useState<WaTemplate | null>(null)
+  const [waParams, setWaParams] = useState<Record<string, string>>({})
+
+  const waTemplates = trpc.contact.callSummary.waTemplates.useQuery(undefined, {
+    enabled: isWhatsapp && mode === 'template',
+    staleTime: 60_000,
+  })
 
   const quickReplies = trpc.quickReply.list.useQuery(
     channel ? { channel: channel as 'whatsapp' | 'sms' | 'email' | 'web_chat' } : undefined,
@@ -72,6 +108,23 @@ export function ConversationReply({
     },
     onError: (e) => toast.error(e.message ?? 'Could not send reply'),
   })
+
+  const sendTemplate = trpc.interaction.trengo.startWhatsappTemplate.useMutation({
+    onSuccess: () => {
+      setWaTemplate(null)
+      setWaParams({})
+      toast.success('Template sent')
+      void utils.inbox.conversations.get.invalidate({ conversationId })
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not send the template'),
+  })
+
+  const waSegments = useMemo(
+    () => (waTemplate ? parseWaTemplateSegments(waTemplate.body) : []),
+    [waTemplate],
+  )
+  const waPreview = waTemplate ? renderWaTemplate(waTemplate.body, waParams) : ''
+  const waMissing = waTemplate ? missingWaParams(waTemplate.params, waParams) : []
 
   const close = trpc.interaction.trengo.close.useMutation({
     onSuccess: () => {
@@ -151,13 +204,36 @@ export function ConversationReply({
     send.mutate({ interactionId: latestInteractionId, body, attachments })
   }
 
+  const waData = waTemplates.data
+  const templateSendDisabled =
+    sendTemplate.isPending || !waTemplate || waMissing.length > 0
+
   return (
     <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+        <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
           Reply
+          {isWhatsapp ? (
+            <span className="inline-flex rounded-md border border-neutral-200 bg-neutral-100 p-0.5 normal-case tracking-normal">
+              {(['text', 'template'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  aria-pressed={mode === m}
+                  className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                    mode === m
+                      ? 'bg-white text-neutral-900 shadow-sm'
+                      : 'text-neutral-600 hover:text-neutral-900'
+                  }`}
+                >
+                  {m === 'text' ? 'Free text' : 'Approved template'}
+                </button>
+              ))}
+            </span>
+          ) : null}
         </span>
-        {(quickReplies.data?.length ?? 0) > 0 ? (
+        {mode === 'text' && (quickReplies.data?.length ?? 0) > 0 ? (
           <select
             defaultValue=""
             onChange={(e) => {
@@ -179,62 +255,193 @@ export function ConversationReply({
           </select>
         ) : null}
       </div>
-      <label className="flex flex-col gap-1 text-sm">
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={4}
-          placeholder={
-            canSend
-              ? 'Write your reply here. Sends through Trengo on the same channel.'
-              : 'No inbound message to reply to yet.'
-          }
-          className="w-full rounded border border-neutral-300 bg-white p-2 font-mono text-sm focus:border-primary-500 focus:outline-none"
-        />
-      </label>
+      {mode === 'text' ? (
+        <>
+          {isWhatsapp && replyWindowOpen === false ? (
+            <p className="mb-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+              The 24-hour WhatsApp window has closed — WhatsApp will reject free
+              text. Switch to “Approved template” to message this customer.
+            </p>
+          ) : null}
+          <label className="flex flex-col gap-1 text-sm">
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={4}
+              placeholder={
+                canSend
+                  ? 'Write your reply here. Sends through Trengo on the same channel.'
+                  : 'No inbound message to reply to yet.'
+              }
+              className="w-full rounded border border-neutral-300 bg-white p-2 font-mono text-sm focus:border-primary-500 focus:outline-none"
+            />
+          </label>
 
-      {files.length > 0 ? (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {files.map((f, i) => (
-            <li
-              key={`${f.name}-${i}`}
-              className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-700"
-            >
-              {f.name} · {Math.round(f.size / 1024)} KB
-              <button
-                type="button"
-                aria-label={`Remove ${f.name}`}
-                onClick={() => setFiles(files.filter((_, j) => j !== i))}
-                className="text-neutral-400 hover:text-danger-600"
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+          {files.length > 0 ? (
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {files.map((f, i) => (
+                <li
+                  key={`${f.name}-${i}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-700"
+                >
+                  {f.name} · {Math.round(f.size / 1024)} KB
+                  <button
+                    type="button"
+                    aria-label={`Remove ${f.name}`}
+                    onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                    className="text-neutral-400 hover:text-danger-600"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : (
+        /* ── WhatsApp approved-template composer — mirrors Trengo's own:
+              pick the template, fill each {{n}} inline, watch the preview. ── */
+        <div className="space-y-2">
+          {waTemplates.isLoading ? (
+            <p className="text-xs text-neutral-500">Loading templates from Trengo…</p>
+          ) : !waData?.available ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+              {waData?.reason ?? 'Could not load WhatsApp templates from Trengo.'}
+            </p>
+          ) : waData.templates.length === 0 ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+              No approved WhatsApp templates in your Trengo workspace yet — add one
+              in Trengo first.
+            </p>
+          ) : !waTemplate ? (
+            <ul className="max-h-48 space-y-1 overflow-y-auto pr-1">
+              {waData.templates.map((t) => (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWaTemplate(t)
+                      setWaParams({})
+                    }}
+                    className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40"
+                  >
+                    <span className="block text-xs font-semibold text-neutral-900">
+                      {t.title}
+                    </span>
+                    <span className="mt-0.5 block whitespace-pre-wrap text-xs leading-snug text-neutral-600">
+                      {t.body}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-neutral-900">
+                  {waTemplate.title}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWaTemplate(null)
+                    setWaParams({})
+                  }}
+                  className="text-xs text-primary-700 hover:underline"
+                >
+                  ← Choose a different template
+                </button>
+              </div>
+              <div className="whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm leading-relaxed text-neutral-800">
+                {waSegments.map((seg, i) =>
+                  seg.kind === 'text' ? (
+                    <span key={i}>{seg.text}</span>
+                  ) : seg.first ? (
+                    <input
+                      key={i}
+                      value={waParams[seg.key] ?? ''}
+                      onChange={(e) =>
+                        setWaParams((prev) => ({ ...prev, [seg.key]: e.target.value }))
+                      }
+                      placeholder={seg.key}
+                      aria-label={`Template variable ${seg.key}`}
+                      className="mx-0.5 inline-block w-32 rounded border border-primary-300 bg-white px-1.5 py-0.5 text-sm focus:border-primary-500 focus:outline-none"
+                    />
+                  ) : (
+                    <span
+                      key={i}
+                      className="mx-0.5 rounded bg-primary-100 px-1 text-primary-800"
+                    >
+                      {(waParams[seg.key] ?? '').trim() || seg.key}
+                    </span>
+                  ),
+                )}
+              </div>
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+                  Preview
+                </p>
+                <div className="max-w-md whitespace-pre-wrap rounded-lg rounded-tl-none border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm leading-relaxed text-neutral-900">
+                  {waPreview}
+                </div>
+                {waMissing.length > 0 ? (
+                  <p className="mt-1 text-xs text-amber-700">
+                    Fill {waMissing.join(', ')} to send — WhatsApp rejects templates
+                    with empty variables.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void handleSend()}
-          disabled={sendDisabled}
-          className="rounded bg-primary-600 px-3 py-1 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
-        >
-          {send.isPending || reading ? 'Sending…' : 'Send'}
-        </button>
-        <label className="cursor-pointer rounded border border-neutral-300 bg-white px-3 py-1 text-sm text-neutral-700 hover:bg-neutral-50">
-          Attach
-          <input
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              onPickFiles(e.target.files)
-              e.currentTarget.value = ''
+        {mode === 'text' ? (
+          <button
+            type="button"
+            onClick={() => void handleSend()}
+            disabled={sendDisabled}
+            className="rounded bg-primary-600 px-3 py-1 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            {send.isPending || reading ? 'Sending…' : 'Send'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              if (!waTemplate) return
+              sendTemplate.mutate({
+                contactId,
+                templateId: waTemplate.id,
+                templateTitle: waTemplate.title,
+                params: waTemplate.params.map((key) => ({
+                  key,
+                  value: (waParams[key] ?? '').trim(),
+                })),
+                renderedBody: waPreview,
+              })
             }}
-          />
-        </label>
+            disabled={templateSendDisabled}
+            className="rounded bg-primary-600 px-3 py-1 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            {sendTemplate.isPending ? 'Sending…' : 'Send template'}
+          </button>
+        )}
+        {mode === 'text' ? (
+          <label className="cursor-pointer rounded border border-neutral-300 bg-white px-3 py-1 text-sm text-neutral-700 hover:bg-neutral-50">
+            Attach
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                onPickFiles(e.target.files)
+                e.currentTarget.value = ''
+              }}
+            />
+          </label>
+        ) : null}
         {status === 'closed' ? (
           <button
             type="button"
