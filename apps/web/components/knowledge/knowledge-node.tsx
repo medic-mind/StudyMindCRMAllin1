@@ -11,15 +11,18 @@ import { humaniseKey } from '@studymind/core/knowledge'
 
 import { CheckIcon } from '@/components/ui/icon'
 import {
+  anchorId,
   asGlossaryRecord,
+  asRecordGrid,
   asStatRecord,
+  cardParts,
   classifyArray,
   extractSummary,
   isObject,
   isScalar,
+  isStepKey,
   looksLikeStat,
   partitionEntries,
-  pickTitleKey,
   scalarText,
   type KnowledgeObject,
   type Scalar,
@@ -153,6 +156,27 @@ function Bullets({
         </li>
       ))}
     </ul>
+  )
+}
+
+/** Sequential guidance (scenario steps, processes) — numbered, not bulleted. */
+function Steps({ items, tone }: { items: Scalar[]; tone: ToneClasses }) {
+  return (
+    <ol className="space-y-2">
+      {items.map((item, idx) => (
+        <li key={idx} className="flex gap-3">
+          <span
+            aria-hidden
+            className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums ${tone.chip}`}
+          >
+            {idx + 1}
+          </span>
+          <span className="whitespace-pre-line text-sm leading-relaxed text-neutral-700">
+            {scalarText(item)}
+          </span>
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -291,36 +315,28 @@ function DefinitionGrid({
   )
 }
 
-/** A rich "record card" — a title row with numeric badges, then its fields. */
+/** A rich "record card" — a title row with stat + categorical badges, then
+ *  its fields. `fallbackTitle` covers catalogue entries keyed by id. */
 function RecordCard({
   obj,
   tone,
   depth,
+  fallbackTitle,
+  id,
 }: {
   obj: KnowledgeObject
   tone: ToneClasses
   depth: number
+  fallbackTitle?: string | null
+  id?: string
 }) {
-  const titleKey = pickTitleKey(obj)
-  const title = titleKey ? scalarText(obj[titleKey] as Scalar) : null
-
-  // Surface short numeric/stat scalar fields as header badges.
-  const badges: Array<[string, string]> = []
-  const rest: KnowledgeObject = {}
-  for (const [key, value] of Object.entries(obj)) {
-    if (key === titleKey) continue
-    if (isScalar(value)) {
-      const text = scalarText(value)
-      if (looksLikeStat(text) && badges.length < 4) {
-        badges.push([humaniseKey(key), text])
-        continue
-      }
-    }
-    rest[key] = value
-  }
+  const { title, badges, rest } = cardParts(obj, fallbackTitle)
 
   return (
-    <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+    <div
+      id={id}
+      className="scroll-mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 bg-neutral-50/60 px-4 py-2.5">
         <h4 className={`text-sm font-semibold ${title ? tone.heading : 'text-neutral-700'}`}>
           {title ?? 'Item'}
@@ -358,12 +374,19 @@ function ArrayView({
   items,
   tone,
   depth,
+  hint,
 }: {
   items: KnowledgeValue[]
   tone: ToneClasses
   depth: number
+  hint?: string
 }) {
   const layout = classifyArray(items)
+  // Sequential keys (guidance, steps, process…) get numbered steps instead
+  // of chips/bullets — order is the content.
+  if ((layout === 'chips' || layout === 'bullets') && isStepKey(hint)) {
+    return <Steps items={items as Scalar[]} tone={tone} />
+  }
   switch (layout) {
     case 'empty':
       return <p className="text-sm text-neutral-400">None.</p>
@@ -417,7 +440,7 @@ function ObjectView({
             <span aria-hidden className={`h-3 w-1 rounded-full ${tone.bar}`} />
             {humaniseKey(key)}
           </h4>
-          <KnowledgeValueView value={value} tone={tone} depth={depth + 1} />
+          <KnowledgeValueView value={value} tone={tone} depth={depth + 1} hint={key} />
         </section>
       ))}
     </div>
@@ -429,13 +452,15 @@ export function KnowledgeValueView({
   value,
   tone,
   depth,
+  hint,
 }: {
   value: KnowledgeValue
   tone: ToneClasses
   depth: number
+  hint?: string
 }) {
   if (isScalar(value)) return <Prose text={scalarText(value)} />
-  if (Array.isArray(value)) return <ArrayView items={value} tone={tone} depth={depth} />
+  if (Array.isArray(value)) return <ArrayView items={value} tone={tone} depth={depth} hint={hint} />
   return <ObjectView obj={value} tone={tone} depth={depth} />
 }
 
@@ -459,6 +484,9 @@ export function KnowledgeNodeView({
   if (isObject(data)) {
     const { summary, rest } = extractSummary(data)
     const { scalars, complex } = partitionEntries(rest)
+    // Catalogue sections (products, hubs, brands — many object entries) read
+    // as a grid of record cards rather than a stack of full-width sections.
+    const grid = asRecordGrid(complex)
     return (
       <div className="space-y-5">
         {summary ? (
@@ -473,17 +501,36 @@ export function KnowledgeNodeView({
           </div>
         ) : null}
 
-        {complex.map(([key, value]) => (
-          <section key={key} className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
-            <div className="flex items-center gap-2.5 border-b border-neutral-100 px-4 py-3 sm:px-5">
-              <span aria-hidden className={`h-5 w-1.5 rounded-full ${t.bar}`} />
-              <h3 className="text-base font-semibold text-neutral-900">{humaniseKey(key)}</h3>
-            </div>
-            <div className="px-4 py-4 sm:px-5">
-              <KnowledgeValueView value={value} tone={t} depth={1} />
-            </div>
-          </section>
-        ))}
+        {grid ? (
+          <div className="grid items-start gap-4 lg:grid-cols-2">
+            {grid.map(([key, obj]) => (
+              <RecordCard
+                key={key}
+                id={anchorId(key)}
+                obj={obj}
+                tone={t}
+                depth={1}
+                fallbackTitle={humaniseKey(key)}
+              />
+            ))}
+          </div>
+        ) : (
+          complex.map(([key, value]) => (
+            <section
+              key={key}
+              id={anchorId(key)}
+              className="scroll-mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm"
+            >
+              <div className="flex items-center gap-2.5 border-b border-neutral-100 px-4 py-3 sm:px-5">
+                <span aria-hidden className={`h-5 w-1.5 rounded-full ${t.bar}`} />
+                <h3 className="text-base font-semibold text-neutral-900">{humaniseKey(key)}</h3>
+              </div>
+              <div className="px-4 py-4 sm:px-5">
+                <KnowledgeValueView value={value} tone={t} depth={1} hint={key} />
+              </div>
+            </section>
+          ))
+        )}
       </div>
     )
   }

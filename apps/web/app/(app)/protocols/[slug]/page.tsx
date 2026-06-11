@@ -16,9 +16,11 @@ import {
 import { db } from '@/lib/db'
 import { groupStyle } from '@/components/knowledge/group-style'
 import { KnowledgeNodeView } from '@/components/knowledge/knowledge-node'
+import { KnowledgeToc } from '@/components/knowledge/knowledge-toc'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { SparklesIcon } from '@/components/ui/icon'
+import { tocFor } from '@/lib/knowledge/present'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,6 +40,9 @@ export default async function ProtocolSectionPage({ params }: PageProps) {
   const inGroup = store.sections.filter(
     (s) => s.group === section.group && s.slug !== section.slug,
   )
+  // "On this page" rail for long sections — 4+ subsections earns a TOC.
+  const toc = tocFor(data)
+  const showToc = toc.length >= 4
 
   return (
     <>
@@ -72,7 +77,14 @@ export default async function ProtocolSectionPage({ params }: PageProps) {
             </span>
           </div>
 
-          <KnowledgeNodeView data={data} tone={style.tone} />
+          {showToc ? (
+            <div className="xl:grid xl:grid-cols-[minmax(0,1fr),200px] xl:items-start xl:gap-8">
+              <KnowledgeNodeView data={data} tone={style.tone} />
+              <KnowledgeToc entries={toc} />
+            </div>
+          ) : (
+            <KnowledgeNodeView data={data} tone={style.tone} />
+          )}
 
           {inGroup.length > 0 ? (
             <section aria-label={`More in ${section.group}`}>

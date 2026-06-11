@@ -14,10 +14,23 @@ import { groupStyle } from '@/components/knowledge/group-style'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { ChevronRightIcon, PencilIcon, SparklesIcon } from '@/components/ui/icon'
+import { sectionItemCount } from '@/lib/knowledge/present'
 
 import { KnowledgeSearch } from './KnowledgeSearch'
 
 export const dynamic = 'force-dynamic'
+
+// The sections agents reach for mid-call — mirrors the Crib homepage's
+// quick links. Filtered against the live store so an edited/renamed
+// knowledge base never renders a dead link.
+const QUICK_LINK_SLUGS = [
+  'master-pricing',
+  'scripts',
+  'pricing',
+  'upsell',
+  'live-days',
+  'mmi-circuits',
+] as const
 
 export default async function ProtocolsPage() {
   const me = await getCurrentUser()
@@ -68,6 +81,41 @@ export default async function ProtocolsPage() {
 
           <KnowledgeSearch />
 
+          {(() => {
+            const quick = QUICK_LINK_SLUGS.map((slug) =>
+              store.sections.find((s) => s.slug === slug),
+            ).filter((s): s is NonNullable<typeof s> => !!s)
+            if (quick.length === 0) return null
+            return (
+              <section aria-label="Most used">
+                <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-400">
+                  Most used
+                </h2>
+                <div className="flex flex-wrap gap-2">
+                  {quick.map((section) => {
+                    const style = groupStyle(section.group)
+                    const { Icon } = style
+                    return (
+                      <Link
+                        key={section.slug}
+                        href={`/protocols/${section.slug}`}
+                        className={`flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-800 shadow-sm transition-colors ${style.hover}`}
+                      >
+                        <span
+                          aria-hidden
+                          className={`flex h-5 w-5 items-center justify-center rounded ${style.chip}`}
+                        >
+                          <Icon size={12} />
+                        </span>
+                        {section.title}
+                      </Link>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })()}
+
           {KNOWLEDGE_GROUP_ORDER.map((group) => {
             const inGroup = store.sections.filter((s) => s.group === group)
             if (inGroup.length === 0) return null
@@ -88,26 +136,38 @@ export default async function ProtocolsPage() {
                   </span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {inGroup.map((section) => (
-                    <Link key={section.slug} href={`/protocols/${section.slug}`} className="group">
-                      <div
-                        className={`flex h-full flex-col rounded-xl border border-neutral-200 bg-white p-4 shadow-sm transition-colors ${style.hover}`}
+                  {inGroup.map((section) => {
+                    const count = sectionItemCount(store.data[section.dataKey])
+                    return (
+                      <Link
+                        key={section.slug}
+                        href={`/protocols/${section.slug}`}
+                        className="group"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-neutral-900">
-                            {section.title}
-                          </h3>
-                          <ChevronRightIcon
-                            size={16}
-                            className="shrink-0 text-neutral-300 transition-transform group-hover:translate-x-0.5 group-hover:text-neutral-500"
-                          />
+                        <div
+                          className={`flex h-full flex-col rounded-xl border border-neutral-200 bg-white p-4 shadow-sm transition-colors ${style.hover}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <h3 className="text-sm font-semibold text-neutral-900">
+                              {section.title}
+                            </h3>
+                            <ChevronRightIcon
+                              size={16}
+                              className="shrink-0 text-neutral-300 transition-transform group-hover:translate-x-0.5 group-hover:text-neutral-500"
+                            />
+                          </div>
+                          <p className="mt-1 text-xs leading-relaxed text-neutral-500">
+                            {section.blurb}
+                          </p>
+                          {count !== null && count > 1 ? (
+                            <span className="mt-2 pt-1 text-[11px] font-medium tabular-nums text-neutral-400">
+                              {count} entries
+                            </span>
+                          ) : null}
                         </div>
-                        <p className="mt-1 text-xs leading-relaxed text-neutral-500">
-                          {section.blurb}
-                        </p>
-                      </div>
-                    </Link>
-                  ))}
+                      </Link>
+                    )
+                  })}
                 </div>
               </section>
             )
