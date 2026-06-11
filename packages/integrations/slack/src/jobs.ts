@@ -24,6 +24,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { matchContactByCandidate } from './match'
 import { resolveSlackNames } from './names'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
@@ -136,11 +137,14 @@ export const slackEventReceived = inngest.createFunction(
       return { ok: true, parked: true, confidence: parsed.confidence }
     }
 
-    // 3. High confidence — match to a Contact (email then phone). Never
-    //    auto-create a Contact (§12).
-    const contactId = await step.run('match-contact', async () =>
-      matchContactByCandidate(parsed),
+    // 3. High confidence — match to ONE contact: email, then phone
+    //    (normalised variants), then an unambiguous full name. Ambiguity and
+    //    misses park for triage; we never auto-create a Contact (§12) and
+    //    never guess between two same-named people (§3).
+    const match = await step.run('match-contact', async () =>
+      matchContactByCandidate(db, parsed.candidateContactIdentifier),
     )
+    const contactId = match.contactId
 
     if (!contactId) {
       // Confidence said yes but no match in our DB — also park.
@@ -205,6 +209,7 @@ export const slackEventReceived = inngest.createFunction(
             sentiment: parsed.sentiment,
             suggestedNextAction: parsed.suggestedNextAction,
             confidence: parsed.confidence,
+            matchedVia: match.via,
             promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
           },
         },
@@ -240,27 +245,6 @@ export const slackEventReceived = inngest.createFunction(
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
-
-async function matchContactByCandidate(parsed: SlackSummary): Promise<string | null> {
-  const email = parsed.candidateContactIdentifier.email?.trim().toLowerCase() ?? null
-  const phone = parsed.candidateContactIdentifier.phone?.trim() ?? null
-
-  if (email) {
-    const byEmail = await db.contact.findFirst({
-      where: { email, deletedAt: null },
-      select: { id: true },
-    })
-    if (byEmail) return byEmail.id
-  }
-  if (phone && phone.startsWith('+')) {
-    const byPhone = await db.contact.findFirst({
-      where: { phoneE164: phone, deletedAt: null },
-      select: { id: true },
-    })
-    if (byPhone) return byPhone.id
-  }
-  return null
-}
 
 // Weekly drift-triage reminder. CLAUDE.md §18.3.
 // Counts untriaged DriftSample rows and posts a reminder to #crm-finops.
