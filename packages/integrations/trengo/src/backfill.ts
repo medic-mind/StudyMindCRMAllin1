@@ -26,6 +26,7 @@ import { inngest } from '@studymind/jobs'
 
 import { createClientForAgent, TrengoApiError, type TrengoClient } from './client'
 import { applyEventToConversation } from './conversation-head'
+import { extractNameFromMessages } from './name-extract'
 import { isTrengoChannel, type TrengoChannel } from './types'
 
 interface BackfillRequestedData {
@@ -226,6 +227,11 @@ export interface NormalisedTicket {
   status: 'open' | 'closed'
   subject: string | null
   labels: string[]
+  /** Whether the listing row carried a labels/tags key at all. When it did
+   *  not, the import fetches the ticket detail to read the labels — an empty
+   *  listing field and "the listing never includes labels" must not both
+   *  silently mean "no labels". */
+  labelsKnown: boolean
   contact: { phone: string | null; email: string | null; name: string | null }
   createdAt: Date | null
 }
@@ -248,6 +254,7 @@ export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
         : 'open',
     subject: typeof t.subject === 'string' && t.subject.trim() !== '' ? t.subject : null,
     labels: extractTicketLabels(t.labels ?? t.tags),
+    labelsKnown: 'labels' in t || 'tags' in t,
     contact: {
       phone: t.contact?.phone?.trim() || null,
       email: t.contact?.email?.trim().toLowerCase() || null,
@@ -306,6 +313,24 @@ export async function listTicketsPage(
   )
   const parsed = parseListResponse<TrengoTicketRow>(res, page)
   return { ...parsed, endpoint: 'conversations' }
+}
+
+/** Labels from the ticket DETAIL — used when the listing row carried no
+ *  labels/tags key at all. Best-effort: any failure yields []. */
+async function fetchTicketDetailLabels(
+  request: RequestFn,
+  endpoint: TrengoListEndpoint,
+  ticketId: number,
+): Promise<string[]> {
+  const base = endpoint === 'tickets' ? '/tickets' : '/conversations'
+  try {
+    const res = await request<unknown>('GET', `${base}/${ticketId}`)
+    const root = (res ?? {}) as Record<string, unknown>
+    const detail = (root['data'] ?? root) as Record<string, unknown>
+    return extractTicketLabels(detail['labels'] ?? detail['tags'])
+  } catch {
+    return []
+  }
 }
 
 /** All messages on one ticket, walking the paginated listing. A 404 on the
@@ -524,11 +549,16 @@ async function processTicket(
     }
   }
 
-  // A matched contact with NO name at all takes the name Trengo holds for
-  // the customer — blanks only, never overwrite (§3). This is what stops the
-  // inbox saying "Contact" for people Trengo knows by name (phone-only or
-  // email-only contacts created by the lead funnel / call resolver).
-  if (matchedContact && ticket.contact.name && !matchedContact.firstName && !matchedContact.lastName) {
+  // Name-resolution waterfall step 1 (free, exact): a matched contact with
+  // NO name at all takes the name Trengo holds for the customer — blanks
+  // only, never overwrite (§3). This is what stops the inbox saying
+  // "Contact" for people Trengo knows by name (phone-only or email-only
+  // contacts created by the lead funnel / call resolver). Steps 2 (rules
+  // over message text, free) and 3 (AI, LAST — §18) run after the message
+  // loop below, only when this step had nothing to give.
+  const matchedIsNameless =
+    !!matchedContact && !matchedContact.firstName && !matchedContact.lastName
+  if (matchedContact && matchedIsNameless && ticket.contact.name) {
     const split = splitDisplayName(ticket.contact.name)
     if (split.firstName) {
       await db.contact.update({
@@ -560,6 +590,13 @@ async function processTicket(
     }
   }
 
+  // Whether the contact still has no name after step 1 — steps 2/3 below
+  // only run for these.
+  const contactNeedsName =
+    contactId !== null &&
+    !ticket.contact.name &&
+    (matchedContact ? matchedIsNameless : created === 1)
+
   const messages = await fetchTicketMessages(client.request, endpoint, ticket.id)
   let processed = 0
   let matched = 0
@@ -570,6 +607,8 @@ async function processTicket(
     direction: 'message.inbound' | 'message.outbound'
     occurredAt: Date
   }> = []
+  // The customer's own words, oldest first — input to waterfall steps 2/3.
+  const inboundBodies: string[] = []
 
   for (const m of messages) {
     processed += 1
@@ -585,6 +624,10 @@ async function processTicket(
     const direction = inferMessageDirection(m)
     const occurredAt = parseTrengoDate(m['created_at']) ?? new Date()
     headEvents.push({ direction, occurredAt })
+    const body = extractMessageBody(m)
+    if (direction === 'message.inbound' && body && inboundBodies.length < 12) {
+      inboundBodies.push(body)
+    }
 
     // Sender attribution, exactly as Trengo's thread shows it: outbound rows
     // name the Trengo agent (user_id → workspace user), inbound rows name
@@ -614,7 +657,6 @@ async function processTicket(
       }
       continue
     }
-    const body = extractMessageBody(m)
     const ticketIdOnMessage =
       typeof m['ticket_id'] === 'number'
         ? m['ticket_id']
@@ -644,6 +686,35 @@ async function processTicket(
     matched += 1
   }
 
+  // Name waterfall steps 2 + 3 — cheapest first, AI strictly last (§18):
+  // deterministic extraction from the customer's own messages, then the
+  // budget-capped contact_name_extraction mini-task. Blanks only (§3); the
+  // updateMany re-checks blankness so a concurrent write is never clobbered.
+  if (contactId && contactNeedsName && inboundBodies.length > 0) {
+    const resolvedName =
+      extractNameFromMessages(inboundBodies) ??
+      (await aiExtractNameFromMessages(inboundBodies, input.jobId))
+    if (resolvedName) {
+      const split = splitDisplayName(resolvedName)
+      if (split.firstName) {
+        await db.contact.updateMany({
+          where: {
+            id: contactId,
+            AND: [
+              { OR: [{ firstName: null }, { firstName: '' }] },
+              { OR: [{ lastName: null }, { lastName: '' }] },
+            ],
+          },
+          data: {
+            firstName: split.firstName,
+            lastName: split.lastName,
+            updatedById: input.actorId,
+          },
+        })
+      }
+    }
+  }
+
   // Replay the ticket onto the Conversation head (ADR 0020 Phase 2) so the
   // comms centre / unified inbox lists the imported history immediately. The
   // merger is monotonic and keyed on trengoTicketId, so replays converge.
@@ -665,7 +736,12 @@ async function processTicket(
     const lastAt = headEvents[headEvents.length - 1]!.occurredAt
     // Ticket labels mirror onto the head's tags — the same place the live
     // webhook's label.added events land, so the comms centre shows them.
-    for (const label of ticket.labels) {
+    // When the listing row carried no labels key at all, read the ticket
+    // detail rather than assuming "no labels".
+    const labels = ticket.labelsKnown
+      ? ticket.labels
+      : await fetchTicketDetailLabels(client.request, endpoint, ticket.id)
+    for (const label of labels) {
       await applyEventToConversation(db, {
         ticketId: ticket.id,
         eventName: 'label.added',
@@ -689,6 +765,42 @@ async function processTicket(
   }
 
   return { processed, matched, skipped, created }
+}
+
+/**
+ * Waterfall step 3 — AI name extraction, strictly LAST because it is the
+ * only paid route (§18). Budget-capped (`contact_name_extraction`,
+ * packages/ai/budget.ts); any failure — over budget, no API key, provider
+ * down, low confidence — quietly resolves to null and the display fallback
+ * (phone / email) covers the contact instead.
+ */
+async function aiExtractNameFromMessages(
+  inboundBodies: string[],
+  requestId: string,
+): Promise<string | null> {
+  try {
+    const {
+      buildContactNameExtractPrompt,
+      CONTACT_NAME_EXTRACT_PROMPT_VERSION,
+      contactNameExtractSchema,
+      NAME_EXTRACT_THRESHOLD,
+      runStructured,
+    } = await import('@studymind/ai')
+    const prompt = buildContactNameExtractPrompt({ inboundMessages: inboundBodies })
+    const parsed = await runStructured({
+      task: 'contact_name_extraction',
+      promptVersion: CONTACT_NAME_EXTRACT_PROMPT_VERSION,
+      schema: contactNameExtractSchema,
+      schemaName: 'contact_name_extract',
+      system: prompt.system,
+      user: prompt.user,
+      ctx: { requestId, backfill: true },
+    })
+    if (!parsed.name || parsed.confidence < NAME_EXTRACT_THRESHOLD) return null
+    return parsed.name
+  } catch {
+    return null
+  }
 }
 
 /**

@@ -73,6 +73,14 @@ export {
   type SlackSummaryPromptInput,
 } from './prompts/slack-summary'
 export {
+  buildContactNameExtractPrompt,
+  contactNameExtractSchema,
+  NAME_EXTRACT_THRESHOLD,
+  VERSION as CONTACT_NAME_EXTRACT_PROMPT_VERSION,
+  type ContactNameExtract,
+  type ContactNameExtractPromptInput,
+} from './prompts/contact-name-extract'
+export {
   buildMergeCandidatesPrompt,
   mergeCandidateSchema,
   MERGE_SUGGESTION_THRESHOLD,

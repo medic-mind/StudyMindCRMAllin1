@@ -271,7 +271,13 @@ export const inboxRouter = router({
             tags: true,
             replyDeadlineAt: true,
             contact: {
-              select: { id: true, firstName: true, lastName: true, email: true },
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneE164: true,
+              },
             },
           },
         })
@@ -442,8 +448,13 @@ export const inboxRouter = router({
             contactName: head.contact
               ? [head.contact.firstName, head.contact.lastName]
                   .filter((x): x is string => !!x)
-                  .join(' ') || head.contact.email || null
+                  .join(' ') ||
+                head.contact.email ||
+                head.contact.phoneE164 ||
+                null
               : null,
+            contactEmail: head.contact?.email ?? null,
+            contactPhone: head.contact?.phoneE164 ?? null,
           },
           messages,
         }
@@ -455,6 +466,8 @@ export const inboxRouter = router({
             .enum(['active', 'mine', 'unassigned', 'closed', 'snoozed'])
             .default('active'),
           channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
+          /** Trengo label filter — matches Conversation.tags. */
+          tag: z.string().trim().min(1).max(80).nullish(),
           cursor: z
             .object({ id: z.string(), lastMessageAt: z.date() })
             .nullish(),
@@ -492,6 +505,7 @@ export const inboxRouter = router({
             break
         }
         if (input.channel) where['channel'] = input.channel
+        if (input.tag) where['tags'] = { has: input.tag }
         if (input.cursor) {
           where['OR'] = [
             { lastMessageAt: { lt: input.cursor.lastMessageAt } },
@@ -522,7 +536,13 @@ export const inboxRouter = router({
             tags: true,
             replyDeadlineAt: true,
             contact: {
-              select: { id: true, firstName: true, lastName: true, email: true },
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneE164: true,
+              },
             },
           },
         })
@@ -569,7 +589,10 @@ export const inboxRouter = router({
           contactName: r.contact
             ? [r.contact.firstName, r.contact.lastName]
                 .filter((x): x is string => !!x)
-                .join(' ') || r.contact.email || null
+                .join(' ') ||
+              r.contact.email ||
+              r.contact.phoneE164 ||
+              null
             : null,
         }))
         const last = sliced[sliced.length - 1]
@@ -579,6 +602,31 @@ export const inboxRouter = router({
             : null
         return { items, nextCursor }
       }),
+
+    /**
+     * Distinct Trengo labels across conversation heads, ordered by how many
+     * conversations carry each — drives the label filter in the comms-centre
+     * rail. Bounded read (labels live on indexed head rows, not messages).
+     */
+    tags: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!ALLOWED_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+      }
+      const rows = await ctx.db.conversation.findMany({
+        where: { tags: { isEmpty: false } },
+        select: { tags: true },
+        take: 5000,
+      })
+      const counts = new Map<string, number>()
+      for (const r of rows) {
+        for (const t of r.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
+      }
+      return [...counts.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 50)
+        .map(([name, count]) => ({ name, count }))
+    }),
 
     // ADR 0020 Phase 6i — bulk triage actions on the conversation list.
     // markRead / snooze / unsnooze are fast head-only `updateMany`s; close

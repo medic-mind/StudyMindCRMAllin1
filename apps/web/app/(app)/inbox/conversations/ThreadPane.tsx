@@ -225,6 +225,7 @@ export function ThreadPane({
               status={head.status}
               channel={head.channel}
               contactName={head.contactName}
+              contactPhone={head.contactPhone}
               latestInteractionId={latestInteractionId}
               replyWindowOpen={
                 head.channel === 'whatsapp' && head.replyDeadlineAt

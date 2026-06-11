@@ -24,6 +24,7 @@ export type AiTaskCategory =
   | 'product_classification'
   | 'webinar_class_match'
   | 'webinar_schedule_import'
+  | 'contact_name_extraction'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -54,6 +55,10 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   webinar_class_match: { daily: 2, monthly: 40 },
   // One-shot schedule import (CSV/PDF/paste → weekly topics). Rare, mini-tier.
   webinar_schedule_import: { daily: 2, monthly: 40 },
+  // Last step of the Trengo name-resolution waterfall (§11) — only runs when
+  // the free routes (Trengo contact record, rule-based message extraction)
+  // both fail. Mini-tier, import-time only.
+  contact_name_extraction: { daily: 2, monthly: 40 },
 }
 
 interface UsageBucket {

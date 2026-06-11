@@ -167,9 +167,16 @@ describe('normaliseTicketRow', () => {
       status: 'open',
       subject: 'Re: trial lesson',
       labels: ['GCSE', 'Billing'],
+      labelsKnown: true,
       contact: { phone: '+447700900123', email: 'parent@example.com', name: 'Jo Smith' },
       createdAt: new Date('2026-05-30T10:00:00.000Z'),
     })
+  })
+
+  it('distinguishes "no labels" from "listing carried no labels key"', () => {
+    expect(normaliseTicketRow({ id: 1, labels: [] })?.labelsKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1, tags: [] })?.labelsKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1 })?.labelsKnown).toBe(false)
   })
 })
 
