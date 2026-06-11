@@ -30,6 +30,27 @@ export const InteractionType = z.enum([
   'ticket.reopened',
   'label.added',
   'label.removed',
+  // DB-aligned display types (Prisma InteractionType values passed through by
+  // interaction.list so the Activity timeline can label rows truthfully —
+  // previously every unmapped type collapsed to 'note' and the timeline lied).
+  'call',
+  'message',
+  'ticket_assigned',
+  'ticket_closed',
+  'ticket_reopened',
+  'label_added',
+  'label_removed',
+  'card_moved',
+  'card_comment',
+  'card_description_changed',
+  'call_summary',
+  'call_summary_sent',
+  'task_comment',
+  'lead_enquiry',
+  'email_forwarded',
+  'slack_summary',
+  'payment',
+  'family_pipeline_moved',
 ])
 export type InteractionType = z.infer<typeof InteractionType>
 
@@ -62,6 +83,23 @@ export const InteractionCreateInput = z
   })
 export type InteractionCreateInput = z.infer<typeof InteractionCreateInput>
 
+/** Display hints derived from the payload at list time so the timeline can
+ *  label rows truthfully (call direction/duration, message channel + send
+ *  state, …) without shipping the raw JSONB payload to the client. */
+export const InteractionListMeta = z.object({
+  /** trengo/email channel (whatsapp | sms | email | web_chat) when known. */
+  channel: z.string().nullable(),
+  /** Call direction (inbound | outbound) when the row is a call. */
+  direction: z.string().nullable(),
+  /** Call duration in seconds when known. */
+  durationSec: z.number().nullable(),
+  /** Outbound send state (pending_send | sent | failed) when applicable. */
+  status: z.string().nullable(),
+  /** Human-readable last send error, when the row is a failed outbound. */
+  error: z.string().nullable(),
+})
+export type InteractionListMeta = z.infer<typeof InteractionListMeta>
+
 export const InteractionListItem = z.object({
   id: z.string(),
   type: InteractionType,
@@ -70,6 +108,7 @@ export const InteractionListItem = z.object({
   authorId: z.string().nullable(),
   contactId: z.string().nullable(),
   familyId: z.string().nullable(),
+  meta: InteractionListMeta.optional(),
 })
 export type InteractionListItem = z.infer<typeof InteractionListItem>
 

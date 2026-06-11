@@ -84,7 +84,8 @@ const CloseInput = z.object({
 const CreateInput = z.object({
   title: z.string().trim().min(1).max(280),
   description: z.string().trim().max(4000).optional(),
-  assigneeId: z.string().min(1),
+  /** A task is for a person, a whole team, or both — at least one. */
+  assigneeId: z.string().min(1).optional(),
   teamId: z.string().min(1).optional(),
   dueAt: z.date().optional(),
   contactId: z.string().min(1).optional(),
@@ -315,11 +316,27 @@ export const taskRouter = router({
       })
       if (!a) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
     }
-    const assignee = await ctx.db.user.findFirst({
-      where: { id: input.assigneeId, deletedAt: null, isActive: true },
-      select: { id: true },
-    })
-    if (!assignee) throw new TRPCError({ code: 'NOT_FOUND', message: 'Assignee not found' })
+    if (!input.assigneeId && !input.teamId) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Pick a person or a team for the task.',
+      })
+    }
+    const assignee = input.assigneeId
+      ? await ctx.db.user.findFirst({
+          where: { id: input.assigneeId, deletedAt: null, isActive: true },
+          select: { id: true },
+        })
+      : null
+    if (input.assigneeId && !assignee)
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Assignee not found' })
+    if (input.teamId) {
+      const team = await ctx.db.team.findFirst({
+        where: { id: input.teamId, archivedAt: null },
+        select: { id: true },
+      })
+      if (!team) throw new TRPCError({ code: 'NOT_FOUND', message: 'Team not found' })
+    }
 
     const id = createId()
     const created = await ctx.db.task.create({
@@ -328,7 +345,7 @@ export const taskRouter = router({
         title: input.title,
         description: input.description ?? null,
         status: 'open',
-        assigneeId: assignee.id,
+        assigneeId: assignee?.id ?? null,
         teamId: input.teamId ?? null,
         contactId: input.contactId ?? null,
         familyId: input.familyId ?? null,

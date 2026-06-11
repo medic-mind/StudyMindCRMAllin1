@@ -76,6 +76,10 @@ export interface CallSummarySenders {
     contactName: string
     contactId: string
     slackChannelId?: string
+    /** Call outcome + layout hint — the internal-note variant renders the
+     *  VA-team format (outcome — name — phone — email + pending tasks). */
+    outcome?: 'answered' | 'voicemail' | 'no_answer' | null
+    variant?: 'summary' | 'internal_note'
   }) => Promise<ChannelResult>
   trengo?: (args: {
     body: string

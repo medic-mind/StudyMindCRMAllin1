@@ -104,14 +104,19 @@ export function NewTaskDialog({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (title.trim().length === 0 || assigneeId.trim().length === 0) {
-      setError('Title and assignee are required.')
+    if (title.trim().length === 0) {
+      setError('A title is required.')
+      return
+    }
+    // A task is for a person, a whole team, or both — at least one.
+    if (assigneeId.trim().length === 0 && teamId.trim().length === 0) {
+      setError('Pick a person or a team for the task.')
       return
     }
     create.mutate({
       title: title.trim(),
       description: description.trim() || undefined,
-      assigneeId,
+      assigneeId: assigneeId || undefined,
       teamId: teamId || undefined,
       dueAt: dueAt ? new Date(dueAt) : undefined,
       contactId: pickedContactId ?? undefined,
@@ -179,13 +184,9 @@ export function NewTaskDialog({
               </Field>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="Assignee" required>
-                  <Select
-                    required
-                    value={assigneeId}
-                    onChange={(e) => setAssigneeId(e.target.value)}
-                  >
-                    <option value="">Select an assignee…</option>
+                <Field label="Assignee (person)">
+                  <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+                    <option value="">— No individual —</option>
                     {(usersQuery.data ?? []).map((u) => (
                       <option key={u.id} value={u.id}>
                         {u.name ? `${u.name} (${u.email})` : u.email}
@@ -194,12 +195,12 @@ export function NewTaskDialog({
                   </Select>
                 </Field>
 
-                <Field label="Team (optional)">
+                <Field label="Team">
                   <Select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-                    <option value="">— None —</option>
+                    <option value="">— No team —</option>
                     {(teamsQuery.data ?? []).map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.name}
+                        {t.name} (whole team)
                       </option>
                     ))}
                   </Select>

@@ -1115,6 +1115,9 @@ export const contactRouter = router({
           note: z.string().trim().min(1).max(8000),
           postToSlack: z.boolean().optional(),
           slackChannelId: z.string().optional(),
+          // Drives the Slack VA-team headline ("Call completed — name —
+          // phone — email").
+          outcome: z.enum(['answered', 'voicemail', 'no_answer']).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -1148,6 +1151,10 @@ export const contactRouter = router({
                   contactName,
                   contactId: input.contactId,
                   slackChannelId: input.slackChannelId,
+                  outcome: input.outcome ?? null,
+                  // VA-team layout: outcome — name — phone — email headline
+                  // plus a "Pending tasks for VA team" section.
+                  variant: 'internal_note',
                 })
               : { status: 'skipped', detail: 'Slack sender not configured' }
           }

@@ -139,6 +139,9 @@ export const interactionRouter = router({
           contactId: true,
           familyId: true,
           createdById: true,
+          // Distilled into a small typed `meta` by toInteractionListItem —
+          // the raw JSONB never reaches the client (CLAUDE.md §26).
+          payload: true,
         },
       })
 
@@ -680,6 +683,104 @@ export const interactionRouter = router({
         }
       }),
 
+    // Start a brand-new WhatsApp conversation with an APPROVED Trengo template
+    // (HSM) — the same thing Trengo's own composer does, and the only send
+    // WhatsApp accepts outside the 24-hour window. The UI fills the {{n}}
+    // params with a live preview; we receive the param values plus the
+    // rendered body for the timeline. Sales Executive+.
+    startWhatsappTemplate: auditedProcedure
+      .input(
+        z.object({
+          contactId: z.string().min(1),
+          templateId: z.number().int().positive(),
+          templateTitle: z.string().trim().min(1).max(200),
+          params: z
+            .array(
+              z.object({
+                key: z.string().min(1).max(12),
+                value: z.string().trim().min(1).max(500),
+              }),
+            )
+            .max(20),
+          renderedBody: z.string().trim().min(1).max(4_000),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (
+          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+        ) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send messages' })
+        }
+        await enforceRestrictedAccess(ctx, input.contactId, 'trengo-start-template')
+
+        const contact = await ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: { id: true, phoneE164: true },
+        })
+        if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+        if (!contact.phoneE164) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'This contact has no phone number.',
+          })
+        }
+
+        const { sendWhatsAppTemplate } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        try {
+          const result = await sendWhatsAppTemplate({
+            contactId: contact.id,
+            agentId: user.id,
+            recipient: contact.phoneE164,
+            templateId: input.templateId,
+            templateTitle: input.templateTitle,
+            renderedBody: input.renderedBody,
+            params: input.params,
+            requestId: ctx.requestId,
+          })
+          await ctx.audit({
+            action: 'trengo.reply_requested',
+            target: { type: 'Contact', id: contact.id },
+            after: {
+              interactionId: result.interactionId,
+              waTemplateId: input.templateId,
+              channel: 'whatsapp',
+              newConversation: true,
+            },
+          })
+          return result
+        } catch (err) {
+          throw mapTrengoOutboundError(err)
+        }
+      }),
+
+    // Trengo quick replies (canned responses) — surfaced as the SMS
+    // "templates" in the new-conversation composer. Graceful: a missing token
+    // returns available:false instead of erroring, so the UI falls back to
+    // free text.
+    quickReplies: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      try {
+        const { listTrengoQuickReplies } = await import(
+          '@studymind/integration-trengo/outbound'
+        )
+        const replies = await listTrengoQuickReplies(user.id, ctx.requestId)
+        return { available: true as const, replies }
+      } catch (err) {
+        const reason =
+          err instanceof BusinessError && err.code === 'TOKEN_EXPIRED'
+            ? 'Connect your Trengo token in Account → Trengo to load quick replies.'
+            : 'Could not load quick replies from Trengo.'
+        return {
+          available: false as const,
+          reason,
+          replies: [] as Array<{ id: number; title: string; body: string }>,
+        }
+      }
+    }),
+
     // CLAUDE.md §11 — close / reopen a Trengo conversation from the CRM.
     // Reuses the new audited `closeConversation` / `reopenConversation`
     // outbound, which writes a CRM-sourced Interaction the inbound webhook
@@ -1151,7 +1252,7 @@ function mapDbType(t: string): InteractionListItem['type'] {
     case 'note':
       return 'note'
     case 'call':
-      return 'call_logged'
+      return 'call'
     case 'email':
       return 'email_sent'
     case 'email_received':
@@ -1166,6 +1267,27 @@ function mapDbType(t: string): InteractionListItem['type'] {
       return 'family.billing_contact_changed'
     case 'safeguarding_concern_raised':
       return 'safeguarding.concern_raised'
+    // Pass-throughs so the timeline can label rows truthfully — these used to
+    // collapse to 'note', which made messages, card events, call summaries and
+    // web enquiries all read "note" on the Activity timeline.
+    case 'message':
+    case 'ticket_assigned':
+    case 'ticket_closed':
+    case 'ticket_reopened':
+    case 'label_added':
+    case 'label_removed':
+    case 'card_moved':
+    case 'card_comment':
+    case 'card_description_changed':
+    case 'call_summary':
+    case 'call_summary_sent':
+    case 'task_comment':
+    case 'lead_enquiry':
+    case 'email_forwarded':
+    case 'slack_summary':
+    case 'payment':
+    case 'family_pipeline_moved':
+      return t
     default:
       return 'note'
   }

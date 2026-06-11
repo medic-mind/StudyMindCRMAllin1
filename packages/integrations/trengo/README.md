@@ -24,11 +24,14 @@ them is a one-line change with no ripple:
 |---|---|
 | `uploadMedia` | `POST /media` (multipart `file`) → `{ data: { id } }` |
 | `sendMessage` attachments | `POST /tickets/:id/messages` with `attachment_ids: number[]` |
-| `createConversation` | `POST /messages` with `{ channel, recipient, body, custom_fields }` → `{ message: { id, ticket_id } }` |
+| `createConversation` (primary) | `POST /messages` with `{ channel, recipient, body, custom_fields }` → `{ message: { id, ticket_id } }` |
+| `createConversation` (fallback chain, runs when the primary is rejected 4xx) | `GET /channels` → pick by `type` (`WA_BUSINESS`/`SMS`/`EMAIL`/`CHAT`) → `POST /channels/:id/contacts {identifier}` (upserts by identifier) → `POST /tickets {channel_id, contact_id}` → `POST /tickets/:id/messages` |
 | `attachLabel` / `detachLabel` | `POST /tickets/:id/labels {label_id}` / `DELETE /tickets/:id/labels/:labelId` |
 | `addInternalNote` | `POST /tickets/:id/notes {body}` |
 | `listWaTemplates` | `GET /wa_templates` → `{ data: [{ id, title, message, status }] }` (approved WhatsApp HSM templates) |
 | `sendWaTemplate` | `POST /wa_sessions` with `{ recipient_phone_number, hsm_id, params: [{key:"{{1}}", value}] }` — starts/refreshes the WhatsApp session with a template (valid outside the 24h window) |
+| `listQuickReplies` | `GET /quick_replies` → `{ data: [{ id, title, message }] }` (canned responses — surfaced as the SMS templates) |
+| `listChannels` | `GET /channels` → `{ data: [{ id, name, type }] }` |
 
 If a live response differs, fix the method body in `client.ts` and the matching
 expectation in `client.test.ts`.

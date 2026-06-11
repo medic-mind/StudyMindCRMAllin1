@@ -158,6 +158,10 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
 
   const vaQuery = trpc.task.assignableUsers.useQuery({})
   const assignableUsers = vaQuery.data ?? []
+  // A follow-up task can be for one person OR a whole team (VA team, sales
+  // pod, anything in Settings → Teams).
+  const teamsQuery = trpc.team.pickList.useQuery()
+  const teams = teamsQuery.data ?? []
 
   // Attachment sources for the EMAIL step. Info packs come from the shared
   // document library (Settings → Documents); the rest are per-contact.
@@ -497,6 +501,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
         postToSlack,
         slackChannelId:
           postToSlack && effectiveSlackChannelId ? effectiveSlackChannelId : undefined,
+        // Drives the Slack VA-team headline ("Call completed — name — phone
+        // — email" + "Pending tasks for VA team").
+        outcome,
       })
       toast.success('Internal note saved')
       if (postToSlack && res.slack) {
@@ -506,11 +513,13 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
 
       if (createTask && taskAssigneeId) {
         try {
+          const isTeam = taskAssigneeId.startsWith('team:')
           await taskCreate.mutateAsync({
             title: taskTitle.trim() || `Follow up: ${contactName}`,
             description: internalNote.trim(),
             contactId,
-            assigneeId: taskAssigneeId,
+            assigneeId: isTeam ? undefined : taskAssigneeId.replace(/^user:/, ''),
+            teamId: isTeam ? taskAssigneeId.slice('team:'.length) : undefined,
             dueAt: taskDueAt ? new Date(taskDueAt) : undefined,
           })
           toast.success('Task created')
@@ -1092,7 +1101,7 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                 checked={createTask}
                 onChange={(e) => setCreateTask(e.target.checked)}
               />
-              Also open a follow-up task for a VA
+              Also open a follow-up task (for a person or a whole team)
             </label>
 
             {createTask ? (
@@ -1109,7 +1118,7 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                 </div>
                 <div>
                   <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-                    Assign to (VA)
+                    Assign to
                   </label>
                   <Select
                     value={taskAssigneeId}
@@ -1117,11 +1126,22 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                     aria-label="Task assignee"
                   >
                     <option value="">Choose…</option>
-                    {assignableUsers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name ?? u.email}
-                      </option>
-                    ))}
+                    {teams.length > 0 ? (
+                      <optgroup label="Teams">
+                        {teams.map((t) => (
+                          <option key={t.id} value={`team:${t.id}`}>
+                            {t.name} (whole team)
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    <optgroup label="People">
+                      {assignableUsers.map((u) => (
+                        <option key={u.id} value={`user:${u.id}`}>
+                          {u.name ?? u.email}
+                        </option>
+                      ))}
+                    </optgroup>
                   </Select>
                 </div>
                 <div>
