@@ -51,6 +51,11 @@ export const RATE_LIMITS: Readonly<Record<string, RateLimit>> = {
   // model context, so it is priced like a write even though it mutates
   // nothing (ADR 0040).
   'knowledge.ask': DEFAULT_WRITE_LIMIT,
+  // Knowledge AI editor (CEO / Senior Manager). Propose is AI-priced like
+  // ask; commit/reset rewrite company-wide reference content.
+  'knowledge.edit.propose': DEFAULT_WRITE_LIMIT,
+  'knowledge.edit.commit': SENSITIVE_WRITE_LIMIT,
+  'knowledge.edit.reset': SENSITIVE_WRITE_LIMIT,
 
   // Reads
   'contact.list': DEFAULT_READ_LIMIT,

@@ -1,24 +1,29 @@
 // Builds the grounding context for the AI Knowledge assistant (ADR 0040).
 //
 // The default char budget comfortably fits the WHOLE knowledge base — the
-// assistant is grounded on everything, exactly like the Crib's own chatbot.
-// Sections are still relevance-ordered so that (a) a smaller budget degrades
-// gracefully by dropping the least relevant sections, and (b) the top scorers
-// double as "read more" links in the UI.
+// assistant is grounded on everything, exactly like the Crib's own chatbot
+// (including any in-app edits, since it reads the live store). Sections are
+// still relevance-ordered so that (a) a smaller budget degrades gracefully
+// by dropping the least relevant sections, and (b) the top scorers double
+// as "read more" links in the UI.
 
 import { knowledgeSectionPlainText } from './plain-text'
-import { getKnowledgeSectionData, KNOWLEDGE_SECTIONS } from './sections'
 import { tokeniseQuery } from './search'
-import type { KnowledgeContext, KnowledgeContextSection } from './types'
+import type { KnowledgeContext, KnowledgeContextSection, KnowledgeStore } from './types'
 
 /** Fits the full knowledge base (~330k chars serialised) with headroom. */
 export const DEFAULT_CONTEXT_CHAR_BUDGET = 400_000
 
 const RELATED_SECTIONS = 5
 
-function scoreSection(slug: string, title: string, tokens: string[]): number {
+function scoreSection(
+  store: KnowledgeStore,
+  slug: string,
+  title: string,
+  tokens: string[],
+): number {
   if (tokens.length === 0) return 0
-  const text = knowledgeSectionPlainText(slug).toLowerCase()
+  const text = knowledgeSectionPlainText(store, slug).toLowerCase()
   const lowerTitle = title.toLowerCase()
   let score = 0
   for (const token of tokens) {
@@ -36,15 +41,18 @@ function scoreSection(slug: string, title: string, tokens: string[]): number {
 }
 
 export function buildKnowledgeContext(
+  store: KnowledgeStore,
   question: string,
   maxChars = DEFAULT_CONTEXT_CHAR_BUDGET,
 ): KnowledgeContext {
   const tokens = tokeniseQuery(question)
 
-  const ranked = KNOWLEDGE_SECTIONS.map((section) => ({
-    section,
-    score: scoreSection(section.slug, section.title, tokens),
-  })).sort((a, b) => b.score - a.score)
+  const ranked = store.sections
+    .map((section) => ({
+      section,
+      score: scoreSection(store, section.slug, section.title, tokens),
+    }))
+    .sort((a, b) => b.score - a.score)
 
   const included: KnowledgeContextSection[] = []
   const parts: string[] = []
@@ -52,7 +60,7 @@ export function buildKnowledgeContext(
   let truncated = false
 
   for (const { section, score } of ranked) {
-    const data = getKnowledgeSectionData(section.slug)
+    const data = store.data[section.dataKey]
     if (data === undefined) continue
     const serialised = `${JSON.stringify(section.dataKey)}:${JSON.stringify(data)}`
     // Skip what does not fit and keep walking — a huge section must not
@@ -71,7 +79,7 @@ export function buildKnowledgeContext(
   if (included.length === 0 && ranked.length > 0) {
     const top = ranked[0]
     if (top) {
-      const data = getKnowledgeSectionData(top.section.slug)
+      const data = store.data[top.section.dataKey]
       if (data !== undefined) {
         parts.push(`${JSON.stringify(top.section.dataKey)}:${JSON.stringify(data)}`)
         included.push({ slug: top.section.slug, title: top.section.title, score: top.score })

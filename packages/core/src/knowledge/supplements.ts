@@ -1,11 +1,28 @@
-// Common call scenarios — extracted verbatim from the Crib frontend's
-// hardcoded SCENARIOS constant (public/script.js), the one piece of CRIB
-// content that does not live in its defaults.json (ADR 0040). Kept as a
-// sibling module so crib-data.json stays a byte-for-byte copy of the
-// Crib's defaults.json; sections.ts merges this in under the
-// `commonScenarios` key.
+// Crib content that does NOT live in its defaults.json (ADR 0040), kept as
+// a sibling module so crib-data.json stays a byte-for-byte copy of the
+// Crib's defaults.json. sections.ts merges these in:
+//
+// - COMMON_SCENARIOS — extracted verbatim from the Crib frontend's
+//   hardcoded SCENARIOS constant (public/script.js).
+// - FOUNDER_PEOPLE — the founders, documented in the Crib repo's CLAUDE.md
+//   §3 (brand architecture) but absent from its defaults.json people list.
 
 import type { KnowledgeValue } from './types'
+
+export const FOUNDER_PEOPLE: KnowledgeValue = [
+  {
+    name: 'Mohil',
+    role: 'Co-founder',
+    handles:
+      'Sits across MedicMind and OxbridgeMind with Kunal — brand architecture and direction.',
+  },
+  {
+    name: 'Kunal',
+    role: 'Co-founder',
+    handles:
+      'Sits across MedicMind and OxbridgeMind with Mohil. Runs the master classes included with the Platinum Full Application Scheme.',
+  },
+]
 
 export const COMMON_SCENARIOS: KnowledgeValue = [
   {

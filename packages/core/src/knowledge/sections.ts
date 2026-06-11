@@ -5,15 +5,21 @@
 // re-import that adds a key cannot silently vanish from the UI.
 
 import rawData from './crib-data.json'
-import { COMMON_SCENARIOS } from './scenarios'
+import { COMMON_SCENARIOS, FOUNDER_PEOPLE } from './supplements'
 import type { KnowledgeGroup, KnowledgeSectionDef, KnowledgeValue } from './types'
 
 // crib-data.json is a byte-for-byte copy of the Crib's defaults.json; the
-// common-scenarios content lived in the Crib FRONTEND, so it merges in here
-// (see scenarios.ts). Re-import stays a plain file copy.
+// content the Crib keeps OUTSIDE that file (frontend scenarios, the
+// founders from its CLAUDE.md) merges in here — see supplements.ts.
+// Re-import stays a plain file copy.
+const baseline = rawData as unknown as Record<string, KnowledgeValue>
 const KNOWLEDGE_DATA = {
-  ...(rawData as unknown as Record<string, KnowledgeValue>),
+  ...baseline,
   commonScenarios: COMMON_SCENARIOS,
+  people: [
+    ...(Array.isArray(baseline['people']) ? baseline['people'] : []),
+    ...(Array.isArray(FOUNDER_PEOPLE) ? FOUNDER_PEOPLE : []),
+  ],
 } as Readonly<Record<string, KnowledgeValue>>
 
 export const KNOWLEDGE_GROUP_ORDER: readonly KnowledgeGroup[] = [
@@ -22,6 +28,9 @@ export const KNOWLEDGE_GROUP_ORDER: readonly KnowledgeGroup[] = [
   'Sales playbook',
   'Events & operations',
   'Reference',
+  // In-app additions (AI editor) whose top-level key the baseline manifest
+  // does not know — derived per-store in store.ts, never listed here.
+  'Custom',
 ]
 
 export const KNOWLEDGE_SECTIONS: readonly KnowledgeSectionDef[] = [
@@ -241,24 +250,9 @@ export const KNOWLEDGE_SECTIONS: readonly KnowledgeSectionDef[] = [
   },
 ]
 
-const BY_SLUG = new Map(KNOWLEDGE_SECTIONS.map((s) => [s.slug, s]))
-
-export function listKnowledgeSections(): readonly KnowledgeSectionDef[] {
-  return KNOWLEDGE_SECTIONS
-}
-
-export function getKnowledgeSection(slug: string): KnowledgeSectionDef | undefined {
-  return BY_SLUG.get(slug)
-}
-
-/** The whole imported knowledge data, keyed by top-level data key. */
+/** The imported BASELINE knowledge data, keyed by top-level data key.
+ *  The live data (baseline + in-app edits) comes from `loadKnowledgeStore`
+ *  in store.ts — read that everywhere a user-facing surface is involved. */
 export function getKnowledgeData(): Readonly<Record<string, KnowledgeValue>> {
   return KNOWLEDGE_DATA
-}
-
-/** The raw data behind one section, or undefined for an unknown slug. */
-export function getKnowledgeSectionData(slug: string): KnowledgeValue | undefined {
-  const section = BY_SLUG.get(slug)
-  if (!section) return undefined
-  return KNOWLEDGE_DATA[section.dataKey]
 }

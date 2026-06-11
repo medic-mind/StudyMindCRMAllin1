@@ -16,6 +16,9 @@ export type KnowledgeGroup =
   | 'Sales playbook'
   | 'Events & operations'
   | 'Reference'
+  // Top-level keys added in-app (AI editor) that the imported baseline does
+  // not know about land here, so nothing added can ever be invisible.
+  | 'Custom'
 
 export interface KnowledgeSectionDef {
   /** URL slug — the page lives at /protocols/<slug>. */
@@ -75,4 +78,35 @@ export interface KnowledgeContext {
   related: KnowledgeContextSection[]
   /** True when the char budget forced sections to be dropped. */
   truncated: boolean
+}
+
+/**
+ * The live knowledge base: the checked-in baseline, or the baseline with
+ * in-app edits applied (a `KnowledgeOverride` row — ADR 0040). Everything
+ * downstream (pages, search, AI context) reads from a store so edited and
+ * baseline content flow through identical code.
+ */
+export interface KnowledgeStore {
+  data: Readonly<Record<string, KnowledgeValue>>
+  /** Manifest sections present in the data + auto-defs for added keys. */
+  sections: readonly KnowledgeSectionDef[]
+  /** Cache key — 'baseline' or the override row's updatedAt. */
+  version: string
+  /** True when an in-app edit (override row) is live. */
+  edited: boolean
+  /** When the override was last written; undefined for the baseline. */
+  updatedAt?: Date
+}
+
+export type KnowledgePatchOp = 'replace' | 'add' | 'remove'
+
+/**
+ * One edit to the knowledge JSON, in the Crib AI-editor's dot-path format
+ * (e.g. `fullApplication.tiers.3.hours`). Arrays use numeric indices;
+ * `add` with an index equal to the array length (or `-`) appends.
+ */
+export interface KnowledgePatch {
+  op: KnowledgePatchOp
+  path: string
+  value?: KnowledgeValue
 }

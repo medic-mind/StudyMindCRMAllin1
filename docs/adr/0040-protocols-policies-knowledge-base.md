@@ -1,6 +1,6 @@
 # ADR 0040 — Protocols & Policies: import the Crib knowledge base + AI Knowledge assistant
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-06-17 — in-app AI editing, see §5)
 - **Date:** 2026-06-11
 - **Owners:** CRM engineering
 
@@ -23,11 +23,15 @@ look up what the Platinum tier includes mid-call.
 
 ## Decision
 
-### 1. The content is a checked-in, read-only snapshot — not a DB table
+### 1. The content baseline is a checked-in snapshot
 
 `packages/core/src/knowledge/crib-data.json` is a **verbatim copy** of the
-Crib's `defaults.json`. A typed domain module around it
-(`@studymind/core/knowledge`) provides:
+Crib's `defaults.json`; `supplements.ts` merges the Crib content that lives
+outside that file (the frontend's hardcoded common-call scenarios; the
+founders from the Crib CLAUDE.md §3). In-app edits layer on top via a DB
+override (§5 amendment) — the baseline file itself never changes outside a
+re-import. A typed domain module around it (`@studymind/core/knowledge`)
+provides:
 
 - a **section manifest** (`sections.ts`) mapping every top-level data key to a
   slug, title, blurb and display group — a unit test fails if the manifest and
@@ -42,13 +46,11 @@ Crib's `defaults.json`. A typed domain module around it
   knowledge base (mirroring the Crib chatbot's full-context grounding), with
   relevance-ordered graceful degradation under a smaller budget.
 
-Why not Prisma rows? The Crib remains the **editing** surface (its admins
-curate content there); the CRM needs a faithful, reviewable, versioned
-**mirror**. A checked-in snapshot is zero-risk to existing CRM functions (no
-migration, no new tables, no jobs), diffs cleanly in review, and re-import is
-`cp defaults.json crib-data.json` + the drift test. If two-way editing is ever
-wanted, that is a future ADR (DB-backed with the Crib's `/api/data` as a sync
-source).
+Why a checked-in baseline rather than rows? The import must be faithful,
+reviewable and versioned; a snapshot diffs cleanly in review and re-import is
+`cp defaults.json crib-data.json` + the drift test. The §5 amendment adds the
+runtime edit layer on top of (not instead of) this baseline — exactly the
+Crib's own `defaults.json` + `data.json` model.
 
 This file is product **content** (like `lead/dial-codes.ts`), not a test
 fixture — §23.1's "no real data in fixtures" does not apply. It contains
@@ -99,11 +101,52 @@ budgeted and drift-sampled inside `packages/ai` as for every other task.
   timetable XLSX) stay in the Crib repo; their distilled content is already in
   the JSON. If staff want the files inside the CRM, the existing
   `InfoPackDocument` library (`/settings/documents`, ADR 0039) is the home.
-- The Crib's admin editing, user management and AI-editor surfaces — the Crib
-  keeps those; the CRM is a read mirror.
+- The Crib's user-management surface — staff identity stays with the CRM's
+  own auth (ADR 0010). (Editing is no longer excluded: the §5 amendment ports
+  the Crib's AI editor into the CRM.)
 - Any `${DATA_DIR}/data.json` runtime overrides on the Crib's Railway volume —
   only the repo's `defaults.json` is importable from here. Re-import picks up
   whatever is current at that time.
+
+### 5. Amendment (2026-06-17): in-app AI editing — the Crib's AI editor, ported
+
+The Crib lets a super admin edit content two ways: inline editing and an AI
+editor that turns a plain-English instruction into JSON patches. The CRM now
+has the same capability, human-confirmed end to end:
+
+- **Override layer.** A single `KnowledgeOverride` row (`id = 'knowledge'`,
+  forward-only migration `20260617120000_add_knowledge_override`) holds the
+  FULL live knowledge JSON once edited; no row = baseline. This mirrors the
+  Crib's `defaults.json` (ships with the code) + `data.json` (runtime edits)
+  split. `loadKnowledgeStore(db)` resolves the live document and derives the
+  section list per document — a top-level key **added** in-app surfaces
+  automatically as a "Custom" section, so nothing added can be invisible.
+  Search, section pages and the AI Knowledge context all read the live store
+  (indexes cache on the override's `updatedAt`, so edits are live instantly
+  and nothing serves stale).
+- **Patch engine.** `applyKnowledgePatches` (pure, unit-tested,
+  all-or-nothing, never in place) applies `replace | add | remove` ops in the
+  Crib's dot-path format (`fullApplication.tiers.3.hours`; `-` appends to an
+  array). Fail-closed: invalid paths reject, values containing Zoom/Teams
+  links or passcodes reject (`KNOWLEDGE_CONTENT_FORBIDDEN` — the Crib hard
+  rule now guards writes as well as the baseline test), and the document has
+  a serialised-size ceiling.
+- **Flow.** tRPC `knowledge.edit.propose` (CEO + Senior Manager — the Crib's
+  super-admin tier) sends the instruction + the full current document to
+  `runStructured` (new prompt `knowledge-edit.ts`, budget category
+  `knowledge_edit`), dry-runs the proposed patches and returns them with
+  current values for review. `knowledge.edit.commit` (named `commit` —
+  `apply` is a reserved word in tRPC routers) applies the
+  human-selected patches and upserts the override; `knowledge.edit.reset`
+  returns to the baseline (the Crib's `/api/reset`). Apply and reset are
+  audited (`knowledge.updated` with the patch list, `knowledge.reset`) and
+  rate-limited as sensitive writes. AI proposes, a named human confirms — §3
+  is never bypassed; an empty-patch response is the model's way of asking
+  for a missing fact rather than inventing one.
+- **UI.** `/protocols/edit` (CEO/SM; "Edit content" in the sidebar and on the
+  index): instruction box → proposal summary + per-patch review (op badge,
+  path, current → proposed, include/exclude) → apply; plus the guarded
+  reset. The index page banners when in-app edits are live.
 
 ## Consequences
 

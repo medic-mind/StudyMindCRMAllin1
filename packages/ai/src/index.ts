@@ -157,3 +157,10 @@ export {
   type KnowledgeQaPromptInput,
   type KnowledgeQaTurn,
 } from './prompts/knowledge-qa'
+export {
+  buildKnowledgeEditPrompt,
+  knowledgeEditSchema,
+  VERSION as KNOWLEDGE_EDIT_PROMPT_VERSION,
+  type KnowledgeEditAi,
+  type KnowledgeEditPromptInput,
+} from './prompts/knowledge-edit'

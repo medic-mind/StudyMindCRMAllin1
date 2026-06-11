@@ -1,6 +1,8 @@
-// One knowledge section, rendered in full from the imported data
-// (ADR 0040). Read-only for all staff; the generic KnowledgeNodeView
-// guarantees every detail in the section renders even with no bespoke UI.
+// One knowledge section, rendered in full from the LIVE data — the
+// imported baseline plus any in-app edits (ADR 0040). Read-only for all
+// staff; the generic KnowledgeNodeView guarantees every detail in the
+// section renders even with no bespoke UI, including sections added
+// in-app by the AI editor.
 
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -8,10 +10,11 @@ import { notFound } from 'next/navigation'
 import {
   getKnowledgeSection,
   getKnowledgeSectionData,
-  listKnowledgeSections,
+  loadKnowledgeStore,
   toRenderTree,
 } from '@studymind/core/knowledge'
 
+import { db } from '@/lib/db'
 import { KnowledgeNodeView } from '@/components/knowledge/knowledge-node'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
@@ -26,12 +29,12 @@ interface PageProps {
 
 export default async function ProtocolSectionPage({ params }: PageProps) {
   const { slug } = await params
-  const section = getKnowledgeSection(slug)
-  const data = getKnowledgeSectionData(slug)
+  const store = await loadKnowledgeStore(db)
+  const section = getKnowledgeSection(store, slug)
+  const data = getKnowledgeSectionData(store, slug)
   if (!section || data === undefined) notFound()
 
-  const sections = listKnowledgeSections()
-  const inGroup = sections.filter(
+  const inGroup = store.sections.filter(
     (s) => s.group === section.group && s.slug !== section.slug,
   )
 
@@ -80,8 +83,11 @@ export default async function ProtocolSectionPage({ params }: PageProps) {
           ) : null}
 
           <p className="text-xs text-neutral-400">
-            Imported from the StudyMind team Crib. Always confirm live discount
-            offers with Becca before quoting a customer.
+            {store.edited
+              ? 'Imported from the StudyMind team Crib, with in-app edits applied.'
+              : 'Imported from the StudyMind team Crib.'}{' '}
+            Always confirm live discount offers with Becca before quoting a
+            customer.
           </p>
         </div>
       </PageBody>

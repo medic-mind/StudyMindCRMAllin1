@@ -510,6 +510,12 @@ export const EVENT_NAMES = [
   // backfill writes on completion (the recurring sync logs rather than audits).
   'summer_camp.backfill_requested',
   'summer_camp.bookings_synced',
+
+  // Protocols & Policies knowledge base (ADR 0040): in-app edits to the
+  // imported Crib content. AI proposes patches, CEO / Senior Manager
+  // confirms; reset returns to the checked-in baseline.
+  'knowledge.updated',
+  'knowledge.reset',
 ] as const
 
 export type EventName = (typeof EVENT_NAMES)[number]

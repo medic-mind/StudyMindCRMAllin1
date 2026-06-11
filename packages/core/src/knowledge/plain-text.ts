@@ -3,8 +3,8 @@
 // so what the search and the assistant "see" matches the rendered page.
 
 import { toRenderTree } from './render-tree'
-import { getKnowledgeSectionData } from './sections'
-import type { KnowledgeNode } from './types'
+import { getKnowledgeSectionData } from './store'
+import type { KnowledgeNode, KnowledgeStore } from './types'
 
 function indentOf(depth: number): string {
   return '  '.repeat(depth)
@@ -51,14 +51,20 @@ export function renderToPlainText(node: KnowledgeNode, depth = 0): string {
   }
 }
 
+// Keyed on (store version, slug). The store version changes on every saved
+// edit, so the cache can never serve stale text; the size cap just stops
+// unbounded growth across many override versions.
 const sectionTextCache = new Map<string, string>()
+const SECTION_TEXT_CACHE_MAX = 200
 
-/** Plain-text rendering of one whole section (cached — the data is static). */
-export function knowledgeSectionPlainText(slug: string): string {
-  const cached = sectionTextCache.get(slug)
+/** Plain-text rendering of one whole section of a store (cached). */
+export function knowledgeSectionPlainText(store: KnowledgeStore, slug: string): string {
+  const key = `${store.version}:${slug}`
+  const cached = sectionTextCache.get(key)
   if (cached !== undefined) return cached
-  const data = getKnowledgeSectionData(slug)
+  const data = getKnowledgeSectionData(store, slug)
   const text = data === undefined ? '' : renderToPlainText(toRenderTree(data))
-  sectionTextCache.set(slug, text)
+  if (sectionTextCache.size >= SECTION_TEXT_CACHE_MAX) sectionTextCache.clear()
+  sectionTextCache.set(key, text)
   return text
 }

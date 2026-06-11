@@ -4,12 +4,16 @@ import { buildKnowledgeContext } from './context'
 import { knowledgeSectionPlainText, renderToPlainText } from './plain-text'
 import { humaniseKey, toRenderTree } from './render-tree'
 import { searchKnowledge } from './search'
+import { getKnowledgeData, KNOWLEDGE_SECTIONS } from './sections'
 import {
-  getKnowledgeData,
+  baselineKnowledgeStore,
+  buildKnowledgeStore,
   getKnowledgeSection,
   getKnowledgeSectionData,
-  KNOWLEDGE_SECTIONS,
-} from './sections'
+  loadKnowledgeStore,
+} from './store'
+
+const store = baselineKnowledgeStore()
 
 describe('knowledge manifest completeness', () => {
   it('maps every top-level data key to exactly one section', () => {
@@ -28,14 +32,14 @@ describe('knowledge manifest completeness', () => {
 
   it('resolves every section to data', () => {
     for (const section of KNOWLEDGE_SECTIONS) {
-      expect(getKnowledgeSectionData(section.slug), section.slug).toBeDefined()
-      expect(getKnowledgeSection(section.slug)?.title.length).toBeGreaterThan(0)
+      expect(getKnowledgeSectionData(store, section.slug), section.slug).toBeDefined()
+      expect(getKnowledgeSection(store, section.slug)?.title.length).toBeGreaterThan(0)
     }
   })
 
   it('returns undefined for an unknown slug', () => {
-    expect(getKnowledgeSection('not-a-section')).toBeUndefined()
-    expect(getKnowledgeSectionData('not-a-section')).toBeUndefined()
+    expect(getKnowledgeSection(store, 'not-a-section')).toBeUndefined()
+    expect(getKnowledgeSectionData(store, 'not-a-section')).toBeUndefined()
   })
 })
 
@@ -47,6 +51,71 @@ describe('knowledge content policy', () => {
     expect(raw).not.toMatch(/zoom\.us/)
     expect(raw).not.toMatch(/teams\.microsoft\.com/)
     expect(raw).not.toMatch(/passcode/)
+  })
+})
+
+describe('knowledge store', () => {
+  it('exposes the manifest sections for the baseline', () => {
+    expect(store.edited).toBe(false)
+    expect(store.version).toBe('baseline')
+    expect(store.sections.map((s) => s.slug).sort()).toEqual(
+      KNOWLEDGE_SECTIONS.map((s) => s.slug).sort(),
+    )
+  })
+
+  it('derives a Custom section for a top-level key added in-app', () => {
+    const custom = buildKnowledgeStore({
+      data: { ...getKnowledgeData(), refundPolicy2027: { summary: 'New policy' } },
+      version: 'override:test',
+      edited: true,
+    })
+    const added = custom.sections.find((s) => s.dataKey === 'refundPolicy2027')
+    expect(added).toBeDefined()
+    expect(added?.group).toBe('Custom')
+    expect(added?.slug).toBe('refund-policy2027')
+    expect(getKnowledgeSectionData(custom, 'refund-policy2027')).toEqual({
+      summary: 'New policy',
+    })
+  })
+
+  it('drops a manifest section whose key was removed in-app', () => {
+    const data = { ...getKnowledgeData() }
+    delete (data as Record<string, unknown>)['faq']
+    const edited = buildKnowledgeStore({ data, version: 'override:t2', edited: true })
+    expect(getKnowledgeSection(edited, 'faq')).toBeUndefined()
+  })
+
+  it('loadKnowledgeStore returns the baseline when no override row exists', async () => {
+    const db = { knowledgeOverride: { findUnique: async () => null } }
+    expect((await loadKnowledgeStore(db)).version).toBe('baseline')
+  })
+
+  it('loadKnowledgeStore returns the override and caches by updatedAt', async () => {
+    const updatedAt = new Date('2026-06-17T10:00:00Z')
+    let reads = 0
+    const db = {
+      knowledgeOverride: {
+        findUnique: async () => {
+          reads += 1
+          return { data: { faq: [{ question: 'Q', answer: 'A' }] }, updatedAt }
+        },
+      },
+    }
+    const first = await loadKnowledgeStore(db)
+    const second = await loadKnowledgeStore(db)
+    expect(first.edited).toBe(true)
+    expect(first.sections.map((s) => s.slug)).toEqual(['faq'])
+    expect(second).toBe(first) // same built store, keyed on updatedAt
+    expect(reads).toBe(2) // the row itself is always re-read (no stale data)
+  })
+
+  it('loadKnowledgeStore falls back to baseline on a malformed row', async () => {
+    const db = {
+      knowledgeOverride: {
+        findUnique: async () => ({ data: 'not-an-object', updatedAt: new Date() }),
+      },
+    }
+    expect((await loadKnowledgeStore(db)).version).toBe('baseline')
   })
 })
 
@@ -136,14 +205,24 @@ describe('toRenderTree', () => {
 describe('plain text rendering', () => {
   it('renders every section to non-empty text', () => {
     for (const section of KNOWLEDGE_SECTIONS) {
-      expect(knowledgeSectionPlainText(section.slug).length, section.slug).toBeGreaterThan(0)
+      expect(knowledgeSectionPlainText(store, section.slug).length, section.slug).toBeGreaterThan(0)
     }
   })
 
   it('keeps known facts intact', () => {
-    const fullApplication = knowledgeSectionPlainText('full-application')
+    const fullApplication = knowledgeSectionPlainText(store, 'full-application')
     expect(fullApplication).toContain('£500')
     expect(fullApplication.toLowerCase()).toContain('platinum')
+  })
+
+  it('includes the supplements (frontend scenarios + founders)', () => {
+    expect(knowledgeSectionPlainText(store, 'common-scenarios')).toContain(
+      'Anxious teen reluctant to engage',
+    )
+    const people = knowledgeSectionPlainText(store, 'people')
+    expect(people).toContain('Mohil')
+    expect(people).toContain('Kunal')
+    expect(people).toContain('Becca') // the baseline list is still intact
   })
 
   it('serialises tables row by row', () => {
@@ -158,28 +237,46 @@ describe('plain text rendering', () => {
 
 describe('searchKnowledge', () => {
   it('finds the Full Application guarantee', () => {
-    const results = searchKnowledge('platinum money back guarantee')
+    const results = searchKnowledge(store, 'platinum money back guarantee')
     expect(results.length).toBeGreaterThan(0)
     expect(results.some((r) => r.sectionSlug === 'full-application')).toBe(true)
   })
 
   it('finds shadowing partner practices', () => {
-    const results = searchKnowledge('robin hood lane')
+    const results = searchKnowledge(store, 'robin hood lane')
     expect(results.some((r) => r.sectionSlug === 'shadowing')).toBe(true)
   })
 
+  it('finds the common call scenarios', () => {
+    const results = searchKnowledge(store, 'anxious teen')
+    expect(results.some((r) => r.sectionSlug === 'common-scenarios')).toBe(true)
+  })
+
+  it('searches edited content under its own store version', () => {
+    const edited = buildKnowledgeStore({
+      data: { faq: [{ question: 'Do you teach xylophonics tutoring?', answer: 'Yes' }] },
+      version: 'override:search-test',
+      edited: true,
+    })
+    const results = searchKnowledge(edited, 'xylophonics')
+    expect(results.length).toBeGreaterThan(0)
+    expect(results[0]?.sectionSlug).toBe('faq')
+    // The baseline index is untouched.
+    expect(searchKnowledge(store, 'xylophonics')).toEqual([])
+  })
+
   it('returns nothing for an empty query', () => {
-    expect(searchKnowledge('   ')).toEqual([])
+    expect(searchKnowledge(store, '   ')).toEqual([])
   })
 
   it('caps results at the limit', () => {
-    expect(searchKnowledge('tutor', 5).length).toBeLessThanOrEqual(5)
+    expect(searchKnowledge(store, 'tutor', 5).length).toBeLessThanOrEqual(5)
   })
 })
 
 describe('buildKnowledgeContext', () => {
   it('includes the whole knowledge base at the default budget', () => {
-    const ctx = buildKnowledgeContext('how many hours in the platinum package?')
+    const ctx = buildKnowledgeContext(store, 'how many hours in the platinum package?')
     expect(ctx.truncated).toBe(false)
     expect(ctx.included.length).toBe(KNOWLEDGE_SECTIONS.length)
     const parsed = JSON.parse(ctx.contextJson) as Record<string, unknown>
@@ -187,18 +284,30 @@ describe('buildKnowledgeContext', () => {
   })
 
   it('ranks the most relevant section first and surfaces it as related', () => {
-    const ctx = buildKnowledgeContext('UCAT live day dates in Manchester')
+    const ctx = buildKnowledgeContext(store, 'UCAT live day dates in Manchester')
     expect(ctx.related.length).toBeGreaterThan(0)
     expect(ctx.related.map((r) => r.slug)).toContain('live-days')
   })
 
   it('drops least-relevant sections under a small budget', () => {
-    const ctx = buildKnowledgeContext('platinum money back guarantee', 30_000)
+    const ctx = buildKnowledgeContext(store, 'platinum money back guarantee', 30_000)
     expect(ctx.truncated).toBe(true)
     expect(ctx.included.length).toBeGreaterThan(0)
     expect(ctx.included.length).toBeLessThan(KNOWLEDGE_SECTIONS.length)
     expect(ctx.included.map((s) => s.slug)).toContain('full-application')
     // The context stays valid JSON even when truncated.
     expect(() => JSON.parse(ctx.contextJson)).not.toThrow()
+  })
+
+  it('grounds on in-app additions too', () => {
+    const edited = buildKnowledgeStore({
+      data: { ...getKnowledgeData(), winterRetreats: { summary: 'Ski + study retreat' } },
+      version: 'override:ctx-test',
+      edited: true,
+    })
+    const ctx = buildKnowledgeContext(edited, 'tell me about the winter retreats')
+    const parsed = JSON.parse(ctx.contextJson) as Record<string, unknown>
+    expect(parsed['winterRetreats']).toEqual({ summary: 'Ski + study retreat' })
+    expect(ctx.related.map((r) => r.slug)).toContain('winter-retreats')
   })
 })
