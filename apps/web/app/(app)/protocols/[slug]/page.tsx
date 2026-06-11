@@ -1,8 +1,8 @@
 // One knowledge section, rendered in full from the LIVE data — the
 // imported baseline plus any in-app edits (ADR 0040). Read-only for all
-// staff; the generic KnowledgeNodeView guarantees every detail in the
-// section renders even with no bespoke UI, including sections added
-// in-app by the AI editor.
+// staff; the visual KnowledgeNodeView turns the raw JSON into stat tiles,
+// glossary cards, badged record cards and styled tables, including
+// sections added in-app by the AI editor.
 
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -11,14 +11,13 @@ import {
   getKnowledgeSection,
   getKnowledgeSectionData,
   loadKnowledgeStore,
-  toRenderTree,
 } from '@studymind/core/knowledge'
 
 import { db } from '@/lib/db'
+import { groupStyle } from '@/components/knowledge/group-style'
 import { KnowledgeNodeView } from '@/components/knowledge/knowledge-node'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
-import { Card } from '@/components/ui/card'
 import { SparklesIcon } from '@/components/ui/icon'
 
 export const dynamic = 'force-dynamic'
@@ -34,6 +33,8 @@ export default async function ProtocolSectionPage({ params }: PageProps) {
   const data = getKnowledgeSectionData(store, slug)
   if (!section || data === undefined) notFound()
 
+  const style = groupStyle(section.group)
+  const { Icon } = style
   const inGroup = store.sections.filter(
     (s) => s.group === section.group && s.slug !== section.slug,
   )
@@ -59,9 +60,19 @@ export default async function ProtocolSectionPage({ params }: PageProps) {
       />
       <PageBody>
         <div className="space-y-6">
-          <Card className="p-5 sm:p-6">
-            <KnowledgeNodeView node={toRenderTree(data)} />
-          </Card>
+          <div className="flex items-center gap-2.5">
+            <span
+              aria-hidden
+              className={`flex h-7 w-7 items-center justify-center rounded-lg ${style.chip}`}
+            >
+              <Icon size={16} />
+            </span>
+            <span className="text-xs font-semibold uppercase tracking-[0.1em] text-neutral-400">
+              {section.group}
+            </span>
+          </div>
+
+          <KnowledgeNodeView data={data} tone={style.tone} />
 
           {inGroup.length > 0 ? (
             <section aria-label={`More in ${section.group}`}>
