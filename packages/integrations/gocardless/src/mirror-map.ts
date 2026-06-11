@@ -6,6 +6,7 @@ import type {
   UpsertGcCustomerInput,
   UpsertGcMandateMirrorInput,
   UpsertGcPaymentMirrorInput,
+  UpsertGcPayoutInput,
   UpsertGcSubscriptionInput,
 } from '@studymind/core/finance'
 
@@ -13,6 +14,7 @@ import type {
   GcCustomerResource,
   GcMandateResource,
   GcPaymentResource,
+  GcPayoutResource,
   GcSubscriptionResource,
 } from './types'
 import { mapMandateStatus, mapPaymentStatus, mapSubscriptionStatus } from './types'
@@ -96,5 +98,20 @@ export function paymentMirrorInput(
     gcMandateId: resource.links.mandate ?? null,
     gcCustomerId: opts.gcCustomerId ?? resource.links.customer ?? null,
     gcSubscriptionId: resource.links.subscription ?? null,
+    gcPayoutId: resource.links.payout ?? null,
+  }
+}
+
+export function payoutMirrorInput(resource: GcPayoutResource): UpsertGcPayoutInput {
+  return {
+    gcPayoutId: resource.id,
+    status: resource.status || 'pending',
+    amountMinor: resource.amount,
+    currency: resource.currency,
+    deductedFeesMinor: resource.deducted_fees ?? null,
+    reference: resource.reference ?? null,
+    payoutType: resource.payout_type ?? null,
+    arrivalDate: parseDate(resource.arrival_date),
+    gcCreatedAt: parseDate(resource.created_at),
   }
 }

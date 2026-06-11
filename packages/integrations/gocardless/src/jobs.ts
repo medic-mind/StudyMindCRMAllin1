@@ -13,6 +13,7 @@ import {
   syncGcPayment,
   upsertGcMandateMirror,
   upsertGcPaymentMirror,
+  upsertGcPayoutMirror,
   upsertGcSubscriptionMirror,
 } from '@studymind/core/finance'
 import { db } from '@studymind/db'
@@ -20,7 +21,12 @@ import { inngest } from '@studymind/jobs'
 
 import { gocardlessBackfill } from './backfill'
 import { createClient } from './client'
-import { mandateMirrorInput, paymentMirrorInput, subscriptionMirrorInput } from './mirror-map'
+import {
+  mandateMirrorInput,
+  paymentMirrorInput,
+  payoutMirrorInput,
+  subscriptionMirrorInput,
+} from './mirror-map'
 import { mapMandateStatus, mapPaymentStatus } from './types'
 
 // Event keys we currently process (resource_type/action). Anything else is
@@ -54,6 +60,7 @@ const HANDLED_KEYS = new Set<string>([
   'subscriptions/finished',
   'subscriptions/paused',
   'subscriptions/resumed',
+  'payouts/paid',
 ])
 
 // Keys that append a timeline Interaction (kept to the meaningful moments so
@@ -120,6 +127,7 @@ export const gocardlessEventReceived = inngest.createFunction(
         payment?: string
         new_mandate?: string
         subscription?: string
+        payout?: string
       }
     }
     const occurredAt = new Date(rawEvent.created_at)
@@ -127,6 +135,7 @@ export const gocardlessEventReceived = inngest.createFunction(
     const isPayment = type.startsWith('payments/')
     const isMandate = type.startsWith('mandates/')
     const isSubscription = type.startsWith('subscriptions/')
+    const isPayout = type.startsWith('payouts/')
 
     // 2. Refetch the canonical resource. CLAUDE.md §9.
     const refetched = await step.run('refetch', async () => {
@@ -152,6 +161,10 @@ export const gocardlessEventReceived = inngest.createFunction(
           const subscription = await client.getSubscription(subscriptionId)
           return { kind: 'subscription' as const, subscription }
         }
+      }
+      if (isPayout && rawEvent.links.payout) {
+        const payout = await client.getPayout(rawEvent.links.payout)
+        return { kind: 'payout' as const, payout }
       }
       return { kind: 'unresolvable' as const }
     })
@@ -232,6 +245,20 @@ export const gocardlessEventReceived = inngest.createFunction(
           gcId: p.id,
           status: mappedStatus,
           reversal,
+        }
+      }
+
+      if (refetched.kind === 'payout') {
+        // Payouts are merchant-side money movement — mirror only, no Family
+        // link and no timeline Interaction.
+        await upsertGcPayoutMirror(db, payoutMirrorInput(refetched.payout))
+        return {
+          kind: 'payout' as const,
+          unresolved: true,
+          familyId: null as string | null,
+          contactId: null as string | null,
+          gcId: refetched.payout.id,
+          status: refetched.payout.status,
         }
       }
 
@@ -399,9 +426,10 @@ function buildInteractionSummary(
   persisted:
     | { kind: 'payment'; reversal: { reopenedAllocations: number } | null }
     | { kind: 'mandate'; replacement: { newGcMandateId: string } | null }
-    | { kind: 'subscription' },
+    | { kind: 'subscription' }
+    | { kind: 'payout' },
 ): string {
-  if (persisted.kind === 'subscription') {
+  if (persisted.kind === 'subscription' || persisted.kind === 'payout') {
     return `GoCardless ${type}`
   }
   if (persisted.kind === 'payment') {
