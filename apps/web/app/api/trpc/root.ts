@@ -56,6 +56,7 @@ import { inboxRouter } from './routers/inbox'
 import { infoPackRouter } from './routers/infoPack'
 import { interactionRouter } from './routers/interaction'
 import { invoicingRouter } from './routers/invoicing'
+import { knowledgeRouter } from './routers/knowledge'
 import { leadRouter } from './routers/lead'
 import { mailRouter } from './routers/mail'
 import { mailAccountRouter } from './routers/mailAccount'
@@ -102,6 +103,7 @@ export const appRouter = router({
   infoPack: infoPackRouter,
   interaction: interactionRouter,
   invoicing: invoicingRouter,
+  knowledge: knowledgeRouter,
   lead: leadRouter,
   mail: mailRouter,
   mailAccount: mailAccountRouter,

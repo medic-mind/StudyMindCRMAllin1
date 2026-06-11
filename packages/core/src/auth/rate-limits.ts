@@ -47,6 +47,10 @@ export const RATE_LIMITS: Readonly<Record<string, RateLimit>> = {
   'task.update': DEFAULT_WRITE_LIMIT,
   'finance.discrepancy.resolve': DEFAULT_WRITE_LIMIT,
   'auth.changePassword': SENSITIVE_WRITE_LIMIT,
+  // AI Knowledge assistant — each call carries the full knowledge base as
+  // model context, so it is priced like a write even though it mutates
+  // nothing (ADR 0040).
+  'knowledge.ask': DEFAULT_WRITE_LIMIT,
 
   // Reads
   'contact.list': DEFAULT_READ_LIMIT,

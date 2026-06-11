@@ -24,6 +24,7 @@ export type AiTaskCategory =
   | 'product_classification'
   | 'webinar_class_match'
   | 'webinar_schedule_import'
+  | 'knowledge_qa'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -54,6 +55,11 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   webinar_class_match: { daily: 2, monthly: 40 },
   // One-shot schedule import (CSV/PDF/paste → weekly topics). Rare, mini-tier.
   webinar_schedule_import: { daily: 2, monthly: 40 },
+  // AI Knowledge assistant (ADR 0040). Each call carries the whole imported
+  // knowledge base as context (~90k input tokens), so per-call cost is high
+  // relative to other tasks; the cap covers a full day of staff questions on
+  // Gemini Flash and degrades cleanly if the provider is flipped to gpt-4o.
+  knowledge_qa: { daily: 10, monthly: 150 },
 }
 
 interface UsageBucket {
