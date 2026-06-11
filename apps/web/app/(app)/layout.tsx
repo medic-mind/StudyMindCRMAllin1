@@ -134,6 +134,8 @@ function buildNav(role: Role): NavItem[] {
         { href: '/direct-debits/plans', label: 'Plans' },
         { href: '/direct-debits/payments', label: 'Payments' },
         { href: '/direct-debits/customers', label: 'Customers & mandates' },
+        { href: '/direct-debits/payouts', label: 'Payouts' },
+        { href: '/direct-debits/activity', label: 'Activity' },
         { href: '/direct-debits/issues', label: 'Issues' },
       ],
     },

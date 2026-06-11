@@ -48,6 +48,12 @@ export interface SlackClient {
    * listed (that would need `groups:read`); they can still be added by id.
    */
   listChannels(): Promise<SlackConversation[]>
+  /** Resolve a Slack user id (U…) to their display name via `users.info`.
+   *  Needs the `users:read` bot scope; the caller treats a failure as
+   *  "keep the raw id". */
+  getUserDisplayName(userId: string): Promise<string | null>
+  /** Resolve a channel id (C…) to its #name via `conversations.info`. */
+  getChannelName(channelId: string): Promise<string | null>
 }
 
 export interface CreateSlackClientOptions {
@@ -130,6 +136,21 @@ export function createClient(opts: CreateSlackClientOptions = {}): SlackClient {
         if (!cursor) break
       }
       return out.sort((a, b) => a.name.localeCompare(b.name))
+    },
+    async getUserDisplayName(userId) {
+      const res = await get<{
+        user?: { real_name?: string; name?: string; profile?: { display_name?: string } }
+      }>('/users.info', { user: userId })
+      const u = res.user
+      const name = u?.profile?.display_name || u?.real_name || u?.name || null
+      return name && name.trim() ? name.trim() : null
+    },
+    async getChannelName(channelId) {
+      const res = await get<{ channel?: { name?: string } }>('/conversations.info', {
+        channel: channelId,
+      })
+      const name = res.channel?.name ?? null
+      return name && name.trim() ? name.trim() : null
     },
   }
 }

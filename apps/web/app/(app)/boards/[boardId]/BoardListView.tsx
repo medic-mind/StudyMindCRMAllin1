@@ -35,6 +35,7 @@ interface CardData {
   contactName: string
   contactEmail?: string | null
   contactPhone?: string | null
+  company?: { id: string; name: string; color: string | null } | null
   description?: string | null
   subject: { id: string; name: string } | null
   labels: ReadonlyArray<LabelChip>
@@ -212,14 +213,31 @@ export function BoardListView({
                               className="mt-0.5 flex flex-col gap-0.5 text-xs text-neutral-600"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
                               {card.contactEmail && <EmailLink email={card.contactEmail} />}
+                              {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
                             </div>
                           ) : null}
                         </td>
                         <td className="px-3 py-2 align-top">
                           <div className="flex flex-wrap items-center gap-1">
                             {card.subject ? <Badge tone="info">{card.subject.name}</Badge> : null}
+                            {card.company ? (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] font-medium text-neutral-700"
+                                title="Company"
+                              >
+                                <span
+                                  aria-hidden
+                                  className="h-1.5 w-1.5 rounded-full"
+                                  style={{
+                                    backgroundColor: resolveStageColor(
+                                      card.company.color ?? 'neutral-400',
+                                    ),
+                                  }}
+                                />
+                                {card.company.name}
+                              </span>
+                            ) : null}
                             {card.labels.map((l) => (
                               <span
                                 key={l.id}

@@ -24,6 +24,8 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { resolveSlackNames } from './names'
+import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
 
 interface EventReceivedData {
@@ -72,11 +74,23 @@ export const slackEventReceived = inngest.createFunction(
 
     const occurredAt = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
 
+    // 0. Resolve the human-readable details the Events payload doesn't carry:
+    //    sender display name (users.info), channel #name (conversations.info)
+    //    and a permalink (constructed — the payload has none). Each is
+    //    best-effort: a missing scope or token keeps the raw ids, never
+    //    blocks the archive.
+    const resolved = await step.run('resolve-details', async () =>
+      resolveSlackNames({ userId: message.user ?? null, channelId: message.channel }),
+    )
+    const senderName = resolved.senderName ?? message.user ?? null
+    const channelName = resolved.channelName
+    const permalink = buildSlackPermalink(message.channel, message.ts, message.thread_ts ?? null)
+
     // 1. AI parse. Sanitise the user content first (§18).
     const safeText = sanitiseUserContent(message.text)
     const prompt = buildSlackSummaryPrompt({
-      channelName: null,
-      authorDisplayName: message.user ?? null,
+      channelName,
+      authorDisplayName: senderName,
       text: safeText,
     })
     const parsed: SlackSummary = await step.run('ai-parse', async () =>
@@ -103,13 +117,13 @@ export const slackEventReceived = inngest.createFunction(
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
             messageText: message.text,
-            senderName: message.user ?? null,
+            senderName,
           },
           update: {
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
             messageText: message.text,
-            senderName: message.user ?? null,
+            senderName,
           },
         }),
       )
@@ -140,13 +154,13 @@ export const slackEventReceived = inngest.createFunction(
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
             messageText: message.text,
-            senderName: message.user ?? null,
+            senderName,
           },
           update: {
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
             messageText: message.text,
-            senderName: message.user ?? null,
+            senderName,
           },
         }),
       )
@@ -178,12 +192,14 @@ export const slackEventReceived = inngest.createFunction(
             slackEventId: eventId,
             slackTs: message.ts,
             channelId: message.channel,
-            channelName: null,
+            channelName,
+            permalink,
+            ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
             // Archive the ORIGINAL message text + author so the full internal
             // record survives Slack's 90-day retention (§21). The view-model
             // (contact-channels SlackMention) already surfaces these fields.
             messageText: message.text,
-            senderName: message.user ?? null,
+            senderName,
             // AI categorisation so the archived record is sortable.
             category: parsed.category,
             sentiment: parsed.sentiment,

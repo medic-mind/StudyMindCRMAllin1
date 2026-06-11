@@ -115,6 +115,24 @@ describe('gocardless client contract', () => {
     expect(page.after).toBeNull()
   })
 
+  it('lists and fetches payouts', async () => {
+    const { calls, fetchImpl } = makeFetch({
+      '/payouts/PO1': { payouts: { id: 'PO1', status: 'paid', amount: 50000, currency: 'GBP', created_at: '2026-01-02T00:00:00Z' } },
+      '/payouts': {
+        payouts: [
+          { id: 'PO1', status: 'paid', amount: 50000, currency: 'GBP', created_at: '2026-01-02T00:00:00Z' },
+        ],
+        meta: { cursors: { after: null }, limit: 200 },
+      },
+    })
+    const client = createClient({ accessToken: 't', environment: 'sandbox', fetchImpl })
+    const page = await client.listPayouts({ limit: 200 })
+    expect(page.items[0]!.id).toBe('PO1')
+    const payout = await client.getPayout('PO1')
+    expect(payout.status).toBe('paid')
+    expect(calls.map((c) => c.url)).toEqual(['/payouts?limit=200', '/payouts/PO1'])
+  })
+
   it('completes a redirect flow with the session token', async () => {
     const { calls, fetchImpl } = makeFetch({
       '/redirect_flows/RE1/actions/complete': {

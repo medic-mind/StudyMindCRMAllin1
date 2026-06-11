@@ -166,3 +166,17 @@ architecture (visuals stay on StudyMind design tokens, §4):
   customer mirror), and a `?customer=` deep-link filter set by the record's
   action buttons — which also prefills the New-plan / Collect-payment
   mandate pickers so "create for this customer" is one click.
+
+## Amendment (2026-06-11, fourth) — payouts + activity feed
+
+The last two GoCardless dashboard areas land in the workspace:
+
+- **Payouts**: `GcPayout` mirror (status as normalised text, §15) plus
+  `GcPayment.gcPayoutId` (links.payout, only ever set forward). Webhook
+  `payouts/paid` and a `payouts` backfill phase keep it complete. UI: a
+  Payouts tab (status chips, fees, settled-payment counts) and a per-payout
+  drill-down listing the customer payments inside the transfer.
+- **Activity feed**: `gocardless.events.list` reads the `ProviderEvent`
+  replay log (no new storage), parses each event's links, and resolves them
+  to customers through the mirror — the CRM's Events screen. Filterable by
+  resource, keyset "load older" pagination.

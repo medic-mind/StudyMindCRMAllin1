@@ -342,6 +342,7 @@ export interface UpsertGcPaymentMirrorInput {
   gcMandateId?: string | null
   gcCustomerId?: string | null
   gcSubscriptionId?: string | null
+  gcPayoutId?: string | null
 }
 
 export async function upsertGcPaymentMirror(
@@ -360,11 +361,54 @@ export async function upsertGcPaymentMirror(
     ...(input.gcSubscriptionId !== undefined
       ? { gcSubscriptionId: input.gcSubscriptionId }
       : {}),
+    // Only ever set forward — a refetch without payout context must not clear
+    // the settled link.
+    ...(input.gcPayoutId ? { gcPayoutId: input.gcPayoutId } : {}),
   }
 
   const row = await db.gcPayment.upsert({
     where: { gcPaymentId: input.gcPaymentId },
     create: { id: createId(), gcPaymentId: input.gcPaymentId, ...data },
+    update: data,
+    select: { id: true },
+  })
+  return { id: row.id }
+}
+
+// -----------------------------------------------------------------------------
+// Payout mirror (ADR 0038 parity pass 2)
+// -----------------------------------------------------------------------------
+
+export interface UpsertGcPayoutInput {
+  gcPayoutId: string
+  /** Normalised text (pending | paid | bounced | …) — stored as-is, §15. */
+  status: string
+  amountMinor: number
+  currency: string
+  deductedFeesMinor?: number | null
+  reference?: string | null
+  payoutType?: string | null
+  arrivalDate?: Date | null
+  gcCreatedAt?: Date | null
+}
+
+export async function upsertGcPayoutMirror(
+  db: DbClient,
+  input: UpsertGcPayoutInput,
+): Promise<{ id: string }> {
+  const data = {
+    status: input.status,
+    amountMinor: input.amountMinor,
+    currency: input.currency.toUpperCase(),
+    deductedFeesMinor: input.deductedFeesMinor ?? null,
+    reference: input.reference ?? null,
+    payoutType: input.payoutType ?? null,
+    arrivalDate: input.arrivalDate ?? null,
+    gcCreatedAt: input.gcCreatedAt ?? null,
+  }
+  const row = await db.gcPayout.upsert({
+    where: { gcPayoutId: input.gcPayoutId },
+    create: { id: createId(), gcPayoutId: input.gcPayoutId, ...data },
     update: data,
     select: { id: true },
   })

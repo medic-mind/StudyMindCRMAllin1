@@ -4,7 +4,7 @@
 // in `@studymind/jobs/leads/process-lead`. The AI enrichment glue lives here so
 // `packages/jobs` does not import the OpenAI client directly through a cycle —
 // it injects an `enrich` callback. AI is best-effort + budget-guarded; the
-// deterministic rules are authoritative, so a missing OPENAI_API_KEY (or a
+// deterministic rules are authoritative, so an unconfigured AI provider (or a
 // failed call) never blocks ingestion.
 
 import {
@@ -23,12 +23,36 @@ import { safeFetch } from '@studymind/core/observability/safe-fetch'
 
 import { db } from '@/lib/db'
 
+/** "YYYY-MM-DDTHH:mm, Tuesday" in Europe/London — grounds the AI's relative
+ * date resolution ("call me Thursday at 3pm"). */
+function nowLondonLabel(): string {
+  const now = new Date()
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'long',
+    hour12: false,
+  }).formatToParts(now)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}, ${get('weekday')}`
+}
+
 const enrichLead: NonNullable<ProcessLeadDeps['enrich']> = async ({
   normalised,
   classification,
   brandName,
 }): Promise<LeadAiEnrichment | null> => {
-  if (!process.env['OPENAI_API_KEY']) return null
+  // Any configured provider (Gemini default, OpenAI fallback — ADR 0028).
+  const aiConfigured =
+    process.env['GEMINI_API_KEY'] || process.env['GOOGLE_API_KEY'] || process.env['OPENAI_API_KEY']
+  if (!aiConfigured) return null
+  const extraFieldsText = Object.entries(normalised.extraFields)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('\n')
   const prompt = buildLeadClassificationPrompt({
     brandName,
     landingUrl: normalised.landingUrl,
@@ -36,6 +60,8 @@ const enrichLead: NonNullable<ProcessLeadDeps['enrich']> = async ({
     categories: classification.categories,
     productTags: classification.productTags,
     message: normalised.message,
+    extraFieldsText: extraFieldsText || null,
+    nowLondon: nowLondonLabel(),
   })
   return runStructured({
     task: 'lead_classification',

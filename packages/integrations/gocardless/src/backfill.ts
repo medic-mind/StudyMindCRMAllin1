@@ -25,6 +25,7 @@ import {
   upsertGcCustomerMirror,
   upsertGcMandateMirror,
   upsertGcPaymentMirror,
+  upsertGcPayoutMirror,
   upsertGcSubscriptionMirror,
 } from '@studymind/core/finance'
 import { db } from '@studymind/db'
@@ -35,13 +36,14 @@ import {
   customerMirrorInput,
   mandateMirrorInput,
   paymentMirrorInput,
+  payoutMirrorInput,
   subscriptionMirrorInput,
 } from './mirror-map'
 import { mapPaymentStatus } from './types'
 
 const PAGE_LIMIT = 200
 
-const PHASES = ['customers', 'mandates', 'subscriptions', 'payments'] as const
+const PHASES = ['customers', 'mandates', 'subscriptions', 'payouts', 'payments'] as const
 type Phase = (typeof PHASES)[number]
 
 interface BackfillEventData {
@@ -127,6 +129,14 @@ export const gocardlessBackfill = inngest.createFunction(
           processed += 1
           if (result.familyId) matched += 1
           else skipped += 1
+        }
+        nextAfter = res.after
+      } else if (phase === 'payouts') {
+        const res = await client.listPayouts({ after, limit: PAGE_LIMIT })
+        for (const payout of res.items) {
+          await upsertGcPayoutMirror(db, payoutMirrorInput(payout))
+          processed += 1
+          matched += 1
         }
         nextAfter = res.after
       } else if (phase === 'subscriptions') {

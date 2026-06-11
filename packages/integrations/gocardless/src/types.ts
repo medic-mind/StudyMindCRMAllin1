@@ -164,6 +164,27 @@ export interface GcPaymentResource {
     mandate?: string
     customer?: string
     subscription?: string
+    payout?: string
+  }
+}
+
+/**
+ * Payout statuses are normalised text in the mirror (§15 precedent) — the
+ * documented set is pending | paid | bounced; anything new is stored as-is.
+ */
+export interface GcPayoutResource {
+  id: string
+  status: string
+  amount: number
+  currency: string
+  created_at: string
+  arrival_date?: string | null
+  reference?: string | null
+  deducted_fees?: number | null
+  payout_type?: string | null
+  links?: {
+    creditor?: string
+    creditor_bank_account?: string
   }
 }
 

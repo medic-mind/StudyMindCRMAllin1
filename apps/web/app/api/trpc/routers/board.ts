@@ -637,7 +637,18 @@ const cardRouter = router({
           assignee: { select: { id: true, name: true, email: true } },
           subject: { select: { id: true, name: true } },
           contact: {
-            select: { id: true, firstName: true, lastName: true, email: true, phoneE164: true },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneE164: true,
+              companies: {
+                select: { company: { select: { id: true, name: true, color: true } } },
+                orderBy: { createdAt: 'asc' },
+                take: 1,
+              },
+            },
           },
           labels: { select: { label: { select: { id: true, name: true, color: true } } } },
           updatedAt: true,
@@ -661,6 +672,7 @@ const cardRouter = router({
         contactName: displayNameOf(r.contact),
         contactEmail: r.contact.email,
         contactPhone: r.contact.phoneE164,
+        company: r.contact.companies[0]?.company ?? null,
         description: r.description,
         subject: r.subject ? { id: r.subject.id, name: r.subject.name } : null,
         labels: r.labels.map((l) => l.label),
@@ -870,9 +882,9 @@ const cardRouter = router({
       // UploadedInvoice / CallSummaryTemplate). Cap on the input keeps it sane.
       const wantsAttachments = Boolean(
         input.channels.email ||
-          input.channels.whatsapp ||
-          input.channels.sms ||
-          input.channels.trengo,
+        input.channels.whatsapp ||
+        input.channels.sms ||
+        input.channels.trengo,
       )
       const refs = wantsAttachments ? (input.emailAttachments ?? []) : []
       const attachments: Array<{ filename: string; contentType: string; data: Buffer }> = [
@@ -1069,9 +1081,10 @@ const cardRouter = router({
           [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim() ||
           contact.email ||
           'this contact'
-        const appUrl = (
-          process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000'
-        ).replace(/\/$/, '')
+        const appUrl = (process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3000').replace(
+          /\/$/,
+          '',
+        )
         const composed = `Call summary for ${contactName}\n\n${input.body}\n\n${appUrl}/contacts/${contact.id}`
 
         const defaultSlackOption = await ctx.db.slackChannelOption.findFirst({
@@ -1091,13 +1104,9 @@ const cardRouter = router({
           : null
         const trengoPayload = (recentMessage?.payload ?? {}) as Record<string, unknown>
         const trengoTicketId =
-          typeof trengoPayload['ticketId'] === 'number'
-            ? trengoPayload['ticketId']
-            : null
+          typeof trengoPayload['ticketId'] === 'number' ? trengoPayload['ticketId'] : null
         const trengoChannel =
-          typeof trengoPayload['channel'] === 'string'
-            ? (trengoPayload['channel'] as string)
-            : null
+          typeof trengoPayload['channel'] === 'string' ? (trengoPayload['channel'] as string) : null
 
         // Gmail target — most recent email thread + actor's mailbox.
         const recentEmail = contact.email
@@ -1121,7 +1130,7 @@ const cardRouter = router({
         const emailSubject =
           typeof emailPayload['subject'] === 'string'
             ? (emailPayload['subject'] as string)
-            : recentEmail?.summary ?? 'Call summary'
+            : (recentEmail?.summary ?? 'Call summary')
         const mailbox = await ctx.db.gmailMailbox.findFirst({
           where: { agentId: user.id, deletedAt: null },
           orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
@@ -1130,9 +1139,7 @@ const cardRouter = router({
 
         return {
           composedText: composed,
-          slack: slackChannelId
-            ? { channelId: slackChannelId, body: composed }
-            : null,
+          slack: slackChannelId ? { channelId: slackChannelId, body: composed } : null,
           trengo:
             contact.phoneE164 && trengoTicketId != null && trengoChannel
               ? {
@@ -1233,19 +1240,17 @@ const cardRouter = router({
   // Hard-delete a card. Irreversible — CLAUDE.md §3 (no silent data
   // mutation; UI must confirm). Cascades labels + subtasks; preserves the
   // backing Contact and its timeline. Manager+ only.
-  delete: auditedProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCardDelete(user.role)
-      try {
-        await deleteCard(ctx.db, input.id, { actorId: user.id, requestId: ctx.requestId })
-        ctx.audit.called = true
-        return { ok: true }
-      } catch (err) {
-        mapBusinessError(err)
-      }
-    }),
+  delete: auditedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCardDelete(user.role)
+    try {
+      await deleteCard(ctx.db, input.id, { actorId: user.id, requestId: ctx.requestId })
+      ctx.audit.called = true
+      return { ok: true }
+    } catch (err) {
+      mapBusinessError(err)
+    }
+  }),
 
   setLabels: auditedProcedure.input(CardSetLabelsInput).mutation(async ({ ctx, input }) => {
     const user = requireUser(ctx)
@@ -1531,16 +1536,63 @@ const boardQuickActionRouter = router({
       listQuickActions(ctx.db, input.boardId, { includeArchived: input.includeArchived }),
     ),
 
-  create: auditedProcedure
-    .input(QuickActionCreateInput)
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManageQuickActions(user.role)
-      const board = await ctx.db.board.findUnique({
-        where: { id: input.boardId },
-        select: { id: true, archivedAt: true },
-      })
-      if (!board) throw new TRPCError({ code: 'NOT_FOUND', message: 'Board not found' })
+  create: auditedProcedure.input(QuickActionCreateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManageQuickActions(user.role)
+    const board = await ctx.db.board.findUnique({
+      where: { id: input.boardId },
+      select: { id: true, archivedAt: true },
+    })
+    if (!board) throw new TRPCError({ code: 'NOT_FOUND', message: 'Board not found' })
+    const stage = await ctx.db.pipelineStage.findFirst({
+      where: { id: input.targetStageId, archivedAt: null },
+      select: { id: true, boardId: true },
+    })
+    if (!stage || !stage.boardId) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' })
+    }
+    const id = createId()
+    const row = await ctx.db.boardQuickAction.create({
+      data: {
+        id,
+        boardId: input.boardId,
+        label: input.label,
+        color: input.color ?? null,
+        targetStageId: input.targetStageId,
+        targetBoardId: stage.boardId === input.boardId ? null : stage.boardId,
+        commentTemplate: input.commentTemplate ?? null,
+        sortOrder: input.sortOrder ?? 100,
+        createdById: user.id,
+        updatedById: user.id,
+      },
+    })
+    await ctx.audit({
+      action: 'board.quick_action_created',
+      target: { type: 'Board', id: input.boardId },
+      after: { quickActionId: row.id, label: row.label },
+    })
+    return { id: row.id }
+  }),
+
+  update: auditedProcedure.input(QuickActionUpdateInput).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManageQuickActions(user.role)
+    const before = await ctx.db.boardQuickAction.findUnique({
+      where: { id: input.id },
+      select: {
+        id: true,
+        boardId: true,
+        label: true,
+        color: true,
+        targetStageId: true,
+        targetBoardId: true,
+        commentTemplate: true,
+        sortOrder: true,
+      },
+    })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    let targetBoardId = before.targetBoardId
+    if (input.targetStageId !== undefined) {
       const stage = await ctx.db.pipelineStage.findFirst({
         where: { id: input.targetStageId, archivedAt: null },
         select: { id: true, boardId: true },
@@ -1548,124 +1600,69 @@ const boardQuickActionRouter = router({
       if (!stage || !stage.boardId) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' })
       }
-      const id = createId()
-      const row = await ctx.db.boardQuickAction.create({
-        data: {
-          id,
-          boardId: input.boardId,
-          label: input.label,
-          color: input.color ?? null,
-          targetStageId: input.targetStageId,
-          targetBoardId: stage.boardId === input.boardId ? null : stage.boardId,
-          commentTemplate: input.commentTemplate ?? null,
-          sortOrder: input.sortOrder ?? 100,
-          createdById: user.id,
-          updatedById: user.id,
-        },
-      })
-      await ctx.audit({
-        action: 'board.quick_action_created',
-        target: { type: 'Board', id: input.boardId },
-        after: { quickActionId: row.id, label: row.label },
-      })
-      return { id: row.id }
-    }),
+      targetBoardId = stage.boardId === before.boardId ? null : stage.boardId
+    }
+    const after = await ctx.db.boardQuickAction.update({
+      where: { id: input.id },
+      data: {
+        ...(input.label !== undefined ? { label: input.label } : {}),
+        color: input.color,
+        ...(input.targetStageId !== undefined
+          ? { targetStageId: input.targetStageId, targetBoardId }
+          : {}),
+        commentTemplate: input.commentTemplate,
+        ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+        updatedById: user.id,
+      },
+    })
+    await ctx.audit({
+      action: 'board.quick_action_updated',
+      target: { type: 'Board', id: after.boardId },
+      before,
+      after,
+    })
+    return { id: after.id }
+  }),
 
-  update: auditedProcedure
-    .input(QuickActionUpdateInput)
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManageQuickActions(user.role)
-      const before = await ctx.db.boardQuickAction.findUnique({
-        where: { id: input.id },
-        select: {
-          id: true,
-          boardId: true,
-          label: true,
-          color: true,
-          targetStageId: true,
-          targetBoardId: true,
-          commentTemplate: true,
-          sortOrder: true,
-        },
-      })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      let targetBoardId = before.targetBoardId
-      if (input.targetStageId !== undefined) {
-        const stage = await ctx.db.pipelineStage.findFirst({
-          where: { id: input.targetStageId, archivedAt: null },
-          select: { id: true, boardId: true },
-        })
-        if (!stage || !stage.boardId) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' })
-        }
-        targetBoardId = stage.boardId === before.boardId ? null : stage.boardId
-      }
-      const after = await ctx.db.boardQuickAction.update({
-        where: { id: input.id },
-        data: {
-          ...(input.label !== undefined ? { label: input.label } : {}),
-          color: input.color,
-          ...(input.targetStageId !== undefined
-            ? { targetStageId: input.targetStageId, targetBoardId }
-            : {}),
-          commentTemplate: input.commentTemplate,
-          ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
-          updatedById: user.id,
-        },
-      })
-      await ctx.audit({
-        action: 'board.quick_action_updated',
-        target: { type: 'Board', id: after.boardId },
-        before,
-        after,
-      })
-      return { id: after.id }
-    }),
+  archive: auditedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManageQuickActions(user.role)
+    const before = await ctx.db.boardQuickAction.findUnique({
+      where: { id: input.id },
+      select: { id: true, boardId: true, label: true },
+    })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    await ctx.db.boardQuickAction.update({
+      where: { id: input.id },
+      data: { archivedAt: new Date(), updatedById: user.id },
+    })
+    await ctx.audit({
+      action: 'board.quick_action_archived',
+      target: { type: 'Board', id: before.boardId },
+      before,
+    })
+    return { id: input.id }
+  }),
 
-  archive: auditedProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManageQuickActions(user.role)
-      const before = await ctx.db.boardQuickAction.findUnique({
-        where: { id: input.id },
-        select: { id: true, boardId: true, label: true },
-      })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      await ctx.db.boardQuickAction.update({
-        where: { id: input.id },
-        data: { archivedAt: new Date(), updatedById: user.id },
-      })
-      await ctx.audit({
-        action: 'board.quick_action_archived',
-        target: { type: 'Board', id: before.boardId },
-        before,
-      })
-      return { id: input.id }
-    }),
-
-  restore: auditedProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManageQuickActions(user.role)
-      const before = await ctx.db.boardQuickAction.findUnique({
-        where: { id: input.id },
-        select: { id: true, boardId: true, label: true },
-      })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      await ctx.db.boardQuickAction.update({
-        where: { id: input.id },
-        data: { archivedAt: null, updatedById: user.id },
-      })
-      await ctx.audit({
-        action: 'board.quick_action_restored',
-        target: { type: 'Board', id: before.boardId },
-        after: before,
-      })
-      return { id: input.id }
-    }),
+  restore: auditedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
+    const user = requireUser(ctx)
+    assertCanManageQuickActions(user.role)
+    const before = await ctx.db.boardQuickAction.findUnique({
+      where: { id: input.id },
+      select: { id: true, boardId: true, label: true },
+    })
+    if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+    await ctx.db.boardQuickAction.update({
+      where: { id: input.id },
+      data: { archivedAt: null, updatedById: user.id },
+    })
+    await ctx.audit({
+      action: 'board.quick_action_restored',
+      target: { type: 'Board', id: before.boardId },
+      after: before,
+    })
+    return { id: input.id }
+  }),
 })
 
 export { boardRouter, boardQuickActionRouter, cardRouter, labelRouter, subjectRouter }

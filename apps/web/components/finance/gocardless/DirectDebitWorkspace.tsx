@@ -14,9 +14,11 @@ import { Button } from '@/components/ui/button'
 import { Table, Tbody, Th, Thead, Tr } from '@/components/ui/table'
 import { trpc } from '@/lib/trpc/client'
 
+import { ActivityTab } from './ActivityTab'
 import { CustomersTab } from './CustomersTab'
 import { OverviewTab } from './OverviewTab'
 import { PaymentsTab } from './PaymentsTab'
+import { PayoutsTab } from './PayoutsTab'
 import { PlansTab } from './PlansTab'
 
 export const DD_TABS = [
@@ -24,6 +26,8 @@ export const DD_TABS = [
   { value: 'plans', label: 'Plans', href: '/direct-debits/plans' },
   { value: 'payments', label: 'Payments', href: '/direct-debits/payments' },
   { value: 'customers', label: 'Customers & mandates', href: '/direct-debits/customers' },
+  { value: 'payouts', label: 'Payouts', href: '/direct-debits/payouts' },
+  { value: 'activity', label: 'Activity', href: '/direct-debits/activity' },
   { value: 'issues', label: 'Issues', href: '/direct-debits/issues' },
 ] as const
 
@@ -97,6 +101,8 @@ export function DirectDebitWorkspace({ tab, canImport }: { tab: DdTab; canImport
       {tab === 'plans' ? <PlansTab /> : null}
       {tab === 'payments' ? <PaymentsTab /> : null}
       {tab === 'customers' ? <CustomersTab /> : null}
+      {tab === 'payouts' ? <PayoutsTab /> : null}
+      {tab === 'activity' ? <ActivityTab /> : null}
       {tab === 'issues' ? <IssuesTab /> : null}
     </div>
   )

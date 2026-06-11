@@ -1801,6 +1801,8 @@ model GcPayment {
   gcMandateId      String?
   gcCustomerId     String?
   gcSubscriptionId String?
+  /// Payout this payment was settled in (links.payout, set once paid out).
+  gcPayoutId       String?
   status           GcPaymentState @default(unknown)
   amountMinor      Int
   currency         String         @default("GBP")
@@ -1817,7 +1819,34 @@ model GcPayment {
   @@index([status])
   @@index([gcCustomerId])
   @@index([gcSubscriptionId])
+  @@index([gcPayoutId])
   @@index([chargeDate])
+}
+
+/// Complete mirror of a GoCardless payout (ADR 0038): the batch transfer of
+/// collected funds to the merchant bank account. Status is normalised text
+/// (pending | paid | bounced — §15 precedent) so a new provider value never
+/// blocks a sync. The payments inside a payout join via GcPayment.gcPayoutId.
+model GcPayout {
+  id                String  @id
+  gcPayoutId        String  @unique
+  status            String  @default("pending")
+  amountMinor       Int
+  currency          String  @default("GBP")
+  deductedFeesMinor Int?
+  reference         String?
+  payoutType        String?
+  arrivalDate       DateTime?
+  gcCreatedAt       DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([arrivalDate])
 }
 
 model Invoice {
