@@ -36,7 +36,7 @@ export interface SendMessageInput {
 
 export interface SendMessageResult {
   interactionId: string
-  trengoMessageId: number
+  trengoMessageId: number | null
 }
 
 export async function sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
@@ -98,42 +98,45 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
 
   // 3. Send. On failure, leave the Interaction in pending_send and rethrow.
   try {
-    // Upload any attachments first, collecting Trengo media ids + the
-    // metadata we surface in the timeline.
-    const attachmentIds: number[] = []
+    // Text first (documented `message` param), then one media message per
+    // file via the documented `/tickets/:id/messages/media` — the same two
+    // requests Trengo's own composer makes. An attachment-only send skips
+    // the empty text message.
+    let message: { id: number | null } | null = null
+    if (input.body.trim() !== '') {
+      message = await client.sendMessage({
+        ticketId: input.ticketId,
+        body: input.body,
+        channel: input.channel,
+        customFields: {
+          // Per CLAUDE.md §11 — embed our Interaction id and agent id so
+          // inbound webhook events for this message reconcile cleanly.
+          interactionId,
+          agentId: input.agentId,
+        },
+      })
+    }
     const attachmentMeta: Array<{
       filename: string
       contentType: string
       sizeBytes: number
-      trengoMediaId: number
+      trengoMessageId: number | null
     }> = []
     for (const att of input.attachments ?? []) {
-      const media = await client.uploadMedia({
+      const sent = await client.sendMediaMessage({
+        ticketId: input.ticketId,
         filename: att.filename,
         contentType: att.contentType,
         data: att.data,
       })
-      attachmentIds.push(media.id)
       attachmentMeta.push({
         filename: att.filename,
         contentType: att.contentType,
         sizeBytes: att.data.byteLength,
-        trengoMediaId: media.id,
+        trengoMessageId: sent.id,
       })
+      if (!message) message = sent
     }
-
-    const message = await client.sendMessage({
-      ticketId: input.ticketId,
-      body: input.body,
-      channel: input.channel,
-      customFields: {
-        // Per CLAUDE.md §11 — embed our Interaction id and agent id so
-        // inbound webhook events for this message reconcile cleanly.
-        interactionId,
-        agentId: input.agentId,
-      },
-      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-    })
 
     await db.interaction.update({
       where: { id: interactionId },
@@ -147,7 +150,7 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
           agentId: input.agentId,
           body: input.body,
           outboundRequestId: input.requestId,
-          trengoMessageId: message.id,
+          trengoMessageId: message?.id ?? null,
           ...(attachmentMeta.length > 0 ? { attachments: attachmentMeta } : {}),
         },
       },
@@ -160,7 +163,7 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
       requestId: input.requestId,
       after: {
         interactionId,
-        trengoMessageId: message.id,
+        trengoMessageId: message?.id ?? null,
         channel: input.channel,
       },
     })
@@ -177,7 +180,7 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
       contactId: input.contactId,
     })
 
-    return { interactionId, trengoMessageId: message.id }
+    return { interactionId, trengoMessageId: message?.id ?? null }
   } catch (err) {
     await markFailed(interactionId, err)
     throw err
@@ -268,39 +271,37 @@ export async function startConversation(
   }
 
   try {
-    // Upload any attachments first, collecting Trengo media ids + metadata for
-    // the timeline (mirrors sendMessage).
-    const attachmentIds: number[] = []
-    const attachmentMeta: Array<{
-      filename: string
-      contentType: string
-      sizeBytes: number
-      trengoMediaId: number
-    }> = []
-    for (const att of input.attachments ?? []) {
-      const media = await client.uploadMedia({
-        filename: att.filename,
-        contentType: att.contentType,
-        data: att.data,
-      })
-      attachmentIds.push(media.id)
-      attachmentMeta.push({
-        filename: att.filename,
-        contentType: att.contentType,
-        sizeBytes: att.data.byteLength,
-        trengoMediaId: media.id,
-      })
-    }
-
     const result = await client.createConversation({
       channel: input.channel,
       recipient: input.recipient,
       body: input.body,
       customFields: { interactionId, agentId: input.agentId },
-      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
     })
     if (!result.ticketId) {
       throw new TrengoApiError(502, '/messages', { reason: 'no ticket id returned' })
+    }
+
+    // Attachments follow as media messages on the freshly-created ticket
+    // (documented `/tickets/:id/messages/media`, one file per message).
+    const attachmentMeta: Array<{
+      filename: string
+      contentType: string
+      sizeBytes: number
+      trengoMessageId: number | null
+    }> = []
+    for (const att of input.attachments ?? []) {
+      const sent = await client.sendMediaMessage({
+        ticketId: result.ticketId,
+        filename: att.filename,
+        contentType: att.contentType,
+        data: att.data,
+      })
+      attachmentMeta.push({
+        filename: att.filename,
+        contentType: att.contentType,
+        sizeBytes: att.data.byteLength,
+        trengoMessageId: sent.id,
+      })
     }
 
     await db.interaction.update({
