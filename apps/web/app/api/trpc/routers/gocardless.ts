@@ -303,6 +303,122 @@ const MandateListInput = z.object({
 const CHARGEABLE_MANDATE_STATES = ['pending_submission', 'submitted', 'active'] as const
 
 export const gocardlessRouter = router({
+  /**
+   * The Direct Debit picture for ONE customer-CRM contact — powers the
+   * "Direct Debit" panel on /contacts/[id]. Read-only and open to all staff
+   * (§20.1 contact.read; the same page already shows payments to every
+   * role). Resolution: GcCustomers linked to the contact directly, else via
+   * any family the contact belongs to.
+   */
+  contactSummary: protectedProcedure
+    .input(z.object({ contactId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      requireUser(ctx)
+      const familyIds = (
+        await ctx.db.familyMember.findMany({
+          where: { contactId: input.contactId },
+          select: { familyId: true },
+        })
+      ).map((m) => m.familyId)
+
+      const customers = await ctx.db.gcCustomer.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { contactId: input.contactId },
+            ...(familyIds.length > 0 ? [{ familyId: { in: familyIds } }] : []),
+          ],
+        },
+        orderBy: [{ createdAt: 'asc' }],
+        take: 5,
+        select: {
+          gcCustomerId: true,
+          email: true,
+          givenName: true,
+          familyName: true,
+          companyName: true,
+        },
+      })
+      const customerIds = customers.map((c) => c.gcCustomerId)
+
+      const [mandates, subscriptions, payments, setupLinks] = await Promise.all([
+        customerIds.length > 0
+          ? ctx.db.gcMandate.findMany({
+              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+              orderBy: [{ createdAt: 'desc' }],
+              take: 10,
+              select: {
+                gcMandateId: true,
+                state: true,
+                reference: true,
+                scheme: true,
+                nextPossibleChargeDate: true,
+              },
+            })
+          : Promise.resolve([]),
+        customerIds.length > 0
+          ? ctx.db.gcSubscription.findMany({
+              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+              orderBy: [{ createdAt: 'desc' }],
+              take: 10,
+              select: {
+                gcSubscriptionId: true,
+                name: true,
+                status: true,
+                amountMinor: true,
+                currency: true,
+                intervalUnit: true,
+                interval: true,
+                dayOfMonth: true,
+                nextChargeAt: true,
+              },
+            })
+          : Promise.resolve([]),
+        customerIds.length > 0
+          ? ctx.db.gcPayment.findMany({
+              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+              orderBy: [{ chargeDate: 'desc' }, { createdAt: 'desc' }],
+              take: 5,
+              select: {
+                gcPaymentId: true,
+                status: true,
+                amountMinor: true,
+                currency: true,
+                description: true,
+                chargeDate: true,
+              },
+            })
+          : Promise.resolve([]),
+        ctx.db.mandateSetupLink.findMany({
+          where: { contactId: input.contactId, deletedAt: null },
+          orderBy: [{ createdAt: 'desc' }],
+          take: 5,
+          select: {
+            id: true,
+            status: true,
+            emailTo: true,
+            emailedAt: true,
+            openCount: true,
+            expiresAt: true,
+            completedAt: true,
+          },
+        }),
+      ])
+
+      return {
+        customers: customers.map((c) => ({
+          gcCustomerId: c.gcCustomerId,
+          name:
+            [c.givenName, c.familyName].filter(Boolean).join(' ') || c.companyName || null,
+          email: c.email,
+        })),
+        mandates,
+        subscriptions,
+        payments,
+        setupLinks,
+      }
+    }),
+
   // Master dashboard for the Direct Debits section (ADR 0038). One query
   // feeds the whole Overview tab: headline KPIs, the needs-attention queues,
   // and the upcoming-collections list.
