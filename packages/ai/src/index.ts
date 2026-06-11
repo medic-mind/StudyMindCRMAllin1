@@ -158,3 +158,17 @@ export {
   type ScheduleImportAi,
   type ScheduleImportPromptInput,
 } from './prompts/webinar-schedule-import'
+export {
+  buildKnowledgeQaPrompt,
+  knowledgeAnswerShape,
+  VERSION as KNOWLEDGE_QA_PROMPT_VERSION,
+  type KnowledgeQaPromptInput,
+  type KnowledgeQaTurn,
+} from './prompts/knowledge-qa'
+export {
+  buildKnowledgeEditPrompt,
+  knowledgeEditSchema,
+  VERSION as KNOWLEDGE_EDIT_PROMPT_VERSION,
+  type KnowledgeEditAi,
+  type KnowledgeEditPromptInput,
+} from './prompts/knowledge-edit'

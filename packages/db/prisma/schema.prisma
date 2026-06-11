@@ -4180,3 +4180,18 @@ model ComplaintUpdate {
 
   @@index([complaintId, createdAt])
 }
+
+/// Local edits to the imported Protocols & Policies knowledge base
+/// (ADR 0040). Single row (id = "knowledge") holding the FULL live
+/// knowledge JSON once it has been edited in-app; no row = the
+/// checked-in baseline (crib-data.json + commonScenarios) is live.
+/// AI proposes patches, a human (CEO / Senior Manager) confirms;
+/// every apply / reset is audited (knowledge.updated / knowledge.reset).
+model KnowledgeOverride {
+  id          String   @id
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+}

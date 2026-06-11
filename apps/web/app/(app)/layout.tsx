@@ -151,6 +151,21 @@ function buildNav(role: Role): NavItem[] {
         { href: '/reports/cost', label: 'Cost' },
       ],
     },
+    // Knowledge — the company knowledge base imported from the internal Crib
+    // site (ADR 0040): protocols, pricing, playbooks + the AI assistant that
+    // answers from them. All staff — VAs are the primary audience. The AI
+    // editor (propose-and-confirm content edits) is CEO / Senior Manager.
+    {
+      href: '/protocols',
+      label: 'Protocols & Policies',
+      children: [
+        { href: '/protocols', label: 'Knowledge base' },
+        { href: '/protocols/ask', label: 'AI Knowledge' },
+        ...(role === 'ceo' || role === 'senior_manager'
+          ? [{ href: '/protocols/edit', label: 'Edit content' }]
+          : []),
+      ],
+    },
     {
       href: '/settings',
       label: 'Settings',

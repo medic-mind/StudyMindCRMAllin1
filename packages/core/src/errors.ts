@@ -38,6 +38,9 @@ export type BusinessErrorCode =
   | 'LABEL_IN_USE'
   | 'SUBJECT_NOT_FOUND'
   | 'TASK_NOT_FOUND'
+  // Protocols & Policies knowledge base in-app edits (ADR 0040).
+  | 'KNOWLEDGE_PATCH_INVALID'
+  | 'KNOWLEDGE_CONTENT_FORBIDDEN'
   // Forwarding ("Forward to <team>" quick action — packages/core/src/forwarding).
   | 'FORWARDING_RULE_NOT_FOUND'
   | 'FORWARDING_RULE_ARCHIVED'

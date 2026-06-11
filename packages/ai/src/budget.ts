@@ -24,6 +24,8 @@ export type AiTaskCategory =
   | 'product_classification'
   | 'webinar_class_match'
   | 'webinar_schedule_import'
+  | 'knowledge_qa'
+  | 'knowledge_edit'
   | 'contact_name_extraction'
 
 export interface BudgetLimit {
@@ -55,6 +57,14 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   webinar_class_match: { daily: 2, monthly: 40 },
   // One-shot schedule import (CSV/PDF/paste → weekly topics). Rare, mini-tier.
   webinar_schedule_import: { daily: 2, monthly: 40 },
+  // AI Knowledge assistant (ADR 0040). Each call carries the whole imported
+  // knowledge base as context (~90k input tokens), so per-call cost is high
+  // relative to other tasks; the cap covers a full day of staff questions on
+  // Gemini Flash and degrades cleanly if the provider is flipped to gpt-4o.
+  knowledge_qa: { daily: 10, monthly: 150 },
+  // AI editor for the knowledge base (ADR 0040): CEO / Senior Manager only,
+  // low volume, but each proposal carries the whole document as context.
+  knowledge_edit: { daily: 5, monthly: 75 },
   // Last step of the Trengo name-resolution waterfall (§11) — only runs when
   // the free routes (Trengo contact record, rule-based message extraction)
   // both fail. Mini-tier, import-time only.

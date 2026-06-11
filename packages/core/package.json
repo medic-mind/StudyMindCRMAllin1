@@ -25,6 +25,7 @@
     "./chat/s3": "./src/chat/s3.ts",
     "./finance": "./src/finance/index.ts",
     "./interaction": "./src/interaction/index.ts",
+    "./knowledge": "./src/knowledge/index.ts",
     "./lead": "./src/lead/index.ts",
     "./mail": "./src/mail/index.ts",
     "./medi": "./src/medi/index.ts",
