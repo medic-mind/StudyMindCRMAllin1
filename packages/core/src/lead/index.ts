@@ -25,3 +25,5 @@ export {
   type MatchDecision,
   type LeadRoutingPlan,
 } from './match'
+export { buildPhoneMatch, type PhoneMatchQuery } from './phone-match'
+export { dialCountryFromPhone } from './dial-codes'

@@ -408,6 +408,33 @@ export function inferPhoneE164(rawNumber: string): string | null {
 }
 
 /**
+ * Resolve the country from a phone number that already carries its dial code
+ * — a fully free, deterministic signal we use to fill `Contact.country` /
+ * `Lead.countryCode` when the form had no country and IP geo failed. A
+ * "+51928812118" unambiguously means Peru; a "+44…" means the UK. Only fires
+ * on an E.164-shaped number (leading "+" or "00") so a UK national "07…" is
+ * never misread. Longest dial-prefix wins (ITU codes are a prefix code, so at
+ * most one matches). Note +1 maps to US among NANP countries — acceptable for
+ * country display + dial-code purposes.
+ */
+export function dialCountryFromPhone(rawNumber: string | null | undefined): DialCountry | null {
+  if (!rawNumber) return null
+  const trimmed = rawNumber.trim()
+  let digits = trimmed.replace(/[^\d]/gu, '')
+  const international = trimmed.startsWith('+') || digits.startsWith('00')
+  if (!international) return null
+  if (digits.startsWith('00')) digits = digits.slice(2)
+  if (digits.length < 8 || digits.length > 15) return null
+  for (const dial of DIAL_PREFIXES_DESC) {
+    if (digits.startsWith(dial) && digits.length - dial.length >= 6) {
+      const hit = DIAL_COUNTRIES.find((c) => c.dial === dial)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+/**
  * Last resort when no E.164 could be derived by any route: the digits as
  * typed (leading + preserved), so the number still lands on the contact's
  * phone field — visible and manually dialable — instead of only in notes.

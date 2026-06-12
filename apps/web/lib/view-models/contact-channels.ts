@@ -294,6 +294,15 @@ export async function callsForContact(
   input: ChannelListInput,
 ): Promise<Paginated<CallEntry>> {
   const limit = clampLimit(input.limit)
+  // A single Aircall call emits MANY `call` Interaction rows — one per event
+  // (created / answered / ended / voicemail / transcript). The recording +
+  // transcript are stamped on only ONE of those rows (call.ended / the
+  // transcript merge). Returning raw rows therefore showed at most one
+  // recording per page and buried the rest. We sweep wider than the page,
+  // collapse per Aircall call, and pick the recording from whichever event
+  // row actually carries it (and key the entry id to THAT row so the audio
+  // route streams the right interaction). Mirrors the /calls history dedupe.
+  const sweep = Math.min(limit * 6 + 1, 600)
   const rows = await db.interaction.findMany({
     where: {
       contactId: input.contactId,
@@ -302,35 +311,81 @@ export async function callsForContact(
       ...cursorWhere(input.cursor),
     },
     orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-    take: limit + 1,
+    take: sweep,
     select: { id: true, occurredAt: true, payload: true },
   })
-  const { sliced, nextCursor: nc } = nextCursor(rows, limit)
-  const items: CallEntry[] = sliced.map((r) => {
+
+  const byCall = new Map<string, CallEntry>()
+  const order: string[] = []
+  const outcomeRank = (o: CallEntry['outcome']): number =>
+    o === 'answered' ? 3 : o === 'voicemail' ? 2 : o === 'missed' ? 1 : 0
+  for (const r of rows) {
     const p = asObject(r.payload)
+    const aircallCallId = asNumber(p['aircallCallId'])
+    const key = aircallCallId != null ? `ac:${aircallCallId}` : `iid:${r.id}`
     const dir = asString(p['direction'])
-    return {
-      id: r.id,
-      occurredAt: r.occurredAt,
-      direction:
-        dir === 'inbound' || dir === 'outbound' ? dir : null,
-      outcome: classifyOutcome(p),
-      durationSec: asNumber(p['durationSec']),
-      recordingS3Key: asString(p['recordingS3Key']),
-      recordingUrl: asString(p['recordingUrl']),
-      voicemailUrl: asString(p['voicemailUrl']),
-      hasRecording: Boolean(
-        asString(p['recordingS3Key']) ||
-          asString(p['recordingUrl']) ||
-          asString(p['voicemailUrl']),
-      ),
-      transcript: asString(p['transcriptText']),
-      aiOutcome: parseAiOutcome(p['aiOutcome']),
-      aircallCallId: asNumber(p['aircallCallId']),
-      interactionType: asString(p['interactionType']),
-      triageRequired: p['triageRequired'] === true,
+    const recordingS3Key = asString(p['recordingS3Key'])
+    const recordingUrl = asString(p['recordingUrl'])
+    const voicemailUrl = asString(p['voicemailUrl'])
+    const rowHasRecording = Boolean(recordingS3Key || recordingUrl || voicemailUrl)
+    const transcript = asString(p['transcriptText'])
+    const outcome = classifyOutcome(p)
+    const durationSec = asNumber(p['durationSec'])
+
+    const existing = byCall.get(key)
+    if (!existing) {
+      byCall.set(key, {
+        // When this first-seen row carries the recording, key the entry to it
+        // so the audio route streams the right interaction; otherwise the
+        // entry adopts a recording-bearing row's id below.
+        id: r.id,
+        occurredAt: r.occurredAt,
+        direction: dir === 'inbound' || dir === 'outbound' ? dir : null,
+        outcome,
+        durationSec,
+        recordingS3Key,
+        recordingUrl,
+        voicemailUrl,
+        hasRecording: rowHasRecording,
+        transcript,
+        aiOutcome: parseAiOutcome(p['aiOutcome']),
+        aircallCallId,
+        interactionType: asString(p['interactionType']),
+        triageRequired: p['triageRequired'] === true,
+      })
+      order.push(key)
+      continue
     }
-  })
+    // Merge this event row into the call we already have.
+    if (r.occurredAt < existing.occurredAt) existing.occurredAt = r.occurredAt
+    if (!existing.direction && (dir === 'inbound' || dir === 'outbound')) {
+      existing.direction = dir
+    }
+    if (outcomeRank(outcome) > outcomeRank(existing.outcome)) existing.outcome = outcome
+    if (durationSec != null && (existing.durationSec == null || durationSec > existing.durationSec)) {
+      existing.durationSec = durationSec
+    }
+    if (rowHasRecording && !existing.hasRecording) {
+      existing.id = r.id // stream from the row that holds the audio
+      existing.recordingS3Key = recordingS3Key
+      existing.recordingUrl = recordingUrl
+      existing.voicemailUrl = voicemailUrl
+      existing.hasRecording = true
+    }
+    if (!existing.transcript && transcript) existing.transcript = transcript
+    if (!existing.aiOutcome) existing.aiOutcome = parseAiOutcome(p['aiOutcome'])
+    if (existing.triageRequired === false && p['triageRequired'] === true) {
+      existing.triageRequired = true
+    }
+  }
+
+  const collapsed = order
+    .map((k) => byCall.get(k)!)
+    .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+  const hasMore = collapsed.length > limit
+  const items = hasMore ? collapsed.slice(0, limit) : collapsed
+  const last = items[items.length - 1]
+  const nc = hasMore && last ? { id: last.id, occurredAt: last.occurredAt } : null
   return { items, nextCursor: nc }
 }
 

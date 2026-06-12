@@ -17,9 +17,11 @@ import { logger } from '@studymind/core'
 import { createCard, findOrCreateSubject } from '@studymind/core/board'
 import {
   asTypedPhoneFallback,
+  buildPhoneMatch,
   chooseContactMatch,
   classifyLead,
   composePhoneE164,
+  dialCountryFromPhone,
   findDialCountry,
   inferPhoneE164,
   londonWallToUtc,
@@ -45,6 +47,10 @@ export interface LeadAiEnrichment {
   /** AI-detected requested call time ("YYYY-MM-DDTHH:mm" / "YYYY-MM-DD",
    * Europe/London). Fallback only — the deterministic parser wins. */
   preferredCallTime?: string | null
+  /** AI-inferred ISO2 country (from the message, city/university named, phone
+   * dial code, email domain). Last-resort fallback only — the form field, IP
+   * geo, and the phone's own dial code are tried first. */
+  countryCode?: string | null
   confidence: number
 }
 
@@ -266,7 +272,18 @@ export async function processLead(
   // geo-locate the captured IP. With a country in hand, a nationally-typed
   // number ("928 812 118", Peru) composes to full E.164 so the contact always
   // gets a dialable number (live bug: it only survived in the notes).
+  // Country resolution is a strict cheapest-first waterfall so a country is
+  // (almost) always found and a nationally-typed number always composes:
+  //   (1) the form's own country field;
+  //   (2) IP geolocation of the captured visitor IP (free providers);
+  //   (3) the phone's OWN dial code, if it was typed in E.164 ("+51…" → PE) —
+  //       free + deterministic;
+  //   (4) the AI's inferred country (from the message, city/university named,
+  //       email domain) — the expert last resort (§18).
   let dialCountry = findDialCountry(normalised.country)
+  let countrySource: 'form' | 'ip_geo' | 'phone_dial' | 'ai' | null = dialCountry
+    ? 'form'
+    : null
   // The form's own visitor-IP field beats the transport IP: CF7 webhooks are
   // POSTed by the WordPress server, so lead.ip is often the site server, not
   // the enquirer.
@@ -275,9 +292,22 @@ export async function processLead(
     try {
       const iso2 = await deps.geoCountry(geoIp)
       dialCountry = findDialCountry(iso2)
+      if (dialCountry) countrySource = 'ip_geo'
     } catch (err) {
       logger.warn({ leadId, err: String(err) }, 'lead.process.geo_failed')
     }
+  }
+  if (!dialCountry) {
+    dialCountry =
+      dialCountryFromPhone(normalised.phoneE164) ?? dialCountryFromPhone(normalised.phone)
+    if (dialCountry) countrySource = 'phone_dial'
+  }
+  if (!dialCountry && ai?.countryCode) {
+    dialCountry = findDialCountry(ai.countryCode)
+    if (dialCountry) countrySource = 'ai'
+  }
+  if (countrySource) {
+    logger.info({ leadId, country: dialCountry?.iso2, countrySource }, 'lead.country_resolved')
   }
   // normalisePhone optimistically treats a leading-0 national number as UK
   // (+44, our home market). When the resolved country says otherwise,
@@ -310,19 +340,44 @@ export async function processLead(
       ? asTypedPhoneFallback(normalised.phone)
       : null
 
-  // 6. Match an existing contact (conservative — never auto-merge).
+  // 6. Match an existing contact (conservative — never auto-merge). Matching
+  // is format-insensitive so a re-enquiry never duplicates: email is matched
+  // case-insensitively (legacy rows may be mixed-case), and phone is matched
+  // on EVERY candidate form plus the last-9-digit suffix — so a number stored
+  // as "928812118" on the first enquiry and composed to "+51928812118" on the
+  // next still resolves to the same contact.
   const email = normalised.email
   const phoneE164 = formPhoneE164 ?? composedPhone ?? inferredPhone ?? fallbackPhone
+  const phoneMatch = buildPhoneMatch([
+    formPhoneE164,
+    composedPhone,
+    inferredPhone,
+    fallbackPhone,
+  ])
+  const phoneWhere =
+    phoneMatch.exact.length || phoneMatch.suffix
+      ? {
+          deletedAt: null,
+          OR: [
+            ...(phoneMatch.exact.length
+              ? [{ phoneE164: { in: phoneMatch.exact } }]
+              : []),
+            ...(phoneMatch.suffix
+              ? [{ phoneE164: { endsWith: phoneMatch.suffix } }]
+              : []),
+          ],
+        }
+      : null
   const [byEmail, byPhone] = await Promise.all([
     email
-      ? db.contact.findMany({ where: { email, deletedAt: null }, select: { id: true }, take: 5 })
-      : Promise.resolve([] as { id: string }[]),
-    phoneE164
       ? db.contact.findMany({
-          where: { phoneE164, deletedAt: null },
+          where: { email: { equals: email, mode: 'insensitive' }, deletedAt: null },
           select: { id: true },
           take: 5,
         })
+      : Promise.resolve([] as { id: string }[]),
+    phoneWhere
+      ? db.contact.findMany({ where: phoneWhere, select: { id: true }, take: 5 })
       : Promise.resolve([] as { id: string }[]),
   ])
   const match = chooseContactMatch({ email, phoneE164, byEmail, byPhone })

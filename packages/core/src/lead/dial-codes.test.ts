@@ -3,10 +3,28 @@ import { describe, expect, it } from 'vitest'
 import {
   asTypedPhoneFallback,
   composePhoneE164,
+  dialCountryFromPhone,
   DIAL_COUNTRIES,
   findDialCountry,
   inferPhoneE164,
 } from './dial-codes'
+
+describe('dialCountryFromPhone', () => {
+  it('resolves the country from an E.164 dial code', () => {
+    expect(dialCountryFromPhone('+51928812118')?.iso2).toBe('PE')
+    expect(dialCountryFromPhone('+447700900123')?.iso2).toBe('GB')
+    expect(dialCountryFromPhone('00971501234567')?.iso2).toBe('AE')
+  })
+  it('does not guess from a national (non-international) number', () => {
+    expect(dialCountryFromPhone('07700900123')).toBeNull()
+    expect(dialCountryFromPhone('928812118')).toBeNull()
+  })
+  it('returns null for junk / empty', () => {
+    expect(dialCountryFromPhone(null)).toBeNull()
+    expect(dialCountryFromPhone('+123')).toBeNull()
+    expect(dialCountryFromPhone('')).toBeNull()
+  })
+})
 
 describe('DIAL_COUNTRIES table', () => {
   it('has unique ISO2 codes', () => {

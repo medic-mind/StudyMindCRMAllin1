@@ -60,6 +60,7 @@ const enrichLead: NonNullable<ProcessLeadDeps['enrich']> = async ({
     categories: classification.categories,
     productTags: classification.productTags,
     message: normalised.message,
+    phone: normalised.phoneE164 ?? normalised.phone ?? null,
     extraFieldsText: extraFieldsText || null,
     nowLondon: nowLondonLabel(),
   })
@@ -111,10 +112,28 @@ async function geoViaIpapi(ip: string): Promise<string | null> {
   }
 }
 
-/** Best-effort IP → ISO2 country. Two free https providers — ipwho.is first,
- * ipapi.co as fallback — because a missing country means a nationally-typed
- * phone can't compose to E.164. Private / local addresses are skipped; any
- * failure returns null and never blocks the lead. */
+async function geoViaGeojs(ip: string): Promise<string | null> {
+  const res = await fetchWithTimeout(
+    `https://get.geojs.io/v1/ip/country/${encodeURIComponent(ip)}.json`,
+    3000,
+  )
+  if (!res?.ok) return null
+  try {
+    const body = (await res.json()) as { country?: string }
+    return typeof body.country === 'string' && /^[A-Z]{2}$/u.test(body.country)
+      ? body.country
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Best-effort IP → ISO2 country. THREE free https providers tried in turn
+ * (ipwho.is → ipapi.co → geojs.io) because the free tiers rate-limit and a
+ * single provider being down would otherwise lose the country (and a
+ * nationally-typed phone can't then compose to E.164). Private / local
+ * addresses are skipped; any failure returns null and never blocks the lead.
+ * When all three fail, the job falls back to the phone's dial code, then AI. */
 async function geoCountry(ip: string): Promise<string | null> {
   if (
     /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fc|fd)/iu.test(ip) ||
@@ -122,7 +141,9 @@ async function geoCountry(ip: string): Promise<string | null> {
   ) {
     return null
   }
-  return (await geoViaIpwho(ip)) ?? (await geoViaIpapi(ip))
+  return (
+    (await geoViaIpwho(ip)) ?? (await geoViaIpapi(ip)) ?? (await geoViaGeojs(ip))
+  )
 }
 
 export const leadClassifyRequested = inngest.createFunction(
