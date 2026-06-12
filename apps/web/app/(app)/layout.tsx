@@ -63,6 +63,9 @@ function buildNav(role: Role): NavItem[] {
         { href: '/calls/history', label: 'Call history' },
       ],
     },
+    // Call Summaries — submit a summary for anyone (even someone not yet on
+    // the CRM); a smart de-dup guard aligns it with an existing contact.
+    { href: '/call-summaries', label: 'Call Summaries' },
     // Internal — staff↔staff chat. Renamed from the colliding "Messages"
     // (the sidebar said "Messages" for staff chat while the inbox said
     // "Messages" for customer messages).

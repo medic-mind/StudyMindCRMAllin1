@@ -23,6 +23,7 @@ import {
   InboxIcon,
   ListTodoIcon,
   MailIcon,
+  FileTextIcon,
   PhoneIcon,
   RepeatIcon,
   SettingsIcon,
@@ -74,6 +75,7 @@ const ICONS: Record<string, IconComp> = {
   '/inbox': InboxIcon,
   '/mail': MailIcon,
   '/calls': PhoneIcon,
+  '/call-summaries': FileTextIcon,
   // Slack — its own category (customer mentions spotted in Slack).
   '/inbox/slack-mentions': HashIcon,
   // Internal — staff↔staff (distinct glyph from the customer Trengo inbox).
@@ -107,6 +109,7 @@ const SECTION: Record<string, string> = {
   '/inbox': 'Communications',
   '/mail': 'Communications',
   '/calls': 'Communications',
+  '/call-summaries': 'Communications',
   // Slack — its own category per ops request (June 2026).
   '/inbox/slack-mentions': 'Slack',
   // Internal — staff↔staff only.
