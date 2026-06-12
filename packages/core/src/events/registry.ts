@@ -224,6 +224,8 @@ export const EVENT_NAMES = [
   'aircall.webhook_reenabled',
   // Manual click-to-call log (Aircall fallback / Google Voice / freeform).
   'call.manually_logged',
+  // On-demand "sync recent calls now" from /calls (force-pull missed calls).
+  'call.sync_requested',
 
   // Messaging (Trengo — CLAUDE.md §11)
   'message.inbound',
@@ -248,6 +250,10 @@ export const EVENT_NAMES = [
   'lead.classification_corrected',
   'lead.source_created',
   'lead.source_updated',
+  // Retroactive lead repair: country backfill from IP + freebie-name rename
+  // (operator-triggered from the Lead webhook integration page).
+  'lead.maintenance_requested',
+  'lead.maintenance_completed',
   'lead.source_archived',
   'lead.rule_created',
   'lead.rule_updated',
@@ -544,6 +550,9 @@ export const INNGEST_EVENT_NAMES = [
   'booking/event.received',
   'aircall/transcribe-fallback',
   'aircall/persist-recording',
+  // On-demand "sync recent calls now" — staff-triggered from /calls when a
+  // missed call hasn't come through (a dropped webhook). Reuses the sync job.
+  'aircall/sync-now.requested',
   'gmail/history.changed',
 
   // Cross-cutting domain events
@@ -578,6 +587,8 @@ export const INNGEST_EVENT_NAMES = [
   // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
   // persists a Lead then hands off async classification + pipeline routing.
   'lead/classify.requested',
+  // Retroactive country/name repair walk (self-rescheduling batches).
+  'lead/backfill-countries.requested',
   // Medi Platform account sync (ADR 0037): the POST /api/contacts receiver
   // persists a `medi` ProviderEvent then hands off async Contact onboarding.
   'medi/account.received',

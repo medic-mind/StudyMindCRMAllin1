@@ -64,6 +64,17 @@ export function StartTrengoConversation({ contactId }: { contactId: string }) {
     enabled: open && channel === 'sms',
     staleTime: 60_000,
   })
+  // "Send from" — the workspace's sender lines for the picked channel type.
+  const channelsQuery = trpc.interaction.trengo.channels.useQuery(undefined, {
+    enabled: open && channel !== 'whatsapp',
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  const [fromChannelId, setFromChannelId] = useState<number | null>(null)
+  const senderOptions =
+    channelsQuery.data?.available === true
+      ? channelsQuery.data.channels.filter((c) => c.kind === channel)
+      : []
 
   const start = trpc.interaction.trengo.startConversation.useMutation({
     onSuccess: () => onSent(),
@@ -114,7 +125,12 @@ export function StartTrengoConversation({ contactId }: { contactId: string }) {
       })
       return
     }
-    start.mutate({ contactId, channel, body })
+    start.mutate({
+      contactId,
+      channel,
+      body,
+      ...(fromChannelId ? { trengoChannelId: fromChannelId } : {}),
+    })
   }
 
   const canSend =
@@ -321,6 +337,26 @@ export function StartTrengoConversation({ contactId }: { contactId: string }) {
           placeholder="First message…"
           className="mt-2 w-full rounded border border-neutral-300 bg-white p-2 text-sm focus:border-primary-500 focus:outline-none"
         />
+      ) : null}
+
+      {channel !== 'whatsapp' && senderOptions.length > 1 ? (
+        <label className="mt-2 flex items-center gap-1.5 text-xs text-neutral-700">
+          <span className="font-medium">Send from</span>
+          <select
+            value={fromChannelId ?? ''}
+            onChange={(e) =>
+              setFromChannelId(e.target.value ? Number(e.target.value) : null)
+            }
+            className="rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-xs"
+          >
+            <option value="">Workspace default</option>
+            {senderOptions.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
       ) : null}
 
       <div className="mt-2 flex items-center gap-2">

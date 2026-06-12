@@ -74,6 +74,30 @@ export function phoneMatchKey(raw: string | null): string | null {
   return digits.length > 9 ? digits.slice(-9) : digits
 }
 
+/**
+ * The counterparty phone number of a `call` Interaction, used for callback
+ * matching AND display. Aircall-sourced calls (live webhook, sync, backfill)
+ * store it at `payload.rawDigits`. A manually-logged call — the contact-page
+ * click-to-call, which is the ONLY record for Google Voice callbacks (no
+ * webhook exists) and lands before Aircall's own webhook for Aircall ones —
+ * stores the DIALLED number at `payload.toNumber` instead.
+ *
+ * Without the `toNumber` fallback a manual callback could never clear a miss by
+ * NUMBER — only by a shared contact link. So a callback to an unlinked number,
+ * or to a number linked to a different contact than the auto-created one the
+ * miss sits on, silently stayed "outstanding" even though it had been rung
+ * back. Reducing both legs to `phoneMatchKey` then makes them match regardless
+ * of which field carried the number or how it was formatted.
+ */
+export function callNumberFromPayload(payload: unknown): string | null {
+  const p = (payload ?? {}) as Record<string, unknown>
+  const raw = p['rawDigits']
+  if (typeof raw === 'string' && raw.trim().length > 0) return raw
+  const to = p['toNumber']
+  if (typeof to === 'string' && to.trim().length > 0) return to
+  return null
+}
+
 /** Collapse per-event call rows into one row per call (dedupe on Aircall id):
  * earliest time, longest duration, voicemail if any event was a voicemail,
  * first known direction / number / contact. */

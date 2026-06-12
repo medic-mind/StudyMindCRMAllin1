@@ -178,6 +178,7 @@ export function MissedCallsWorkspace({ items, counts, filter, days, canAction, h
           })}
         </div>
         <div className="flex items-center gap-1.5">
+          {canAction ? <SyncFromAircallButton /> : null}
           <span className="text-xs text-neutral-500">Window</span>
           {windows.map((w) => {
             const active = days === w
@@ -326,5 +327,37 @@ export function MissedCallsWorkspace({ items, counts, filter, days, canAction, h
         )}
       </Card>
     </div>
+  )
+}
+
+/**
+ * Force an immediate pull of recent calls from Aircall (the 24h re-pull the
+ * 10-minute cron does) — for when a specific missed call hasn't come through.
+ * Then refreshes the page so the freshly-pulled calls show. Sales Exec+.
+ */
+function SyncFromAircallButton(): JSX.Element {
+  const router = useRouter()
+  const sync = trpc.calls.missed.syncNow.useMutation({
+    onSuccess: (r) => {
+      if (!r.configured) {
+        toast.error('Aircall API keys are not set — ask an admin to configure AIRCALL_API_ID / AIRCALL_API_TOKEN.')
+        return
+      }
+      toast.success('Syncing recent calls from Aircall — refresh in a few seconds to see them.')
+      // Give the background pull a moment, then refresh the server data.
+      setTimeout(() => router.refresh(), 4000)
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not start the sync'),
+  })
+  return (
+    <button
+      type="button"
+      onClick={() => sync.mutate()}
+      disabled={sync.isPending}
+      className="inline-flex items-center rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:opacity-50"
+      title="Pull the last 24 hours of calls from Aircall now (in case a webhook was missed)"
+    >
+      {sync.isPending ? 'Syncing…' : 'Sync from Aircall'}
+    </button>
   )
 }

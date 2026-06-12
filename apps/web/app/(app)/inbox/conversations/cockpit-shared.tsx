@@ -4,7 +4,13 @@
 
 import { MailIcon, MessageSquareIcon, PhoneIcon, SmartphoneIcon } from '@/components/ui/icon'
 
-export type InboxFilter = 'active' | 'mine' | 'unassigned' | 'snoozed' | 'closed'
+export type InboxFilter =
+  | 'active'
+  | 'mine'
+  | 'assigned'
+  | 'unassigned'
+  | 'snoozed'
+  | 'closed'
 export type InboxChannel = 'whatsapp' | 'sms' | 'email' | 'web_chat'
 
 export interface CockpitMe {
@@ -26,6 +32,8 @@ export interface CockpitConversation {
   unreadCount: number
   subject: string | null
   tags: string[]
+  /** First ~140 chars of the newest message — the Trengo-style row preview. */
+  lastMessagePreview: string | null
   replyDeadlineAt: Date | null
   contactName: string | null
 }

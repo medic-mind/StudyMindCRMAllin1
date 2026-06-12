@@ -13,7 +13,7 @@ import { InboxCockpit } from './InboxCockpit'
 
 export const dynamic = 'force-dynamic'
 
-const FILTERS: ReadonlyArray<InboxFilter> = ['active', 'mine', 'unassigned', 'snoozed', 'closed']
+const FILTERS: ReadonlyArray<InboxFilter> = ['active', 'mine', 'assigned', 'unassigned', 'snoozed', 'closed']
 const CHANNELS: ReadonlyArray<InboxChannel> = ['whatsapp', 'sms', 'email', 'web_chat']
 
 function one(raw: string | string[] | undefined): string | undefined {

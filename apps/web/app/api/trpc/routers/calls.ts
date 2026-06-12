@@ -11,6 +11,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  callNumberFromPayload,
   deriveMissedCalls,
   isAnswered,
   normalizeCalls,
@@ -109,7 +110,10 @@ export const callsRouter = router({
           const direction =
             p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
           const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-          const rawDigits = typeof p['rawDigits'] === 'string' ? (p['rawDigits'] as string) : null
+          // Counterparty number: rawDigits (Aircall) OR toNumber (a manually
+          // logged click-to-call). The toNumber fallback is what lets a manual
+          // callback clear a miss by number, not only by a shared contact.
+          const rawDigits = callNumberFromPayload(p)
           return {
             interactionId: r.id,
             aircallCallId,
@@ -265,6 +269,31 @@ export const callsRouter = router({
         })
         return { ok: true }
       }),
+
+    /**
+     * Force an immediate pull of recent calls from Aircall — for when a
+     * specific missed call hasn't come through (a dropped webhook). Fires the
+     * same sync job the 10-minute cron runs (re-pulls the last 24h, idempotent
+     * on the Aircall call id). Sales Exec+; returns whether Aircall is
+     * configured so the UI can explain a no-op.
+     */
+    syncNow: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      assertCanReview(user.role)
+      const configured = Boolean(
+        process.env['AIRCALL_API_ID'] && process.env['AIRCALL_API_TOKEN'],
+      )
+      if (configured) {
+        const { inngest } = await import('@studymind/jobs')
+        await inngest.send({ name: 'aircall/sync-now.requested', data: {} })
+      }
+      await ctx.audit({
+        action: 'call.sync_requested',
+        target: { type: 'Integration', id: 'aircall' },
+        after: { configured },
+      })
+      return { ok: true as const, configured }
+    }),
   }),
 
   /** Full call history — every Aircall call (inbound + outbound, answered /
@@ -315,7 +344,9 @@ export const callsRouter = router({
           const direction =
             p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
           const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-          const rawDigits = typeof p['rawDigits'] === 'string' ? (p['rawDigits'] as string) : null
+          // Counterparty number: rawDigits (Aircall) OR toNumber (a manually
+          // logged click-to-call), so a manual outbound call shows its number.
+          const rawDigits = callNumberFromPayload(p)
           const key = aircallCallId != null ? `ac:${aircallCallId}` : `iid:${r.id}`
           if (hasRecordingPayload(p) && !recordingByKey.has(key)) recordingByKey.set(key, r.id)
           return {

@@ -1225,6 +1225,10 @@ model Conversation {
   /// Trengo labels as a flat string array. Maintained by label.added /
   /// label.removed webhooks.
   tags             String[]           @default([])
+  /// First ~140 chars of the newest message body — the list-row preview the
+  /// comms centre shows under the contact name (Trengo parity). Display
+  /// convenience only; bodies live in Interaction.
+  lastMessagePreview String?
   /// WhatsApp 24-hour reply window deadline derived from the most recent
   /// inbound on a whatsapp conversation. Null otherwise.
   replyDeadlineAt  DateTime?

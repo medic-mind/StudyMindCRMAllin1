@@ -37,7 +37,7 @@ export function DirectDebitWorkspace({ tab, canImport }: { tab: DdTab; canImport
   const importStatus = trpc.gocardless.import.status.useQuery(undefined, {
     refetchInterval: (query) => {
       const status = query.state.data?.job?.status
-      return status === 'pending' || status === 'running' ? 4000 : false
+      return status === 'pending' || status === 'running' ? 8000 : false
     },
   })
 

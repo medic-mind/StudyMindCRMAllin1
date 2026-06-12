@@ -38,7 +38,9 @@ export function ThreadPane({
   // reading appears promptly. The list itself is kept live by the SSE stream.
   const convo = trpc.inbox.conversations.get.useQuery(
     { conversationId },
-    { refetchInterval: 15_000, refetchOnWindowFocus: true },
+    // SSE (useConversationStream) is the primary live path; this poll is a
+    // fallback, so 30s is plenty and keeps the thread light.
+    { refetchInterval: 30_000, refetchOnWindowFocus: true },
   )
 
   if (convo.isLoading) {
@@ -62,7 +64,10 @@ export function ThreadPane({
   const isEmail = head.provider === 'email'
   const replyWindowOpen =
     head.replyDeadlineAt && new Date(head.replyDeadlineAt).getTime() > now.getTime()
-  const latestInteractionId = messages[messages.length - 1]?.id ?? null
+  // Seed for replies: the newest real MESSAGE (system separators are not
+  // replyable rows).
+  const latestInteractionId =
+    [...messages].reverse().find((m) => m.kind === 'message')?.id ?? null
   const canReplyTrengo = !!head.contactId && head.trengoTicketId !== null
 
   return (
@@ -159,6 +164,25 @@ export function ThreadPane({
             const prev = messages[i - 1]
             const newDay =
               !prev || prev.occurredAt.toDateString() !== m.occurredAt.toDateString()
+            // Lifecycle rows ("Closed by Lizette at …") render as centred
+            // system separators, exactly like Trengo's thread.
+            if (m.kind === 'system') {
+              return (
+                <Fragment key={m.id}>
+                  {newDay ? <DaySeparator date={m.occurredAt} /> : null}
+                  <div className="py-1 text-center text-[11px] text-neutral-400">
+                    {m.systemText ?? m.body ?? 'Updated'} ·{' '}
+                    {new Intl.DateTimeFormat('en-GB', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    }).format(m.occurredAt)}
+                  </div>
+                </Fragment>
+              )
+            }
             const sender = outbound
               ? (m.senderName ?? 'You')
               : m.direction === 'inbound'
@@ -170,7 +194,7 @@ export function ThreadPane({
                 <article
                   className={`max-w-[42rem] rounded-2xl border p-3 text-sm shadow-sm ${
                     outbound
-                      ? 'ml-auto rounded-br-sm border-primary-100 bg-primary-50 text-neutral-900'
+                      ? 'ml-auto rounded-br-sm border-emerald-100 bg-emerald-50 text-neutral-900'
                       : 'mr-auto rounded-bl-sm border-neutral-200 bg-white text-neutral-900'
                   }`}
                 >
@@ -178,7 +202,7 @@ export function ThreadPane({
                     <span className="font-medium uppercase">
                       {sender}
                       {outbound ? (
-                        <span className="ml-1 normal-case text-primary-500">· sent by us</span>
+                        <span className="ml-1 normal-case text-emerald-600">· sent by us</span>
                       ) : m.direction === 'inbound' ? (
                         <span className="ml-1 normal-case text-neutral-400">· customer</span>
                       ) : null}

@@ -197,7 +197,14 @@ function isNoise(normalisedKey: string): boolean {
 const RESOURCE_KEY_RE =
   /(product|resource|course|subject|topic|item|title|book|guide|download|file|document|package|pack|exam)/u
 const RESOURCE_VALUE_RE =
-  /\b(books?|e-?books?|guides?|guidebooks?|downloads?|resources?|packs?|papers?|webinars?|courses?|samples?|sheets?|notes?|bundles?|free|ucat|gamsat|bmat|ukcat|interview|tutoring|tuition|gcse|igcse|a-?levels?|11\+)\b/iu
+  /\b(books?|e-?books?|guides?|guidebooks?|downloads?|resources?|packs?|papers?|webinars?|courses?|samples?|sheets?|notes?|bundles?|free|ucat|gamsat|bmat|ukcat|plab|lnat|imat|esat|mcat|tsa|nsaa|engaa|questions?|quiz(?:zes)?|q-?banks?|mocks?|flashcards?|worksheets?|revision|syllabus|past\s+papers?|interview|tutoring|tuition|gcse|igcse|a-?levels?|11\+)\b/iu
+
+/** True when a value is a product/resource title, not a person ("PLAB
+ *  Questions", "GAMSAT Book") — used by the lead pipeline and the retro
+ *  repair job to rename such contacts after their email instead. */
+export function isResourceShapedName(name: string): boolean {
+  return RESOURCE_VALUE_RE.test(name)
+}
 
 const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u
 
@@ -472,6 +479,17 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
     const parts = name.split(/\s+/u)
     firstName = parts[0] ?? null
     lastName = parts.length > 1 ? parts.slice(1).join(' ') : null
+  }
+
+  // Final person-name guard: even an EXPLICITLY-mapped name field can carry
+  // the product on freebie forms ("PLAB Questions", "LNAT Questions" typed
+  // into the name input, or wired via webhook mapping). A resource-shaped
+  // name is dropped entirely so onboarding names the contact after their
+  // email instead — never after the page they downloaded (§16).
+  if (name && RESOURCE_VALUE_RE.test(name)) {
+    name = null
+    firstName = null
+    lastName = null
   }
 
   // Landing-page intelligence.

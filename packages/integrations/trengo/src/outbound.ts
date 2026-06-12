@@ -178,6 +178,7 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
       occurredAt: new Date(),
       channel: input.channel,
       contactId: input.contactId,
+      preview: input.body,
     })
 
     return { interactionId, trengoMessageId: message?.id ?? null }
@@ -202,6 +203,9 @@ export interface StartConversationInput {
   contactId: string
   agentId: string
   channel: TrengoChannel
+  /** Exact Trengo channel (sender line) to send from — see
+   *  TrengoCreateConversationInput.channelId. */
+  trengoChannelId?: number
   /** E.164 phone (whatsapp/sms) or email address (email). */
   recipient: string
   body: string
@@ -250,6 +254,7 @@ export async function startConversation(
           body: input.body,
           recipient: input.recipient,
           newConversation: true,
+          ...(input.trengoChannelId ? { trengoChannelId: input.trengoChannelId } : {}),
           outboundRequestId: input.requestId,
         },
       },
@@ -276,6 +281,7 @@ export async function startConversation(
       recipient: input.recipient,
       body: input.body,
       customFields: { interactionId, agentId: input.agentId },
+      ...(input.trengoChannelId ? { channelId: input.trengoChannelId } : {}),
     })
     if (!result.ticketId) {
       throw new TrengoApiError(502, '/messages', { reason: 'no ticket id returned' })
@@ -344,6 +350,7 @@ export async function startConversation(
       occurredAt: new Date(),
       channel: input.channel,
       contactId: input.contactId,
+      preview: input.body,
     })
 
     return {
@@ -1146,4 +1153,60 @@ export async function listTrengoQuickReplies(
       body: r.message ?? r.body ?? '',
     }))
     .filter((r) => r.body.trim().length > 0)
+}
+
+
+// -----------------------------------------------------------------------------
+// Workspace channels — for the composer's "send from" picker. Graceful like
+// listTrengoQuickReplies: a missing/expired token yields available:false so
+// the UI falls back to the workspace default instead of erroring.
+// -----------------------------------------------------------------------------
+
+const CHANNEL_KIND_BY_TYPE: Record<string, TrengoChannel> = {
+  WA_BUSINESS: 'whatsapp',
+  WHATSAPP: 'whatsapp',
+  SMS: 'sms',
+  EMAIL: 'email',
+  CHAT: 'web_chat',
+}
+
+export interface TrengoWorkspaceChannel {
+  id: number
+  name: string
+  kind: TrengoChannel | null
+}
+
+export async function listTrengoChannels(
+  agentId: string,
+  requestId: string,
+): Promise<
+  | { available: true; channels: TrengoWorkspaceChannel[] }
+  | { available: false; reason: string }
+> {
+  try {
+    const client = await createClientForAgent({
+      agentId,
+      requestId,
+      purpose: 'trengo.list_channels',
+    })
+    const rows = await client.listChannels()
+    return {
+      available: true,
+      channels: rows
+        .filter((r) => typeof r.id === 'number')
+        .map((r) => ({
+          id: r.id,
+          name: r.name?.trim() || `Channel ${r.id}`,
+          kind: CHANNEL_KIND_BY_TYPE[(r.type ?? '').toUpperCase()] ?? null,
+        })),
+    }
+  } catch (err) {
+    if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+      return {
+        available: false,
+        reason: 'Connect your Trengo token (Account → Trengo) to pick a send channel.',
+      }
+    }
+    return { available: false, reason: 'Could not load channels from Trengo.' }
+  }
 }

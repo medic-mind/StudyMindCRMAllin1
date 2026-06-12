@@ -166,8 +166,8 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
         body: 'Outbound messages preserve agent identity, so every agent must create a personal Trengo API token from Settings → API and paste it into Account → Trengo inside the CRM. Tokens rotate every 90 days; the CRM banners 14 days before expiry.',
       },
       {
-        title: 'Register the inbound webhook',
-        body: 'Trengo Settings → Webhooks → Add. URL is https://<your-host>/api/webhooks/trengo. Save the secret into TRENGO_WEBHOOK_SECRET.',
+        title: 'Register the webhook — subscribe to ALL conversation events',
+        body: 'Trengo Settings → Webhooks → Add. URL is https://<your-host>/api/webhooks/trengo. Save the secret into TRENGO_WEBHOOK_SECRET. Subscribe to EVERY conversation event — inbound message, outbound message, ticket closed, ticket reopened, ticket assigned, label added, label removed, contact updated. If only "inbound message" is subscribed, closes/assignments made inside Trengo never reach the CRM and statuses drift (the "Last 7 days (quick sync)" import re-converges them, but live sync needs the events).',
       },
     ],
     providerDashboardUrl: 'https://app.trengo.com/admin/api',
@@ -568,6 +568,44 @@ export const adminIntegrationsRouter = router({
         }
       }
 
+      // Slack: did the customer mention reach the CRM, and where did it stop?
+      // eventsReceived = Slack actually delivered to us (bot in channel +
+      // Event Subscriptions configured). mentionsLinked = matched + saved on a
+      // contact. parkedForTriage = arrived but couldn't auto-match (the
+      // /inbox/slack-mentions tray). 0 events received = a Slack-app side
+      // problem (CLAUDE.md §12), not a matching one.
+      let slackStats: {
+        eventsReceived: number
+        last7dEvents: number
+        lastEventAt: Date | null
+        mentionsLinked: number
+        parkedForTriage: number
+      } | null = null
+      if (input.provider === 'slack') {
+        const sevenDaysAgo = new Date(nowMs - 7 * oneDayMs)
+        const [eventsReceived, last7dEvents, lastEvent, mentionsLinked, parkedForTriage] =
+          await Promise.all([
+            ctx.db.providerEvent.count({ where: { provider: 'slack' } }),
+            ctx.db.providerEvent.count({
+              where: { provider: 'slack', receivedAt: { gte: sevenDaysAgo } },
+            }),
+            ctx.db.providerEvent.findFirst({
+              where: { provider: 'slack' },
+              orderBy: { receivedAt: 'desc' },
+              select: { receivedAt: true },
+            }),
+            ctx.db.interaction.count({ where: { type: 'slack_summary', deletedAt: null } }),
+            ctx.db.unassignedSummary.count({ where: { resolvedAt: null } }),
+          ])
+        slackStats = {
+          eventsReceived,
+          last7dEvents,
+          lastEventAt: lastEvent?.receivedAt ?? null,
+          mentionsLinked,
+          parkedForTriage,
+        }
+      }
+
       // Background-job (Inngest) health — Inngest is the engine that runs every
       // import job (backfill, the 10-min sync, webhook processing). A backfill
       // stuck `pending` past a few minutes means the worker isn't picking jobs
@@ -617,6 +655,7 @@ export const adminIntegrationsRouter = router({
         perAgent,
         importStats,
         trengoStats,
+        slackStats,
         backgroundJobs,
         setupSteps: cfg.setupSteps,
       }

@@ -33,12 +33,22 @@ import {
 import { ContextPane } from './ContextPane'
 import { ThreadPane } from './ThreadPane'
 
-const FILTERS: ReadonlyArray<{ value: InboxFilter; label: string }> = [
-  { value: 'active', label: 'Active' },
-  { value: 'mine', label: 'Mine' },
-  { value: 'unassigned', label: 'Unassigned' },
-  { value: 'snoozed', label: 'Snoozed' },
-  { value: 'closed', label: 'Closed' },
+// Trengo-style folders: Inbox (New = waiting unassigned, Assigned, Closed,
+// Snoozed) + Personal (Assigned to me). `countKey` maps to
+// inbox.conversations.counts for the rail badges ("New 4 · Assigned 36").
+const INBOX_FILTERS: ReadonlyArray<{
+  value: InboxFilter
+  label: string
+  countKey: 'newCount' | 'assigned' | 'mine' | 'closed' | 'snoozed' | null
+}> = [
+  { value: 'unassigned', label: 'New', countKey: 'newCount' },
+  { value: 'assigned', label: 'Assigned', countKey: 'assigned' },
+  { value: 'active', label: 'All open', countKey: null },
+  { value: 'snoozed', label: 'Snoozed', countKey: 'snoozed' },
+  { value: 'closed', label: 'Closed', countKey: 'closed' },
+]
+const PERSONAL_FILTERS: typeof INBOX_FILTERS = [
+  { value: 'mine', label: 'Assigned to me', countKey: 'mine' },
 ]
 
 const CHANNELS: ReadonlyArray<{ value: InboxChannel | null; label: string }> = [
@@ -323,6 +333,13 @@ function FoldersRail({
     staleTime: 60_000,
     retry: false,
   })
+  // Folder counts ("New 4 · Assigned 36"), refreshed with the list.
+  const counts = trpc.inbox.conversations.counts.useQuery(undefined, {
+    refetchInterval: 60_000,
+    retry: false,
+  })
+  const badge = (key: (typeof INBOX_FILTERS)[number]['countKey']): number | null =>
+    key && counts.data ? counts.data[key] : null
   return (
     <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-200 bg-neutral-50/60 p-3 md:flex">
       <div className="flex items-center gap-2 px-1 pt-1 text-sm font-semibold text-neutral-900">
@@ -331,15 +348,33 @@ function FoldersRail({
       </div>
 
       <nav aria-label="Views" className="flex flex-col gap-0.5">
-        {FILTERS.map((f) => (
+        {INBOX_FILTERS.map((f) => (
           <RailItem
             key={f.value}
             label={f.label}
+            count={badge(f.countKey)}
             active={filter === f.value}
             onClick={() => onFilter(f.value)}
           />
         ))}
       </nav>
+
+      <div>
+        <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+          Personal
+        </h2>
+        <nav aria-label="Personal" className="flex flex-col gap-0.5">
+          {PERSONAL_FILTERS.map((f) => (
+            <RailItem
+              key={f.value}
+              label={f.label}
+              count={badge(f.countKey)}
+              active={filter === f.value}
+              onClick={() => onFilter(f.value)}
+            />
+          ))}
+        </nav>
+      </div>
 
       <div>
         <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -367,10 +402,11 @@ function FoldersRail({
             {tag !== null ? (
               <RailItem label="Clear label filter" active={false} onClick={() => onTag(null)} />
             ) : null}
-            {tags.data!.slice(0, 12).map((t) => (
+            {tags.data!.slice(0, 30).map((t) => (
               <RailItem
                 key={t.name}
-                label={`${t.name} (${t.count})`}
+                label={t.name}
+                count={t.count > 0 ? t.count : null}
                 active={tag === t.name}
                 onClick={() => onTag(tag === t.name ? null : t.name)}
               />
@@ -394,11 +430,13 @@ function FoldersRail({
 function RailItem({
   label,
   icon,
+  count = null,
   active,
   onClick,
 }: {
   label: string
   icon?: React.ReactNode
+  count?: number | null
   active: boolean
   onClick: () => void
 }) {
@@ -414,7 +452,16 @@ function RailItem({
       }
     >
       {icon ? <span className="shrink-0">{icon}</span> : null}
-      {label}
+      <span className="truncate">{label}</span>
+      {count !== null && count > 0 ? (
+        <span
+          className={`ml-auto rounded-full px-1.5 text-[11px] font-medium tabular-nums ${
+            active ? 'bg-primary-200 text-primary-900' : 'bg-neutral-200 text-neutral-700'
+          }`}
+        >
+          {count > 999 ? '999+' : count}
+        </span>
+      ) : null}
     </button>
   )
 }
@@ -473,7 +520,15 @@ function ConversationRow({
             {formatRelativeTime(item.lastMessageAt, now)}
           </time>
         </div>
-        {item.subject ? (
+        {item.lastMessagePreview ? (
+          <div
+            className={`truncate text-[13px] ${
+              unread ? 'font-medium text-neutral-800' : 'text-neutral-600'
+            }`}
+          >
+            {item.lastMessagePreview}
+          </div>
+        ) : item.subject ? (
           <div
             className={`truncate text-[13px] ${
               unread ? 'font-medium text-neutral-800' : 'text-neutral-600'
