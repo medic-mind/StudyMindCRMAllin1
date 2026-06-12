@@ -33,21 +33,36 @@ export interface SlackConversation {
   name: string
   /** True when the bot has been /invited into the channel (it can post there). */
   isMember: boolean
+  /** Private channels only list when the token has `groups:read`. */
+  isPrivate: boolean
+}
+
+/** Who the configured token actually is (auth.test) — lets the UI say
+ *  "invite @this-exact-bot" instead of a generic name, which catches the
+ *  classic failure of inviting a different app than the one whose token the
+ *  CRM holds. */
+export interface SlackIdentity {
+  botName: string | null
+  teamName: string | null
 }
 
 export interface SlackClient {
   readonly baseUrl: string
   chatPostMessage(input: SlackChatPostMessageInput): Promise<SlackChatPostMessageResult>
   /**
-   * List the workspace's public channels (name + id + bot membership) so
-   * Settings → Slack channels can offer a pick-by-name browser instead of
-   * hand-pasted channel ids. Paginates internally (bounded); needs the
-   * `channels:read` bot scope — without it Slack returns `missing_scope`,
-   * which surfaces as a SlackApiError for the caller to map to a friendly
-   * "re-install with the extra permission" message. Private channels are not
-   * listed (that would need `groups:read`); they can still be added by id.
+   * List the workspace's channels (name + id + bot membership) so Settings →
+   * Slack channels can offer a pick-by-name browser instead of hand-pasted
+   * channel ids. Paginates internally (bounded); needs the `channels:read`
+   * bot scope — without it Slack returns `missing_scope`, which surfaces as
+   * a SlackApiError for the caller to map to a friendly "re-install with the
+   * extra permission" message. Private channels are included when the token
+   * also has `groups:read` (fails soft back to public-only when it doesn't);
+   * they can always be added by id.
    */
   listChannels(): Promise<SlackConversation[]>
+  /** The bot identity behind the configured token (auth.test, no scope
+   *  needed). Null fields when Slack doesn't return them. */
+  identity(): Promise<SlackIdentity>
   /** Resolve a Slack user id (U…) to their display name via `users.info`.
    *  Needs the `users:read` bot scope; the caller treats a failure as
    *  "keep the raw id". */
@@ -114,28 +129,50 @@ export function createClient(opts: CreateSlackClientOptions = {}): SlackClient {
           name?: string
           is_member?: boolean
           is_archived?: boolean
+          is_private?: boolean
         }>
         response_metadata?: { next_cursor?: string }
       }
-      const out: SlackConversation[] = []
-      let cursor = ''
-      // Bounded pagination: 10 pages × 200 = up to 2 000 channels, plenty for
-      // any workspace this CRM serves and safe against a runaway loop.
-      for (let page = 0; page < 10; page += 1) {
-        const res = await get<Page>('/conversations.list', {
-          types: 'public_channel',
-          exclude_archived: 'true',
-          limit: '200',
-          ...(cursor ? { cursor } : {}),
-        })
-        for (const ch of res.channels ?? []) {
-          if (!ch.id || !ch.name || ch.is_archived) continue
-          out.push({ id: ch.id, name: ch.name, isMember: ch.is_member === true })
+      async function listWith(types: string): Promise<SlackConversation[]> {
+        const out: SlackConversation[] = []
+        let cursor = ''
+        // Bounded pagination: 10 pages × 200 = up to 2 000 channels, plenty
+        // for any workspace this CRM serves and safe against a runaway loop.
+        for (let page = 0; page < 10; page += 1) {
+          const res = await get<Page>('/conversations.list', {
+            types,
+            exclude_archived: 'true',
+            limit: '200',
+            ...(cursor ? { cursor } : {}),
+          })
+          for (const ch of res.channels ?? []) {
+            if (!ch.id || !ch.name || ch.is_archived) continue
+            out.push({
+              id: ch.id,
+              name: ch.name,
+              isMember: ch.is_member === true,
+              isPrivate: ch.is_private === true,
+            })
+          }
+          cursor = res.response_metadata?.next_cursor ?? ''
+          if (!cursor) break
         }
-        cursor = res.response_metadata?.next_cursor ?? ''
-        if (!cursor) break
+        return out.sort((a, b) => a.name.localeCompare(b.name))
       }
-      return out.sort((a, b) => a.name.localeCompare(b.name))
+      try {
+        // Private channels the bot is in surface here too (needs groups:read).
+        return await listWith('public_channel,private_channel')
+      } catch (err) {
+        if (err instanceof SlackApiError && err.slackError === 'missing_scope') {
+          // groups:read absent — public channels still beat nothing.
+          return listWith('public_channel')
+        }
+        throw err
+      }
+    },
+    async identity() {
+      const res = await call<{ user?: string; team?: string }>('/auth.test', {})
+      return { botName: res.user ?? null, teamName: res.team ?? null }
     },
     async getUserDisplayName(userId) {
       const res = await get<{

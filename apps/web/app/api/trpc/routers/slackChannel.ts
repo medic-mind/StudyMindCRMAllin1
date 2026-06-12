@@ -92,17 +92,29 @@ export const slackChannelRouter = router({
       '@studymind/integration-slack/client'
     )
     try {
-      const channels = await createClient().listChannels()
+      const client = createClient()
+      const channels = await client.listChannels()
+      // Who the token actually is — so the UI can say "invite @this-exact-
+      // bot". Catches the classic miss of inviting a different Slack app
+      // than the one whose token the CRM holds. Best-effort (no scope
+      // needed, but never block the list on it).
+      const identity = await client.identity().catch(() => ({
+        botName: null,
+        teamName: null,
+      }))
       const existing = await ctx.db.slackChannelOption.findMany({
         select: { channelId: true },
       })
       const known = new Set(existing.map((r) => r.channelId))
       return {
         status: 'ok' as const,
+        botName: identity.botName,
+        teamName: identity.teamName,
         channels: channels.map((c) => ({
           id: c.id,
           name: c.name,
           isMember: c.isMember,
+          isPrivate: c.isPrivate,
           alreadyAdded: known.has(c.id),
         })),
       }
