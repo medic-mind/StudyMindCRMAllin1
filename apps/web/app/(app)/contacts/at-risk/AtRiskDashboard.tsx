@@ -227,13 +227,13 @@ export function AtRiskDashboard({
                         {(c.labels.length > 0 || c.openTaskCount > 0 || c.complaintCount > 0) && (
                           <span className="mt-1 flex flex-wrap items-center gap-1">
                             {c.complaintCount > 0 && (
-                              <a
+                              <Link
                                 href={`/contacts/${c.id}#section-complaints`}
                                 className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-100"
                                 title="Active complaints — open the customer's Complaints section"
                               >
                                 {c.complaintCount} complaint{c.complaintCount === 1 ? '' : 's'}
-                              </a>
+                              </Link>
                             )}
                             {c.openTaskCount > 0 && (
                               <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-700">

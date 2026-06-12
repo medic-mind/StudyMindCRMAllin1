@@ -21,8 +21,9 @@ const VARIANTS: Record<Variant, string> = {
   // Refined "outline" rather than a flat grey fill — reads as paired with
   // the primary instead of competing with it.
   secondary:
-    'bg-white text-neutral-800 border border-neutral-200 shadow-sm hover:bg-neutral-50 hover:border-neutral-300',
-  ghost: 'bg-transparent text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900',
+    'bg-white text-neutral-800 border border-neutral-200 shadow-sm hover:bg-neutral-50 hover:border-neutral-300 active:bg-neutral-100',
+  ghost:
+    'bg-transparent text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 active:bg-neutral-200',
   destructive: 'bg-red-600 text-white shadow-sm hover:bg-red-700 active:bg-red-800',
 }
 
@@ -38,9 +39,14 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       className={cn(
-        'inline-flex items-center justify-center rounded-md font-medium transition-colors',
+        // `transition` (not just colors) so the pressed scale animates too —
+        // a ~100ms tactile dip that confirms the click registered even while
+        // the mutation/navigation behind it is still in flight (§28: gated
+        // under 200ms, plus motion-reduce opt-out).
+        'inline-flex items-center justify-center rounded-md font-medium transition duration-100',
+        'active:scale-[0.97] motion-reduce:transform-none',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
-        'disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none',
+        'disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:active:scale-100',
         VARIANTS[variant],
         SIZES[size],
         className,

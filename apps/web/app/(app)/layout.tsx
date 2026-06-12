@@ -9,6 +9,7 @@ import { ComposeEmailProvider } from '@/components/mail/compose-email'
 import { ConfirmProvider } from '@/components/ui/confirm'
 import { BackfillProgressBanner } from '@/components/shell/backfill-progress-banner'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
+import { NavigationProgress } from '@/components/shell/navigation-progress'
 import { TopBar } from '@/components/shell/top-bar'
 import { TrengoTokenBanner } from '@/components/shell/trengo-token-banner'
 
@@ -239,6 +240,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <ConfirmProvider>
       <ComposeEmailProvider canSend={role !== 'virtual_assistant'}>
         <div className="flex min-h-screen flex-col bg-neutral-50">
+          <NavigationProgress />
           <TopBar
             user={{
               email: me.email,

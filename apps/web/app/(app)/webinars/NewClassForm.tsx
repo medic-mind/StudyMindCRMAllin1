@@ -6,6 +6,7 @@
 // year picker is hidden; on the master Classes page it shows the picker plus an
 // inline "new academic year".
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -244,9 +245,9 @@ export function NewClassForm({
             <span className="ml-3 text-xs text-neutral-500">
               Import the weekly schedule (CSV/PDF) and set the Zoom link on the next screen. Need to
               rename or remove a subject/level?{' '}
-              <a href="/webinars/subjects" className="text-primary-700 hover:underline">
+              <Link href="/webinars/subjects" className="text-primary-700 hover:underline">
                 Manage the list
-              </a>
+              </Link>
               .
             </span>
           </div>

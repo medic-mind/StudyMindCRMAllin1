@@ -8,6 +8,7 @@
 
 'use client'
 
+import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -196,9 +197,9 @@ function SlackChannelPicker({
       {status === 'not_configured' && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Slack isn&apos;t connected yet — set up the bot under{' '}
-          <a href="/settings/integrations/slack" className="font-medium underline">
+          <Link href="/settings/integrations/slack" className="font-medium underline">
             Settings → Integrations → Slack
-          </a>{' '}
+          </Link>{' '}
           first. You can still add a channel by id with &quot;Enter id manually&quot;.
         </p>
       )}

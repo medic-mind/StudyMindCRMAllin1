@@ -2,6 +2,7 @@
 // admin / finance see this), §26 (RSC by default, dense lists, plain
 // English empty states).
 
+import Link from 'next/link'
 import { TRPCError } from '@trpc/server'
 
 import { DiscrepancyActions } from '@/components/finance/DiscrepancyActions'
@@ -115,24 +116,24 @@ export default async function FinancePage() {
         subtitle="Open reconciliation discrepancies across active families. Nothing is ever auto-resolved — every item below needs a human decision."
         actions={
           <div className="flex items-center gap-3 text-sm">
-            <a
+            <Link
               href="/direct-debits"
               className="text-neutral-700 hover:text-neutral-900 hover:underline"
             >
               Direct Debits →
-            </a>
-            <a
+            </Link>
+            <Link
               href="/finance/payment-links"
               className="text-neutral-700 hover:text-neutral-900 hover:underline"
             >
               Payment links →
-            </a>
-            <a
+            </Link>
+            <Link
               href="/finance/refunds"
               className="text-neutral-700 hover:text-neutral-900 hover:underline"
             >
               Refunds →
-            </a>
+            </Link>
           </div>
         }
       />
