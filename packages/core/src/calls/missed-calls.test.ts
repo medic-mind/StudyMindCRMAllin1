@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  callNumberFromPayload,
   deriveMissedCalls,
   isAnswered,
   normalizeCalls,
@@ -27,6 +28,29 @@ describe('isAnswered', () => {
     expect(isAnswered({ durationSec: 42, isVoicemail: false })).toBe(true)
     expect(isAnswered({ durationSec: 0, isVoicemail: false })).toBe(false)
     expect(isAnswered({ durationSec: 30, isVoicemail: true })).toBe(false)
+  })
+})
+
+describe('callNumberFromPayload', () => {
+  it('prefers rawDigits (Aircall calls)', () => {
+    expect(callNumberFromPayload({ rawDigits: '+447700900001', toNumber: '999' })).toBe(
+      '+447700900001',
+    )
+  })
+
+  it('falls back to toNumber for a manually logged click-to-call', () => {
+    // The contact-page Call button / Google Voice callback stores the dialled
+    // number at toNumber, never rawDigits — this fallback is what lets such a
+    // callback clear a miss by number.
+    expect(callNumberFromPayload({ event: 'call.manually_logged', toNumber: '+447700900001' })).toBe(
+      '+447700900001',
+    )
+  })
+
+  it('ignores blank values and returns null when neither is present', () => {
+    expect(callNumberFromPayload({ rawDigits: '', toNumber: '   ' })).toBeNull()
+    expect(callNumberFromPayload({})).toBeNull()
+    expect(callNumberFromPayload(null)).toBeNull()
   })
 })
 
@@ -104,6 +128,35 @@ describe('deriveMissedCalls', () => {
         occurredAt: new Date('2026-06-01T10:00:00Z'),
         rawDigits: '+442079460000',
         contactId: 'contact_1',
+      }),
+    ])
+    const out = deriveMissedCalls(calls, noReviews)
+    expect(out[0]?.state).toBe('called_back')
+    expect(out[0]?.calledBackAt?.toISOString()).toBe('2026-06-01T10:00:00.000Z')
+  })
+
+  it('resolves a miss from a manual callback to a DIFFERENT contact, by number', () => {
+    // The miss sits on an auto-created lightweight contact; the agent rang the
+    // number back from a different (deduplicated) contact's page, so the
+    // outbound call links to another contactId. The contact link can't bridge
+    // it — only the number can. The manual leg's number reaches the derivation
+    // via callNumberFromPayload(toNumber), so this MUST clear.
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 40,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900111',
+        contactId: 'contact_auto',
+      }),
+      raw({
+        aircallCallId: null,
+        interactionId: 'manual_1',
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T10:00:00Z'),
+        rawDigits: '+447700900111', // router fills this from payload.toNumber
+        contactId: 'contact_real',
       }),
     ])
     const out = deriveMissedCalls(calls, noReviews)
