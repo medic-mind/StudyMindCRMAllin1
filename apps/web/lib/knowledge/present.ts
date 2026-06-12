@@ -213,6 +213,24 @@ export function isStepKey(key: string | undefined): boolean {
   return STEP_KEYS.has(key.toLowerCase().replace(/[^a-z]/g, ''))
 }
 
+/** Keys whose scalar arrays are an "included" feature list → checklist. */
+const INCLUDES_KEYS = new Set([
+  'includes',
+  'included',
+  'alwaysincluded',
+  'features',
+  'covers',
+  'benefits',
+  'whatyouget',
+  'inclusions',
+  'perks',
+])
+
+export function isIncludesKey(key: string | undefined): boolean {
+  if (!key) return false
+  return INCLUDES_KEYS.has(key.toLowerCase().replace(/[^a-z]/g, ''))
+}
+
 /** Stable DOM anchor for a section key (TOC + deep links). */
 export function anchorId(key: string): string {
   return `k-${key.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}`

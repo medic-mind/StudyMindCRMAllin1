@@ -10,7 +10,7 @@ import { KNOWLEDGE_GROUP_ORDER, loadKnowledgeStore } from '@studymind/core/knowl
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { db } from '@/lib/db'
-import { groupStyle } from '@/components/knowledge/group-style'
+import { CARD_HOVER, groupStyle } from '@/components/knowledge/group-style'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { ChevronRightIcon, PencilIcon, SparklesIcon } from '@/components/ui/icon'
@@ -99,7 +99,7 @@ export default async function ProtocolsPage() {
                       <Link
                         key={section.slug}
                         href={`/protocols/${section.slug}`}
-                        className={`flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-800 shadow-sm transition-colors ${style.hover}`}
+                        className={`flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-800 shadow-sm transition-colors ${CARD_HOVER}`}
                       >
                         <span
                           aria-hidden
@@ -145,7 +145,7 @@ export default async function ProtocolsPage() {
                         className="group"
                       >
                         <div
-                          className={`flex h-full flex-col rounded-xl border border-neutral-200 bg-white p-4 shadow-sm transition-colors ${style.hover}`}
+                          className={`flex h-full flex-col rounded-xl border border-neutral-200 bg-white p-4 shadow-sm transition-colors ${CARD_HOVER}`}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <h3 className="text-sm font-semibold text-neutral-900">

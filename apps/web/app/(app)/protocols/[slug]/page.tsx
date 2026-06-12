@@ -1,8 +1,8 @@
 // One knowledge section, rendered in full from the LIVE data — the
 // imported baseline plus any in-app edits (ADR 0040). Read-only for all
-// staff; the visual KnowledgeNodeView turns the raw JSON into stat tiles,
-// glossary cards, badged record cards and styled tables, including
-// sections added in-app by the AI editor.
+// staff; the editorial KnowledgeNodeView turns the raw JSON into a clean
+// reference page (definition lists, rate cards, quiet record cards,
+// numbered steps), including sections added in-app by the AI editor.
 
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -78,12 +78,12 @@ export default async function ProtocolSectionPage({ params }: PageProps) {
           </div>
 
           {showToc ? (
-            <div className="xl:grid xl:grid-cols-[minmax(0,1fr),200px] xl:items-start xl:gap-8">
-              <KnowledgeNodeView data={data} tone={style.tone} />
+            <div className="xl:grid xl:grid-cols-[minmax(0,1fr),200px] xl:items-start xl:gap-10">
+              <KnowledgeNodeView data={data} />
               <KnowledgeToc entries={toc} />
             </div>
           ) : (
-            <KnowledgeNodeView data={data} tone={style.tone} />
+            <KnowledgeNodeView data={data} />
           )}
 
           {inGroup.length > 0 ? (
