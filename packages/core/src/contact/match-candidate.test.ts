@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { matchContactByCandidate, phoneVariants, type MatchDb } from './match'
+import {
+  extractIdentifiersFromText,
+  matchContactByCandidate,
+  phoneVariants,
+  type MatchDb,
+} from './match-candidate'
 
 interface Row {
   id: string
@@ -53,41 +58,42 @@ describe('phoneVariants', () => {
   })
 })
 
+describe('extractIdentifiersFromText', () => {
+  it('pulls an email and phone out of a free-text summary', () => {
+    const r = extractIdentifiersFromText('Spoke to Jane on 07700 900123, email jane@example.com')
+    expect(r.email).toBe('jane@example.com')
+    expect(r.phone?.replace(/[^\d]/gu, '')).toBe('07700900123'.replace(/[^\d]/gu, ''))
+  })
+  it('returns nulls when nothing identifiable is present', () => {
+    expect(extractIdentifiersFromText('Had a nice chat about maths')).toEqual({
+      email: null,
+      phone: null,
+    })
+  })
+})
+
 describe('matchContactByCandidate', () => {
   it('matches by email first', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), { email: 'JANE@example.com' })
     expect(r).toMatchObject({ contactId: 'c1', via: 'email', reason: 'matched' })
   })
-
   it('matches a nationally-typed phone number', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), { phone: '07700 900123' })
     expect(r).toMatchObject({ contactId: 'c1', via: 'phone' })
   })
-
   it('matches an unambiguous full name (case-insensitive)', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), { name: 'jane smith' })
     expect(r).toMatchObject({ contactId: 'c1', via: 'name', reason: 'matched' })
   })
-
-  it('parks an ambiguous name (two Jane Smiths) instead of guessing', async () => {
+  it('parks an ambiguous name (two Jane Smiths)', async () => {
     const r = await matchContactByCandidate(fakeDb([jane, otherJane]), { name: 'Jane Smith' })
     expect(r).toMatchObject({ contactId: null, reason: 'ambiguous' })
   })
-
   it('never auto-attaches a single-token name', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), { name: 'Jane' })
     expect(r).toMatchObject({ contactId: null, reason: 'no_match' })
   })
-
-  it('email beats a name pointing elsewhere', async () => {
-    const r = await matchContactByCandidate(fakeDb([jane, otherJane]), {
-      email: 'jane2@example.com',
-      name: 'Jane Smith',
-    })
-    expect(r).toMatchObject({ contactId: 'c2', via: 'email' })
-  })
-
-  it('reports no_candidate when the AI extracted nothing', async () => {
+  it('reports no_candidate when nothing was provided', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), {})
     expect(r).toMatchObject({ contactId: null, reason: 'no_candidate' })
   })

@@ -935,6 +935,13 @@ export const contactRouter = router({
             .optional(),
           // Subject for a fresh email when the contact has no Gmail thread.
           emailSubject: z.string().trim().min(1).max(200).optional(),
+          // Full-Gmail extras: recipient override + Cc/Bcc + send-from address.
+          emailTo: z.array(z.string().trim().email()).max(20).optional(),
+          emailCc: z.array(z.string().trim().email()).max(20).optional(),
+          emailBcc: z.array(z.string().trim().email()).max(20).optional(),
+          emailFromAddress: z.string().trim().email().max(254).optional(),
+          // Trengo sender line for a NEW WhatsApp/SMS conversation.
+          trengoChannelId: z.number().int().positive().optional(),
           // Approved Trengo WhatsApp template — sent via the template session
           // (works outside the 24h window). No PDFs ride this path: the
           // templates already carry the info-pack links.
@@ -1076,6 +1083,11 @@ export const contactRouter = router({
               attachments,
               ...(input.channelBodies ? { channelBodies: input.channelBodies } : {}),
               ...(input.emailSubject ? { emailSubject: input.emailSubject } : {}),
+              ...(input.emailTo ? { emailTo: input.emailTo } : {}),
+              ...(input.emailCc ? { emailCc: input.emailCc } : {}),
+              ...(input.emailBcc ? { emailBcc: input.emailBcc } : {}),
+              ...(input.emailFromAddress ? { emailFromAddress: input.emailFromAddress } : {}),
+              ...(input.trengoChannelId ? { trengoChannelId: input.trengoChannelId } : {}),
               ...(input.whatsappTemplate ? { whatsappTemplate: input.whatsappTemplate } : {}),
               senders,
             },
@@ -1114,6 +1126,18 @@ export const contactRouter = router({
           templates: [] as WhatsAppTemplate[],
         }
       }
+    }),
+
+    /** The agent's connected Gmail send-from addresses (primary + send-as) for
+     *  the email step's "From" picker. Empty when no mailbox is connected. */
+    mailboxes: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      const rows = await ctx.db.gmailMailbox.findMany({
+        where: { agentId: user.id, deletedAt: null },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        select: { address: true, isDefault: true },
+      })
+      return rows.map((r) => ({ address: r.address, isDefault: r.isDefault }))
     }),
 
     // Two-step flow, step 2: after the customer-facing summary is sent, the

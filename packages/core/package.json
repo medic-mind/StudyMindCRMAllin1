@@ -12,6 +12,7 @@
     "./contact/documents": "./src/contact/documents.ts",
     "./contact/call-summary": "./src/contact/call-summary.ts",
     "./contact/from-call": "./src/contact/from-call.ts",
+    "./contact/match-candidate": "./src/contact/match-candidate.ts",
     "./contact/from-medi": "./src/contact/from-medi.ts",
     "./stats": "./src/stats/index.ts",
     "./family": "./src/family/index.ts",
