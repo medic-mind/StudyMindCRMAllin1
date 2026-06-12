@@ -11,6 +11,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  callNumberFromPayload,
   deriveMissedCalls,
   isAnswered,
   normalizeCalls,
@@ -109,7 +110,10 @@ export const callsRouter = router({
           const direction =
             p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
           const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-          const rawDigits = typeof p['rawDigits'] === 'string' ? (p['rawDigits'] as string) : null
+          // Counterparty number: rawDigits (Aircall) OR toNumber (a manually
+          // logged click-to-call). The toNumber fallback is what lets a manual
+          // callback clear a miss by number, not only by a shared contact.
+          const rawDigits = callNumberFromPayload(p)
           return {
             interactionId: r.id,
             aircallCallId,
@@ -315,7 +319,9 @@ export const callsRouter = router({
           const direction =
             p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
           const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-          const rawDigits = typeof p['rawDigits'] === 'string' ? (p['rawDigits'] as string) : null
+          // Counterparty number: rawDigits (Aircall) OR toNumber (a manually
+          // logged click-to-call), so a manual outbound call shows its number.
+          const rawDigits = callNumberFromPayload(p)
           const key = aircallCallId != null ? `ac:${aircallCallId}` : `iid:${r.id}`
           if (hasRecordingPayload(p) && !recordingByKey.has(key)) recordingByKey.set(key, r.id)
           return {
