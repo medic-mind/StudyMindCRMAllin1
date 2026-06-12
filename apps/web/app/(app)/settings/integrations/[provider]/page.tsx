@@ -223,6 +223,71 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
             </section>
           ) : null}
 
+          {provider === 'slack' && detail.slackStats ? (
+            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
+                Slack mention health
+              </h2>
+              <p className="mt-1 max-w-2xl text-xs text-neutral-500">
+                When a customer’s name, phone, or email is posted in a watched
+                Slack channel, it should appear on their contact page. This
+                shows where the pipeline is: <strong>Events received</strong> is
+                Slack actually delivering to us (needs the bot in the channel{' '}
+                <em>and</em> Event Subscriptions pointing at{' '}
+                <code className="font-mono">/api/webhooks/slack</code> with{' '}
+                <code className="font-mono">SLACK_SIGNING_SECRET</code> set). If
+                that’s 0, it’s a Slack-app setup issue, not matching.{' '}
+                <strong>Linked to a contact</strong> are mentions saved on a
+                customer; <strong>Awaiting triage</strong> arrived but couldn’t
+                be auto-matched — work them at{' '}
+                <Link href="/inbox/slack-mentions" className="text-primary-700 hover:underline">
+                  Slack mentions
+                </Link>
+                .
+              </p>
+              <div
+                className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+                  detail.slackStats.eventsReceived === 0
+                    ? 'border-red-200 bg-red-50 text-red-900'
+                    : detail.slackStats.mentionsLinked === 0 &&
+                        detail.slackStats.parkedForTriage === 0
+                      ? 'border-amber-200 bg-amber-50 text-amber-900'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                }`}
+              >
+                {detail.slackStats.eventsReceived === 0
+                  ? 'No Slack events have ever reached the CRM. The bot must be invited to the channel AND the Slack app’s Event Subscriptions must point at /api/webhooks/slack (subscribe message.channels) with SLACK_SIGNING_SECRET set. Run the 90-day backfill below once that’s done.'
+                  : detail.slackStats.mentionsLinked === 0 && detail.slackStats.parkedForTriage === 0
+                    ? 'Events are arriving but none matched a contact yet — most messages are noise (no name/phone/email). Post a message with a customer’s phone or email and re-check, or run the backfill below to reprocess history through the matcher.'
+                    : 'Connected — Slack mentions are being captured and matched to contacts.'}
+              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                {[
+                  { label: 'Events received', value: String(detail.slackStats.eventsReceived) },
+                  { label: 'Last 7 days', value: String(detail.slackStats.last7dEvents) },
+                  {
+                    label: 'Most recent event',
+                    value: formatDateTime(detail.slackStats.lastEventAt),
+                  },
+                  { label: 'Linked to a contact', value: String(detail.slackStats.mentionsLinked) },
+                  { label: 'Awaiting triage', value: String(detail.slackStats.parkedForTriage) },
+                ].map((s) => (
+                  <div
+                    key={s.label}
+                    className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2"
+                  >
+                    <dt className="text-[11px] uppercase tracking-wide text-neutral-500">
+                      {s.label}
+                    </dt>
+                    <dd className="mt-0.5 font-mono text-sm tabular-nums text-neutral-900">
+                      {s.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+
           {provider === 'trengo' && detail.trengoStats ? (
             <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
               <div className="flex flex-wrap items-start justify-between gap-3">

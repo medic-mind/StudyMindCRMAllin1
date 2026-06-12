@@ -5,3 +5,9 @@ export const CONTACT_DOMAIN = 'contact' as const
 
 export * from './types'
 export * from './hours-risk'
+export {
+  clusterDuplicates,
+  emailKey,
+  phoneKey,
+  type DupContactRow,
+} from './duplicates'

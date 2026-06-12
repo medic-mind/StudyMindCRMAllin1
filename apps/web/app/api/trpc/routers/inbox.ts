@@ -682,9 +682,24 @@ export const inboxRouter = router({
       for (const r of rows) {
         for (const t of r.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
       }
+      // Also list the FULL Trengo label catalogue (best-effort, via the
+      // caller's token) so every workspace label is a filter chip even before
+      // it has been applied to a synced conversation ("not all labels are
+      // here"). Catalogue-only labels get count 0; a missing/expired token
+      // just falls back to the head-derived set.
+      try {
+        const { listTrengoLabels } = await import('@studymind/integration-trengo/outbound')
+        const catalogue = await listTrengoLabels(user.id, ctx.requestId)
+        for (const label of catalogue) {
+          const name = label.name?.trim()
+          if (name && !counts.has(name)) counts.set(name, 0)
+        }
+      } catch {
+        // Best-effort only (no/expired token) — head-derived tags still return.
+      }
       return [...counts.entries()]
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .slice(0, 50)
+        .slice(0, 100)
         .map(([name, count]) => ({ name, count }))
     }),
 

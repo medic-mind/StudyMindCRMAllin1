@@ -21,6 +21,7 @@ import { chatRouter } from './routers/chat'
 import { companyRouter } from './routers/company'
 import { complaintRouter } from './routers/complaint'
 import { contactRouter } from './routers/contact'
+import { contactDuplicatesRouter } from './routers/contact-duplicates'
 import { contactBookingRouter } from './routers/contact-booking'
 import { contactChannelsRouter } from './routers/contact-channels'
 
@@ -44,6 +45,7 @@ const contactWithChannels = router({
   mailchimp: contactRouter.mailchimp,
   channels: contactChannelsRouter,
   booking: contactBookingRouter,
+  duplicates: contactDuplicatesRouter,
 })
 import { costRouter } from './routers/cost'
 import { dashboardRouter } from './routers/dashboard'

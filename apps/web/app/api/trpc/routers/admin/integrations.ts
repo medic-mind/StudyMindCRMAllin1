@@ -568,6 +568,44 @@ export const adminIntegrationsRouter = router({
         }
       }
 
+      // Slack: did the customer mention reach the CRM, and where did it stop?
+      // eventsReceived = Slack actually delivered to us (bot in channel +
+      // Event Subscriptions configured). mentionsLinked = matched + saved on a
+      // contact. parkedForTriage = arrived but couldn't auto-match (the
+      // /inbox/slack-mentions tray). 0 events received = a Slack-app side
+      // problem (CLAUDE.md §12), not a matching one.
+      let slackStats: {
+        eventsReceived: number
+        last7dEvents: number
+        lastEventAt: Date | null
+        mentionsLinked: number
+        parkedForTriage: number
+      } | null = null
+      if (input.provider === 'slack') {
+        const sevenDaysAgo = new Date(nowMs - 7 * oneDayMs)
+        const [eventsReceived, last7dEvents, lastEvent, mentionsLinked, parkedForTriage] =
+          await Promise.all([
+            ctx.db.providerEvent.count({ where: { provider: 'slack' } }),
+            ctx.db.providerEvent.count({
+              where: { provider: 'slack', receivedAt: { gte: sevenDaysAgo } },
+            }),
+            ctx.db.providerEvent.findFirst({
+              where: { provider: 'slack' },
+              orderBy: { receivedAt: 'desc' },
+              select: { receivedAt: true },
+            }),
+            ctx.db.interaction.count({ where: { type: 'slack_summary', deletedAt: null } }),
+            ctx.db.unassignedSummary.count({ where: { resolvedAt: null } }),
+          ])
+        slackStats = {
+          eventsReceived,
+          last7dEvents,
+          lastEventAt: lastEvent?.receivedAt ?? null,
+          mentionsLinked,
+          parkedForTriage,
+        }
+      }
+
       // Background-job (Inngest) health — Inngest is the engine that runs every
       // import job (backfill, the 10-min sync, webhook processing). A backfill
       // stuck `pending` past a few minutes means the worker isn't picking jobs
@@ -617,6 +655,7 @@ export const adminIntegrationsRouter = router({
         perAgent,
         importStats,
         trengoStats,
+        slackStats,
         backgroundJobs,
         setupSteps: cfg.setupSteps,
       }

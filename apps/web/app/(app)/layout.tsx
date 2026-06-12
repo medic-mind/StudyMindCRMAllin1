@@ -74,6 +74,7 @@ function buildNav(role: Role): NavItem[] {
       children: [
         { href: '/contacts', label: 'All customers' },
         { href: '/contacts/at-risk', label: 'At-risk hours' },
+        { href: '/contacts/duplicates', label: 'Duplicates' },
       ],
     },
     {

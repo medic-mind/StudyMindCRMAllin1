@@ -402,10 +402,11 @@ function FoldersRail({
             {tag !== null ? (
               <RailItem label="Clear label filter" active={false} onClick={() => onTag(null)} />
             ) : null}
-            {tags.data!.slice(0, 12).map((t) => (
+            {tags.data!.slice(0, 30).map((t) => (
               <RailItem
                 key={t.name}
-                label={`${t.name} (${t.count})`}
+                label={t.name}
+                count={t.count > 0 ? t.count : null}
                 active={tag === t.name}
                 onClick={() => onTag(tag === t.name ? null : t.name)}
               />

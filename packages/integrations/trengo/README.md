@@ -27,6 +27,8 @@ them is a one-line change with no ripple:
 | `uploadMedia` | LEGACY/assumed, no longer used by outbound: `POST /media` (multipart `file`) → `{ data: { id } }` |
 | `createConversation` (primary) | `POST /messages` with `{ channel, recipient, body, custom_fields }` → `{ message: { id, ticket_id } }` |
 | `createConversation` (fallback chain, runs when the primary is rejected 4xx) | `GET /channels` → pick by `type` (`WA_BUSINESS`/`SMS`/`EMAIL`/`CHAT`) → `POST /channels/:id/contacts {identifier}` (upserts by identifier) → `POST /tickets {channel_id, contact_id}` → `POST /tickets/:id/messages` |
+| `closeTicket` / `reopenTicket` | **Documented POST** (developers.trengo.com/reference/close-a-ticket, /reopen-a-ticket) — `POST /tickets/:id/close` / `POST /tickets/:id/reopen`. The old PATCH silently failed (the close-button bug). |
+| `assignTicket` | **Documented POST** (developers.trengo.com/reference/assign-a-ticket) — `POST /tickets/:id/assign {type:'user', user_id}`. The old PATCH + bare `user_id` never took. |
 | `attachLabel` / `detachLabel` | `POST /tickets/:id/labels {label_id}` / `DELETE /tickets/:id/labels/:labelId` |
 | `addInternalNote` | `POST /tickets/:id/notes {note, body}` (both spellings — versions disagree on the param name) |
 | `listWaTemplates` | `GET /wa_templates` → `{ data: [{ id, title, message, status }] }` (approved WhatsApp HSM templates) |
