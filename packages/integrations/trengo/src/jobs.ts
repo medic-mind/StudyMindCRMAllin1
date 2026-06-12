@@ -266,7 +266,10 @@ export const trengoEventReceived = inngest.createFunction(
     if (headTicketId !== null) {
       // Phase 6: resolve the raw Trengo assignee id to a CRM User if we have
       // the mapping (User.trengoUserId — stamped at token-connect time).
-      const rawAssignee = coerceTrengoId(envelope.data.assignee_id)
+      // Trengo spells the assignee differently across event versions.
+      const rawAssignee =
+        coerceTrengoId(envelope.data.assignee_id) ??
+        coerceTrengoId(envelope.data['user_id'])
       let assigneeUserId: string | null = null
       if (rawAssignee !== null) {
         const u = await step.run('resolve-assignee', async () =>

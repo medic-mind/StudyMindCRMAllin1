@@ -31,6 +31,7 @@ import { inngest } from '@studymind/jobs'
 import { SLACK_API_BASE } from './client'
 import { getWatchedChannels } from './config'
 import { matchContactByCandidate } from './match'
+import { extractContactSignals, slackTextToPlain } from './extract'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 
@@ -205,21 +206,71 @@ async function processSlackMessage(
   })
   const senderName = resolvedSender ?? message.user ?? null
 
+  // Deterministic pre-match FIRST (cheapest route; AI last — §32). The
+  // call-log format carries the customer's phone/email verbatim, so the
+  // backfill archives those mentions with zero AI spend — and still works
+  // when no AI provider is configured at all.
+  const signals = extractContactSignals(message.text)
+  if (signals.email || signals.phone) {
+    const rulesMatch = await matchContactByCandidate(db, {
+      name: null,
+      email: signals.email,
+      phone: signals.phone,
+    })
+    if (rulesMatch.contactId) {
+      const occurredAtRules = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
+      await db.interaction.create({
+        data: {
+          id: createId(),
+          type: 'slack_summary',
+          contactId: rulesMatch.contactId,
+          occurredAt: occurredAtRules,
+          summary: slackTextToPlain(message.text).slice(0, 280),
+          payload: {
+            backfill: true,
+            event: 'slack.message_summarised',
+            slackTs: message.ts,
+            channelId,
+            channelName,
+            permalink: message.permalink ?? null,
+            messageText: message.text ?? null,
+            senderName,
+            category: 'general',
+            sentiment: 'neutral',
+            suggestedNextAction: null,
+            confidence: 1,
+            matchedVia: rulesMatch.via,
+            promptVersion: 'rules-v1',
+          },
+        },
+      })
+      return { matched: true }
+    }
+  }
+
   const safeText = sanitiseUserContent(message.text)
   const prompt = buildSlackSummaryPrompt({
     channelName,
     authorDisplayName: senderName,
     text: safeText,
   })
-  const parsed: SlackSummary = await runStructured({
-    task: 'slack_summary',
-    promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
-    schema: slackSummarySchema,
-    schemaName: 'slack_summary',
-    system: prompt.system,
-    user: prompt.user,
-    ctx: { channelId, slackTs: message.ts, backfill: true },
-  })
+  // AI is best-effort in the backfill: no provider key / budget exhaustion
+  // must not abort the whole history walk — the deterministic pass above has
+  // already archived everything it could.
+  let parsed: SlackSummary
+  try {
+    parsed = await runStructured({
+      task: 'slack_summary',
+      promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
+      schema: slackSummarySchema,
+      schemaName: 'slack_summary',
+      system: prompt.system,
+      user: prompt.user,
+      ctx: { channelId, slackTs: message.ts, backfill: true },
+    })
+  } catch {
+    return { matched: false }
+  }
 
   if (parsed.confidence < MATCH_THRESHOLD) return { matched: false }
 

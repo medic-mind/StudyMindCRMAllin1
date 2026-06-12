@@ -66,7 +66,8 @@ export function KnowledgeAssistant() {
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className="mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <div className="flex h-[calc(100vh-280px)] min-h-[24rem] flex-col gap-4 overflow-y-auto bg-neutral-50/60 p-4">
       {turns.length === 0 ? (
         <div className="rounded-xl border border-dashed border-neutral-200 bg-white p-6 text-center">
           <SparklesIcon size={24} className="mx-auto text-primary-500" />
@@ -139,18 +140,19 @@ export function KnowledgeAssistant() {
         </div>
       )}
 
-      {error ? (
-        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-          {error}
-        </p>
-      ) : null}
+        {error ? (
+          <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+            {error}
+          </p>
+        ) : null}
+      </div>
 
       <form
         onSubmit={(e) => {
           e.preventDefault()
           submit(question)
         }}
-        className="flex items-end gap-2"
+        className="flex items-end gap-2 border-t border-neutral-200 bg-white p-3"
       >
         <label htmlFor="knowledge-question" className="sr-only">
           Your question
@@ -175,7 +177,7 @@ export function KnowledgeAssistant() {
         </Button>
       </form>
 
-      <p className="text-xs text-neutral-400">
+      <p className="border-t border-neutral-100 bg-white px-3 pb-3 pt-2 text-xs text-neutral-400">
         AI-generated from the Protocols &amp; Policies knowledge base — check
         the linked section for the source, and always confirm live discount
         offers with Becca before quoting a customer.

@@ -166,8 +166,8 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
         body: 'Outbound messages preserve agent identity, so every agent must create a personal Trengo API token from Settings → API and paste it into Account → Trengo inside the CRM. Tokens rotate every 90 days; the CRM banners 14 days before expiry.',
       },
       {
-        title: 'Register the inbound webhook',
-        body: 'Trengo Settings → Webhooks → Add. URL is https://<your-host>/api/webhooks/trengo. Save the secret into TRENGO_WEBHOOK_SECRET.',
+        title: 'Register the webhook — subscribe to ALL conversation events',
+        body: 'Trengo Settings → Webhooks → Add. URL is https://<your-host>/api/webhooks/trengo. Save the secret into TRENGO_WEBHOOK_SECRET. Subscribe to EVERY conversation event — inbound message, outbound message, ticket closed, ticket reopened, ticket assigned, label added, label removed, contact updated. If only "inbound message" is subscribed, closes/assignments made inside Trengo never reach the CRM and statuses drift (the "Last 7 days (quick sync)" import re-converges them, but live sync needs the events).',
       },
     ],
     providerDashboardUrl: 'https://app.trengo.com/admin/api',

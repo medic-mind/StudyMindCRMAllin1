@@ -177,6 +177,18 @@ describe('normaliseLead — country field + URL message guard', () => {
 })
 
 describe('normaliseLead — never name a contact after the freebie', () => {
+  it('drops a resource-shaped value even from an EXPLICIT name field', () => {
+    for (const bad of ['PLAB Questions', 'BMAT Questions', 'LNAT Questions', 'GAMSAT Questions']) {
+      const out = normaliseLead({
+        fields: { 'your-name': bad, 'email-1': 'jess@example.com' },
+        meta: {},
+      })
+      expect(out.name).toBeNull()
+      expect(out.firstName).toBeNull()
+      expect(out.email).toBe('jess@example.com')
+    }
+  })
+
   it('refuses a product-shaped value as the name and leaves name null', () => {
     const out = normaliseLead({
       fields: {

@@ -27,7 +27,7 @@ import { inngest } from '@studymind/jobs'
 import { createClientForAgent, TrengoApiError, type TrengoClient } from './client'
 import { applyEventToConversation } from './conversation-head'
 import { extractNameFromMessages } from './name-extract'
-import { isTrengoChannel, type TrengoChannel } from './types'
+import { coerceTrengoId, isTrengoChannel, type TrengoChannel } from './types'
 
 interface BackfillRequestedData {
   jobId: string
@@ -225,6 +225,9 @@ export interface NormalisedTicket {
   channel: TrengoChannel | null
   /** Trengo statuses (OPEN / ASSIGNED / CLOSED / …) folded to our two. */
   status: 'open' | 'closed'
+  /** Trengo user id the ticket is assigned to, however the listing spells it
+   *  (assignee/agent/user object or *_id field). Null when unassigned. */
+  assigneeId: number | null
   subject: string | null
   labels: string[]
   /** Whether the listing row carried a labels/tags key at all. When it did
@@ -234,6 +237,25 @@ export interface NormalisedTicket {
   labelsKnown: boolean
   contact: { phone: string | null; email: string | null; name: string | null }
   createdAt: Date | null
+}
+
+/** The ticket's assigned Trengo user, however the listing spells it —
+ *  `assignee_id` / `agent_id` / `user_id`, or a nested `assignee` / `agent` /
+ *  `user` object. Drives assignee sync so "Assigned" matches Trengo. */
+export function extractTicketAssigneeId(t: Record<string, unknown>): number | null {
+  const direct =
+    coerceTrengoId(t['assignee_id']) ??
+    coerceTrengoId(t['agent_id']) ??
+    coerceTrengoId(t['user_id'])
+  if (direct !== null) return direct
+  for (const key of ['assignee', 'agent', 'user'] as const) {
+    const v = t[key]
+    if (v !== null && typeof v === 'object') {
+      const id = coerceTrengoId((v as Record<string, unknown>)['id'])
+      if (id !== null) return id
+    }
+  }
+  return null
 }
 
 /** Fold a raw ticket row to the fields the import needs. Null on rows with
@@ -252,6 +274,7 @@ export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
       typeof t.status === 'string' && t.status.toLowerCase() === 'closed'
         ? 'closed'
         : 'open',
+    assigneeId: extractTicketAssigneeId(t as Record<string, unknown>),
     subject: typeof t.subject === 'string' && t.subject.trim() !== '' ? t.subject : null,
     labels: extractTicketLabels(t.labels ?? t.tags),
     labelsKnown: 'labels' in t || 'tags' in t,
@@ -721,7 +744,11 @@ async function processTicket(
   // merger is monotonic and keyed on trengoTicketId, so replays converge.
   // Heads are only built for tickets that have a CRM home (matched/created
   // contact) — a skipped-unmatched ticket must not become a ghost row.
-  if (contactId && headEvents.length > 0) {
+  //
+  // The listing row is Trengo's CURRENT state, so this is also the status /
+  // assignee re-sync: a re-run (the "Last 7 days quick sync") converges
+  // open/closed/assigned with what Trengo shows right now.
+  if (contactId) {
     headEvents.sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
     for (const ev of headEvents) {
       await applyEventToConversation(db, {
@@ -735,7 +762,10 @@ async function processTicket(
         preview: ev.preview,
       })
     }
-    const lastAt = headEvents[headEvents.length - 1]!.occurredAt
+    const lastAt =
+      headEvents.length > 0
+        ? headEvents[headEvents.length - 1]!.occurredAt
+        : (ticket.createdAt ?? new Date())
     // Ticket labels mirror onto the head's tags — the same place the live
     // webhook's label.added events land, so the comms centre shows them.
     // When the listing row carried no labels key at all, read the ticket
@@ -754,6 +784,28 @@ async function processTicket(
         label,
       })
     }
+    // Assignee sync — Trengo's current assignee mirrors onto the head
+    // (resolved to a CRM user via User.trengoUserId when connected).
+    if (ticket.assigneeId !== null) {
+      const assignee = await db.user.findUnique({
+        where: { trengoUserId: ticket.assigneeId },
+        select: { id: true },
+      })
+      await applyEventToConversation(db, {
+        ticketId: ticket.id,
+        eventName: 'ticket.assigned',
+        occurredAt: lastAt,
+        channel: ticket.channel,
+        contactId,
+        familyId,
+        trengoAssigneeId: ticket.assigneeId,
+        assigneeUserId: assignee?.id ?? null,
+      })
+    }
+    // Status sync — BOTH directions. The old code only ever closed, so a
+    // ticket reopened in Trengo stayed closed in the CRM forever ("open/
+    // closed on Trengo don't appear the same here"). A CRM-side snooze is
+    // deliberately preserved (only a closed head reopens).
     if (ticket.status === 'closed') {
       await applyEventToConversation(db, {
         ticketId: ticket.id,
@@ -763,6 +815,21 @@ async function processTicket(
         contactId,
         familyId,
       })
+    } else {
+      const head = await db.conversation.findUnique({
+        where: { trengoTicketId: ticket.id },
+        select: { status: true },
+      })
+      if (head?.status === 'closed') {
+        await applyEventToConversation(db, {
+          ticketId: ticket.id,
+          eventName: 'ticket.reopened',
+          occurredAt: lastAt,
+          channel: ticket.channel,
+          contactId,
+          familyId,
+        })
+      }
     }
   }
 

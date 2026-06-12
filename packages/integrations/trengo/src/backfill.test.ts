@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   buildUserNameMap,
+  extractTicketAssigneeId,
   extractMessageBody,
   extractTicketLabels,
   inferMessageDirection,
@@ -165,6 +166,7 @@ describe('normaliseTicketRow', () => {
       id: 9,
       channel: 'whatsapp',
       status: 'open',
+      assigneeId: null,
       subject: 'Re: trial lesson',
       labels: ['GCSE', 'Billing'],
       labelsKnown: true,
@@ -212,6 +214,19 @@ describe('buildUserNameMap', () => {
 
   it('skips rows without a numeric id or any name', () => {
     expect(buildUserNameMap([{ full_name: 'No Id' }, { id: 9 }, null, 'x'])).toEqual({})
+  })
+})
+
+describe('extractTicketAssigneeId', () => {
+  it('reads the assignee however the listing spells it', () => {
+    expect(extractTicketAssigneeId({ assignee_id: 7 })).toBe(7)
+    expect(extractTicketAssigneeId({ user_id: '12' })).toBe(12)
+    expect(extractTicketAssigneeId({ agent: { id: 9 } })).toBe(9)
+    expect(extractTicketAssigneeId({ user: { id: 3, name: 'L' } })).toBe(3)
+  })
+  it('returns null when unassigned', () => {
+    expect(extractTicketAssigneeId({})).toBeNull()
+    expect(extractTicketAssigneeId({ user: {} })).toBeNull()
   })
 })
 

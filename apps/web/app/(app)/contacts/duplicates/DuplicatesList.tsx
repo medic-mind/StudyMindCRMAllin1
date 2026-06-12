@@ -39,6 +39,8 @@ export function DuplicatesList({
 }) {
   const utils = trpc.useUtils()
   const [done, setDone] = useState<Set<string>>(new Set())
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState(0)
 
   const merge = trpc.contact.bulkMerge.useMutation({
     onSuccess: (res, vars) => {
@@ -53,6 +55,42 @@ export function DuplicatesList({
 
   const remaining = initialClusters.filter((c) => !done.has(c.survivorId))
 
+  // Bulk action: merge EVERY shown group, oldest contact kept in each.
+  // Sequential so one bad group can't abort the rest; the human confirms the
+  // whole batch up-front (§3 — confirmed, once for the batch).
+  const mergeAll = async () => {
+    const groups = initialClusters.filter((c) => !done.has(c.survivorId))
+    if (groups.length === 0) return
+    const losers = groups.reduce((n, g) => n + g.members.length - 1, 0)
+    const msg =
+      'Merge ALL ' +
+      groups.length +
+      ' groups now? The OLDEST contact in each group is kept and ' +
+      losers +
+      ' duplicate contact(s) are merged into them. All history moves onto the kept contacts. This cannot be undone.'
+    if (!window.confirm(msg)) return
+    setBulkRunning(true)
+    setBulkProgress(0)
+    let failures = 0
+    for (const g of groups) {
+      try {
+        await merge.mutateAsync({
+          survivorId: g.survivorId,
+          loserIds: g.members.map((m) => m.id).filter((id) => id !== g.survivorId),
+        })
+      } catch {
+        failures += 1
+      }
+      setBulkProgress((n) => n + 1)
+    }
+    setBulkRunning(false)
+    if (failures > 0) {
+      toast.error(failures + ' group(s) could not be merged — left in the list')
+    } else {
+      toast.success('All groups merged')
+    }
+  }
+
   if (initialClusters.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-8 text-center text-sm text-neutral-600">
@@ -64,12 +102,23 @@ export function DuplicatesList({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
-        Found <strong>{totalClusters}</strong> group
-        {totalClusters === 1 ? '' : 's'} of duplicates ({duplicateContacts} contacts).{' '}
-        {capped ? 'Showing the first 100 — re-run after merging to see more. ' : ''}
-        Pick the contact to keep, then merge — all calls, messages, emails and
-        notes move onto it.
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+        <span>
+          Found <strong>{totalClusters}</strong> group
+          {totalClusters === 1 ? '' : 's'} of duplicates ({duplicateContacts} contacts).{' '}
+          {capped ? 'Showing the first 100 — re-run after merging to see more. ' : ''}
+          Pick the contact to keep per group, or merge everything in one go.
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          disabled={bulkRunning || merge.isPending || remaining.length === 0}
+          onClick={() => void mergeAll()}
+        >
+          {bulkRunning
+            ? `Merging… ${bulkProgress} done`
+            : `Merge all ${remaining.length} groups (keep oldest)`}
+        </Button>
       </div>
 
       {remaining.length === 0 ? (

@@ -145,7 +145,7 @@ export const knowledgeRouter = router({
         code: 'PRECONDITION_FAILED',
         message: budgetHit
           ? 'The AI Knowledge assistant has reached its daily budget. Browse the Protocols & Policies sections directly, or try again tomorrow.'
-          : 'The AI Knowledge assistant is unavailable right now. The Protocols & Policies sections are always available to browse and search.',
+          : 'The AI Knowledge assistant is unavailable — this usually means no AI provider key is configured. Ask an admin to set GEMINI_API_KEY (or OPENAI_API_KEY) on the web service in Railway. The Protocols & Policies sections are always available to browse and search.',
       })
     }
   }),

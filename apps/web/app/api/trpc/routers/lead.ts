@@ -373,6 +373,27 @@ export const leadRouter = router({
     }),
 
   /**
+   * Retroactive repair (operator button on the Lead webhook integration
+   * page): backfills missing country codes via the IP-geo → phone-dial-code
+   * waterfall for every old lead, fills the converted contacts' blank
+   * countries, upgrades as-typed phones to E.164, and renames contacts that
+   * were christened after a freebie ("PLAB Questions") to their email.
+   * Self-rescheduling Inngest job; idempotent.
+   */
+  runMaintenance: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertCanManageSources(user.role)
+    const { inngest } = await import('@studymind/jobs')
+    await inngest.send({ name: 'lead/backfill-countries.requested', data: {} })
+    await ctx.audit({
+      action: 'lead.maintenance_requested',
+      target: { type: 'System', id: 'lead-country-backfill' },
+      after: { initiatedBy: user.id },
+    })
+    return { ok: true as const }
+  }),
+
+  /**
    * Integrations "Test Lead Generator". Pushes a synthetic Contact-Form-7-shape
    * submission through the exact same ingest path as the public endpoint
    * (normalise → persist → classify), so an admin can prove the pipeline is

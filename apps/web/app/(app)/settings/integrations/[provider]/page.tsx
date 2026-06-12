@@ -25,6 +25,7 @@ import { CancelBackfillButton } from './CancelBackfillButton'
 import { TrengoImportButton } from './TrengoImportButton'
 import { TrengoProbeButton } from './TrengoProbeButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
+import { LeadMaintenanceButton } from './LeadMaintenanceButton'
 
 const BACKFILL_PROVIDERS = new Set(['gmail', 'aircall', 'trengo', 'slack'])
 const SHARED_TOKEN_BACKFILL = new Set(['aircall', 'slack'])
@@ -180,7 +181,14 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
       />
       <PageBody>
         <div className="space-y-8">
-          {provider === 'lead' ? <LeadIngestionPanel /> : null}
+          {provider === 'lead' ? (
+            <>
+              <div className="flex justify-end">
+                <LeadMaintenanceButton />
+              </div>
+              <LeadIngestionPanel />
+            </>
+          ) : null}
 
           {provider === 'aircall' && detail.importStats ? (
             <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">

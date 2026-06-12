@@ -248,6 +248,10 @@ export const EVENT_NAMES = [
   'lead.classification_corrected',
   'lead.source_created',
   'lead.source_updated',
+  // Retroactive lead repair: country backfill from IP + freebie-name rename
+  // (operator-triggered from the Lead webhook integration page).
+  'lead.maintenance_requested',
+  'lead.maintenance_completed',
   'lead.source_archived',
   'lead.rule_created',
   'lead.rule_updated',
@@ -578,6 +582,8 @@ export const INNGEST_EVENT_NAMES = [
   // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
   // persists a Lead then hands off async classification + pipeline routing.
   'lead/classify.requested',
+  // Retroactive country/name repair walk (self-rescheduling batches).
+  'lead/backfill-countries.requested',
   // Medi Platform account sync (ADR 0037): the POST /api/contacts receiver
   // persists a `medi` ProviderEvent then hands off async Contact onboarding.
   'medi/account.received',

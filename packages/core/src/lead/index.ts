@@ -5,7 +5,13 @@
 // processor that consumes these.
 
 export * from './types'
-export { normaliseLead, normalisePhone, extractPreferredWhen, type RawLeadInput } from './normalise'
+export {
+  normaliseLead,
+  normalisePhone,
+  extractPreferredWhen,
+  isResourceShapedName,
+  type RawLeadInput,
+} from './normalise'
 export { classifyLead, FREE_RESOURCES_CATEGORY, type ClassifyOptions } from './classify'
 export {
   asTypedPhoneFallback,
