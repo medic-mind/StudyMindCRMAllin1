@@ -17,9 +17,12 @@ const PROVIDER_LABEL: Record<string, string> = {
 }
 
 export function BackfillProgressBanner(): JSX.Element | null {
+  // This banner is mounted in the shell on EVERY page, so a constant 5s poll
+  // was a site-wide background fetch that added latency to navigation. Poll
+  // fast (5s) only while a job is actually running; idle, fall back to 30s.
   const { data } = trpc.admin.backfill.mine.useQuery(undefined, {
-    refetchInterval: 5000,
-    refetchOnWindowFocus: true,
+    refetchInterval: (query) =>
+      (query.state.data?.length ?? 0) > 0 ? 5000 : 30000,
   })
 
   if (!data || data.length === 0) return null

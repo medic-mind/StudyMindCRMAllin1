@@ -38,7 +38,9 @@ export function ThreadPane({
   // reading appears promptly. The list itself is kept live by the SSE stream.
   const convo = trpc.inbox.conversations.get.useQuery(
     { conversationId },
-    { refetchInterval: 15_000, refetchOnWindowFocus: true },
+    // SSE (useConversationStream) is the primary live path; this poll is a
+    // fallback, so 30s is plenty and keeps the thread light.
+    { refetchInterval: 30_000, refetchOnWindowFocus: true },
   )
 
   if (convo.isLoading) {

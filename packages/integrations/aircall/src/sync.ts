@@ -16,12 +16,12 @@ import { inngest } from '@studymind/jobs'
 import { processBackfillCall } from './backfill'
 import { createClient, type AircallCallResource } from './client'
 
-const OVERLAP_MS = 60 * 60 * 1000 // re-pull the last hour each run (idempotent)
+const OVERLAP_MS = 24 * 60 * 60 * 1000 // re-pull the last 24h each run (idempotent)
 // Cold-start reach-back when we hold no calls yet: a clean 1-month import,
 // matching the admin backfill window (CLAUDE.md §10). Override via
 // AIRCALL_SYNC_LOOKBACK_DAYS. After the first run the cursor moves forward.
 const DEFAULT_LOOKBACK_DAYS = 30
-const MAX_PAGES = 40 // bound per run: 40 × 50 = 2000 calls
+const MAX_PAGES = 60 // bound per run: 60 × 50 = 3000 calls
 
 export const aircallSyncCalls = inngest.createFunction(
   {
@@ -30,7 +30,10 @@ export const aircallSyncCalls = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 3,
   },
-  { cron: '*/10 * * * *' },
+  // Cron every 10 min, PLUS an on-demand trigger so staff can force an
+  // immediate pull from the /calls page when a specific missed call hasn't
+  // come through (e.g. a dropped webhook). Same body either way.
+  [{ cron: '*/10 * * * *' }, { event: 'aircall/sync-now.requested' }],
   async ({ step, logger }) => {
     if (!process.env['AIRCALL_API_ID'] || !process.env['AIRCALL_API_TOKEN']) {
       return { skipped: 'no-credentials' }

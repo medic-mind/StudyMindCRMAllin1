@@ -35,11 +35,11 @@ export function PinsSavedPanel({
 }: Props) {
   const pinsQuery = trpc.chat.listPins.useQuery(
     { channelId },
-    { enabled: kind === 'pins', refetchInterval: 20_000 },
+    { enabled: kind === 'pins', refetchInterval: 60_000 },
   )
   const savesQuery = trpc.chat.listSaves.useQuery(
     {},
-    { enabled: kind === 'saved', refetchInterval: 20_000 },
+    { enabled: kind === 'saved', refetchInterval: 60_000 },
   )
 
   const isPins = kind === 'pins'

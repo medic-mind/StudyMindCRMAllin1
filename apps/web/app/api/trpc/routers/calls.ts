@@ -265,6 +265,31 @@ export const callsRouter = router({
         })
         return { ok: true }
       }),
+
+    /**
+     * Force an immediate pull of recent calls from Aircall — for when a
+     * specific missed call hasn't come through (a dropped webhook). Fires the
+     * same sync job the 10-minute cron runs (re-pulls the last 24h, idempotent
+     * on the Aircall call id). Sales Exec+; returns whether Aircall is
+     * configured so the UI can explain a no-op.
+     */
+    syncNow: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      assertCanReview(user.role)
+      const configured = Boolean(
+        process.env['AIRCALL_API_ID'] && process.env['AIRCALL_API_TOKEN'],
+      )
+      if (configured) {
+        const { inngest } = await import('@studymind/jobs')
+        await inngest.send({ name: 'aircall/sync-now.requested', data: {} })
+      }
+      await ctx.audit({
+        action: 'call.sync_requested',
+        target: { type: 'Integration', id: 'aircall' },
+        after: { configured },
+      })
+      return { ok: true as const, configured }
+    }),
   }),
 
   /** Full call history — every Aircall call (inbound + outbound, answered /

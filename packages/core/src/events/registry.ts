@@ -224,6 +224,8 @@ export const EVENT_NAMES = [
   'aircall.webhook_reenabled',
   // Manual click-to-call log (Aircall fallback / Google Voice / freeform).
   'call.manually_logged',
+  // On-demand "sync recent calls now" from /calls (force-pull missed calls).
+  'call.sync_requested',
 
   // Messaging (Trengo — CLAUDE.md §11)
   'message.inbound',
@@ -548,6 +550,9 @@ export const INNGEST_EVENT_NAMES = [
   'booking/event.received',
   'aircall/transcribe-fallback',
   'aircall/persist-recording',
+  // On-demand "sync recent calls now" — staff-triggered from /calls when a
+  // missed call hasn't come through (a dropped webhook). Reuses the sync job.
+  'aircall/sync-now.requested',
   'gmail/history.changed',
 
   // Cross-cutting domain events
