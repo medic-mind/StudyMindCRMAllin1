@@ -162,6 +162,14 @@ export const CallSummarySendInput = z.object({
     .optional(),
   /** Subject for a fresh email when the contact has no Gmail thread yet. */
   emailSubject: z.string().trim().min(1).max(200).optional(),
+  /** Full-Gmail extras for the email channel (recipient override + Cc/Bcc +
+   *  send-from address). */
+  emailTo: z.array(z.string().trim().email()).max(20).optional(),
+  emailCc: z.array(z.string().trim().email()).max(20).optional(),
+  emailBcc: z.array(z.string().trim().email()).max(20).optional(),
+  emailFromAddress: z.string().trim().email().max(254).optional(),
+  /** Trengo sender line (channel id) for a NEW WhatsApp/SMS conversation. */
+  trengoChannelId: z.number().int().positive().optional(),
   /** Send the WhatsApp channel as this approved Trengo template. */
   whatsappTemplate: CallSummaryWhatsAppTemplate.optional(),
   /** Up to 10 attachments for the email channel. Ignored when email

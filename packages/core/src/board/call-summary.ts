@@ -85,6 +85,8 @@ export interface CallSummarySenders {
     body: string
     contactId: string
     attachments?: ReadonlyArray<ResolvedAttachment>
+    /** Trengo sender line (channel id) to start a NEW conversation from. */
+    trengoChannelId?: number
   }) => Promise<ChannelResult>
   /** Explicit WhatsApp send via Trengo (continues the WhatsApp thread if one
    *  exists, else starts one). Distinct from `trengo` which uses whatever the
@@ -94,6 +96,7 @@ export interface CallSummarySenders {
     contactId: string
     attachments?: ReadonlyArray<ResolvedAttachment>
     trengoTemplate?: WhatsAppTemplateRef
+    trengoChannelId?: number
   }) => Promise<ChannelResult>
   /** Explicit SMS send via Trengo (continues the SMS thread if one exists,
    *  else starts one to the contact's E.164 number). */
@@ -101,6 +104,7 @@ export interface CallSummarySenders {
     body: string
     contactId: string
     attachments?: ReadonlyArray<ResolvedAttachment>
+    trengoChannelId?: number
   }) => Promise<ChannelResult>
   email?: (args: {
     body: string
@@ -108,6 +112,11 @@ export interface CallSummarySenders {
     attachments?: ReadonlyArray<ResolvedAttachment>
     /** Subject for a fresh email when the contact has no Gmail thread yet. */
     subject?: string
+    /** Full-Gmail extras: recipient override + Cc/Bcc + send-from address. */
+    to?: ReadonlyArray<string>
+    cc?: ReadonlyArray<string>
+    bcc?: ReadonlyArray<string>
+    fromAddress?: string
   }) => Promise<ChannelResult>
 }
 
@@ -210,6 +219,13 @@ export async function sendCallSummary(
     channelBodies?: { whatsapp?: string; sms?: string; email?: string; trengo?: string }
     /** Subject for a fresh email when the contact has no Gmail thread yet. */
     emailSubject?: string
+    /** Full-Gmail extras for the email channel. */
+    emailTo?: ReadonlyArray<string>
+    emailCc?: ReadonlyArray<string>
+    emailBcc?: ReadonlyArray<string>
+    emailFromAddress?: string
+    /** Trengo sender line (channel id) for a NEW WhatsApp/SMS conversation. */
+    trengoChannelId?: number
     /** Approved Trengo WhatsApp template — sent via the template session
      *  instead of free text when present. */
     whatsappTemplate?: WhatsAppTemplateRef
@@ -262,6 +278,7 @@ export async function sendCallSummary(
               body: bodyFor('trengo'),
               contactId,
               attachments: input.attachments,
+              ...(input.trengoChannelId ? { trengoChannelId: input.trengoChannelId } : {}),
             })
         : undefined,
     )
@@ -278,6 +295,7 @@ export async function sendCallSummary(
               ...(input.whatsappTemplate
                 ? { trengoTemplate: input.whatsappTemplate }
                 : { attachments: input.attachments }),
+              ...(input.trengoChannelId ? { trengoChannelId: input.trengoChannelId } : {}),
             })
         : undefined,
     )
@@ -290,6 +308,7 @@ export async function sendCallSummary(
               body: bodyFor('sms'),
               contactId,
               attachments: input.attachments,
+              ...(input.trengoChannelId ? { trengoChannelId: input.trengoChannelId } : {}),
             })
         : undefined,
     )
@@ -303,6 +322,10 @@ export async function sendCallSummary(
               contactId,
               attachments: input.attachments,
               ...(input.emailSubject ? { subject: input.emailSubject } : {}),
+              ...(input.emailTo && input.emailTo.length > 0 ? { to: input.emailTo } : {}),
+              ...(input.emailCc && input.emailCc.length > 0 ? { cc: input.emailCc } : {}),
+              ...(input.emailBcc && input.emailBcc.length > 0 ? { bcc: input.emailBcc } : {}),
+              ...(input.emailFromAddress ? { fromAddress: input.emailFromAddress } : {}),
             })
         : undefined,
     )
