@@ -1795,6 +1795,10 @@ model GcCustomer {
   givenName    String?
   familyName   String?
   companyName  String?
+  /// E.164 phone the customer gave GoCardless. Used as a second contact-match
+  /// key after email (ADR 0038, sixth amendment) so a DD customer with no email
+  /// (or a non-matching one) still links to its CRM contact.
+  phone        String?
   /// CRM links. Set by unambiguous email auto-match at import or by manual
   /// linking in the Direct Debit workspace. familyId follows the contact's
   /// family when one exists (finance stays Family-keyed, CLAUDE.md §6.1).
@@ -1812,6 +1816,7 @@ model GcCustomer {
   family  Family?  @relation(fields: [familyId], references: [id], onDelete: SetNull)
 
   @@index([email])
+  @@index([phone])
   @@index([contactId])
   @@index([familyId])
 }

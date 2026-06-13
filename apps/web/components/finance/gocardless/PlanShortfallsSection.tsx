@@ -9,6 +9,7 @@
 import Link from 'next/link'
 import { useMemo, useState } from 'react'
 
+import { NewTaskDialog } from '@/app/(app)/tasks/NewTaskDialog'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
@@ -16,6 +17,35 @@ import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
 import { formatDate, statusLabel } from './shared'
+
+/** A compact "chase" action for an Issues row: open a follow-up task against the
+ * contact/family, plus a jump to the contact. Shown only when the plan's
+ * customer is linked (otherwise there is nobody to action). */
+function RowActions({
+  contactId,
+  familyId,
+  customerName,
+}: {
+  contactId: string | null
+  familyId: string | null
+  customerName: string | null
+}) {
+  if (!contactId && !familyId) {
+    return <span className="text-xs text-neutral-400">link customer</span>
+  }
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <NewTaskDialog
+        contactId={contactId ?? undefined}
+        familyId={familyId ?? undefined}
+        contactName={customerName ?? undefined}
+        triggerLabel="Chase"
+        triggerVariant="secondary"
+        triggerSize="xs"
+      />
+    </div>
+  )
+}
 
 function describeCadence(intervalUnit: string, interval: number): string {
   const unit =
@@ -226,6 +256,7 @@ export function PlanShortfallsSection() {
                   align="right"
                 />
                 <Th>Why</Th>
+                <Th className="text-right">Action</Th>
               </Tr>
             </Thead>
             <Tbody>
@@ -276,6 +307,13 @@ export function PlanShortfallsSection() {
                         </Badge>
                       ))}
                     </div>
+                  </Td>
+                  <Td className="text-right">
+                    <RowActions
+                      contactId={s.contactId}
+                      familyId={s.familyId}
+                      customerName={s.customerName}
+                    />
                   </Td>
                 </Tr>
               ))}
@@ -403,6 +441,7 @@ export function ActivePlanArrearsSection() {
                   align="right"
                 />
                 <Th>Next charge</Th>
+                <Th className="text-right">Action</Th>
               </Tr>
             </Thead>
             <Tbody>
@@ -439,6 +478,13 @@ export function ActivePlanArrearsSection() {
                     {formatMoneyMinor(s.estimatedArrearsMinor, s.currency)}
                   </Td>
                   <Td className="text-xs text-neutral-500">{formatDate(s.nextChargeAt)}</Td>
+                  <Td className="text-right">
+                    <RowActions
+                      contactId={s.contactId}
+                      familyId={s.familyId}
+                      customerName={s.customerName}
+                    />
+                  </Td>
                 </Tr>
               ))}
             </Tbody>
