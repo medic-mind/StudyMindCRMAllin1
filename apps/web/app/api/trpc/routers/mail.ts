@@ -9,10 +9,11 @@
 import { z } from 'zod'
 import { TRPCError } from '@trpc/server'
 
-import { applyMailToConversation } from '@studymind/core/mail'
+import { applyMailToConversation, buildOutgoingEmail } from '@studymind/core/mail'
 import { publishConversationUpdate } from '@studymind/core/realtime'
 import { sendEmail, sendReply } from '@studymind/integration-gmail/outbound'
 
+import { displayMessageBody } from '@/lib/format/html-text'
 import { getMailSyncProvider } from '@/lib/mail/get-sync-provider'
 import {
   auditedProcedure,
@@ -306,7 +307,14 @@ export const mailRouter = router({
       assertCanMutate(me.role)
       const account = await ctx.db.mailAccount.findFirst({
         where: { id: input.mailAccountId, deletedAt: null },
-        select: { id: true, provider: true, ownerUserId: true, address: true, status: true },
+        select: {
+          id: true,
+          provider: true,
+          ownerUserId: true,
+          address: true,
+          status: true,
+          signatureHtml: true,
+        },
       })
       if (!account) throw new TRPCError({ code: 'NOT_FOUND' })
       if (account.provider !== 'gmail') {
@@ -322,11 +330,21 @@ export const mailRouter = router({
         })
       }
 
+      // multipart/alternative so the new email renders rich (Gmail-identical)
+      // with the account's copied HTML signature.
+      const bodies = buildOutgoingEmail({
+        body: input.body,
+        signatureHtml: account.signatureHtml,
+        signatureText: account.signatureHtml
+          ? displayMessageBody(account.signatureHtml)
+          : null,
+      })
       const result = await sendEmail({
         agentId: account.ownerUserId,
         fromAddress: account.address,
         subject: input.subject,
-        body: input.body,
+        body: bodies.text,
+        html: bodies.html,
         toAddresses: input.to,
         cc: input.cc,
         requestId: ctx.requestId,
@@ -529,7 +547,7 @@ export const mailRouter = router({
 
         const account = await ctx.db.mailAccount.findUnique({
           where: { id: head.mailAccountId },
-          select: { ownerUserId: true },
+          select: { ownerUserId: true, signatureHtml: true },
         })
         if (!account?.ownerUserId) {
           throw new TRPCError({
@@ -564,11 +582,21 @@ export const mailRouter = router({
             ? (p['messageIdHeader'] as string)
             : undefined
 
+        // Send as multipart/alternative so the message renders like Gmail and
+        // the account's copied HTML signature shows with its real formatting.
+        const bodies = buildOutgoingEmail({
+          body: input.body,
+          signatureHtml: account.signatureHtml,
+          signatureText: account.signatureHtml
+            ? displayMessageBody(account.signatureHtml)
+            : null,
+        })
         await sendReply({
           agentId: account.ownerUserId,
           threadId: head.externalThreadId,
           subject,
-          body: input.body,
+          body: bodies.text,
+          html: bodies.html,
           toAddresses,
           cc: input.cc,
           requestId: ctx.requestId,

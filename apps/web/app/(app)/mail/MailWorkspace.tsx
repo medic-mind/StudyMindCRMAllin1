@@ -48,10 +48,6 @@ function signatureText(account: AccountOption | undefined): string {
   return displayMessageBody(html)?.trim() ?? ''
 }
 
-function signatureBlock(text: string): string {
-  return text ? `\n\n${text}` : ''
-}
-
 type Folder = 'all' | 'unread' | 'starred' | 'archived' | 'trash'
 
 export function MailWorkspace({
@@ -703,21 +699,14 @@ function ReadingPane({
   const [body, setBody] = useState('')
   const [confirmTrash, setConfirmTrash] = useState(false)
   const markedRef = useRef<Set<string>>(new Set())
-  const sigInitRef = useRef<string | null>(null)
 
   const head = convo.data?.head
   const messages = useMemo(() => convo.data?.messages ?? [], [convo.data])
 
-  // Prefill the reply with the account's Gmail signature once per conversation
-  // (Gmail parity). Only when the box is still untouched, so we never clobber
-  // a draft the agent has started.
+  // The account's Gmail signature is appended server-side on send (text + HTML);
+  // surface it as a read-only preview by the composer rather than prefilling it.
   const replyAccount = accounts.find((a) => a.id === head?.mailAccountId)
-  useEffect(() => {
-    if (!head || sigInitRef.current === head.id) return
-    sigInitRef.current = head.id
-    const sig = signatureText(replyAccount)
-    if (sig) setBody((prev) => (prev.trim() ? prev : signatureBlock(sig)))
-  }, [head?.id, replyAccount])
+  const replySigPreview = signatureText(replyAccount)
 
   // Mark read on open (like Gmail). Once per conversation per mount.
   useEffect(() => {
@@ -910,7 +899,14 @@ function ReadingPane({
             placeholder="Reply… (sends from this mailbox and syncs to Gmail)   ( r )"
             aria-label="Reply"
           />
-          <div className="mt-2 flex justify-end">
+          <div className="mt-2 flex items-center justify-between gap-3">
+            {replySigPreview ? (
+              <span className="truncate text-[11px] text-neutral-400" title={replySigPreview}>
+                Signature appended: {replySigPreview}
+              </span>
+            ) : (
+              <span />
+            )}
             <Button type="button" size="sm" disabled={reply.isPending || !body.trim()} onClick={sendReply}>
               <SendIcon size={15} /> {reply.isPending ? 'Sending…' : 'Send reply'}
             </Button>
@@ -992,19 +988,11 @@ function ComposeModal({
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
 
-  // Keep the agent's Gmail signature pinned to the bottom of the draft, and
-  // swap it cleanly when the From account changes — mirroring Gmail.
-  const prevSigRef = useRef('')
-  useEffect(() => {
-    const sig = signatureText(accounts.find((a) => a.id === accountId))
-    setBody((prev) => {
-      let base = prev
-      const oldBlock = signatureBlock(prevSigRef.current)
-      if (oldBlock && base.endsWith(oldBlock)) base = base.slice(0, -oldBlock.length)
-      prevSigRef.current = sig
-      return base + signatureBlock(sig)
-    })
-  }, [accountId, accounts])
+  // The account's Gmail signature is appended server-side to both the text and
+  // HTML parts (so it renders with its real formatting). Show it as a read-only
+  // preview here so the agent sees what will be added without it cluttering the
+  // editable body. Swaps with the From account.
+  const sigPreview = signatureText(accounts.find((a) => a.id === accountId))
 
   async function send() {
     const recipients = to
@@ -1094,6 +1082,14 @@ function ComposeModal({
             placeholder="Write your message…"
             aria-label="Message"
           />
+          {sigPreview ? (
+            <div className="rounded-md border border-dashed border-neutral-200 bg-neutral-50/60 px-2.5 py-1.5 text-xs text-neutral-500">
+              <span className="text-neutral-400">Signature appended:</span>
+              <span className="ml-1 whitespace-pre-wrap break-words text-neutral-600">
+                {sigPreview}
+              </span>
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-neutral-200 px-4 py-2.5">
           <Button type="button" size="sm" variant="ghost" onClick={onClose}>
