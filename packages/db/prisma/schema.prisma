@@ -221,6 +221,11 @@ enum ReconciliationCategory {
   // Raised by the nightly finance/flag-dd-defaulters job (forward-only enum
   // add per CLAUDE.md §19).
   direct_debit_default
+  // ADR 0038 (sixth amendment): a fixed-length plan cancelled/finished early
+  // leaving contracted instalments uncollected, and an active plan that has
+  // fallen behind its expected collection schedule. Raised by the same job.
+  direct_debit_plan_shortfall
+  direct_debit_plan_arrears
   other
 }
 

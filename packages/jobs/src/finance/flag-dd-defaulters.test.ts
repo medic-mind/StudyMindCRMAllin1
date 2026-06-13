@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PrismaClient } from '@studymind/db'
 
-import { defaulterContextHash, flagDefaulters } from './flag-dd-defaulters'
+import { defaulterContextHash, flagDefaulters, flagPlanIssues } from './flag-dd-defaulters'
 
 const NOW = new Date('2026-05-26T12:00:00Z')
 const D = (iso: string) => new Date(iso)
@@ -163,5 +163,154 @@ describe('flagDefaulters', () => {
     }
     const reordered = { ...base, reasons: ['b', 'a'] as unknown as never }
     expect(defaulterContextHash(base)).toBe(defaulterContextHash(reordered))
+  })
+})
+
+interface FakeSub {
+  gcSubscriptionId: string
+  status: string
+  amountMinor: number
+  currency: string
+  intervalUnit: string
+  interval: number
+  totalPaymentCount: number | null
+  startDate: Date | null
+  endDate?: Date | null
+  nextChargeAt?: Date | null
+  gcCustomerId: string | null
+}
+
+function makePlanDb(opts: {
+  subs: FakeSub[]
+  paymentsBySub: Record<string, Array<{ status: string; amountMinor: number; chargeDate: Date }>>
+  customers: Array<{ gcCustomerId: string; familyId: string | null; givenName?: string }>
+  existing?: CreatedRow[]
+}): { db: PrismaClient; created: CreatedRow[] } {
+  const created: CreatedRow[] = []
+  const existing = opts.existing ?? []
+
+  const db = {
+    gcSubscription: {
+      findMany: async (args: { where: { status: unknown } }) => {
+        const want = args.where.status as { in?: string[] } | string
+        return opts.subs.filter((s) =>
+          typeof want === 'string' ? s.status === want : (want.in ?? []).includes(s.status),
+        )
+      },
+    },
+    gcPayment: {
+      findMany: async (args: { where: { gcSubscriptionId: { in: string[] } } }) => {
+        const ids = args.where.gcSubscriptionId.in
+        return ids.flatMap((id) =>
+          (opts.paymentsBySub[id] ?? []).map((p) => ({ ...p, gcSubscriptionId: id })),
+        )
+      },
+    },
+    gcCustomer: {
+      findMany: async (args: { where: { gcCustomerId: { in: string[] } } }) =>
+        opts.customers.filter((c) => args.where.gcCustomerId.in.includes(c.gcCustomerId)),
+    },
+    reconciliationDiscrepancy: {
+      findFirst: async (args: { where: CreatedRow }) =>
+        existing.find(
+          (e) =>
+            e.familyId === args.where.familyId &&
+            e.category === args.where.category &&
+            e.contextHash === args.where.contextHash,
+        )
+          ? { id: 'existing' }
+          : null,
+      create: async (args: { data: CreatedRow }) => {
+        created.push({
+          familyId: args.data.familyId,
+          category: args.data.category,
+          contextHash: args.data.contextHash,
+        })
+        return { id: 'new' }
+      },
+    },
+  } as unknown as PrismaClient
+
+  return { db, created }
+}
+
+describe('flagPlanIssues', () => {
+  it('raises a plan_shortfall discrepancy for a family-linked cancelled-part-way plan', async () => {
+    const { db, created } = makePlanDb({
+      subs: [
+        {
+          gcSubscriptionId: 'SB1',
+          status: 'cancelled',
+          amountMinor: 10_000,
+          currency: 'GBP',
+          intervalUnit: 'monthly',
+          interval: 1,
+          totalPaymentCount: 12,
+          startDate: D('2026-01-01T00:00:00Z'),
+          gcCustomerId: 'CU1',
+        },
+      ],
+      paymentsBySub: {
+        SB1: [
+          { status: 'confirmed', amountMinor: 10_000, chargeDate: D('2026-02-01T00:00:00Z') },
+          { status: 'confirmed', amountMinor: 10_000, chargeDate: D('2026-03-01T00:00:00Z') },
+        ],
+      },
+      customers: [{ gcCustomerId: 'CU1', familyId: 'fam_1', givenName: 'Pat' }],
+    })
+    const result = await flagPlanIssues(db, NOW)
+    expect(result.newlyFlagged).toHaveLength(1)
+    expect(result.newlyFlagged[0]?.kind).toBe('shortfall')
+    expect(created).toHaveLength(1)
+    expect(created[0]?.category).toBe('direct_debit_plan_shortfall')
+  })
+
+  it('skips plans whose customer is not linked to a family', async () => {
+    const { db, created } = makePlanDb({
+      subs: [
+        {
+          gcSubscriptionId: 'SB1',
+          status: 'cancelled',
+          amountMinor: 10_000,
+          currency: 'GBP',
+          intervalUnit: 'monthly',
+          interval: 1,
+          totalPaymentCount: 12,
+          startDate: D('2026-01-01T00:00:00Z'),
+          gcCustomerId: 'CU1',
+        },
+      ],
+      paymentsBySub: { SB1: [] },
+      customers: [{ gcCustomerId: 'CU1', familyId: null }],
+    })
+    const result = await flagPlanIssues(db, NOW)
+    expect(result.newlyFlagged).toHaveLength(0)
+    expect(created).toHaveLength(0)
+  })
+
+  it('raises a plan_arrears discrepancy for an active plan behind schedule', async () => {
+    const { db, created } = makePlanDb({
+      subs: [
+        {
+          gcSubscriptionId: 'SB2',
+          status: 'active',
+          amountMinor: 5_000,
+          currency: 'GBP',
+          intervalUnit: 'monthly',
+          interval: 1,
+          totalPaymentCount: null,
+          startDate: D('2026-01-01T00:00:00Z'),
+          gcCustomerId: 'CU2',
+        },
+      ],
+      // NOW is 2026-05-26 → 5 instalments due; only 1 collected → 4 behind.
+      paymentsBySub: {
+        SB2: [{ status: 'confirmed', amountMinor: 5_000, chargeDate: D('2026-01-01T00:00:00Z') }],
+      },
+      customers: [{ gcCustomerId: 'CU2', familyId: 'fam_2' }],
+    })
+    const result = await flagPlanIssues(db, NOW)
+    expect(result.newlyFlagged.some((p) => p.kind === 'arrears')).toBe(true)
+    expect(created.some((c) => c.category === 'direct_debit_plan_arrears')).toBe(true)
   })
 })
