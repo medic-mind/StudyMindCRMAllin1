@@ -36,6 +36,20 @@ interface AccountOption {
   id: string
   address: string
   displayName: string | null
+  signatureHtml: string | null
+}
+
+// The agent's Gmail signature, copied verbatim, rendered as the plaintext the
+// composer sends today (HTML send arrives with the rich composer). Appended
+// below the cursor like Gmail. Empty when the account has no signature.
+function signatureText(account: AccountOption | undefined): string {
+  const html = account?.signatureHtml
+  if (!html) return ''
+  return displayMessageBody(html)?.trim() ?? ''
+}
+
+function signatureBlock(text: string): string {
+  return text ? `\n\n${text}` : ''
 }
 
 type Folder = 'all' | 'unread' | 'starred' | 'archived' | 'trash'
@@ -263,6 +277,7 @@ export function MailWorkspace({
         {selectedId ? (
           <ReadingPane
             conversationId={selectedId}
+            accounts={accounts}
             onClose={() => setSelectedId(null)}
             onChanged={invalidateList}
           />
@@ -669,10 +684,12 @@ function IconBtn({
 
 function ReadingPane({
   conversationId,
+  accounts,
   onClose,
   onChanged,
 }: {
   conversationId: string
+  accounts: AccountOption[]
   onClose: () => void
   onChanged: () => void
 }) {
@@ -686,9 +703,21 @@ function ReadingPane({
   const [body, setBody] = useState('')
   const [confirmTrash, setConfirmTrash] = useState(false)
   const markedRef = useRef<Set<string>>(new Set())
+  const sigInitRef = useRef<string | null>(null)
 
   const head = convo.data?.head
   const messages = useMemo(() => convo.data?.messages ?? [], [convo.data])
+
+  // Prefill the reply with the account's Gmail signature once per conversation
+  // (Gmail parity). Only when the box is still untouched, so we never clobber
+  // a draft the agent has started.
+  const replyAccount = accounts.find((a) => a.id === head?.mailAccountId)
+  useEffect(() => {
+    if (!head || sigInitRef.current === head.id) return
+    sigInitRef.current = head.id
+    const sig = signatureText(replyAccount)
+    if (sig) setBody((prev) => (prev.trim() ? prev : signatureBlock(sig)))
+  }, [head?.id, replyAccount])
 
   // Mark read on open (like Gmail). Once per conversation per mount.
   useEffect(() => {
@@ -903,8 +932,24 @@ function ComposeModal({
   const compose = trpc.mail.compose.useMutation()
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
   const [to, setTo] = useState('')
+  const [cc, setCc] = useState('')
+  const [showCc, setShowCc] = useState(false)
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
+
+  // Keep the agent's Gmail signature pinned to the bottom of the draft, and
+  // swap it cleanly when the From account changes — mirroring Gmail.
+  const prevSigRef = useRef('')
+  useEffect(() => {
+    const sig = signatureText(accounts.find((a) => a.id === accountId))
+    setBody((prev) => {
+      let base = prev
+      const oldBlock = signatureBlock(prevSigRef.current)
+      if (oldBlock && base.endsWith(oldBlock)) base = base.slice(0, -oldBlock.length)
+      prevSigRef.current = sig
+      return base + signatureBlock(sig)
+    })
+  }, [accountId, accounts])
 
   async function send() {
     const recipients = to
@@ -915,10 +960,15 @@ function ComposeModal({
       toast.error('Add a recipient, subject and message.')
       return
     }
+    const ccList = cc
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
     try {
       await compose.mutateAsync({
         mailAccountId: accountId,
         to: recipients,
+        ...(ccList.length > 0 ? { cc: ccList } : {}),
         subject: subject.trim(),
         body: body.trim(),
       })
@@ -966,7 +1016,21 @@ function ComposeModal({
               </option>
             ))}
           </select>
-          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To: name@example.com, …" aria-label="To" />
+          <div className="relative">
+            <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To: name@example.com, …" aria-label="To" />
+            {!showCc ? (
+              <button
+                type="button"
+                onClick={() => setShowCc(true)}
+                className="absolute right-2 top-1.5 text-xs font-medium text-neutral-400 hover:text-neutral-600"
+              >
+                Cc
+              </button>
+            ) : null}
+          </div>
+          {showCc ? (
+            <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc: name@example.com, …" aria-label="Cc" />
+          ) : null}
           <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" aria-label="Subject" />
           <Textarea
             value={body}

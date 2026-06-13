@@ -23,7 +23,9 @@ import {
   listMailProviders,
   mailProviderLabel,
   normaliseEmail,
+  pickSignatureForAddress,
 } from '@studymind/core/mail'
+import { createClientForAgent } from '@studymind/integration-gmail/client'
 
 import {
   auditedProcedure,
@@ -488,6 +490,25 @@ export const mailAccountRouter = router({
           ? ('needs_reconnect' as const)
           : ('disconnected' as const)
 
+    // Best-effort: copy the agent's Gmail signature(s) so outgoing CRM mail
+    // matches Gmail. Readable with our existing scopes; a failure (e.g. a
+    // disconnected/needs-reconnect token) must never block the import — we just
+    // leave signatures untouched and the user can re-sync after reconnecting.
+    let sendAs: Awaited<ReturnType<Awaited<ReturnType<typeof createClientForAgent>>['listSendAs']>> | null =
+      null
+    if (status === 'connected') {
+      try {
+        const client = await createClientForAgent({
+          agentId: me.id,
+          purpose: 'mail.sync_signature',
+          requestId: ctx.requestId,
+        })
+        sendAs = await client.listSendAs()
+      } catch {
+        sendAs = null
+      }
+    }
+
     let imported = 0
     for (const mb of mailboxes) {
       const address = normaliseEmail(mb.address)
@@ -505,6 +526,14 @@ export const mailAccountRouter = router({
         watchExpiresAt: mb.watchExpiresAt,
         deletedAt: null,
         updatedById: me.id,
+        // Only touch the signature when we actually read sendAs — otherwise a
+        // transient fetch failure would wipe a previously-synced signature.
+        ...(sendAs
+          ? {
+              signatureHtml: pickSignatureForAddress(sendAs, address),
+              signatureSyncedAt: new Date(),
+            }
+          : {}),
       }
       if (byBridge) {
         await ctx.db.mailAccount.update({ where: { id: byBridge.id }, data: common })

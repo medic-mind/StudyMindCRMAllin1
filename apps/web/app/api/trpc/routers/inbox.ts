@@ -259,6 +259,7 @@ export const inboxRouter = router({
             id: true,
             provider: true,
             externalThreadId: true,
+            mailAccountId: true,
             trengoTicketId: true,
             contactId: true,
             familyId: true,
@@ -505,6 +506,7 @@ export const inboxRouter = router({
           head: {
             id: head.id,
             provider: head.provider,
+            mailAccountId: head.mailAccountId,
             trengoTicketId: head.trengoTicketId,
             contactId: head.contactId,
             familyId: head.familyId,

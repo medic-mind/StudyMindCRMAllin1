@@ -384,6 +384,7 @@ export const EVENT_NAMES = [
   'gmail.oauth_scope_mismatch',
   'gmail.oauth_invalid_state',
   'gmail.oauth_needs_reconnect',
+  'gmail.oauth_profile_failed',
 
   // Communications Hub — multi-account mail (ADR 0021). MailAccount lifecycle
   // (personal + shared team inboxes) and shared-inbox membership. Reuses the

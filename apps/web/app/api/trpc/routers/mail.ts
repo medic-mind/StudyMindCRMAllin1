@@ -143,6 +143,7 @@ export const mailRouter = router({
         displayName: true,
         ownerKind: true,
         status: true,
+        signatureHtml: true,
       },
     })
     return rows.map((r) => ({
@@ -151,6 +152,7 @@ export const mailRouter = router({
       displayName: r.displayName,
       ownerKind: r.ownerKind,
       status: r.status,
+      signatureHtml: r.signatureHtml,
     }))
   }),
 

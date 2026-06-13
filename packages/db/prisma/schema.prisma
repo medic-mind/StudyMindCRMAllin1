@@ -3316,6 +3316,12 @@ model MailAccount {
   lastSyncedAt   DateTime?
   /// Bridge to the legacy per-agent Gmail row (provider=gmail only). 1:1.
   gmailMailboxId String? @unique
+  /// ADR 0021 — the account's own email signature, copied verbatim from the
+  /// provider (Gmail `users.settings.sendAs` for this address). HTML; appended
+  /// to compose/reply so outgoing mail matches what the agent sends from Gmail.
+  /// Null until first synced. `signatureSyncedAt` records the last copy.
+  signatureHtml     String?
+  signatureSyncedAt DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

@@ -47,6 +47,7 @@ export default async function MailPage() {
             id: a.id,
             address: a.address,
             displayName: a.displayName,
+            signatureHtml: a.signatureHtml,
           }))}
         />
       </PageBody>

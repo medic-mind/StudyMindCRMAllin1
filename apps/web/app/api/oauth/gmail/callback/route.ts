@@ -136,7 +136,24 @@ export async function GET(req: Request): Promise<Response> {
     { headers: { authorization: `Bearer ${tokens.access_token}` } },
   )
   if (!profileRes.ok) {
-    return redirectWithError(req, 'profile_lookup_failed')
+    // Surface the most common, actionable cause distinctly: the Gmail API not
+    // being enabled in the OAuth client's Google Cloud project (403
+    // SERVICE_DISABLED / accessNotConfigured). Everything else stays a generic
+    // profile failure with the status appended so support can diagnose.
+    const detail = await profileRes.text().catch(() => '')
+    const apiDisabled =
+      profileRes.status === 403 &&
+      /SERVICE_DISABLED|accessNotConfigured|has not been used in project|is disabled/i.test(detail)
+    await writeAuditLogEntry(db, {
+      actorId: me.id,
+      action: 'gmail.oauth_profile_failed',
+      target: { type: 'User', id: me.id },
+      after: { status: profileRes.status, apiDisabled },
+    })
+    return redirectWithError(
+      req,
+      apiDisabled ? 'gmail_api_disabled' : `profile_lookup_failed_${profileRes.status}`,
+    )
   }
   const profile = (await profileRes.json()) as { emailAddress?: string }
   const address = profile.emailAddress

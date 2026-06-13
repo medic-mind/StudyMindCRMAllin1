@@ -77,6 +77,16 @@ export interface GmailLabelRef {
   name: string
 }
 
+/** A Gmail "send-as" identity and its signature (users.settings.sendAs). */
+export interface GmailSendAs {
+  email: string
+  displayName: string | null
+  /** Signature HTML as Gmail stores it (may be empty string). */
+  signatureHtml: string | null
+  isPrimary: boolean
+  isDefault: boolean
+}
+
 export interface GmailClient {
   readonly agentId: string
   getMessage(messageId: string): Promise<GmailMessage>
@@ -100,6 +110,11 @@ export interface GmailClient {
   trashThread(threadId: string): Promise<void>
   untrashThread(threadId: string): Promise<void>
   listLabels(): Promise<GmailLabelRef[]>
+  /**
+   * The account's send-as identities and signatures. Readable with the
+   * gmail.readonly / gmail.modify scopes we already request — no extra consent.
+   */
+  listSendAs(): Promise<GmailSendAs[]>
 }
 
 export interface CreateGmailClientOptions {
@@ -307,6 +322,16 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
       return (res.data.labels ?? [])
         .filter((l): l is { id: string; name: string } => !!l.id && !!l.name)
         .map((l) => ({ id: l.id, name: l.name }))
+    },
+    async listSendAs() {
+      const res = await gmail.users.settings.sendAs.list({ userId: 'me' })
+      return (res.data.sendAs ?? []).map((s) => ({
+        email: (s.sendAsEmail ?? '').toLowerCase(),
+        displayName: s.displayName || null,
+        signatureHtml: s.signature ?? null,
+        isPrimary: !!s.isPrimary,
+        isDefault: !!s.isDefault,
+      }))
     },
   }
 }
