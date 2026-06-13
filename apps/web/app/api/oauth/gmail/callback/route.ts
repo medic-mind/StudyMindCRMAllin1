@@ -31,8 +31,18 @@ interface TokenResponse {
   id_token?: string
 }
 
+// Build user-facing redirects against the PUBLIC app URL, not `req.url`. Behind
+// a proxy (Railway) `req.url` is the internal bind (e.g. http://0.0.0.0:8080),
+// which is unreachable from the browser — so a successful connect would land on
+// a broken URL. Fall back to the request origin only when the env is unset.
+function appBaseUrl(req: Request): string {
+  const fromEnv = process.env['NEXT_PUBLIC_APP_URL']
+  if (fromEnv) return fromEnv.replace(/\/$/, '')
+  return new URL(req.url).origin
+}
+
 function redirectWithError(req: Request, error: string): Response {
-  const url = new URL('/settings/mailbox', req.url)
+  const url = new URL('/settings/mailbox', appBaseUrl(req))
   url.searchParams.set('error', error)
   return NextResponse.redirect(url, 302)
 }
@@ -40,7 +50,7 @@ function redirectWithError(req: Request, error: string): Response {
 export async function GET(req: Request): Promise<Response> {
   const me = await getCurrentUser()
   if (!me) {
-    return NextResponse.redirect(new URL('/sign-in', req.url), 302)
+    return NextResponse.redirect(new URL('/sign-in', appBaseUrl(req)), 302)
   }
 
   const inUrl = new URL(req.url)
@@ -215,7 +225,7 @@ export async function GET(req: Request): Promise<Response> {
     }
   }
 
-  const redir = new URL('/settings/mailbox', req.url)
+  const redir = new URL('/settings/mailbox', appBaseUrl(req))
   redir.searchParams.set('connected', '1')
   if (!watchOk) redir.searchParams.set('warning', 'watch_setup_failed')
   return NextResponse.redirect(redir, 302)
