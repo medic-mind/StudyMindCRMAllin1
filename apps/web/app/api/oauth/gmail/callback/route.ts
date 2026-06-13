@@ -36,8 +36,17 @@ interface TokenResponse {
 // which is unreachable from the browser — so a successful connect would land on
 // a broken URL. Fall back to the request origin only when the env is unset.
 function appBaseUrl(req: Request): string {
-  const fromEnv = process.env['NEXT_PUBLIC_APP_URL']
-  if (fromEnv) return fromEnv.replace(/\/$/, '')
+  const fromEnv = process.env['NEXT_PUBLIC_APP_URL']?.trim()
+  if (fromEnv) {
+    try {
+      // Must be an absolute http(s) URL — a bare host like "crm.studymind.co.uk"
+      // makes `new URL(path, base)` throw, which would 500 the callback.
+      const u = new URL(fromEnv)
+      if (u.protocol === 'http:' || u.protocol === 'https:') return `${u.protocol}//${u.host}`
+    } catch {
+      // fall through to the request origin
+    }
+  }
   return new URL(req.url).origin
 }
 
@@ -48,11 +57,31 @@ function redirectWithError(req: Request, error: string): Response {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const me = await getCurrentUser()
-  if (!me) {
-    return NextResponse.redirect(new URL('/sign-in', appBaseUrl(req)), 302)
+  let me: Awaited<ReturnType<typeof getCurrentUser>> = null
+  try {
+    me = await getCurrentUser()
+    if (!me) {
+      return NextResponse.redirect(new URL('/sign-in', appBaseUrl(req)), 302)
+    }
+    return await runCallback(req, me)
+  } catch (err) {
+    // The connect flow must never return a raw 500 (golden rule: no silent
+    // failure, but also no scary dead-end). Capture the real cause in the audit
+    // log and bounce back to Settings → Mailbox with a friendly message.
+    await writeAuditLogEntry(db, {
+      actorId: me?.id ?? null,
+      action: 'gmail.oauth_error',
+      target: { type: 'User', id: me?.id ?? 'unknown' },
+      after: { message: err instanceof Error ? err.message : String(err) },
+    }).catch(() => undefined)
+    return redirectWithError(req, 'connect_failed')
   }
+}
 
+async function runCallback(
+  req: Request,
+  me: NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>,
+): Promise<Response> {
   const inUrl = new URL(req.url)
   const code = inUrl.searchParams.get('code')
   const state = inUrl.searchParams.get('state')
