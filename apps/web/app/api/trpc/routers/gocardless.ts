@@ -155,6 +155,161 @@ async function loadCustomerSummaries(
   return map
 }
 
+type GcDbClient = Prisma.TransactionClient | import('@prisma/client').PrismaClient
+
+interface GcSummaryCustomer {
+  gcCustomerId: string
+  email: string | null
+  givenName: string | null
+  familyName: string | null
+  companyName: string | null
+}
+
+/**
+ * Shared Direct Debit summary for a contact or a family (ADR 0038). Given the
+ * already-resolved GoCardless customers and the setup-link scope, loads their
+ * mandates, plans (with per-plan shortfall), recent collections and sign-up
+ * links. Read-only; reused by `contactSummary` and `familySummary`.
+ */
+async function loadGcCustomerSummary(
+  db: GcDbClient,
+  opts: {
+    customers: GcSummaryCustomer[]
+    setupLinkWhere: Prisma.MandateSetupLinkWhereInput
+  },
+) {
+  const customerIds = opts.customers.map((c) => c.gcCustomerId)
+
+  const [mandates, subscriptions, payments, setupLinks] = await Promise.all([
+    customerIds.length > 0
+      ? db.gcMandate.findMany({
+          where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+          orderBy: [{ createdAt: 'desc' }],
+          take: 10,
+          select: {
+            gcMandateId: true,
+            state: true,
+            reference: true,
+            scheme: true,
+            nextPossibleChargeDate: true,
+          },
+        })
+      : Promise.resolve([]),
+    customerIds.length > 0
+      ? db.gcSubscription.findMany({
+          where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+          orderBy: [{ createdAt: 'desc' }],
+          take: 10,
+          select: {
+            gcSubscriptionId: true,
+            name: true,
+            status: true,
+            amountMinor: true,
+            currency: true,
+            intervalUnit: true,
+            interval: true,
+            dayOfMonth: true,
+            nextChargeAt: true,
+            totalPaymentCount: true,
+          },
+        })
+      : Promise.resolve([]),
+    customerIds.length > 0
+      ? db.gcPayment.findMany({
+          where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+          orderBy: [{ chargeDate: 'desc' }, { createdAt: 'desc' }],
+          take: 5,
+          select: {
+            gcPaymentId: true,
+            status: true,
+            amountMinor: true,
+            currency: true,
+            description: true,
+            chargeDate: true,
+          },
+        })
+      : Promise.resolve([]),
+    db.mandateSetupLink.findMany({
+      where: { ...opts.setupLinkWhere, deletedAt: null },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 5,
+      select: {
+        id: true,
+        status: true,
+        emailTo: true,
+        emailedAt: true,
+        openCount: true,
+        expiresAt: true,
+        completedAt: true,
+      },
+    }),
+  ])
+
+  // Per-plan shortfall for ended fixed-length plans, so the panel can flag
+  // "£X still due" on a plan cancelled/finished early. Reuses the pure engine.
+  const terminalSubIds = subscriptions
+    .filter(
+      (s) => (s.status === 'cancelled' || s.status === 'finished') && s.totalPaymentCount != null,
+    )
+    .map((s) => s.gcSubscriptionId)
+  const terminalPayments =
+    terminalSubIds.length > 0
+      ? await db.gcPayment.findMany({
+          where: {
+            gcSubscriptionId: { in: terminalSubIds },
+            status: { in: ['confirmed', 'paid_out'] },
+            deletedAt: null,
+          },
+          select: { gcSubscriptionId: true, amountMinor: true },
+        })
+      : []
+  const collectedBySub = new Map<string, { count: number; minor: number }>()
+  for (const p of terminalPayments) {
+    if (!p.gcSubscriptionId) continue
+    const cur = collectedBySub.get(p.gcSubscriptionId) ?? { count: 0, minor: 0 }
+    cur.count += 1
+    cur.minor += p.amountMinor
+    collectedBySub.set(p.gcSubscriptionId, cur)
+  }
+
+  return {
+    customers: opts.customers.map((c) => ({
+      gcCustomerId: c.gcCustomerId,
+      name: [c.givenName, c.familyName].filter(Boolean).join(' ') || c.companyName || null,
+      email: c.email,
+    })),
+    mandates,
+    subscriptions: subscriptions.map((s) => {
+      const collected = collectedBySub.get(s.gcSubscriptionId) ?? { count: 0, minor: 0 }
+      const shortfall =
+        s.totalPaymentCount != null
+          ? classifyPlanShortfall({
+              gcSubscriptionId: s.gcSubscriptionId,
+              name: s.name,
+              status: s.status,
+              amountMinor: s.amountMinor,
+              currency: s.currency,
+              totalPaymentCount: s.totalPaymentCount,
+              gcCustomerId: null,
+              startDate: null,
+              endDate: null,
+              gcCreatedAt: null,
+              collectedCount: collected.count,
+              collectedMinor: collected.minor,
+              lastCollectedAt: null,
+            })
+          : null
+      return {
+        ...s,
+        shortfallMinor: shortfall?.shortfallMinor ?? null,
+        collectedCount: shortfall ? shortfall.collectedCount : null,
+      }
+    }),
+    payments,
+    setupLinks,
+  }
+}
+
 /**
  * Resolve a free-text customer search to the matching GoCardless customer
  * ids, so the plans/payments lists can filter by customer the way the
@@ -483,139 +638,39 @@ export const gocardlessRouter = router({
           companyName: true,
         },
       })
-      const customerIds = customers.map((c) => c.gcCustomerId)
 
-      const [mandates, subscriptions, payments, setupLinks] = await Promise.all([
-        customerIds.length > 0
-          ? ctx.db.gcMandate.findMany({
-              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
-              orderBy: [{ createdAt: 'desc' }],
-              take: 10,
-              select: {
-                gcMandateId: true,
-                state: true,
-                reference: true,
-                scheme: true,
-                nextPossibleChargeDate: true,
-              },
-            })
-          : Promise.resolve([]),
-        customerIds.length > 0
-          ? ctx.db.gcSubscription.findMany({
-              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
-              orderBy: [{ createdAt: 'desc' }],
-              take: 10,
-              select: {
-                gcSubscriptionId: true,
-                name: true,
-                status: true,
-                amountMinor: true,
-                currency: true,
-                intervalUnit: true,
-                interval: true,
-                dayOfMonth: true,
-                nextChargeAt: true,
-                totalPaymentCount: true,
-              },
-            })
-          : Promise.resolve([]),
-        customerIds.length > 0
-          ? ctx.db.gcPayment.findMany({
-              where: { gcCustomerId: { in: customerIds }, deletedAt: null },
-              orderBy: [{ chargeDate: 'desc' }, { createdAt: 'desc' }],
-              take: 5,
-              select: {
-                gcPaymentId: true,
-                status: true,
-                amountMinor: true,
-                currency: true,
-                description: true,
-                chargeDate: true,
-              },
-            })
-          : Promise.resolve([]),
-        ctx.db.mandateSetupLink.findMany({
-          where: { contactId: input.contactId, deletedAt: null },
-          orderBy: [{ createdAt: 'desc' }],
-          take: 5,
-          select: {
-            id: true,
-            status: true,
-            emailTo: true,
-            emailedAt: true,
-            openCount: true,
-            expiresAt: true,
-            completedAt: true,
-          },
-        }),
-      ])
+      return loadGcCustomerSummary(ctx.db, {
+        customers,
+        setupLinkWhere: { contactId: input.contactId },
+      })
+    }),
 
-      // Per-plan shortfall for the contact's ended fixed-length plans, so the
-      // panel can flag "£X still due" on a plan cancelled/finished early. We
-      // load the confirmed payments for those plans and reuse the pure engine.
-      const terminalSubIds = subscriptions
-        .filter(
-          (s) =>
-            (s.status === 'cancelled' || s.status === 'finished') && s.totalPaymentCount != null,
-        )
-        .map((s) => s.gcSubscriptionId)
-      const terminalPayments =
-        terminalSubIds.length > 0
-          ? await ctx.db.gcPayment.findMany({
-              where: {
-                gcSubscriptionId: { in: terminalSubIds },
-                status: { in: ['confirmed', 'paid_out'] },
-                deletedAt: null,
-              },
-              select: { gcSubscriptionId: true, amountMinor: true },
-            })
-          : []
-      const collectedBySub = new Map<string, { count: number; minor: number }>()
-      for (const p of terminalPayments) {
-        if (!p.gcSubscriptionId) continue
-        const cur = collectedBySub.get(p.gcSubscriptionId) ?? { count: 0, minor: 0 }
-        cur.count += 1
-        cur.minor += p.amountMinor
-        collectedBySub.set(p.gcSubscriptionId, cur)
-      }
+  /**
+   * Direct Debit summary for a Family — the billing unit (CLAUDE.md §6.1).
+   * Same shape as `contactSummary`, resolved from the customers linked to the
+   * family, for the Family page's Direct Debit panel.
+   */
+  familySummary: protectedProcedure
+    .input(z.object({ familyId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      requireUser(ctx)
+      const customers = await ctx.db.gcCustomer.findMany({
+        where: { deletedAt: null, familyId: input.familyId },
+        orderBy: [{ createdAt: 'asc' }],
+        take: 10,
+        select: {
+          gcCustomerId: true,
+          email: true,
+          givenName: true,
+          familyName: true,
+          companyName: true,
+        },
+      })
 
-      return {
-        customers: customers.map((c) => ({
-          gcCustomerId: c.gcCustomerId,
-          name:
-            [c.givenName, c.familyName].filter(Boolean).join(' ') || c.companyName || null,
-          email: c.email,
-        })),
-        mandates,
-        subscriptions: subscriptions.map((s) => {
-          const collected = collectedBySub.get(s.gcSubscriptionId) ?? { count: 0, minor: 0 }
-          const shortfall =
-            s.totalPaymentCount != null
-              ? classifyPlanShortfall({
-                  gcSubscriptionId: s.gcSubscriptionId,
-                  name: s.name,
-                  status: s.status,
-                  amountMinor: s.amountMinor,
-                  currency: s.currency,
-                  totalPaymentCount: s.totalPaymentCount,
-                  gcCustomerId: null,
-                  startDate: null,
-                  endDate: null,
-                  gcCreatedAt: null,
-                  collectedCount: collected.count,
-                  collectedMinor: collected.minor,
-                  lastCollectedAt: null,
-                })
-              : null
-          return {
-            ...s,
-            shortfallMinor: shortfall?.shortfallMinor ?? null,
-            collectedCount: shortfall ? shortfall.collectedCount : null,
-          }
-        }),
-        payments,
-        setupLinks,
-      }
+      return loadGcCustomerSummary(ctx.db, {
+        customers,
+        setupLinkWhere: { familyId: input.familyId },
+      })
     }),
 
   // Master dashboard for the Direct Debits section (ADR 0038). One query

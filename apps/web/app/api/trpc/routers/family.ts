@@ -407,6 +407,7 @@ export const familyRouter = router({
           select: {
             id: true,
             category: true,
+            summary: true,
             createdAt: true,
             contextHash: true,
           },
@@ -457,6 +458,7 @@ export const familyRouter = router({
         openDiscrepancies: discrepancies.map((d) => ({
           id: d.id,
           category: d.category as string,
+          summary: d.summary,
           createdAt: d.createdAt,
         })),
         recentInteractions: recentInteractions.map((i) => ({

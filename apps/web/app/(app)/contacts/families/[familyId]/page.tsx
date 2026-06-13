@@ -8,6 +8,7 @@ import { notFound } from 'next/navigation'
 
 import { resolveStageColor } from '@/app/(app)/pipeline/stage-color'
 import { ChangeBillingContactButton } from '@/components/contact/ChangeBillingContactButton'
+import { FamilyDirectDebitPanel } from '@/components/finance/gocardless/FamilyDirectDebitPanel'
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { ReconcileNowButton } from '@/components/finance/ReconcileNowButton'
@@ -16,6 +17,33 @@ import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
 export const dynamic = 'force-dynamic'
+
+const DISCREPANCY_LABELS: Record<string, string> = {
+  hours_mismatch: 'Hours mismatch',
+  payment_unallocated: 'Unallocated payment',
+  late_failure: 'Late failure',
+  late_failure_pending_action: 'Late failure — action needed',
+  churned_with_active_subscription: 'Churned but subscription active',
+  la_family_with_card_subscription: 'LA family on card subscription',
+  direct_debit_default: 'Direct Debit default',
+  direct_debit_plan_shortfall: 'Plan cancelled/underpaid',
+  direct_debit_plan_arrears: 'Plan behind schedule',
+  other: 'Other',
+}
+
+function discrepancyLabel(category: string): string {
+  return DISCREPANCY_LABELS[category] ?? category
+}
+
+function discrepancyToneClass(category: string): string {
+  if (category === 'direct_debit_default' || category === 'direct_debit_plan_shortfall') {
+    return 'bg-red-100 text-red-800'
+  }
+  if (category === 'direct_debit_plan_arrears' || category.startsWith('late_failure')) {
+    return 'bg-amber-100 text-amber-800'
+  }
+  return 'bg-neutral-200 text-neutral-700'
+}
 
 export default async function FamilyDetailPage({
   params,
@@ -157,6 +185,15 @@ export default async function FamilyDetailPage({
 
       <section>
         <h2 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">
+          Direct Debit
+        </h2>
+        <div className="mt-2 rounded-md border border-neutral-200 bg-white">
+          <FamilyDirectDebitPanel familyId={data.id} />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">
           Payments
         </h2>
         <div className="mt-2">
@@ -195,15 +232,23 @@ export default async function FamilyDetailPage({
             <Table>
               <Thead>
                 <Tr>
-                  <Th>Category</Th>
+                  <Th>Issue</Th>
+                  <Th>Detail</Th>
                   <Th>Opened</Th>
                 </Tr>
               </Thead>
               <Tbody>
                 {data.openDiscrepancies.map((d) => (
                   <Tr key={d.id}>
-                    <Td className="font-mono text-xs">{d.category}</Td>
-                    <Td className="text-xs">
+                    <Td>
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${discrepancyToneClass(d.category)}`}
+                      >
+                        {discrepancyLabel(d.category)}
+                      </span>
+                    </Td>
+                    <Td className="text-xs text-neutral-700">{d.summary}</Td>
+                    <Td className="text-xs whitespace-nowrap">
                       {new Date(d.createdAt).toLocaleString('en-GB')}
                     </Td>
                   </Tr>
