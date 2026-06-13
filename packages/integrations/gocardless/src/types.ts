@@ -209,6 +209,8 @@ export interface GcSubscriptionResource {
   interval?: number
   day_of_month?: number | null
   month?: string | null
+  /** Total number of payments for a fixed-length plan; absent when open-ended. */
+  count?: number | null
   start_date?: string | null
   end_date?: string | null
   upcoming_payments?: Array<{ charge_date: string; amount: number }>

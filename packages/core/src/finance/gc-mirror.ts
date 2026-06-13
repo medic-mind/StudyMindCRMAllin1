@@ -290,6 +290,8 @@ export interface UpsertGcSubscriptionInput {
   endDate?: Date | null
   nextChargeAt?: Date | null
   nextChargeMinor?: number | null
+  /** GoCardless `count` — total payments for a fixed-length plan; null if open-ended. */
+  totalPaymentCount?: number | null
   metadata?: Record<string, string> | null
   gcCreatedAt?: Date | null
   gcMandateId?: string | null
@@ -312,6 +314,7 @@ export async function upsertGcSubscriptionMirror(
     endDate: input.endDate ?? null,
     nextChargeAt: input.nextChargeAt ?? null,
     nextChargeMinor: input.nextChargeMinor ?? null,
+    totalPaymentCount: input.totalPaymentCount ?? null,
     metadata: input.metadata ?? undefined,
     gcCreatedAt: input.gcCreatedAt ?? null,
     ...(input.gcMandateId !== undefined ? { gcMandateId: input.gcMandateId } : {}),

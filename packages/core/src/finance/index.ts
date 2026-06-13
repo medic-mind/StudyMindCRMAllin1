@@ -103,3 +103,12 @@ export {
   monthlyRunRateMinor,
   type PlanCadence,
 } from './dd-insights'
+// Direct Debit plan shortfalls (ADR 0038) — cancelled-part-way / underpaid plans.
+export {
+  classifyPlanShortfall,
+  listPlanShortfalls,
+  type PlanFacts,
+  type PlanShortfall,
+  type PlanShortfallReason,
+  type PlanShortfallWithCustomer,
+} from './dd-plan-shortfall'

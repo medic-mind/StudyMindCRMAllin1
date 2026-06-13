@@ -74,6 +74,7 @@ export function subscriptionMirrorInput(
     endDate: parseDate(resource.end_date),
     nextChargeAt: next ? parseDate(next.charge_date) : null,
     nextChargeMinor: next?.amount ?? null,
+    totalPaymentCount: resource.count ?? null,
     metadata: resource.metadata ?? null,
     gcCreatedAt: parseDate(resource.created_at),
     gcMandateId: resource.links.mandate ?? null,
