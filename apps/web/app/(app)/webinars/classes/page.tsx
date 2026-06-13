@@ -1,11 +1,10 @@
-// Classes are managed under their cohort now (no flat "all classes" view).
-// This route redirects to the cohort list. Individual class pages still live at
-// /webinars/classes/[id].
+// "Classes" are now "Groups" (each group = a subject + level). This route
+// redirects to the Groups list.
 
 import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
 export default function ClassesIndexRedirect() {
-  redirect('/webinars/cohorts')
+  redirect('/webinars/groups')
 }

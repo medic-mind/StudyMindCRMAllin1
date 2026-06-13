@@ -1,7 +1,6 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
@@ -366,10 +365,10 @@ function SyllabusCard({ detail, canManage }: { detail: Detail; canManage: boolea
       <CardBody>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold text-neutral-900">Syllabus &amp; schedule</h2>
+            <h2 className="text-sm font-semibold text-neutral-900">Weekly classes</h2>
             <p className="mt-1 text-xs text-neutral-500">
-              {detail.sessionCount} teaching weeks (holidays excluded). Type the weekly topics, or
-              upload a ready-made PDF.
+              {detail.sessionCount} weekly classes this term (holidays excluded). Type the topic for
+              each, or upload a ready-made PDF.
             </p>
           </div>
           {detail.hasUploadedPdf ? (
@@ -457,13 +456,10 @@ function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolea
   return (
     <Card>
       <CardBody>
-        <h2 className="mb-1 text-sm font-semibold text-neutral-900">Class settings</h2>
+        <h2 className="mb-1 text-sm font-semibold text-neutral-900">Group settings</h2>
         <p className="mb-3 text-xs text-neutral-500">
-          The reminder email template and send days/times are set per cohort (on the{' '}
-          <Link href={`/webinars/cohorts/${detail.cohortId}`} className="text-primary-700 hover:underline">
-            cohort page
-          </Link>
-          ).
+          The slot, day, Zoom rotation and status. The reminder email and term dates are further
+          down this page.
         </p>
         <form
           className="space-y-3"
@@ -527,7 +523,7 @@ function EnrollmentsCard({
     <Card>
       <CardBody>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-neutral-900">Mailing list ({rows.length})</h2>
+          <h2 className="text-sm font-semibold text-neutral-900">Students ({rows.length})</h2>
         </div>
         {canManage ? (
           <AddToList

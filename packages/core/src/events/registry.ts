@@ -493,6 +493,7 @@ export const EVENT_NAMES = [
   'webinar.class_created',
   'webinar.class_updated',
   'webinar.class_archived',
+  'webinar.class_deleted',
   'webinar.zoom_link_rotated',
   'webinar.syllabus_set',
   'webinar.syllabus_generated',

@@ -82,9 +82,12 @@ export function TimetableImport() {
       toast.success(
         `${r.cohortCreated ? 'Cohort created' : 'Cohort updated'} · ${r.classesCreated} classes · ${r.weeksSet} weekly topics`,
       )
-      await utils.webinar.cohort.list.invalidate()
+      await Promise.all([
+        utils.webinar.cohort.list.invalidate(),
+        utils.webinar.class.list.invalidate(),
+      ])
       reset()
-      router.push(`/webinars/cohorts/${r.cohortId}`)
+      router.push('/webinars/groups')
     },
     onError: (e) => toast.error(e.message),
   })
