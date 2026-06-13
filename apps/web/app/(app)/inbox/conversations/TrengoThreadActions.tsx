@@ -78,6 +78,13 @@ export function TrengoThreadActions({
     },
     onError: (e) => toast.error(e.message ?? 'Could not mark read'),
   })
+  const markUnread = trpc.interaction.trengo.markUnread.useMutation({
+    onSuccess: () => {
+      toast.success('Marked unread')
+      refresh()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not mark unread'),
+  })
   const snooze = trpc.interaction.trengo.snooze.useMutation({
     onSuccess: () => {
       toast.success('Snoozed')
@@ -97,6 +104,7 @@ export function TrengoThreadActions({
     addLabel.isPending ||
     removeLabel.isPending ||
     markRead.isPending ||
+    markUnread.isPending ||
     snooze.isPending ||
     unsnooze.isPending
 
@@ -205,7 +213,16 @@ export function TrengoThreadActions({
           >
             Mark read
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            onClick={() => markUnread.mutate({ conversationId })}
+            disabled={busy}
+            className="rounded border border-neutral-300 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+          >
+            Mark unread
+          </button>
+        )}
 
         {status === 'snoozed' ? (
           <button

@@ -1115,6 +1115,37 @@ export const interactionRouter = router({
         return { ok: true as const }
       }),
 
+    // Mark a conversation UNREAD — bumps the head's unread count so it
+    // re-surfaces in the "Unanswered" view (Trengo parity). CRM-side head
+    // state; any staff may triage.
+    markUnread: auditedProcedure
+      .input(z.object({ conversationId: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!INBOX_STAFF_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN' })
+        }
+        const conv = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: { id: true, contactId: true, unreadCount: true },
+        })
+        if (!conv) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (conv.unreadCount === 0) {
+          await ctx.db.conversation.update({
+            where: { id: conv.id },
+            data: { unreadCount: 1 },
+          })
+        }
+        await ctx.audit({
+          action: 'trengo.conversation_unread',
+          target: conv.contactId
+            ? { type: 'Contact', id: conv.contactId }
+            : { type: 'Conversation', id: conv.id },
+          after: { conversationId: conv.id },
+        })
+        return { ok: true as const }
+      }),
+
     // ADR 0020 Phase 6g — snooze a conversation: hide it from the active
     // inbox until `minutes` from now. The `trengo/unsnooze-due` cron (and a
     // new inbound) resurface it. CRM-side head state — any staff may triage.

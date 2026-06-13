@@ -14,6 +14,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import { InboxIcon, SearchIcon } from '@/components/ui/icon'
@@ -80,10 +81,19 @@ export function InboxCockpit({
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId)
   const [showContext, setShowContext] = useState(true)
+  // Multi-select for bulk triage (Trengo parity). A Set of conversation ids.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  // The details pane is a static column on xl but an overlay below it; default
+  // it CLOSED on small screens so opening a conversation doesn't immediately
+  // cover the thread. Runs once on mount (client-only → no hydration mismatch).
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1280) setShowContext(false)
+  }, [])
 
   // Debounce the search box so typing stays smooth (matches the /mail client).
   useEffect(() => {
-    const t = setTimeout(() => setQuery(rawQuery.trim().toLowerCase()), 200)
+    const t = setTimeout(() => setQuery(rawQuery.trim()), 250)
     return () => clearTimeout(t)
   }, [rawQuery])
 
@@ -92,27 +102,61 @@ export function InboxCockpit({
     { refetchOnWindowFocus: true },
   )
 
+  // Whole-inbox server search (Trengo parity): once the query is ≥2 chars we
+  // search EVERY conversation, not just the loaded page. Below that we show the
+  // filtered folder list.
+  const searching = query.length >= 2
+  const searchResults = trpc.inbox.conversations.search.useQuery(
+    { query, limit: 40 },
+    { enabled: searching, staleTime: 10_000, retry: false },
+  )
+
   const allItems = useMemo<CockpitConversation[]>(
     () => (list.data?.items ?? []) as CockpitConversation[],
     [list.data],
   )
 
-  // Client-side narrowing over the loaded page: search + "unanswered" toggle.
-  // Server-side full-text search across the whole inbox is a follow-up; this
-  // keeps the loaded set instant to filter, the way Trengo's box feels.
+  // When searching, the list IS the server search result (whole inbox);
+  // otherwise it's the folder list, optionally narrowed by the "unanswered"
+  // toggle. The unanswered toggle still applies on top of search.
   const items = useMemo(() => {
-    let rows = allItems
+    let rows = searching
+      ? ((searchResults.data?.items ?? []) as CockpitConversation[])
+      : allItems
     if (unansweredOnly) rows = rows.filter((c) => c.unreadCount > 0)
-    if (query) {
-      rows = rows.filter((c) => {
-        const hay = [c.contactName ?? '', c.subject ?? '', ...(c.tags ?? [])]
-          .join(' ')
-          .toLowerCase()
-        return hay.includes(query)
-      })
-    }
     return rows
-  }, [allItems, unansweredOnly, query])
+  }, [searching, searchResults.data, allItems, unansweredOnly])
+
+  const utils = trpc.useUtils()
+  const bulk = trpc.inbox.conversations.bulk.useMutation({
+    onSuccess: (res) => {
+      const n = res.succeeded
+      toast.success(`${n} conversation${n === 1 ? '' : 's'} updated`)
+      setSelectedIds(new Set())
+      void utils.inbox.conversations.list.invalidate()
+      void utils.inbox.conversations.counts.invalidate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Bulk action failed'),
+  })
+  const runBulk = (action: 'markRead' | 'close' | 'snooze' | 'unsnooze', minutes?: number) => {
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    bulk.mutate({ conversationIds: ids, action, ...(minutes ? { minutes } : {}) })
+  }
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const allShownSelected = items.length > 0 && items.every((c) => selectedIds.has(c.id))
+  const toggleSelectAll = () =>
+    setSelectedIds(allShownSelected ? new Set() : new Set(items.map((c) => c.id)))
+  // Clear selection when the folder/filter/search changes (the rows changed).
+  useEffect(() => {
+    setSelectedIds(new Set())
+  }, [filter, channel, tag, searching])
 
   // Keep the URL shareable (?c=…) without a server round-trip, and clear it
   // when nothing is selected. Deep links are read on the server and arrive as
@@ -238,9 +282,67 @@ export function InboxCockpit({
             </button>
             <span className="ml-auto pr-1 text-neutral-400">
               {items.length}
-              {list.isFetching ? ' · syncing…' : ''}
+              {searching && searchResults.isFetching
+                ? ' · searching…'
+                : list.isFetching && !searching
+                  ? ' · syncing…'
+                  : ''}
             </span>
           </div>
+          {/* Bulk-select header + actions (Trengo parity). Shows once a row
+              is ticked; markRead/snooze are instant, close loops Trengo. */}
+          {items.length > 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <label className="flex items-center gap-1.5 text-neutral-500">
+                <input
+                  type="checkbox"
+                  checked={allShownSelected}
+                  onChange={toggleSelectAll}
+                  aria-label="Select all conversations"
+                />
+                {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select'}
+              </label>
+              {selectedIds.size > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={bulk.isPending}
+                    onClick={() => runBulk('markRead')}
+                    className="rounded border border-neutral-200 bg-white px-2 py-0.5 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Mark read
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bulk.isPending}
+                    onClick={() => runBulk('snooze', 60 * 24)}
+                    className="rounded border border-neutral-200 bg-white px-2 py-0.5 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Snooze 1d
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bulk.isPending}
+                    onClick={() => {
+                      if (window.confirm(`Close ${selectedIds.size} conversation(s) in Trengo?`)) {
+                        runBulk('close')
+                      }
+                    }}
+                    className="rounded border border-neutral-200 bg-white px-2 py-0.5 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds(new Set())}
+                    className="text-neutral-400 hover:text-neutral-700"
+                  >
+                    Clear
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -248,11 +350,17 @@ export function InboxCockpit({
             <div className="p-8 text-center text-sm text-neutral-500">
               You need a staff role to view conversations.
             </div>
-          ) : list.isLoading ? (
+          ) : list.isLoading && !searching ? (
             <ListSkeleton />
           ) : items.length === 0 ? (
             <div className="p-8 text-center text-sm text-neutral-500">
-              {query || unansweredOnly ? 'Nothing matches this view.' : emptyCopyFor(filter)}
+              {searching
+                ? searchResults.isFetching
+                  ? 'Searching…'
+                  : `No conversations match “${query}”.`
+                : unansweredOnly
+                  ? 'Nothing unanswered in this view.'
+                  : emptyCopyFor(filter)}
             </div>
           ) : (
             <ul className="divide-y divide-neutral-100">
@@ -261,6 +369,8 @@ export function InboxCockpit({
                   key={c.id}
                   item={c}
                   active={selectedId === c.id}
+                  selected={selectedIds.has(c.id)}
+                  onToggleSelect={() => toggleSelect(c.id)}
                   now={new Date()}
                   onOpen={() => setSelectedId(c.id)}
                 />
@@ -287,8 +397,16 @@ export function InboxCockpit({
         )}
       </div>
 
-      {/* Contact + ticket context */}
-      {selectedId && showContext ? <ContextPane conversationId={selectedId} me={me} /> : null}
+      {/* Contact + ticket context — static column on xl, slide-over drawer
+          below it (so Assign / Snooze / Labels / Task are reachable on any
+          screen, not hidden off-canvas). */}
+      {selectedId && showContext ? (
+        <ContextPane
+          conversationId={selectedId}
+          me={me}
+          onClose={() => setShowContext(false)}
+        />
+      ) : null}
     </div>
   )
 }
@@ -473,11 +591,15 @@ function RailItem({
 function ConversationRow({
   item,
   active,
+  selected,
+  onToggleSelect,
   now,
   onOpen,
 }: {
   item: CockpitConversation
   active: boolean
+  selected: boolean
+  onToggleSelect: () => void
   now: Date
   onOpen: () => void
 }) {
@@ -487,14 +609,23 @@ function ConversationRow({
     item.replyDeadlineAt && new Date(item.replyDeadlineAt).getTime() > now.getTime()
   return (
     <li
-      className={`group relative flex cursor-pointer items-start gap-2.5 px-3 py-2.5 transition-colors ${
-        active ? 'bg-primary-50' : 'hover:bg-neutral-50'
+      className={`group relative flex cursor-pointer items-start gap-2 px-3 py-2.5 transition-colors ${
+        active ? 'bg-primary-50' : selected ? 'bg-primary-50/40' : 'hover:bg-neutral-50'
       }`}
       onClick={onOpen}
     >
       {unread ? (
         <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary-500" />
       ) : null}
+      {/* Multi-select checkbox — click doesn't open the thread. */}
+      <input
+        type="checkbox"
+        checked={selected}
+        onClick={(e) => e.stopPropagation()}
+        onChange={onToggleSelect}
+        aria-label={`Select conversation with ${who}`}
+        className="mt-2.5 shrink-0"
+      />
       <div className="relative shrink-0">
         <Avatar name={who} size={32} />
         <span

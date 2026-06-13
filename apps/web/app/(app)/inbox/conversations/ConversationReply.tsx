@@ -23,6 +23,7 @@ import {
   parseWaTemplateSegments,
   renderWaTemplate,
 } from '@/components/contact/wa-template'
+import { EmojiPicker } from '@/components/ui/emoji-picker'
 import { trpc } from '@/lib/trpc/client'
 
 type SendChannel = 'whatsapp' | 'sms' | 'email' | 'web_chat'
@@ -470,6 +471,9 @@ export function ConversationReply({
                   ? 'Send SMS'
                   : 'Send'}
           </button>
+          {mode === 'text' ? (
+            <EmojiPicker onPick={(e) => setBody((cur) => cur + e)} />
+          ) : null}
           {isThreadReply ? (
             <label className="cursor-pointer rounded border border-neutral-300 bg-white px-3 py-1 text-sm text-neutral-700 hover:bg-neutral-50">
               Attach

@@ -664,6 +664,100 @@ export const inboxRouter = router({
       }),
 
     /**
+     * Whole-inbox search (Trengo parity). The list view only client-filters
+     * the loaded page; this searches EVERY conversation head — by contact
+     * name, the matched contact's email/phone, subject, last-message preview,
+     * and labels — so a search finds conversations that aren't on the current
+     * page. Returns the same item shape as `list` so the UI renders rows
+     * identically.
+     */
+    search: protectedProcedure
+      .input(z.object({ query: z.string().trim().min(1).max(120), limit: z.number().int().min(1).max(50).default(30) }))
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        const q = input.query
+        const digits = q.replace(/\D/gu, '')
+        const rows = await ctx.db.conversation.findMany({
+          where: {
+            OR: [
+              { subject: { contains: q, mode: 'insensitive' } },
+              { lastMessagePreview: { contains: q, mode: 'insensitive' } },
+              { tags: { has: q } },
+              {
+                contact: {
+                  OR: [
+                    { firstName: { contains: q, mode: 'insensitive' } },
+                    { lastName: { contains: q, mode: 'insensitive' } },
+                    { email: { contains: q, mode: 'insensitive' } },
+                    ...(digits.length >= 4
+                      ? [{ phoneE164: { contains: digits } }]
+                      : []),
+                  ],
+                },
+              },
+            ],
+          },
+          orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+          take: input.limit,
+          select: {
+            id: true,
+            trengoTicketId: true,
+            contactId: true,
+            familyId: true,
+            channel: true,
+            status: true,
+            assigneeUserId: true,
+            lastMessageAt: true,
+            unreadCount: true,
+            subject: true,
+            tags: true,
+            lastMessagePreview: true,
+            replyDeadlineAt: true,
+            contact: {
+              select: { id: true, firstName: true, lastName: true, email: true },
+            },
+          },
+        })
+        const assigneeIds = Array.from(
+          new Set(rows.map((r) => r.assigneeUserId).filter((id): id is string => !!id)),
+        )
+        const assignees = assigneeIds.length
+          ? await ctx.db.user.findMany({
+              where: { id: { in: assigneeIds } },
+              select: { id: true, name: true, email: true },
+            })
+          : []
+        const assigneeNameById = new Map(assignees.map((u) => [u.id, u.name ?? u.email] as const))
+        const items = rows.map((r) => ({
+          id: r.id,
+          trengoTicketId: r.trengoTicketId,
+          contactId: r.contactId,
+          familyId: r.familyId,
+          channel: r.channel,
+          status: r.status,
+          assigneeUserId: r.assigneeUserId,
+          assigneeName: r.assigneeUserId
+            ? (assigneeNameById.get(r.assigneeUserId) ?? null)
+            : null,
+          lastMessageAt: r.lastMessageAt,
+          unreadCount: r.unreadCount,
+          subject: r.subject,
+          tags: r.tags,
+          lastMessagePreview: r.lastMessagePreview,
+          replyDeadlineAt: r.replyDeadlineAt,
+          contactName: r.contact
+            ? [r.contact.firstName, r.contact.lastName].filter((x): x is string => !!x).join(' ') ||
+              r.contact.email ||
+              null
+            : null,
+        }))
+        return { items }
+      }),
+
+    /**
      * Distinct Trengo labels across conversation heads, ordered by how many
      * conversations carry each — drives the label filter in the comms-centre
      * rail. Bounded read (labels live on indexed head rows, not messages).

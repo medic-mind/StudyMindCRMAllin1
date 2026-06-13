@@ -9,6 +9,7 @@
 import Link from 'next/link'
 
 import { Avatar } from '@/components/ui/avatar'
+import { XIcon } from '@/components/ui/icon'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
 
@@ -18,11 +19,46 @@ import { ConversationTaskButton } from './ConversationTaskButton'
 import { MailThreadActions } from './MailThreadActions'
 import { TrengoThreadActions } from './TrengoThreadActions'
 
-export function ContextPane({ conversationId, me }: { conversationId: string; me: CockpitMe }) {
+export function ContextPane({
+  conversationId,
+  me,
+  onClose,
+}: {
+  conversationId: string
+  me: CockpitMe
+  /** Close the pane — used by the backdrop + the X on the overlay (small
+   *  screens). On xl the pane is a static column and onClose is unused. */
+  onClose?: () => void
+}) {
   const convo = trpc.inbox.conversations.get.useQuery({ conversationId })
   const head = convo.data?.head
+
+  // The pane is a static right column on xl, and a slide-over drawer (with a
+  // dimmed backdrop) below xl — so Assign / Snooze / Labels / Mark-read /
+  // Task are reachable on laptops + tablets, not hidden off-screen. The
+  // wrapper classes are identical whether or not we have a head yet so the
+  // layout never jumps.
+  const aside = (className: string, children: React.ReactNode) => (
+    <>
+      {/* Backdrop — only on small screens (the drawer overlays the thread). */}
+      <button
+        type="button"
+        aria-label="Close details"
+        onClick={onClose}
+        className="fixed inset-0 z-30 bg-neutral-900/30 xl:hidden"
+      />
+      <aside className={className}>{children}</aside>
+    </>
+  )
+
+  const wrapperClass =
+    'fixed inset-y-0 right-0 z-40 flex w-80 max-w-[85vw] shrink-0 flex-col overflow-y-auto border-l border-neutral-200 bg-white shadow-2xl xl:static xl:z-auto xl:max-w-none xl:shadow-none'
+
   if (!head) {
-    return <aside className="hidden w-80 shrink-0 border-l border-neutral-200 bg-white xl:block" />
+    return aside(
+      wrapperClass,
+      <div className="p-4 text-sm text-neutral-400">Loading…</div>,
+    )
   }
   const now = new Date()
   const isEmail = head.provider === 'email'
@@ -31,8 +67,23 @@ export function ContextPane({ conversationId, me }: { conversationId: string; me
     280,
   )
 
-  return (
-    <aside className="hidden w-80 shrink-0 flex-col overflow-y-auto border-l border-neutral-200 bg-white xl:flex">
+  return aside(
+    wrapperClass,
+    <>
+      {/* Mobile close affordance (the static xl column has the thread toggle). */}
+      <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-2 xl:hidden">
+        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          Details
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close details"
+          className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100"
+        >
+          <XIcon size={16} />
+        </button>
+      </div>
       {/* Contact header */}
       <div className="border-b border-neutral-200 p-4">
         <div className="flex items-center gap-3">
@@ -116,7 +167,7 @@ export function ContextPane({ conversationId, me }: { conversationId: string; me
         ) : null}
         {head.tags.length > 0 ? <MetaRow label="Labels" value={head.tags.join(', ')} /> : null}
       </dl>
-    </aside>
+    </>,
   )
 }
 
