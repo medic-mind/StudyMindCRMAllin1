@@ -1136,7 +1136,7 @@ const timetableRouter = router({
    * Read one master timetable (PDF / CSV / paste) and return an editable PLAN —
    * the cohort, its holidays, and every weekly group class with its schedule.
    * AI-structured, grounded on the operator subject/level catalogues. Writes
-   * nothing: the human confirms and `timetable.apply` creates everything (§3).
+   * nothing: the human confirms and `timetable.commit` creates everything (§3).
    */
   importPreview: protectedProcedure
     .input(
@@ -1223,8 +1223,11 @@ const timetableRouter = router({
    * its holidays, each class (find-or-create per subject+level, inline-creating
    * any new subject/level option), and each class's weekly schedule. Zoom links
    * are left blank for staff to fill in. Idempotent on re-run. Audited.
+   *
+   * Named `commit` (not `apply`) — `apply` is a reserved key in a tRPC router
+   * (Function.prototype.apply), same convention as `knowledge.edit.commit`.
    */
-  apply: auditedProcedure
+  commit: auditedProcedure
     .input(
       z.object({
         cohort: z.object({
