@@ -251,3 +251,46 @@ describe('classifyLead — free-resource routing (destination)', () => {
     expect(c.destination).toBe('sales')
   })
 })
+
+describe('classifyLead — free-resource routing reads the WHOLE lead', () => {
+  it('routes when "GAMSAT Book" only landed in an unmapped extra field', () => {
+    const c = classifyLead(
+      lead({
+        landingSlug: 'home',
+        formTitle: 'Contact form',
+        extraFields: { 'text-902': 'GAMSAT Book', interest: 'download' },
+      }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+  })
+
+  it('routes when the product was mis-read into the name field', () => {
+    const c = classifyLead(
+      lead({ name: 'GAMSAT Book', firstName: 'GAMSAT', lastName: 'Book' }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+  })
+
+  it('routes a generic free-resource download with a neutral slug', () => {
+    const c = classifyLead(
+      lead({ landingSlug: 'thank-you', extraFields: { resource: 'Free UCAT ebook' } }),
+      ruleset,
+    )
+    expect(c.destination).toBe('free_resources')
+  })
+
+  it('still keeps a real tutoring enquiry that mentions booking on Sales', () => {
+    const c = classifyLead(
+      lead({
+        landingSlug: 'gcse-maths-tuition',
+        firstName: 'Sarah',
+        lastName: 'Khan',
+        message: 'Can I book in a trial lesson for my daughter?',
+      }),
+      ruleset,
+    )
+    expect(c.destination).toBe('sales')
+  })
+})
