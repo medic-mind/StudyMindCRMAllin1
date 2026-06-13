@@ -5,7 +5,11 @@
 //
 // House style (CLAUDE.md §4): warm, professional, specific. No emoji.
 
+import { emailButton, escapeHtml, renderEmailLayout } from './layout'
 import type { WelcomeCredentials } from './types'
+
+// Re-export so existing importers (e.g. direct-debit-setup) keep working.
+export { escapeHtml }
 
 export interface RenderedEmail {
   subject: string
@@ -13,49 +17,12 @@ export interface RenderedEmail {
   text: string
 }
 
-// A calm trust-blue header on a light shell. These values are intentionally
-// inline (transactional email cannot read the product's Tailwind tokens).
-const COLOR_HEADER = '#0b4f8a'
 const COLOR_TEXT = '#1f2933'
 const COLOR_MUTED = '#52606d'
 const COLOR_BORDER = '#e4e7eb'
-const FONT_STACK =
-  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function layout(opts: { heading: string; bodyHtml: string }): string {
-  return `<!DOCTYPE html>
-<html lang="en-GB">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f7fa;">
-  <div style="max-width:560px;margin:0 auto;padding:24px 12px;font-family:${FONT_STACK};color:${COLOR_TEXT};">
-    <div style="background:${COLOR_HEADER};border-radius:10px 10px 0 0;padding:20px 28px;">
-      <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.2px;">StudyMind CRM</div>
-    </div>
-    <div style="background:#ffffff;border:1px solid ${COLOR_BORDER};border-top:0;border-radius:0 0 10px 10px;padding:28px;">
-      <h1 style="margin:0 0 16px;font-size:19px;line-height:1.3;color:${COLOR_TEXT};">${escapeHtml(opts.heading)}</h1>
-      ${opts.bodyHtml}
-    </div>
-    <p style="margin:16px 4px 0;font-size:12px;color:${COLOR_MUTED};line-height:1.5;">
-      You are receiving this because a StudyMind CRM account was created or updated for this address.
-      If you were not expecting it, please contact your administrator.
-    </p>
-  </div>
-</body>
-</html>`
-}
-
-function button(href: string, label: string): string {
-  return `<a href="${escapeHtml(href)}" style="display:inline-block;background:${COLOR_HEADER};color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:8px;">${escapeHtml(label)}</a>`
-}
+const STAFF_FOOTER =
+  'You are receiving this because a StudyMind CRM account was created or updated for this address. If you were not expecting it, please contact your administrator.'
 
 function credentialsBox(email: string, temporaryPassword: string): string {
   const row = (label: string, value: string, mono = false) =>
@@ -95,7 +62,7 @@ export function buildWelcomeEmail(input: WelcomeCredentials): RenderedEmail {
       For your security you will be asked to choose your own password the first time you sign in.
       This temporary password can only be used once. A copy of these details is attached as a PDF.
     </p>
-    <p style="margin:0 0 8px;">${button(input.signInUrl, 'Sign in to StudyMind CRM')}</p>
+    <p style="margin:0 0 8px;">${emailButton(input.signInUrl, 'Sign in to StudyMind CRM')}</p>
     <p style="margin:14px 0 0;font-size:13px;color:${COLOR_MUTED};word-break:break-all;">
       Or paste this link into your browser: ${escapeHtml(input.signInUrl)}
     </p>`
@@ -119,5 +86,17 @@ export function buildWelcomeEmail(input: WelcomeCredentials): RenderedEmail {
     '— StudyMind CRM',
   ].join('\n')
 
-  return { subject, html: layout({ heading, bodyHtml }), text }
+  return {
+    subject,
+    html: renderEmailLayout({
+      brandName: 'StudyMind CRM',
+      heading,
+      bodyHtml,
+      preheader: input.isReset
+        ? 'Your temporary password is inside.'
+        : 'Your sign-in details are inside.',
+      footerNote: STAFF_FOOTER,
+    }),
+    text,
+  }
 }
