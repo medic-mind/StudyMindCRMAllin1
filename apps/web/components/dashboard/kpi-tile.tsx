@@ -1,7 +1,9 @@
 // KPI tile used on the dashboard. Large value, label, optional delta vs the
-// trailing 7d window with a small tone indicator. CLAUDE.md §4 (warm
+// trailing 7d window with a small tone indicator. When an `href` is given the
+// whole tile becomes a link into the relevant workspace. CLAUDE.md §4 (warm
 // secondary used sparingly), §28 (deltas announced via aria-label).
 
+import Link from 'next/link'
 import type { ReactNode } from 'react'
 
 export type KpiTone = 'neutral' | 'success' | 'warn' | 'danger' | 'info'
@@ -20,6 +22,8 @@ interface Props {
   tone?: KpiTone
   icon?: ReactNode
   hint?: string
+  /** When set, the whole tile links here. */
+  href?: string
 }
 
 const TONE_BG: Record<KpiTone, string> = {
@@ -56,6 +60,7 @@ export function KpiTile({
   tone = 'neutral',
   icon,
   hint,
+  href,
 }: Props) {
   const renderDelta = () => {
     if (delta == null) return null
@@ -93,10 +98,8 @@ export function KpiTile({
     )
   }
 
-  return (
-    <div
-      className={`relative overflow-hidden rounded-xl border border-neutral-200 ${TONE_BG[tone]} p-4 pl-5 shadow-card transition-shadow hover:shadow-card-hover`}
-    >
+  const body = (
+    <>
       <span
         aria-hidden="true"
         className={`absolute inset-y-0 left-0 w-1 ${TONE_BAR[tone]}`}
@@ -123,6 +126,17 @@ export function KpiTile({
         {hint ? <p className="truncate text-xs text-neutral-500">{hint}</p> : <span />}
         {renderDelta()}
       </div>
-    </div>
+    </>
   )
+
+  const base = `relative block overflow-hidden rounded-xl border border-neutral-200 ${TONE_BG[tone]} p-4 pl-5 shadow-card transition-shadow hover:shadow-card-hover`
+
+  if (href) {
+    return (
+      <Link href={href} className={`${base} focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500`}>
+        {body}
+      </Link>
+    )
+  }
+  return <div className={base}>{body}</div>
 }
