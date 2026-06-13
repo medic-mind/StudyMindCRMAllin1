@@ -90,6 +90,9 @@ export function InboxCockpit({
   const [filter, setFilter] = useState<InboxFilter>(initialFilter)
   const [channel, setChannel] = useState<InboxChannel | null>(initialChannel)
   const [tag, setTag] = useState<string | null>(null)
+  // Trengo "Teams" folder — when set, the list shows that team's open
+  // conversations and the status folders are visually deselected.
+  const [teamId, setTeamId] = useState<string | null>(null)
   const [unansweredOnly, setUnansweredOnly] = useState(false)
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
@@ -112,7 +115,7 @@ export function InboxCockpit({
   }, [rawQuery])
 
   const list = trpc.inbox.conversations.list.useQuery(
-    { filter, channel: channel ?? null, tag: tag ?? null, limit: 100 },
+    { filter, channel: channel ?? null, tag: tag ?? null, teamId: teamId ?? null, limit: 100 },
     { refetchOnWindowFocus: true },
   )
 
@@ -173,7 +176,7 @@ export function InboxCockpit({
   // Clear selection when the folder/filter/search changes (the rows changed).
   useEffect(() => {
     setSelectedIds(new Set())
-  }, [filter, channel, tag, searching])
+  }, [filter, channel, tag, teamId, searching])
 
   // Keep the URL shareable (?c=…) without a server round-trip, and clear it
   // when nothing is selected. Deep links are read on the server and arrive as
@@ -238,8 +241,10 @@ export function InboxCockpit({
         filter={filter}
         channel={channel}
         tag={tag}
+        teamId={teamId}
         onFilter={(f) => {
           setFilter(f)
+          setTeamId(null)
           setSelectedId(null)
         }}
         onChannel={(c) => {
@@ -250,6 +255,18 @@ export function InboxCockpit({
           setTag(t)
           setSelectedId(null)
         }}
+        onTeam={(id) => {
+          setTeamId(id)
+          setSelectedId(null)
+        }}
+        onApplyView={(v) => {
+          setFilter(v.filter)
+          setChannel(v.channel)
+          setTag(v.tag)
+          setTeamId(null)
+          setSelectedId(null)
+        }}
+        currentView={{ filter, channel, tag }}
       />
 
       {/* Conversation list — full-width on mobile; on a phone we show EITHER
@@ -460,17 +477,26 @@ function FoldersRail({
   filter,
   channel,
   tag,
+  teamId,
   onFilter,
   onChannel,
   onTag,
+  onTeam,
+  onApplyView,
+  currentView,
 }: {
   filter: InboxFilter
   channel: InboxChannel | null
   tag: string | null
+  teamId: string | null
   onFilter: (f: InboxFilter) => void
   onChannel: (c: InboxChannel | null) => void
   onTag: (t: string | null) => void
+  onTeam: (id: string) => void
+  onApplyView: (v: { filter: InboxFilter; channel: InboxChannel | null; tag: string | null }) => void
+  currentView: { filter: InboxFilter; channel: InboxChannel | null; tag: string | null }
 }) {
+  const utils = trpc.useUtils()
   // Trengo labels across the workspace — synced from tickets onto the
   // Conversation heads; clicking one narrows the list server-side.
   const tags = trpc.inbox.conversations.tags.useQuery(undefined, {
@@ -482,6 +508,36 @@ function FoldersRail({
     refetchInterval: 60_000,
     retry: false,
   })
+  // Trengo "Teams" + "Views" folders.
+  const teams = trpc.inbox.conversations.teams.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: false,
+  })
+  const views = trpc.inbox.conversations.views.list.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: false,
+  })
+  const createView = trpc.inbox.conversations.views.create.useMutation({
+    onSuccess: () => {
+      toast.success('View saved')
+      void utils.inbox.conversations.views.list.invalidate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not save view'),
+  })
+  const deleteView = trpc.inbox.conversations.views.delete.useMutation({
+    onSuccess: () => void utils.inbox.conversations.views.list.invalidate(),
+    onError: (e) => toast.error(e.message ?? 'Could not delete view'),
+  })
+  const saveCurrentView = () => {
+    const name = window.prompt('Name this view')?.trim()
+    if (!name) return
+    createView.mutate({
+      name,
+      filter: currentView.filter,
+      channel: currentView.channel,
+      tag: currentView.tag,
+    })
+  }
   const badge = (key: (typeof INBOX_FILTERS)[number]['countKey']): number | null =>
     key && counts.data ? counts.data[key] : null
   return (
@@ -491,13 +547,13 @@ function FoldersRail({
         Inbox
       </div>
 
-      <nav aria-label="Views" className="flex flex-col gap-0.5">
+      <nav aria-label="Inbox" className="flex flex-col gap-0.5">
         {INBOX_FILTERS.map((f) => (
           <RailItem
             key={f.value}
             label={f.label}
             count={badge(f.countKey)}
-            active={filter === f.value}
+            active={!teamId && filter === f.value}
             onClick={() => onFilter(f.value)}
           />
         ))}
@@ -513,12 +569,31 @@ function FoldersRail({
               key={f.value}
               label={f.label}
               count={badge(f.countKey)}
-              active={filter === f.value}
+              active={!teamId && filter === f.value}
               onClick={() => onFilter(f.value)}
             />
           ))}
         </nav>
       </div>
+
+      {(teams.data?.length ?? 0) > 0 ? (
+        <div>
+          <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            Teams
+          </h2>
+          <nav aria-label="Teams" className="flex flex-col gap-0.5">
+            {teams.data!.map((t) => (
+              <RailItem
+                key={t.id}
+                label={t.name}
+                count={t.count > 0 ? t.count : null}
+                active={teamId === t.id}
+                onClick={() => onTeam(t.id)}
+              />
+            ))}
+          </nav>
+        </div>
+      ) : null}
 
       <div>
         <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -559,6 +634,56 @@ function FoldersRail({
         </div>
       ) : null}
 
+      <div>
+        <div className="flex items-center justify-between px-2 pb-1">
+          <h2 className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            Views
+          </h2>
+          <button
+            type="button"
+            onClick={saveCurrentView}
+            disabled={createView.isPending}
+            title="Save the current filter as a view"
+            className="text-trengo-300 hover:text-trengo-200 disabled:opacity-50"
+            aria-label="Save current view"
+          >
+            +
+          </button>
+        </div>
+        {(views.data?.length ?? 0) === 0 ? (
+          <p className="px-2.5 text-[11px] text-neutral-500">
+            Save the current filter with +
+          </p>
+        ) : (
+          <nav aria-label="Views" className="flex flex-col gap-0.5">
+            {views.data!.map((v) => (
+              <div key={v.id} className="group/view flex items-center">
+                <RailItem
+                  className="min-w-0 flex-1"
+                  label={v.name}
+                  active={false}
+                  onClick={() =>
+                    onApplyView({
+                      filter: v.filter as InboxFilter,
+                      channel: (v.channel as InboxChannel | null) ?? null,
+                      tag: v.tag ?? null,
+                    })
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={() => deleteView.mutate({ id: v.id })}
+                  aria-label={`Delete view ${v.name}`}
+                  className="px-1 text-neutral-600 opacity-0 hover:text-danger-400 group-hover/view:opacity-100"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </nav>
+        )}
+      </div>
+
       <div className="mt-auto">
         <Link
           href="/inbox/suggestions"
@@ -577,23 +702,25 @@ function RailItem({
   count = null,
   active,
   onClick,
+  className = '',
 }: {
   label: string
   icon?: React.ReactNode
   count?: number | null
   active: boolean
   onClick: () => void
+  className?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-current={active ? 'true' : undefined}
-      className={
+      className={`${
         active
           ? 'flex items-center gap-2 truncate rounded-md bg-trengo-600 px-2.5 py-1.5 text-left text-sm font-medium text-white'
           : 'flex items-center gap-2 truncate rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-300 transition-colors hover:bg-neutral-800'
-      }
+      } ${className}`}
     >
       {icon ? <span className="shrink-0">{icon}</span> : null}
       <span className="truncate">{label}</span>
