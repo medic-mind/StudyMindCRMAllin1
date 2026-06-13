@@ -35,6 +35,7 @@ export function customerMirrorInput(
     givenName: resource.given_name ?? null,
     familyName: resource.family_name ?? null,
     companyName: resource.company_name ?? null,
+    phone: resource.phone_number ?? null,
     gcCreatedAt: parseDate(resource.created_at),
     autoMatch: opts.autoMatch,
   }
@@ -74,6 +75,7 @@ export function subscriptionMirrorInput(
     endDate: parseDate(resource.end_date),
     nextChargeAt: next ? parseDate(next.charge_date) : null,
     nextChargeMinor: next?.amount ?? null,
+    totalPaymentCount: resource.count ?? null,
     metadata: resource.metadata ?? null,
     gcCreatedAt: parseDate(resource.created_at),
     gcMandateId: resource.links.mandate ?? null,

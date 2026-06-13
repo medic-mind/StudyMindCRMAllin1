@@ -9,47 +9,68 @@ import { z } from 'zod'
 
 import { sanitiseUserContent } from '../sanitise'
 
-export const VERSION = '2026-06-13.1'
+export const VERSION = '2026-06-13.2'
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+// Deliberately PERMISSIVE. runStructured validates the model's JSON against
+// this exact schema and throws on any mismatch (which the caller would have to
+// swallow), so a single over-long name or chatty note must not reject the whole
+// timetable. We accept loose strings + coerce numbers here and do all the real
+// validation/clamping deterministically in @studymind/core buildTimetablePlan.
+const looseStr = (max: number) => z.string().max(max).optional().nullable()
 
 export const timetableImportSchema = z.object({
-  cohort: z.object({
-    /** A short academic-year name, e.g. "2026/2027". */
-    name: z.string().min(1).max(40),
-    startsOn: isoDate.nullish(),
-    endsOn: isoDate.nullish(),
-  }),
+  cohort: z
+    .object({
+      /** An academic-year name, e.g. "2026/2027". */
+      name: looseStr(200),
+      /** ISO YYYY-MM-DD when stated/inferable, else null. */
+      startsOn: looseStr(40),
+      endsOn: looseStr(40),
+    })
+    .partial()
+    .default({}),
   /** Breaks / holidays during which no class runs. */
   holidays: z
-    .array(z.object({ name: z.string().min(1).max(80), startsOn: isoDate, endsOn: isoDate }))
-    .max(30)
+    .array(
+      z.object({
+        name: looseStr(200),
+        startsOn: looseStr(40),
+        endsOn: looseStr(40),
+      }),
+    )
+    .optional()
     .default([]),
   /** One entry per weekly group class in the timetable. */
   classes: z
     .array(
       z.object({
         /** Subject as written, e.g. "Biology". Reuse a known label when it fits. */
-        subject: z.string().min(1).max(60),
+        subject: looseStr(200),
         /** Level/type as written, e.g. "A-Level", "GCSE", "UCAT". */
-        level: z.string().min(1).max(60),
+        level: looseStr(200),
         /** Optional display title; defaults to "<subject> <level>". */
-        title: z.string().max(120).nullish(),
-        /** Full weekday name, e.g. "Saturday". */
-        day: z.string().min(1).max(20),
-        /** 24-hour start time "HH:MM" (or "6:30pm"). */
-        startTime: z.string().min(1).max(12),
-        durationMins: z.number().int().min(15).max(480).nullish(),
-        /** Weekly topics, week 1..N in order. Empty if the PDF has no syllabus. */
+        title: looseStr(300),
+        /** Weekday, e.g. "Saturday" / "Saturdays". */
+        day: looseStr(40),
+        /** Start time, e.g. "18:00" / "6:30pm". */
+        startTime: looseStr(40),
+        durationMins: z.coerce.number().optional().nullable(),
+        /** Weekly topics, week 1..N in order. Empty if no syllabus is given. */
         weeks: z
-          .array(z.object({ weekNumber: z.number().int().min(1).max(60), topic: z.string().min(1).max(300) }))
-          .max(60)
+          .array(
+            z.object({
+              weekNumber: z.coerce.number().optional().nullable(),
+              topic: z.string().max(1000).optional().nullable(),
+            }),
+          )
+          .optional()
           .default([]),
       }),
     )
-    .max(60),
+    .optional()
+    .default([]),
   /** Short note for the reviewer on how confidently the text parsed. */
-  note: z.string().max(300).default(''),
+  note: z.string().max(4000).optional().default(''),
 })
 export type TimetableImportAi = z.infer<typeof timetableImportSchema>
 

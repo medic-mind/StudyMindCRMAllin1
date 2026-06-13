@@ -118,6 +118,24 @@ export const colors = {
     700: '#0369a1',
     900: '#0c4a6e',
   },
+  // Trengo-parity accent (mint-teal) — a DELIBERATE, scoped exception to the
+  // "primary is the brand" rule (§4), approved for the Communication Centre so
+  // the inbox reads like Trengo. Used only inside `apps/web/app/(app)/inbox/*`;
+  // the rest of the product stays on `primary`. Full 11-step scale so it can
+  // act as an accent (active states, send button) and a dark-rail surface.
+  trengo: {
+    50: '#ecfdf6',
+    100: '#d2f9e9',
+    200: '#a8f1d6',
+    300: '#6fe4bd',
+    400: '#33cea0',
+    500: '#13b389',
+    600: '#079070',
+    700: '#06735b',
+    800: '#085b49',
+    900: '#084b3d',
+    950: '#022c24',
+  },
 } as const
 
 export type ColorTokens = typeof colors

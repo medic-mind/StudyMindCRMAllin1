@@ -19,7 +19,7 @@ interface Props {
   ticketId: number | null
   tags: string[]
   unread: boolean
-  status: 'open' | 'closed' | 'snoozed' | 'archived'
+  status: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
 }
 
 const SNOOZE_OPTIONS: ReadonlyArray<{ label: string; minutes: number }> = [

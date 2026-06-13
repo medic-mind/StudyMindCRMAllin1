@@ -77,7 +77,7 @@ export function TimetableImport() {
     onError: (e) => toast.error(e.message),
   })
 
-  const apply = trpc.webinar.timetable.apply.useMutation({
+  const apply = trpc.webinar.timetable.commit.useMutation({
     onSuccess: async (r) => {
       toast.success(
         `${r.cohortCreated ? 'Cohort created' : 'Cohort updated'} · ${r.classesCreated} classes · ${r.weeksSet} weekly topics`,

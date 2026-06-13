@@ -18,6 +18,7 @@ import {
   formatSessionDateShort,
   formatSessionTime,
   levelLabel,
+  parseTabularTimetable,
   renderTemplate,
   sessionStartInstant,
   subjectLabel,
@@ -1136,7 +1137,7 @@ const timetableRouter = router({
    * Read one master timetable (PDF / CSV / paste) and return an editable PLAN —
    * the cohort, its holidays, and every weekly group class with its schedule.
    * AI-structured, grounded on the operator subject/level catalogues. Writes
-   * nothing: the human confirms and `timetable.apply` creates everything (§3).
+   * nothing: the human confirms and `timetable.commit` creates everything (§3).
    */
   importPreview: protectedProcedure
     .input(
@@ -1184,6 +1185,24 @@ const timetableRouter = router({
         }),
       ])
 
+      // 1. Deterministic FIRST (rules-first, §3/§18): a structured CSV /
+      //    spreadsheet export ("one row per week") parses perfectly with no AI,
+      //    so the importer works even when no AI provider is configured.
+      const tabular = parseTabularTimetable(text)
+      if (tabular) {
+        const plan = buildTimetablePlan(tabular, { subjects, levels })
+        if (plan.classes.length > 0) {
+          const n = plan.classes.length
+          return {
+            ...plan,
+            note: `Read ${n} class${n === 1 ? '' : 'es'} directly from the spreadsheet columns — no AI needed. Review and create.`,
+            source: 'table' as const,
+          }
+        }
+      }
+
+      // 2. AI structurer for unstructured input (a prose paste, an odd PDF).
+      let aiError: string | null = null
       try {
         const prompt = buildTimetableImportPrompt({
           text,
@@ -1201,20 +1220,26 @@ const timetableRouter = router({
           ctx: { requestId: ctx.requestId, source: 'webinar.timetable_import' },
         })
         const plan = buildTimetablePlan(out, { subjects, levels })
-        return {
-          ...plan,
-          note: out.note || (plan.classes.length > 0 ? 'Parsed with AI.' : 'No classes found.'),
-          source: 'ai' as const,
+        if (plan.classes.length > 0 || plan.holidays.length > 0) {
+          return {
+            ...plan,
+            note: out.note || 'Parsed with AI. Review and create.',
+            source: 'ai' as const,
+          }
         }
-      } catch {
-        // Degrade cleanly when AI is unavailable / over budget (§18 guardrail):
-        // there is no deterministic parser for a full timetable, so we ask the
-        // operator to create the cohort by hand and use the per-class importer.
-        return {
-          ...emptyPlan,
-          note: 'AI could not structure that timetable right now. Create the cohort manually, then import each class schedule from its page.',
-          source: 'fallback' as const,
-        }
+        aiError = 'The AI read the text but found no classes in it.'
+      } catch (err) {
+        // Surface the REAL reason (bad key, model not found, budget) so the
+        // operator can fix it — silently degrading is what made this look broken.
+        aiError = err instanceof Error ? err.message : 'AI request failed.'
+      }
+
+      return {
+        ...emptyPlan,
+        note: aiError
+          ? `Couldn't read this as a spreadsheet table, and the AI step failed: ${aiError}`
+          : 'Could not find any classes in that input. Upload the spreadsheet (CSV) export, or paste the timetable.',
+        source: 'fallback' as const,
       }
     }),
 
@@ -1223,8 +1248,11 @@ const timetableRouter = router({
    * its holidays, each class (find-or-create per subject+level, inline-creating
    * any new subject/level option), and each class's weekly schedule. Zoom links
    * are left blank for staff to fill in. Idempotent on re-run. Audited.
+   *
+   * Named `commit` (not `apply`) — `apply` is a reserved key in a tRPC router
+   * (Function.prototype.apply), same convention as `knowledge.edit.commit`.
    */
-  apply: auditedProcedure
+  commit: auditedProcedure
     .input(
       z.object({
         cohort: z.object({
