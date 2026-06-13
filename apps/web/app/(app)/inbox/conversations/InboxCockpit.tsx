@@ -462,7 +462,7 @@ function FoldersRail({
     <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-200 bg-neutral-50/60 p-3 md:flex">
       <div className="flex items-center gap-2 px-1 pt-1 text-sm font-semibold text-neutral-900">
         <InboxIcon size={16} className="text-neutral-500" />
-        Trengo
+        Inbox
       </div>
 
       <nav aria-label="Views" className="flex flex-col gap-0.5">
@@ -672,41 +672,42 @@ function ConversationRow({
             {channelLabelFor(item.channel)}
           </div>
         )}
-        <div className="mt-0.5 flex flex-wrap items-center gap-1">
-          {item.unreadCount > 0 ? (
-            <span className="rounded-full bg-primary-100 px-1.5 text-[10px] font-semibold text-primary-700">
-              {item.unreadCount}
-            </span>
-          ) : null}
-          {item.status === 'closed' ? (
-            <span className="rounded bg-neutral-100 px-1 text-[10px] text-neutral-500">Closed</span>
-          ) : null}
-          {item.status === 'snoozed' ? (
-            <span className="rounded bg-amber-50 px-1 text-[10px] text-amber-700">Snoozed</span>
-          ) : null}
-          {item.channel === 'whatsapp' && item.replyDeadlineAt ? (
-            <span
-              className={`rounded px-1 text-[10px] ${
-                replyWindowOpen ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-              }`}
-            >
-              {replyWindowOpen ? '24h open' : '24h closed'}
-            </span>
-          ) : null}
-          {(item.tags ?? []).slice(0, 2).map((t) => (
-            <span
-              key={t}
-              className="rounded-full border border-neutral-200 bg-neutral-50 px-1.5 text-[10px] text-neutral-600"
-            >
-              {t}
-            </span>
-          ))}
-          {item.assigneeName ? (
-            <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-neutral-500">
-              <Avatar name={item.assigneeName} size={14} />
-            </span>
-          ) : null}
-        </div>
+        {item.status !== 'open' ||
+        (item.channel === 'whatsapp' && item.replyDeadlineAt && !replyWindowOpen) ||
+        (item.tags ?? []).length > 0 ||
+        item.assigneeName ? (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            {item.status === 'closed' ? (
+              <span className="rounded px-1 text-[10px] font-medium text-neutral-400">Closed</span>
+            ) : null}
+            {item.status === 'snoozed' ? (
+              <span className="rounded px-1 text-[10px] font-medium text-warning-700">Snoozed</span>
+            ) : null}
+            {/* Only flag the WhatsApp window when it has CLOSED (actionable —
+                you can no longer free-text). An open window is the norm. */}
+            {item.channel === 'whatsapp' && item.replyDeadlineAt && !replyWindowOpen ? (
+              <span className="rounded bg-warning-50 px-1 text-[10px] font-medium text-warning-700">
+                24h window closed
+              </span>
+            ) : null}
+            {(item.tags ?? []).slice(0, 2).map((t) => (
+              <span
+                key={t}
+                className="truncate rounded-full bg-neutral-100 px-1.5 text-[10px] text-neutral-600"
+              >
+                {t}
+              </span>
+            ))}
+            {item.assigneeName ? (
+              <span
+                className="ml-auto inline-flex items-center"
+                title={`Assigned to ${item.assigneeName}`}
+              >
+                <Avatar name={item.assigneeName} size={16} />
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </li>
   )
