@@ -238,6 +238,11 @@ export function ContactDirectDebitPanel({ contactId, canManage }: Props) {
                         {formatMoneyMinor(s.amountMinor * s.totalPaymentCount, s.currency)}
                       </span>
                     ) : null}
+                    {typeof s.shortfallMinor === 'number' && s.shortfallMinor > 0 ? (
+                      <Badge tone="danger">
+                        {formatMoneyMinor(s.shortfallMinor, s.currency)} still due
+                      </Badge>
+                    ) : null}
                     {s.name ? <span className="text-xs text-neutral-500">· {s.name}</span> : null}
                     {s.nextChargeAt ? (
                       <span className="ml-auto text-xs text-neutral-500">

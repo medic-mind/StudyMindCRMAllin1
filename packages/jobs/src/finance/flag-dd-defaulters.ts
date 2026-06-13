@@ -45,11 +45,15 @@ export interface NewlyDefaulted {
 export interface FlagDefaultersResult {
   scanned: number
   newlyDefaulted: NewlyDefaulted[]
+  /** Open defaulter discrepancies auto-resolved because the family recovered. */
+  resolved: number
 }
 
 /**
- * Recompute the defaulter set and upsert discrepancies. Returns the families
- * that were newly flagged on this run (so the caller can notify finops).
+ * Recompute the defaulter set and upsert discrepancies. Resolves any open
+ * `direct_debit_default` discrepancy for a family that is no longer a defaulter
+ * (self-healing, golden rule #4). Returns the families newly flagged this run
+ * (so the caller can notify finops).
  */
 export async function flagDefaulters(
   db: DbClient,
@@ -97,7 +101,24 @@ export async function flagDefaulters(
     })
   }
 
-  return { scanned: defaulters.length, newlyDefaulted }
+  // Self-heal: resolve open defaulter discrepancies for families that have
+  // recovered (no longer in the defaulter set).
+  const defaulterFamilyIds = new Set(defaulters.map((d) => d.familyId))
+  const openDefaulters = await db.reconciliationDiscrepancy.findMany({
+    where: { category: 'direct_debit_default', resolvedAt: null },
+    select: { id: true, familyId: true },
+  })
+  let resolved = 0
+  for (const d of openDefaulters) {
+    if (defaulterFamilyIds.has(d.familyId)) continue
+    await db.reconciliationDiscrepancy.update({
+      where: { id: d.id },
+      data: { resolvedAt: now },
+    })
+    resolved += 1
+  }
+
+  return { scanned: defaulters.length, newlyDefaulted, resolved }
 }
 
 // -----------------------------------------------------------------------------

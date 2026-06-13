@@ -259,3 +259,21 @@ column sorting + filter-honouring CSV export.
   rule #4).
 - **Actionable Issues rows.** Both plan-issue tables carry a "Chase" action
   (opens a follow-up Task against the linked contact/family) for linked plans.
+
+### Follow-up (2026-06-13, second) — robust linking, full self-heal, panel badges
+
+- **Format-insensitive phone linking.** `findContactForGcPhone` now matches on
+  the last-9-digit `phoneKey` (`endsWith`) — the same key the lead funnel and
+  missed-calls workspace use — so "+447700900123", "07700900123" and
+  "447700900123" converge. Still unambiguous-only (§41.1).
+- **Recurring relink cron.** `gocardless/relink-customers` (every 6h) runs
+  `linkUnlinkedGcCustomers` so a contact created *after* its DD customer was
+  imported gets linked automatically, not only at import time. Audited
+  (`gocardless.customers.relinked`) only when it links something.
+- **Defaulter self-heal.** `flagDefaulters` now resolves open
+  `direct_debit_default` discrepancies for families no longer in the defaulter
+  set, matching the plan-issue self-heal (golden rule #4).
+- **Contact-panel shortfall badge.** `gocardless.contactSummary` computes the
+  per-plan shortfall for the contact's ended fixed-length plans (reusing
+  `classifyPlanShortfall`), and `ContactDirectDebitPanel` renders a
+  "£X still due" badge on a plan cancelled/finished early.

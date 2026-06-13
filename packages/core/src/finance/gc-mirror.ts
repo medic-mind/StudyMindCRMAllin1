@@ -15,6 +15,8 @@
 import { createId } from '@paralleldrive/cuid2'
 import type { Prisma, PrismaClient } from '@prisma/client'
 
+import { phoneKey } from '../contact/duplicates'
+
 type DbClient = PrismaClient | Prisma.TransactionClient
 
 // Local mirrors of the Prisma enums so this module stays decoupled from the
@@ -120,17 +122,19 @@ export async function findContactForGcEmail(
 }
 
 /**
- * Find the contact matching an E.164 phone. Exact match on Contact.phoneE164,
- * unambiguous only (a shared family landline returns >1 → null, §41.1).
+ * Find the contact matching a phone, format-insensitively. Matches on the
+ * last-9-digit suffix (the canonical `phoneKey`, ADR 0023/§41.1) so
+ * "+447700900123", "07700900123" and "447700900123" all converge. Unambiguous
+ * only — a shared family landline (>1 match) returns null (§41.1).
  */
 export async function findContactForGcPhone(
   db: DbClient,
   phone: string,
 ): Promise<ContactMatchCandidate | null> {
-  const trimmed = phone.trim()
-  if (!trimmed) return null
+  const key = phoneKey(phone)
+  if (!key) return null
   const contacts = await db.contact.findMany({
-    where: { phoneE164: trimmed, deletedAt: null },
+    where: { phoneE164: { endsWith: key }, deletedAt: null },
     select: { id: true },
     take: 3,
   })

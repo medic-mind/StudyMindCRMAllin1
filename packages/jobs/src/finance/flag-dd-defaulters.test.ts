@@ -24,9 +24,12 @@ function makeDb(opts: {
     mandateState: string
   }
   existingDiscrepancies?: CreatedRow[]
-}): { db: PrismaClient; created: CreatedRow[] } {
+  openDefaulters?: Array<{ id: string; familyId: string }>
+}): { db: PrismaClient; created: CreatedRow[]; resolvedIds: string[] } {
   const created: CreatedRow[] = []
+  const resolvedIds: string[] = []
   const existing = opts.existingDiscrepancies ?? []
+  const openDefaulters = opts.openDefaulters ?? []
   const f = opts.defaulterFamily
 
   const mandates = [
@@ -80,10 +83,16 @@ function makeDb(opts: {
         })
         return { id: 'new' }
       },
+      findMany: async () =>
+        openDefaulters.map((o) => ({ id: o.id, familyId: o.familyId })),
+      update: async (args: { where: { id: string } }) => {
+        resolvedIds.push(args.where.id)
+        return { id: args.where.id }
+      },
     },
   } as unknown as PrismaClient
 
-  return { db, created }
+  return { db, created, resolvedIds }
 }
 
 describe('flagDefaulters', () => {
@@ -147,6 +156,38 @@ describe('flagDefaulters', () => {
     const result = await flagDefaulters(db, NOW)
     expect(result.newlyDefaulted).toHaveLength(0)
     expect(created).toHaveLength(0)
+  })
+
+  it('auto-resolves an open defaulter discrepancy for a recovered family', async () => {
+    // Current family is healthy; an open discrepancy exists for a DIFFERENT
+    // family that is no longer a defaulter → it should be resolved.
+    const { db, resolvedIds } = makeDb({
+      defaulterFamily: {
+        familyId: 'fam_ok',
+        billingName: 'All Paid',
+        invoicedMinor: 1000,
+        mandateState: 'active',
+      },
+      openDefaulters: [{ id: 'disc_recovered', familyId: 'fam_gone' }],
+    })
+    const result = await flagDefaulters(db, NOW)
+    expect(result.resolved).toBe(1)
+    expect(resolvedIds).toEqual(['disc_recovered'])
+  })
+
+  it('keeps an open defaulter discrepancy for a still-defaulting family', async () => {
+    const { db, resolvedIds } = makeDb({
+      defaulterFamily: {
+        familyId: 'fam_1',
+        billingName: 'Owes Money',
+        invoicedMinor: 10000,
+        mandateState: 'failed',
+      },
+      openDefaulters: [{ id: 'disc_keep', familyId: 'fam_1' }],
+    })
+    const result = await flagDefaulters(db, NOW)
+    expect(result.resolved).toBe(0)
+    expect(resolvedIds).toEqual([])
   })
 
   it('produces a stable contextHash for the same reasons', () => {
