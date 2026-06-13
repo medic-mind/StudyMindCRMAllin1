@@ -125,9 +125,8 @@ export function ThreadPane({
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-500">
             <span>{channelLabelFor(head.channel)}</span>
             {head.trengoTicketId !== null ? (
-              <span className="font-mono">· #{head.trengoTicketId}</span>
+              <span className="font-mono text-neutral-400">#{head.trengoTicketId}</span>
             ) : null}
-            <span>· {head.status}</span>
           </div>
         </div>
         {head.status === 'closed' ? <Badge tone="neutral">Closed</Badge> : null}
@@ -135,10 +134,12 @@ export function ThreadPane({
         {head.channel === 'whatsapp' && head.replyDeadlineAt ? (
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-              replyWindowOpen ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+              replyWindowOpen
+                ? 'bg-success-50 text-success-700'
+                : 'bg-warning-50 text-warning-700'
             }`}
           >
-            {replyWindowOpen ? '24h window open' : '24h window closed'}
+            {replyWindowOpen ? '24h open' : '24h closed'}
           </span>
         ) : null}
         {head.contactId && head.trengoTicketId !== null ? (
@@ -254,41 +255,55 @@ export function ThreadPane({
               : m.direction === 'inbound'
                 ? (m.senderName ?? head.contactName ?? 'Customer')
                 : 'System'
+            // Group consecutive messages from the same side: only the first of
+            // a run shows the sender name, so the thread reads calmly.
+            const sameRunAsPrev =
+              !!prev && prev.kind === 'message' && prev.direction === m.direction && !newDay
             return (
               <Fragment key={m.id}>
                 {newDay ? <DaySeparator date={m.occurredAt} /> : null}
                 <article
-                  className={`max-w-[42rem] rounded-2xl border p-3 text-sm shadow-sm ${
+                  className={`max-w-[40rem] px-3.5 py-2 text-sm ${
                     outbound
-                      ? 'ml-auto rounded-br-sm border-emerald-100 bg-emerald-50 text-neutral-900'
-                      : 'mr-auto rounded-bl-sm border-neutral-200 bg-white text-neutral-900'
-                  }`}
+                      ? 'ml-auto rounded-2xl rounded-br-md bg-primary-600 text-white'
+                      : 'mr-auto rounded-2xl rounded-bl-md bg-white text-neutral-900 ring-1 ring-neutral-200'
+                  } ${sameRunAsPrev ? 'mt-1' : ''}`}
                 >
-                  <div className="mb-1 flex items-center justify-between gap-3 text-[11px] tracking-wide text-neutral-400">
-                    <span className="font-medium uppercase">
+                  {!sameRunAsPrev ? (
+                    <div
+                      className={`mb-0.5 text-[11px] font-medium ${
+                        outbound ? 'text-white/70' : 'text-neutral-500'
+                      }`}
+                    >
                       {sender}
-                      {outbound ? (
-                        <span className="ml-1 normal-case text-emerald-600">· sent by us</span>
-                      ) : m.direction === 'inbound' ? (
-                        <span className="ml-1 normal-case text-neutral-400">· customer</span>
-                      ) : null}
-                    </span>
-                    <time dateTime={m.occurredAt.toISOString()}>
-                      {formatRelativeTime(m.occurredAt, now)}
-                    </time>
-                  </div>
-                  <p className="whitespace-pre-wrap break-words">
+                    </div>
+                  ) : null}
+                  <p className="whitespace-pre-wrap break-words leading-relaxed">
                     {displayMessageBody(m.body) ?? '(no content)'}
                   </p>
+                  <div
+                    className={`mt-1 text-right text-[10px] tabular-nums ${
+                      outbound ? 'text-white/60' : 'text-neutral-400'
+                    }`}
+                  >
+                    {formatRelativeTime(m.occurredAt, now)}
+                  </div>
                   {m.sendStatus === 'sending' ? (
-                    <p className="mt-1 text-[11px] font-medium text-amber-700">
-                      Sending… (retries automatically until Trengo accepts it)
+                    <p
+                      className={`mt-1 text-[11px] ${
+                        outbound ? 'text-white/80' : 'text-neutral-500'
+                      }`}
+                    >
+                      Sending…
                     </p>
                   ) : m.sendStatus === 'failed' ? (
-                    <p className="mt-1 text-[11px] font-medium text-red-700">
-                      Not delivered — Trengo said: {m.sendError ?? 'unknown error'}. It
-                      retries every 5 minutes; if this keeps failing, check your token
-                      in Account → Trengo.
+                    <p
+                      className={`mt-1 text-[11px] font-medium ${
+                        outbound ? 'text-rose-100' : 'text-danger-600'
+                      }`}
+                      title={m.sendError ?? undefined}
+                    >
+                      Not delivered — retrying. {m.sendError ?? ''}
                     </p>
                   ) : null}
                   <Attachments

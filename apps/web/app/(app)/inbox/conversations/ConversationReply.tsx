@@ -28,17 +28,11 @@ import { trpc } from '@/lib/trpc/client'
 
 type SendChannel = 'whatsapp' | 'sms' | 'email' | 'web_chat'
 
-const CHANNEL_META: Record<SendChannel, { label: string; chip: string }> = {
-  whatsapp: {
-    label: 'WhatsApp',
-    chip: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  },
-  sms: { label: 'SMS', chip: 'border-sky-200 bg-sky-50 text-sky-800' },
-  email: { label: 'Email', chip: 'border-neutral-200 bg-neutral-100 text-neutral-700' },
-  web_chat: {
-    label: 'Web chat',
-    chip: 'border-violet-200 bg-violet-50 text-violet-800',
-  },
+const CHANNEL_META: Record<SendChannel, { label: string }> = {
+  whatsapp: { label: 'WhatsApp' },
+  sms: { label: 'SMS' },
+  email: { label: 'Email' },
+  web_chat: { label: 'Web chat' },
 }
 
 interface WaTemplate {
@@ -319,7 +313,7 @@ export function ConversationReply({
               aria-pressed={active}
               className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
                 active
-                  ? CHANNEL_META[opt].chip
+                  ? 'border-primary-200 bg-primary-50 text-primary-800'
                   : 'border-neutral-200 bg-white text-neutral-500 hover:text-neutral-800'
               }`}
             >
@@ -331,11 +325,11 @@ export function ConversationReply({
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
               replyWindowOpen
-                ? 'bg-emerald-50 text-emerald-700'
-                : 'bg-red-50 text-red-700'
+                ? 'bg-success-50 text-success-700'
+                : 'bg-warning-50 text-warning-700'
             }`}
           >
-            {replyWindowOpen ? '24h window open — free text OK' : '24h window closed — template needed'}
+            {replyWindowOpen ? '24h open' : 'Template only'}
           </span>
         ) : null}
         {isWhatsapp ? (
@@ -505,7 +499,6 @@ export function ConversationReply({
               />
             </label>
           ) : null}
-          <span className="ml-auto text-xs text-neutral-400">Syncs to Trengo</span>
         </div>
       </div>
     </div>
