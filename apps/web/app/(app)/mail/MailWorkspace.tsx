@@ -38,7 +38,7 @@ interface AccountOption {
   displayName: string | null
 }
 
-type Folder = 'all' | 'unread'
+type Folder = 'all' | 'unread' | 'starred' | 'archived' | 'trash'
 
 export function MailWorkspace({
   accounts,
@@ -362,6 +362,13 @@ function Rail({
       <nav aria-label="Folders" className="flex flex-col gap-0.5">
         <RailItem label="All mail" active={folder === 'all'} onClick={() => onFolder('all')} />
         <RailItem label="Unread" active={folder === 'unread'} onClick={() => onFolder('unread')} />
+        <RailItem label="Starred" active={folder === 'starred'} onClick={() => onFolder('starred')} />
+        <RailItem
+          label="Archived"
+          active={folder === 'archived'}
+          onClick={() => onFolder('archived')}
+        />
+        <RailItem label="Trash" active={folder === 'trash'} onClick={() => onFolder('trash')} />
       </nav>
 
       <div>
@@ -435,6 +442,9 @@ type ThreadItem = {
   subject: string | null
   unreadCount: number
   status: string
+  isStarred: boolean
+  isTrashed: boolean
+  preview: string | null
   lastMessageAt: Date
   accountAddress: string | null
   contactName: string | null
@@ -485,12 +495,21 @@ function ThreadRow({
       <Avatar name={who} size={30} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span
-            className={`truncate text-sm ${
-              unread ? 'font-semibold text-neutral-900' : 'font-medium text-neutral-700'
-            }`}
-          >
-            {who}
+          <span className="flex min-w-0 items-center gap-1">
+            {item.isStarred ? (
+              <StarIcon
+                size={12}
+                aria-label="Starred"
+                className="shrink-0 fill-amber-400 text-amber-400"
+              />
+            ) : null}
+            <span
+              className={`truncate text-sm ${
+                unread ? 'font-semibold text-neutral-900' : 'font-medium text-neutral-700'
+              }`}
+            >
+              {who}
+            </span>
           </span>
           <time
             className="shrink-0 text-[11px] tabular-nums text-neutral-400"
@@ -506,9 +525,14 @@ function ThreadRow({
         >
           {item.subject ?? '(no subject)'}
         </div>
+        {item.preview ? (
+          <div className="truncate text-[12px] text-neutral-400">{item.preview}</div>
+        ) : null}
         <div className="flex items-center gap-1.5 text-[11px] text-neutral-400">
           {item.accountAddress ? <span className="truncate">{item.accountAddress}</span> : null}
-          {item.status === 'archived' ? (
+          {item.isTrashed ? (
+            <span className="rounded bg-red-50 px-1 text-red-500">Trash</span>
+          ) : item.status === 'archived' ? (
             <span className="rounded bg-neutral-100 px-1 text-neutral-500">Archived</span>
           ) : null}
           {item.unreadCount > 1 ? (

@@ -429,10 +429,15 @@ rest advertise the roadmap and reject connection attempts.
 **Phased plan (ADR 0021):** (1) multi-account foundation — *implemented*;
 (2) `MailSyncProvider` seam + Gmail behind it — *implemented*; (3) email into the
 `Conversation` head + Communication Centre (unified inbox) — *implemented*;
-(4) `/mail` client — *v1 + compose/reply/search implemented* (bulk / preview /
-shortcuts still to come); (5) two-way action sync
-(read/archive/star/label/delete) — *implemented* (outbound CRM→Gmail; inbound
-flag-mirroring + drafts still to come); (6) shared-inbox operations — *implemented*
+(4) `/mail` client — *v1 + compose/reply/search/bulk/preview/shortcuts +
+Starred/Archived/Trash folders implemented* (rich-HTML reading pane still to
+come); (5) two-way action sync (read/archive/star/label/delete) — *implemented
+both directions*: outbound CRM→Gmail, **plus inbound Gmail→CRM flag mirroring**
+(`mirrorThreadFlags` — the history sync now pulls labelAdded/labelRemoved/
+messageDeleted and re-reads each thread's Gmail label state via
+`GmailClient.getThreadState`, converging read/star/archive/trash onto the
+`Conversation` head; `isStarred`/`isTrashed`/`flagsSyncedAt` columns). Drafts
+sync still to come; (6) shared-inbox operations — *implemented*
 (assign already existed; + notes/@mentions + one-click task-from-conversation);
 (7) Outlook/Exchange/IMAP providers — design in **ADR 0024** (deps not added
 until approved); (8) templates, automations, analytics, calendar, unified
@@ -444,7 +449,7 @@ channels.
 
 **Real-time push.** Google Cloud Pub/Sub `watch` for real-time delivery. Watch expires after 7 days, so we renew every 6 days via the `gmail/refresh-watch` job.
 
-**Sync surface today.** Read sync, reply from CRM, sent items reflect in Gmail, attachments, 90-day backfill. Labels/drafts/snooze/archive/delete two-way mirroring is ADR 0021 Phase 5 — not yet live.
+**Sync surface today.** Read sync, reply from CRM, sent items reflect in Gmail, attachments, 90-day backfill. **Read/star/archive/trash mirror both ways** (ADR 0021 Phase 5): a change made in the Gmail UI flows back to the CRM via `mirrorThreadFlags` in the history job, and CRM actions push to Gmail. Both sides write the same `Conversation` flag columns so they converge. Custom-label and drafts/snooze two-way mirroring still to come. The OAuth refresh client reads `GOOGLE_OAUTH_CLIENT_ID/SECRET` (falling back to legacy `GOOGLE_CLIENT_ID/SECRET`) — the SAME client the connect flow uses, so background refresh never breaks with `invalid_client`.
 
 **Threading.** Use Gmail's `thread_id` directly. Do not invent our own threading.
 
@@ -1119,7 +1124,8 @@ When asked something that touches money, safeguarding, or external mutation:
 | Read the current state of a Trengo conversation | `Conversation` table (ADR 0020 Phase 2). Upserted by the webhook job and the CRM outbound (`packages/integrations/trengo/src/conversation-head.ts`). Indexed columns: status, lastMessageAt, assigneeUserId, channel, unreadCount, tags. Message bodies stay in `Interaction` — the head is a queryable state layer, not a copy. |
 | Surface an email thread in the unified inbox | `Conversation` head with `provider='email'`, keyed on `(provider, externalThreadId=gmailThreadId)`, optional `mailAccountId` (ADR 0021 Phase 3). Upserter `applyMailToConversation` (`packages/core/src/mail/conversation-head.ts`, pure + db-port, reusable by Outlook/IMAP) is called by the Gmail sync `processMessage` after writing the `email_received`/`email_sent` Interaction. Email heads list in the Comms Centre automatically; `inbox.conversations.get` joins email messages on `payload.gmailThreadId`. |
 | Open the dedicated email workspace | `/mail` (ADR 0021 Phase 4, `apps/web/app/(app)/mail/page.tsx` shell → `MailWorkspace.tsx` client). Three-pane Superhuman-class client: account/folder rail + compose modal · thread list with debounced search + multi-select bulk actions (archive / read / trash) · reading pane with inline actions + mark-read-on-open + reply. tRPC `mail.accounts` + `mail.threads.list` (`apps/web/app/api/trpc/routers/mail.ts`, staff-gated). Live via `useConversationStream` (invalidates `mail.threads.list`). |
-| Act on an email thread (mark read / archive / star / trash / label) | tRPC `mail.thread.{setRead,setArchived,setStarred,setTrashed,setLabels,labels}` (ADR 0021 Phase 5, Sales Executive+; VA read-only). Performs the action on the live mailbox via the `MailSyncProvider` seam (`getMailSyncProvider` → Gmail `users.threads.modify` / `trash`), reflects it on the Conversation head, publishes the SSE delta, audits `mail.thread_*`. Reversible (trash → Gmail Trash). UI: `MailThreadActions` bar on the conversation view (email rows only). |
+| Act on an email thread (mark read / archive / star / trash / label) | tRPC `mail.thread.{setRead,setArchived,setStarred,setTrashed,setLabels,labels}` (ADR 0021 Phase 5, Sales Executive+; VA read-only). Performs the action on the live mailbox via the `MailSyncProvider` seam (`getMailSyncProvider` → Gmail `users.threads.modify` / `trash`), reflects it on the Conversation head (incl. the `isStarred`/`isTrashed` columns), publishes the SSE delta, audits `mail.thread_*`. Reversible (trash → Gmail Trash). UI: `MailThreadActions` bar on the conversation view (email rows only). |
+| Mirror a Gmail-side flag change back into the CRM (inbound two-way) | `mirrorThreadFlags` in `packages/integrations/gmail/src/jobs.ts`, driven by the `gmail/history.changed` job. The history pull (`GmailClient.listHistorySince`) now returns `changedThreadIds` from labelAdded/labelRemoved/messageDeleted; each is re-read via `GmailClient.getThreadState` (`users.threads.get`), mapped by the pure `deriveThreadFlags` (`thread-flags.ts`), and applied with `applyMailFlagsToConversation` (`packages/core/src/mail/conversation-head.ts`). Read→`unreadCount`, archive/trash→`status`, plus `isStarred`/`isTrashed`/`flagsSyncedAt`; never clobbers a CRM `closed`/`snoozed`. A 404 (deleted in Gmail) marks the head trashed, never hard-deletes (§3). The `/mail` rail's Starred/Archived/Trash folders read these columns. |
 | Reply to an email thread from the CRM | tRPC `mail.thread.reply` ({conversationId, body, cc?}) — reuses the Gmail `sendReply` outbound (`@studymind/integration-gmail/outbound`, idempotent on `(threadId, requestId)`), threaded against the latest inbound's `Message-ID`, sent from the account owner's mailbox; reflects the outbound on the head + audits `mail.thread_replied`. Sales Executive+. UI: `EmailReply` box on the conversation view (email rows). |
 | Compose a brand-new email from the CRM | tRPC `mail.compose` ({mailAccountId, to[], cc?, subject, body}) — Gmail `sendEmail` outbound (literal subject, fresh thread, idempotent on `compose:<requestId>`), links matched Contacts, then `applyMailToConversation` creates the email head so it shows in `/mail` at once. Audits `mail.composed`. Sales Executive+; Gmail today (other providers with Phase 7). UI: `MailCompose` panel on `/mail`. |
 | Backfill the Conversation head from historic Interactions | Admin trigger `admin.backfill.conversationHeads.start` (CEO + Senior Manager only) fires `migration/backfill-conversation-heads.requested`. Self-recursive Inngest function `packages/integrations/trengo/src/backfill-conversation-heads.ts` walks 1000 rows per invocation ordered by `(occurredAt, id)`, scheduling the next batch with a cursor. Idempotent — replays converge to the same state. Audit at start + completion only. |

@@ -4,10 +4,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  applyMailFlagsToConversation,
   applyMailToConversation,
   type ApplyMailInput,
   type MailConversationDb,
   type MailConversationRow,
+  type MailThreadFlags,
 } from './conversation-head'
 
 vi.mock('../realtime', () => ({ publishConversationUpdate: vi.fn() }))
@@ -22,7 +24,13 @@ function makeDb(): { db: MailConversationDb; rows: MailConversationRow[] } {
             r.provider === where.provider && r.externalThreadId === where.externalThreadId,
         ) ?? null,
       create: async ({ data }) => {
-        const row = { ...data } as unknown as MailConversationRow
+        // Mirror the DB column defaults the create input omits.
+        const row = {
+          isStarred: false,
+          isTrashed: false,
+          flagsSyncedAt: null,
+          ...data,
+        } as unknown as MailConversationRow
         rows.push(row)
         return row
       },
@@ -134,5 +142,103 @@ describe('applyMailToConversation', () => {
     await applyMailToConversation(db, base)
     await applyMailToConversation(db, { ...base, externalThreadId: 'thread_2' })
     expect(rows).toHaveLength(2)
+  })
+})
+
+describe('applyMailFlagsToConversation (inbound two-way mirror)', () => {
+  const READ_INBOX: MailThreadFlags = {
+    isRead: true,
+    isStarred: false,
+    isArchived: false,
+    isTrashed: false,
+  }
+  const syncedAt = new Date('2026-06-01T09:00:00Z')
+
+  it('returns null when no head exists yet (nothing to mirror onto)', async () => {
+    const { db } = makeDb()
+    const res = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'missing',
+      flags: READ_INBOX,
+      syncedAt,
+    })
+    expect(res).toBeNull()
+  })
+
+  it('clears unread when Gmail marks the thread read', async () => {
+    const { db } = makeDb()
+    await applyMailToConversation(db, base) // unread 1
+    const row = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: READ_INBOX,
+      syncedAt,
+    })
+    expect(row?.unreadCount).toBe(0)
+    expect(row?.flagsSyncedAt).toEqual(syncedAt)
+  })
+
+  it('mirrors star on and off', async () => {
+    const { db } = makeDb()
+    await applyMailToConversation(db, base)
+    const on = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: { ...READ_INBOX, isStarred: true },
+      syncedAt,
+    })
+    expect(on?.isStarred).toBe(true)
+    const off = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: READ_INBOX,
+      syncedAt,
+    })
+    expect(off?.isStarred).toBe(false)
+  })
+
+  it('archived in Gmail moves the head to archived; restored moves it back to open', async () => {
+    const { db } = makeDb()
+    await applyMailToConversation(db, base)
+    const archived = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: { ...READ_INBOX, isArchived: true },
+      syncedAt,
+    })
+    expect(archived?.status).toBe('archived')
+    const restored = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: READ_INBOX,
+      syncedAt,
+    })
+    expect(restored?.status).toBe('open')
+  })
+
+  it('trashed in Gmail sets isTrashed + archives the head', async () => {
+    const { db } = makeDb()
+    await applyMailToConversation(db, base)
+    const row = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: { isRead: true, isStarred: false, isArchived: false, isTrashed: true },
+      syncedAt,
+    })
+    expect(row?.isTrashed).toBe(true)
+    expect(row?.status).toBe('archived')
+  })
+
+  it('never clobbers a CRM-only closed/snoozed status', async () => {
+    const { db, rows } = makeDb()
+    await applyMailToConversation(db, base)
+    rows[0]!.status = 'snoozed'
+    const row = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: { ...READ_INBOX, isArchived: true },
+      syncedAt,
+    })
+    expect(row?.status).toBe('snoozed')
   })
 })

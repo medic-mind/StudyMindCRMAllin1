@@ -13,7 +13,7 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { flag } from '@studymind/core/flags'
-import { applyMailToConversation } from '@studymind/core/mail'
+import { applyMailFlagsToConversation, applyMailToConversation } from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -28,6 +28,7 @@ import {
 import { isGoogleVoiceSender } from './google-voice'
 import { handleGoogleVoiceMessage } from './google-voice-handler'
 import { putAttachment } from './s3'
+import { deriveThreadFlags, DELETED_THREAD_FLAGS } from './thread-flags'
 
 interface HistoryChangedData {
   eventId: string
@@ -107,6 +108,21 @@ export const gmailHistoryChanged = inngest.createFunction(
       )
     }
 
+    // Inbound two-way sync (ADR 0021 Phase 5): threads whose Gmail flags
+    // changed (read / star / archive / trash) without a new message. Re-read
+    // each thread's current label state and mirror it onto the head, so a
+    // change made in the Gmail UI shows in the CRM. Idempotent + convergent —
+    // re-running yields the same head, and our own outbound echoes are no-ops.
+    for (const threadId of result.changedThreadIds) {
+      await step.run(`flags-${threadId}`, async () =>
+        mirrorThreadFlags({
+          agentId: mailbox.agentId,
+          threadId,
+          requestId: eventId,
+        }),
+      )
+    }
+
     await step.run('advance-history', async () =>
       db.gmailMailbox.update({
         where: { address: emailAddress },
@@ -115,9 +131,42 @@ export const gmailHistoryChanged = inngest.createFunction(
     )
 
     await step.run('mark-processed', async () => markProcessed(providerEventRowId))
-    return { ok: true, processed: result.added.length, historyId: result.newHistoryId }
+    return {
+      ok: true,
+      processed: result.added.length,
+      flagsMirrored: result.changedThreadIds.length,
+      historyId: result.newHistoryId,
+    }
   },
 )
+
+interface MirrorThreadFlagsInput {
+  agentId: string
+  threadId: string
+  requestId: string
+}
+
+/**
+ * Re-read a thread's current Gmail label state and mirror it onto the
+ * Conversation head (ADR 0021 Phase 5 — inbound half of two-way sync). A null
+ * head (message never synced) is a no-op; a 404 from Gmail (thread permanently
+ * deleted) marks the head trashed rather than hard-deleting it (§3).
+ */
+async function mirrorThreadFlags(input: MirrorThreadFlagsInput): Promise<void> {
+  const client = await createClientForAgent({
+    agentId: input.agentId,
+    purpose: 'gmail.sync',
+    requestId: input.requestId,
+  })
+  const state = await client.getThreadState(input.threadId)
+  const flags = state ? deriveThreadFlags(state.labelIds) : DELETED_THREAD_FLAGS
+  await applyMailFlagsToConversation(db, {
+    provider: 'email',
+    externalThreadId: input.threadId,
+    flags,
+    syncedAt: new Date(),
+  })
+}
 
 interface ProcessMessageInput {
   agentId: string

@@ -40,6 +40,9 @@ export interface MailConversationRow {
   lastOutboundAt: Date | null
   unreadCount: number
   subject: string | null
+  isStarred: boolean
+  isTrashed: boolean
+  flagsSyncedAt: Date | null
 }
 
 interface MailConversationCreateInput {
@@ -72,6 +75,10 @@ interface MailConversationUpdateInput {
   lastInboundAt?: Date | null
   lastOutboundAt?: Date | null
   unreadCount?: number
+  status?: 'open' | 'closed' | 'snoozed' | 'archived'
+  isStarred?: boolean
+  isTrashed?: boolean
+  flagsSyncedAt?: Date
 }
 
 export interface ApplyMailInput {
@@ -142,6 +149,84 @@ export async function applyMailToConversation(
   }
 
   if (changed) {
+    publishConversationUpdate({
+      id: row.id,
+      trengoTicketId: null,
+      lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
+      contactId: row.contactId,
+    })
+  }
+  return row
+}
+
+/** The four flags mirrored from the provider (Gmail label state today). */
+export interface MailThreadFlags {
+  isRead: boolean
+  isStarred: boolean
+  isArchived: boolean
+  isTrashed: boolean
+}
+
+export interface ApplyMailFlagsInput {
+  provider: string
+  externalThreadId: string
+  flags: MailThreadFlags
+  /** When the provider state was read — always stamped for observability. */
+  syncedAt: Date
+}
+
+/**
+ * Mirror a thread's provider-side flag state (read / star / archive / trash)
+ * onto its Conversation head — the inbound half of two-way sync (ADR 0021
+ * Phase 5). Returns the row, or null when no head exists yet (the message
+ * hasn't been synced, so there is nothing to mirror onto).
+ *
+ * Read state lives on `unreadCount`, archive/trash on `status`, plus the
+ * explicit `isStarred` / `isTrashed` columns — written the same way the CRM
+ * outbound actions write them, so Gmail and the CRM converge from either side.
+ * `closed` / `snoozed` heads are never clobbered (those are CRM workflow
+ * states the provider has no opinion on).
+ */
+export async function applyMailFlagsToConversation(
+  db: MailConversationDb,
+  input: ApplyMailFlagsInput,
+): Promise<MailConversationRow | null> {
+  const existing = await db.conversation.findFirst({
+    where: { provider: input.provider, externalThreadId: input.externalThreadId },
+  })
+  if (!existing) return null
+
+  const { flags } = input
+  const patch: MailConversationUpdateInput = { flagsSyncedAt: input.syncedAt }
+  let meaningful = false
+
+  const desiredUnread = flags.isRead ? 0 : Math.max(1, existing.unreadCount)
+  if (desiredUnread !== existing.unreadCount) {
+    patch.unreadCount = desiredUnread
+    meaningful = true
+  }
+
+  // Only move between open <-> archived; preserve CRM-only closed/snoozed.
+  if (existing.status === 'open' || existing.status === 'archived') {
+    const desiredStatus = flags.isArchived || flags.isTrashed ? 'archived' : 'open'
+    if (desiredStatus !== existing.status) {
+      patch.status = desiredStatus
+      meaningful = true
+    }
+  }
+
+  if (flags.isStarred !== existing.isStarred) {
+    patch.isStarred = flags.isStarred
+    meaningful = true
+  }
+  if (flags.isTrashed !== existing.isTrashed) {
+    patch.isTrashed = flags.isTrashed
+    meaningful = true
+  }
+
+  const row = await db.conversation.update({ where: { id: existing.id }, data: patch })
+
+  if (meaningful) {
     publishConversationUpdate({
       id: row.id,
       trengoTicketId: null,
