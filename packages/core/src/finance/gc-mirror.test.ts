@@ -43,13 +43,20 @@ function makeFakeDb(opts: {
       findMany: ({
         where,
       }: {
-        where: { email?: { equals: string }; phoneE164?: string; deletedAt: null }
+        where: {
+          email?: { equals: string }
+          phoneE164?: { endsWith: string }
+          deletedAt: null
+        }
       }) =>
         Promise.resolve(
           contacts
             .filter((c) => {
               if (c.deletedAt !== null) return false
-              if (where.phoneE164 !== undefined) return c.phoneE164 === where.phoneE164
+              if (where.phoneE164 !== undefined) {
+                const digits = (c.phoneE164 ?? '').replace(/\D/gu, '')
+                return digits.endsWith(where.phoneE164.endsWith)
+              }
               if (where.email)
                 return (c.email ?? '').toLowerCase() === where.email.equals.toLowerCase()
               return false
@@ -465,5 +472,13 @@ describe('findContactForGcCustomer', () => {
       ],
     })
     expect(await findContactForGcCustomer(db, { phone: '+441234567890' })).toBeNull()
+  })
+
+  it('matches a phone format-insensitively (E.164 customer ↔ national contact)', async () => {
+    const db = makeFakeDb({
+      // Contact stored in UK national format; GoCardless gives full E.164.
+      contacts: [{ id: 'c1', email: null, phoneE164: '07700900123' }],
+    })
+    expect((await findContactForGcCustomer(db, { phone: '+447700900123' }))?.id).toBe('c1')
   })
 })

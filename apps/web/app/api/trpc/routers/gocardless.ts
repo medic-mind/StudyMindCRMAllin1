@@ -17,6 +17,7 @@ import { z } from 'zod'
 
 import { BackfillAlreadyRunningError, startBackfill } from '@studymind/core/backfill'
 import {
+  classifyPlanShortfall,
   createMandateSetupLink,
   linkGcCustomer,
   listActivePlanArrears,
@@ -549,6 +550,35 @@ export const gocardlessRouter = router({
         }),
       ])
 
+      // Per-plan shortfall for the contact's ended fixed-length plans, so the
+      // panel can flag "£X still due" on a plan cancelled/finished early. We
+      // load the confirmed payments for those plans and reuse the pure engine.
+      const terminalSubIds = subscriptions
+        .filter(
+          (s) =>
+            (s.status === 'cancelled' || s.status === 'finished') && s.totalPaymentCount != null,
+        )
+        .map((s) => s.gcSubscriptionId)
+      const terminalPayments =
+        terminalSubIds.length > 0
+          ? await ctx.db.gcPayment.findMany({
+              where: {
+                gcSubscriptionId: { in: terminalSubIds },
+                status: { in: ['confirmed', 'paid_out'] },
+                deletedAt: null,
+              },
+              select: { gcSubscriptionId: true, amountMinor: true },
+            })
+          : []
+      const collectedBySub = new Map<string, { count: number; minor: number }>()
+      for (const p of terminalPayments) {
+        if (!p.gcSubscriptionId) continue
+        const cur = collectedBySub.get(p.gcSubscriptionId) ?? { count: 0, minor: 0 }
+        cur.count += 1
+        cur.minor += p.amountMinor
+        collectedBySub.set(p.gcSubscriptionId, cur)
+      }
+
       return {
         customers: customers.map((c) => ({
           gcCustomerId: c.gcCustomerId,
@@ -557,7 +587,32 @@ export const gocardlessRouter = router({
           email: c.email,
         })),
         mandates,
-        subscriptions,
+        subscriptions: subscriptions.map((s) => {
+          const collected = collectedBySub.get(s.gcSubscriptionId) ?? { count: 0, minor: 0 }
+          const shortfall =
+            s.totalPaymentCount != null
+              ? classifyPlanShortfall({
+                  gcSubscriptionId: s.gcSubscriptionId,
+                  name: s.name,
+                  status: s.status,
+                  amountMinor: s.amountMinor,
+                  currency: s.currency,
+                  totalPaymentCount: s.totalPaymentCount,
+                  gcCustomerId: null,
+                  startDate: null,
+                  endDate: null,
+                  gcCreatedAt: null,
+                  collectedCount: collected.count,
+                  collectedMinor: collected.minor,
+                  lastCollectedAt: null,
+                })
+              : null
+          return {
+            ...s,
+            shortfallMinor: shortfall?.shortfallMinor ?? null,
+            collectedCount: shortfall ? shortfall.collectedCount : null,
+          }
+        }),
         payments,
         setupLinks,
       }

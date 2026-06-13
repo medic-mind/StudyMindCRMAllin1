@@ -101,6 +101,7 @@ export const flagDdDefaultersNightly = inngest.createFunction(
         arrearsScanned: planResult.arrearsScanned,
         newlyShortfall,
         newlyArrears,
+        resolved: result.resolved + planResult.resolved,
       },
       'finance dd-issue scan complete',
     )
@@ -109,6 +110,7 @@ export const flagDdDefaultersNightly = inngest.createFunction(
       newlyDefaulted: result.newlyDefaulted.length,
       newlyShortfall,
       newlyArrears,
+      resolved: result.resolved + planResult.resolved,
     }
   },
 )

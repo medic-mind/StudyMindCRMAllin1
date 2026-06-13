@@ -7,6 +7,7 @@ import { createId } from '@paralleldrive/cuid2'
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
   linkReplacedMandate,
+  linkUnlinkedGcCustomers,
   recomputeAtRiskForFamily,
   resolveFamilyByGcMandate,
   revertGcPayment,
@@ -520,8 +521,40 @@ export const gocardlessReconcileLateFailures = inngest.createFunction(
   },
 )
 
+// Periodically re-attempt the unambiguous email/phone link for GoCardless
+// customers that imported before their CRM contact existed (ADR 0038). The
+// import runs this once at completion; the cron catches contacts created later
+// so their Direct Debit data reaches the contact panel without a re-import.
+// Read-only on money; unambiguous-only linking, never auto-merge (§3/§41.1).
+export const gocardlessRelinkCustomers = inngest.createFunction(
+  {
+    id: 'gocardless/relink-customers',
+    name: 'GoCardless: link unlinked customers to CRM contacts',
+    concurrency: { limit: 1 },
+    retries: 3,
+  },
+  { cron: '0 */6 * * *' },
+  async ({ step, logger }) => {
+    const result = await step.run('relink', () => linkUnlinkedGcCustomers(db))
+    if (result.linked > 0) {
+      await step.run('audit', () =>
+        writeAuditLogEntry(db, {
+          actorId: null,
+          action: 'gocardless.customers.relinked',
+          target: { type: 'System', id: 'gocardless-relink' },
+          requestId: `gc-relink:${new Date().toISOString().slice(0, 10)}`,
+          after: { scanned: result.scanned, linked: result.linked },
+        }),
+      )
+    }
+    logger.info(result, 'gocardless relink-customers complete')
+    return result
+  },
+)
+
 export const FUNCTIONS = [
   gocardlessEventReceived,
   gocardlessReconcileLateFailures,
+  gocardlessRelinkCustomers,
   gocardlessBackfill,
 ] as const

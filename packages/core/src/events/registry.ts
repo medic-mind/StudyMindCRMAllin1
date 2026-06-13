@@ -302,6 +302,7 @@ export const EVENT_NAMES = [
   'gocardless.mandate.cancel_requested',
   'gocardless.customer.linked',
   'gocardless.customer.unlinked',
+  'gocardless.customers.relinked',
   'gocardless.setup_link.created',
   'gocardless.setup_link.emailed',
   'gocardless.setup_link.reminder_sent',
