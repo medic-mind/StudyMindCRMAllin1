@@ -13,7 +13,11 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { flag } from '@studymind/core/flags'
-import { applyMailFlagsToConversation, applyMailToConversation } from '@studymind/core/mail'
+import {
+  applyMailFlagsToConversation,
+  applyMailToConversation,
+  prepareEmailHtml,
+} from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -270,6 +274,9 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   const occurredAt = new Date(message.internalDate || Date.now())
   const eventName = direction === 'sent' ? 'email.sent' : 'email.received'
   const dbType = direction === 'sent' ? 'email_sent' : 'email_received'
+  // Sanitised + size-capped HTML body for the reading pane's sandboxed iframe
+  // (ADR 0041). Null falls back to the plaintext `body` already captured.
+  const bodyHtml = prepareEmailHtml(message.htmlBody)
 
   // Persist one Interaction per matched Contact so each timeline shows the
   // full thread (CLAUDE.md §14). When no contact matches, we still record
@@ -292,6 +299,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           cc: ccAddrs,
           bcc: bccAddrs,
           subject,
+          bodyHtml,
           attachments: attachmentRefs,
         },
       },
@@ -325,6 +333,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           bcc: bccAddrs,
           matchedVia: contact.email,
           subject,
+          bodyHtml,
           attachments: attachmentRefs,
         },
       },

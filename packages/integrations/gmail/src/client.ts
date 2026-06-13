@@ -37,6 +37,9 @@ export interface GmailMessage {
   headers: GmailHeader[]
   /** Best-effort plain text body (gmail.utils unwraps base64url multiparts). */
   body: string
+  /** Best-effort text/html body, when the message carries one. Rendered in the
+   *  reading pane's sandboxed iframe so mail looks identical to Gmail. */
+  htmlBody: string | null
   attachments: GmailAttachmentMeta[]
 }
 
@@ -347,6 +350,7 @@ export function normaliseMessage(raw: gmail_v1.Schema$Message): GmailMessage {
   }))
   const attachments: GmailAttachmentMeta[] = []
   let body = ''
+  let htmlBody = ''
 
   function visit(part: gmail_v1.Schema$MessagePart | undefined): void {
     if (!part) return
@@ -362,12 +366,18 @@ export function normaliseMessage(raw: gmail_v1.Schema$Message): GmailMessage {
     if (part.mimeType === 'text/plain' && part.body?.data && !body) {
       body = Buffer.from(part.body.data, 'base64url').toString('utf8')
     }
+    if (part.mimeType === 'text/html' && part.body?.data && !htmlBody) {
+      htmlBody = Buffer.from(part.body.data, 'base64url').toString('utf8')
+    }
     for (const child of part.parts ?? []) visit(child)
   }
 
   visit(raw.payload ?? undefined)
-  if (!body && raw.payload?.body?.data) {
+  if (!body && raw.payload?.body?.data && raw.payload.mimeType !== 'text/html') {
     body = Buffer.from(raw.payload.body.data, 'base64url').toString('utf8')
+  }
+  if (!htmlBody && raw.payload?.mimeType === 'text/html' && raw.payload.body?.data) {
+    htmlBody = Buffer.from(raw.payload.body.data, 'base64url').toString('utf8')
   }
 
   return {
@@ -376,6 +386,7 @@ export function normaliseMessage(raw: gmail_v1.Schema$Message): GmailMessage {
     internalDate: Number(raw.internalDate ?? 0),
     headers,
     body,
+    htmlBody: htmlBody || null,
     attachments,
   }
 }

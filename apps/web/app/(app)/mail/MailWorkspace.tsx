@@ -864,9 +864,13 @@ function ReadingPane({
                     {formatRelativeTime(m.occurredAt, now)}
                   </time>
                 </div>
-                <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
-                  {displayMessageBody(m.body) ?? '(no content)'}
-                </p>
+                {m.bodyHtml ? (
+                  <EmailHtmlBody html={m.bodyHtml} text={displayMessageBody(m.body) ?? ''} />
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
+                    {displayMessageBody(m.body) ?? '(no content)'}
+                  </p>
+                )}
                 {m.mailAttachments.length > 0 ? (
                   <ul className="mt-2 flex flex-wrap gap-1.5">
                     {m.mailAttachments.map((a) => (
@@ -913,6 +917,57 @@ function ReadingPane({
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Email HTML body — rendered exactly like Gmail. ADR 0041.
+//
+// Security: the message HTML is shown in a LOCKED, opaque-origin sandboxed
+// iframe — `sandbox` WITHOUT `allow-scripts` (no JS can ever run) and WITHOUT
+// `allow-same-origin` (the frame is a unique origin: it can't read our cookies/
+// DOM, and it does NOT inherit our strict CSP, so the email's inline styles
+// render — which is what makes it look identical to Gmail). The HTML was also
+// sanitised server-side (packages/core/src/mail/html-email.ts) as defence in
+// depth. `allow-popups` + `<base target="_blank">` lets links open in a new tab.
+// -----------------------------------------------------------------------------
+
+function EmailHtmlBody({ html, text }: { html: string; text: string }) {
+  const [showHtml, setShowHtml] = useState(true)
+  const srcDoc = useMemo(
+    () =>
+      `<!doctype html><html><head><base target="_blank">` +
+      `<meta name="color-scheme" content="light">` +
+      `<style>html,body{margin:0;padding:0;background:#fff;` +
+      `font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;` +
+      `color:#1f2933;font-size:14px;line-height:1.5;word-break:break-word}` +
+      `img{max-width:100%;height:auto}a{color:#2563eb}` +
+      `table{max-width:100%}</style></head><body>${html}</body></html>`,
+    [html],
+  )
+  return (
+    <div>
+      {showHtml ? (
+        <iframe
+          title="Email message"
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          srcDoc={srcDoc}
+          className="w-full rounded-md border border-neutral-100 bg-white"
+          style={{ height: 420 }}
+        />
+      ) : (
+        <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
+          {text || '(no content)'}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => setShowHtml((v) => !v)}
+        className="mt-1 text-[11px] font-medium text-neutral-400 hover:text-neutral-600"
+      >
+        {showHtml ? 'View plain text' : 'View formatted'}
+      </button>
     </div>
   )
 }
