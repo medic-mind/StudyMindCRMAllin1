@@ -10,6 +10,7 @@ import {
   defaulterDetail,
   dismissUnresolvedStripePayment,
   listDefaulters,
+  listPlanShortfalls,
   listUnresolvedStripePayments,
   paymentsForFamily,
   paymentSummaryForFamily,
@@ -325,6 +326,24 @@ export const financeRouter = router({
           after: { view: 'detail' },
         })
         return detail
+      }),
+
+    // Plans cancelled / finished part-way that left contracted instalments
+    // uncollected (ADR 0038). Complements listDefaulters: this catches families
+    // who quietly stopped a fixed-length plan early without ever failing a
+    // Direct Debit. Read-only; audited like every finance read.
+    listPlanShortfalls: protectedProcedure
+      .input(z.object({}).optional())
+      .query(async ({ ctx }) => {
+        assertFinanceRole(requireUser(ctx))
+        const items = await listPlanShortfalls(ctx.db)
+        await ctx.audit({
+          action: 'finance.dd_defaulters_viewed',
+          target: { type: 'System', id: 'direct-debit-plan-shortfalls' },
+          purpose: 'view_dd_plan_shortfalls',
+          after: { count: items.length },
+        })
+        return { items }
       }),
   }),
 

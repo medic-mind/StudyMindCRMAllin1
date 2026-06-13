@@ -20,6 +20,7 @@ import { OverviewTab } from './OverviewTab'
 import { PaymentsTab } from './PaymentsTab'
 import { PayoutsTab } from './PayoutsTab'
 import { PlansTab } from './PlansTab'
+import { PlanShortfallsSection } from './PlanShortfallsSection'
 
 export const DD_TABS = [
   { value: 'overview', label: 'Overview', href: '/direct-debits' },
@@ -109,47 +110,67 @@ export function DirectDebitWorkspace({ tab, canImport }: { tab: DdTab; canImport
 }
 
 function IssuesTab() {
+  return (
+    <div className="space-y-6">
+      <DefaultersSection />
+      <PlanShortfallsSection />
+    </div>
+  )
+}
+
+function DefaultersSection() {
   const defaulters = trpc.finance.directDebit.listDefaulters.useQuery({})
   const items = defaulters.data?.items ?? []
 
-  if (defaulters.isLoading) {
-    return <p className="px-1 py-6 text-sm text-neutral-500">Loading defaulters…</p>
-  }
-  if (items.length === 0) {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
-        <p className="text-sm font-medium text-emerald-700">
-          No Direct Debit defaulters — every mandate is healthy.
-        </p>
-        <p className="mt-1 text-sm text-neutral-500">
-          The nightly defaulter scan runs after reconciliation; any family that defaults will
-          appear here for finance to chase.
-        </p>
-      </div>
-    )
-  }
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white shadow-card">
-      <Table>
-        <Thead>
-          <Tr>
-            <Th>Billing contact</Th>
-            <Th>Mandate</Th>
-            <Th>Failures</Th>
-            <Th>Last failure</Th>
-            <Th className="text-right">Paid</Th>
-            <Th className="text-right">Owed</Th>
-            <Th className="text-right">Outstanding</Th>
-            <Th>Reasons</Th>
-            <Th />
-          </Tr>
-        </Thead>
-        <Tbody>
-          {items.map((d) => (
-            <DefaulterRow key={d.familyId} defaulter={d} />
-          ))}
-        </Tbody>
-      </Table>
-    </div>
+    <section className="space-y-2">
+      <div className="flex items-baseline justify-between px-1">
+        <h2 className="text-sm font-semibold text-neutral-900">
+          Defaulters — failed or inactive Direct Debits
+        </h2>
+        {items.length > 0 ? (
+          <p className="text-xs text-neutral-500">
+            {items.length} family{items.length === 1 ? '' : 'ies'} need chasing
+          </p>
+        ) : null}
+      </div>
+
+      {defaulters.isLoading ? (
+        <p className="px-1 py-6 text-sm text-neutral-500">Loading defaulters…</p>
+      ) : items.length === 0 ? (
+        <div className="rounded-lg border border-neutral-200 bg-white p-6 text-center shadow-card">
+          <p className="text-sm font-medium text-emerald-700">
+            No Direct Debit defaulters — every mandate is healthy.
+          </p>
+          <p className="mt-1 text-sm text-neutral-500">
+            The nightly defaulter scan runs after reconciliation; any family that defaults will
+            appear here for finance to chase.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-neutral-200 bg-white shadow-card">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th>Billing contact</Th>
+                <Th>Mandate</Th>
+                <Th>Failures</Th>
+                <Th>Last failure</Th>
+                <Th className="text-right">Paid</Th>
+                <Th className="text-right">Owed</Th>
+                <Th className="text-right">Outstanding</Th>
+                <Th>Reasons</Th>
+                <Th />
+              </Tr>
+            </Thead>
+            <Tbody>
+              {items.map((d) => (
+                <DefaulterRow key={d.familyId} defaulter={d} />
+              ))}
+            </Tbody>
+          </Table>
+        </div>
+      )}
+    </section>
   )
 }

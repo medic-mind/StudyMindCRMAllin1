@@ -21,6 +21,7 @@ import {
   markBackfillRunning,
 } from '@studymind/core/backfill'
 import {
+  linkUnlinkedGcCustomers,
   syncGcPayment,
   upsertGcCustomerMirror,
   upsertGcMandateMirror,
@@ -231,6 +232,12 @@ export const gocardlessBackfill = inngest.createFunction(
       return { ok: true, phase, continued: true }
     }
 
+    // Final pass: with every customer and mandate now mirrored, re-attempt the
+    // unambiguous email auto-link for customers that were imported before their
+    // CRM contact existed. Linking propagates the Family to orphaned mandates,
+    // so their plans/payments reach the contact's Direct Debit panel.
+    const relinked = await step.run('relink-customers', () => linkUnlinkedGcCustomers(db))
+
     await step.run('complete', async () => {
       await markBackfillCompleted(db, jobId, {
         processed: newTotals.processed,
@@ -240,7 +247,10 @@ export const gocardlessBackfill = inngest.createFunction(
       })
     })
 
-    logger.info({ jobId, ...newTotals }, 'gocardless backfill complete')
-    return { ok: true, ...newTotals }
+    logger.info(
+      { jobId, ...newTotals, relinkedCustomers: relinked.linked },
+      'gocardless backfill complete',
+    )
+    return { ok: true, ...newTotals, relinkedCustomers: relinked.linked }
   },
 )

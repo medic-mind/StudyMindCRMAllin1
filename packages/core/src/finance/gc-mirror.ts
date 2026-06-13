@@ -484,3 +484,46 @@ export async function linkGcCustomer(
 
   return { ok: true, contactId: contact.id, familyId, linkedMandates }
 }
+
+export interface BackfillLinkResult {
+  scanned: number
+  linked: number
+}
+
+/**
+ * Re-attempt the unambiguous email auto-link for GoCardless customers that are
+ * still unlinked. The import-time auto-match only fires when the matching CRM
+ * contact already exists; a customer synced *before* its contact was created
+ * stays orphaned forever, so its mandates/plans/payments never reach the
+ * contact's Direct Debit panel. Running this after a contact import (or on a
+ * schedule) closes that window.
+ *
+ * Unambiguous matches only — two contacts sharing an email is a human decision
+ * (CLAUDE.md §3/§41.1), never an auto-merge. Linking propagates the Family to
+ * the customer's orphaned mandates via `linkGcCustomer`, which is what lets the
+ * reconciliation/defaulter pipeline pick them up.
+ */
+export async function linkUnlinkedGcCustomers(
+  db: DbClient,
+  opts: { limit?: number } = {},
+): Promise<BackfillLinkResult> {
+  const candidates = await db.gcCustomer.findMany({
+    where: { contactId: null, deletedAt: null, email: { not: null } },
+    select: { gcCustomerId: true, email: true },
+    take: opts.limit ?? 500,
+  })
+
+  let linked = 0
+  for (const candidate of candidates) {
+    if (!candidate.email) continue
+    const match = await findContactForGcEmail(db, candidate.email)
+    if (!match) continue
+    const res = await linkGcCustomer(db, {
+      gcCustomerId: candidate.gcCustomerId,
+      contactId: match.id,
+    })
+    if (res.ok && res.contactId) linked += 1
+  }
+
+  return { scanned: candidates.length, linked }
+}

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   linkGcCustomer,
+  linkUnlinkedGcCustomers,
   pickUnambiguousContact,
   upsertGcCustomerMirror,
   upsertGcMandateMirror,
@@ -69,6 +70,16 @@ function makeFakeDb(opts: {
         Promise.resolve(
           gcCustomers.find((c) => c['gcCustomerId'] === where.gcCustomerId) ?? null,
         ),
+      findMany: ({ where, take }: { where?: Record<string, unknown>; take?: number } = {}) => {
+        const wantsUnlinked = where ? 'contactId' in where : false
+        const wantsEmail = where ? 'email' in where : false
+        const rows = gcCustomers.filter((c) => {
+          if (wantsUnlinked && c['contactId'] != null) return false
+          if (wantsEmail && (c['email'] ?? null) == null) return false
+          return (c['deletedAt'] ?? null) === null
+        })
+        return Promise.resolve((take ? rows.slice(0, take) : rows).map((c) => ({ ...c })))
+      },
       create: ({ data }: { data: Record<string, unknown> }) => {
         const row = { ...data } as FakeRow
         gcCustomers.push(row)
@@ -151,7 +162,7 @@ function makeFakeDb(opts: {
         return Promise.resolve({ id: row.id })
       },
     },
-    _state: { gcCustomers, gcMandates, gcSubscriptions, gcPayouts },
+    _state: { gcCustomers, gcMandates, gcSubscriptions, gcPayouts, contacts, familyMembers },
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test fake
   return db as any
@@ -356,5 +367,49 @@ describe('linkGcCustomer', () => {
     expect((await linkGcCustomer(db, { gcCustomerId: 'CU1', contactId: 'ghost' })).reason).toBe(
       'contact_not_found',
     )
+  })
+})
+
+describe('linkUnlinkedGcCustomers', () => {
+  it('links a customer whose contact was created after import, and its mandate', async () => {
+    // Customer imported first with no matching contact → stays unlinked.
+    const db = makeFakeDb({})
+    await upsertGcCustomerMirror(db, {
+      gcCustomerId: 'CU1',
+      email: 'parent@example.com',
+      autoMatch: true,
+    })
+    await upsertGcMandateMirror(db, { gcMandateId: 'MD1', state: 'active', gcCustomerId: 'CU1' })
+    expect(db._state.gcCustomers[0]['contactId'] ?? null).toBeNull()
+
+    // The contact appears later; the backfill linker reconciles it.
+    db._state.contacts.push({ id: 'c1', email: 'parent@example.com', deletedAt: null })
+    db._state.familyMembers.push({ contactId: 'c1', familyId: 'f1' })
+
+    const result = await linkUnlinkedGcCustomers(db)
+    expect(result).toEqual({ scanned: 1, linked: 1 })
+    expect(db._state.gcCustomers[0]['contactId']).toBe('c1')
+    expect(db._state.gcMandates[0]['familyId']).toBe('f1')
+  })
+
+  it('never links when two contacts share the email (no auto-merge)', async () => {
+    const db = makeFakeDb({
+      contacts: [
+        { id: 'c1', email: 'shared@example.com' },
+        { id: 'c2', email: 'shared@example.com' },
+      ],
+    })
+    // Bypass create-time auto-match (ambiguous), then re-attempt via backfill.
+    await upsertGcCustomerMirror(db, { gcCustomerId: 'CU1', email: 'shared@example.com' })
+    const result = await linkUnlinkedGcCustomers(db)
+    expect(result.linked).toBe(0)
+    expect(db._state.gcCustomers[0]['contactId'] ?? null).toBeNull()
+  })
+
+  it('skips customers with no email', async () => {
+    const db = makeFakeDb({ contacts: [{ id: 'c1', email: 'p@example.com' }] })
+    await upsertGcCustomerMirror(db, { gcCustomerId: 'CU1', email: null })
+    const result = await linkUnlinkedGcCustomers(db)
+    expect(result).toEqual({ scanned: 0, linked: 0 })
   })
 })
