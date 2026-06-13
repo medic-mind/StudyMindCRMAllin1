@@ -4035,6 +4035,9 @@ model WebinarClass {
   /// Per-class overrides; fall back to WebinarSettings when null.
   emailSubjectTemplate String?
   emailBodyTemplate    String?
+  /// Optional rich-HTML reminder body authored in the group's chip editor. When
+  /// set it is sent as the HTML part (with emailBodyTemplate as the text part).
+  emailBodyHtml        String?
 
   active Boolean @default(true)
 

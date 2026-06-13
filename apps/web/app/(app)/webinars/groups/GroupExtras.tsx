@@ -8,8 +8,15 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
 import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { RichTextEditor } from '@/components/ui/rich-text-editor'
+import { htmlToPlainText } from '@/lib/html-text'
 import { trpc } from '@/lib/trpc/client'
+import {
+  buildPreviewVars,
+  REMINDER_FIELDS,
+  REMINDER_PRESETS,
+  renderTokens,
+} from '@/lib/webinar/reminder-templates'
 
 import type { ClassDetailView, CohortDetail } from '../types'
 
@@ -39,10 +46,16 @@ export function GroupExtras({
 function ReminderEmailCard({ detail }: { detail: ClassDetailView }) {
   const utils = trpc.useUtils()
   const router = useRouter()
-  const [subject, setSubject] = useState(detail.emailSubjectTemplate ?? '')
-  const [body, setBody] = useState(detail.emailBodyTemplate ?? '')
+  const [subject, setSubject] = useState(detail.emailSubjectTemplate || REMINDER_PRESETS[0]!.subject)
+  const [seed, setSeed] = useState(detail.emailBodyHtml || REMINDER_PRESETS[0]!.bodyHtml)
+  const [bodyHtml, setBodyHtml] = useState(seed)
+  const [resetKey, setResetKey] = useState(0)
   const [days, setDays] = useState<number[]>(detail.sendDaysOfWeek)
   const [hour, setHour] = useState(detail.sendHourLocal)
+
+  const vars = buildPreviewVars(detail)
+  const previewSubject = renderTokens(subject, vars)
+  const previewBody = renderTokens(bodyHtml, vars)
 
   const update = trpc.webinar.class.update.useMutation({
     onSuccess: () => {
@@ -53,48 +66,92 @@ function ReminderEmailCard({ detail }: { detail: ClassDetailView }) {
     onError: (e) => toast.error(e.message),
   })
 
+  function applyPreset(p: (typeof REMINDER_PRESETS)[number]) {
+    setSubject(p.subject)
+    setSeed(p.bodyHtml)
+    setBodyHtml(p.bodyHtml)
+    setResetKey((k) => k + 1)
+  }
+
+  function save() {
+    const html = bodyHtml.trim()
+    update.mutate({
+      id: detail.id,
+      emailSubjectTemplate: subject.trim() || null,
+      emailBodyHtml: html || null,
+      // Keep a plain-text version for text-only mail clients.
+      emailBodyTemplate: html ? htmlToPlainText(html).trim() || null : null,
+      sendDaysOfWeek: days,
+      sendHourLocal: hour,
+    })
+  }
+
   return (
     <Card>
       <CardBody>
         <h2 className="text-sm font-semibold text-neutral-900">Reminder email</h2>
         <p className="mt-1 text-xs text-neutral-500">
-          This group&apos;s own weekly email. Leave blank to use the default. Placeholders:{' '}
-          <code className="rounded bg-neutral-100 px-1">{'{{studentName}}'}</code>{' '}
-          <code className="rounded bg-neutral-100 px-1">{'{{zoomLink}}'}</code>{' '}
-          <code className="rounded bg-neutral-100 px-1">{'{{weekTopic}}'}</code>{' '}
-          <code className="rounded bg-neutral-100 px-1">{'{{dateLabel}}'}</code>.
+          This group&apos;s own weekly email — edit it like a document. Use{' '}
+          <strong>+ Insert field</strong> to drop in the student&apos;s name, the date, the topic or
+          the Zoom link; they fill in automatically each week. The preview shows this week&apos;s
+          real values.
         </p>
-        <form
-          className="mt-3 space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault()
-            update.mutate({
-              id: detail.id,
-              // Blank = fall back to the default template (store null, not '').
-              emailSubjectTemplate: subject.trim() ? subject.trim() : null,
-              emailBodyTemplate: body.trim() ? body.trim() : null,
-              sendDaysOfWeek: days,
-              sendHourLocal: hour,
-            })
-          }}
-        >
+
+        <div className="mt-3">
+          <span className="text-xs font-medium text-neutral-500">Start from a template:</span>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {REMINDER_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                title={p.description}
+                onClick={() => applyPreset(p)}
+                className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-700 hover:bg-neutral-50"
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-3">
           <Field label="Subject" htmlFor="ge-subj">
-            <Input
-              id="ge-subj"
-              placeholder="Your {{className}} class this week"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-            />
+            <Input id="ge-subj" value={subject} onChange={(e) => setSubject(e.target.value)} />
           </Field>
+          <div className="flex flex-wrap gap-1">
+            {REMINDER_FIELDS.map((f) => (
+              <button
+                key={f.token}
+                type="button"
+                onClick={() => setSubject((s) => `${s} ${f.token}`.trim())}
+                className="rounded bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-600 hover:bg-neutral-200"
+              >
+                + {f.label}
+              </button>
+            ))}
+          </div>
+
           <Field label="Body" htmlFor="ge-body">
-            <Textarea
-              id="ge-body"
-              rows={6}
-              placeholder={'Hi {{studentName}},\n\nThis week (week {{weekNumber}}): {{weekTopic}}.\nJoin: {{zoomLink}}'}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
+            <RichTextEditor
+              initialHtml={seed}
+              resetKey={resetKey}
+              fields={REMINDER_FIELDS}
+              onChange={setBodyHtml}
             />
           </Field>
+
+          <div className="rounded-md border border-neutral-200 bg-neutral-50/60 p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-neutral-400">
+              Preview (this week&apos;s values)
+            </div>
+            <div className="mt-1.5 text-sm font-semibold text-neutral-900">{previewSubject}</div>
+            <div
+              className="prose-sm mt-1 max-w-none text-sm text-neutral-700 [&_a]:text-primary-700 [&_a]:underline [&_li]:my-0.5 [&_ul]:list-disc [&_ul]:pl-5"
+              // Manager-authored template rendered with sample/real values — internal preview only.
+              dangerouslySetInnerHTML={{ __html: previewBody }}
+            />
+          </div>
+
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="Send on" htmlFor="ge-days" hint="Which weekday(s) the reminder goes out.">
               <div id="ge-days" className="flex flex-wrap gap-1">
@@ -133,10 +190,10 @@ function ReminderEmailCard({ detail }: { detail: ClassDetailView }) {
               />
             </Field>
           </div>
-          <Button type="submit" disabled={update.isPending}>
+          <Button onClick={save} disabled={update.isPending}>
             {update.isPending ? 'Saving…' : 'Save reminder email'}
           </Button>
-        </form>
+        </div>
       </CardBody>
     </Card>
   )
