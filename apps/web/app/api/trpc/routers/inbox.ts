@@ -582,6 +582,9 @@ export const inboxRouter = router({
           channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
           /** Trengo label filter — matches Conversation.tags. */
           tag: z.string().trim().min(1).max(80).nullish(),
+          /** Trengo "Teams" folder — open conversations assigned to a member
+           *  of this team. Overrides the status `filter` when set. */
+          teamId: z.string().min(1).nullish(),
           cursor: z
             .object({ id: z.string(), lastMessageAt: z.date() })
             .nullish(),
@@ -598,6 +601,15 @@ export const inboxRouter = router({
         }
 
         const where: Record<string, unknown> = {}
+        if (input.teamId) {
+          // Teams folder: open conversations whose assignee is on the team.
+          const members = await ctx.db.teamMember.findMany({
+            where: { teamId: input.teamId },
+            select: { userId: true },
+          })
+          where['status'] = 'open'
+          where['assigneeUserId'] = { in: members.map((m) => m.userId) }
+        } else
         switch (input.filter) {
           case 'mine':
             where['assigneeUserId'] = user.id
@@ -905,6 +917,53 @@ export const inboxRouter = router({
       }
     }),
 
+    // Trengo "Teams" folders — the teams the user can see, with a count of
+    // open conversations assigned to each team's members. CEO/Senior Manager/
+    // Manager see all teams; everyone else sees the teams they belong to.
+    teams: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!ALLOWED_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+      }
+      const seesAll =
+        user.role === 'ceo' || user.role === 'senior_manager' || user.role === 'manager'
+      const teams = await ctx.db.team.findMany({
+        where: {
+          archivedAt: null,
+          ...(seesAll ? {} : { members: { some: { userId: user.id } } }),
+        },
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          members: { select: { userId: true } },
+        },
+      })
+      // One grouped count of open conversations by assignee across all the
+      // member ids, then sum per team (a user can be on several teams).
+      const allMemberIds = Array.from(
+        new Set(teams.flatMap((t) => t.members.map((m) => m.userId))),
+      )
+      const grouped =
+        allMemberIds.length > 0
+          ? await ctx.db.conversation.groupBy({
+              by: ['assigneeUserId'],
+              where: { status: 'open', assigneeUserId: { in: allMemberIds } },
+              _count: { _all: true },
+            })
+          : []
+      const countByUser = new Map(
+        grouped.map((g) => [g.assigneeUserId as string, g._count._all] as const),
+      )
+      return teams.map((t) => ({
+        id: t.id,
+        name: t.name,
+        color: t.color,
+        count: t.members.reduce((sum, m) => sum + (countByUser.get(m.userId) ?? 0), 0),
+      }))
+    }),
+
     // ADR 0020 Phase 6i — bulk triage actions on the conversation list.
     // markRead / snooze / unsnooze are fast head-only `updateMany`s; close
     // loops the audited Trengo outbound per conversation (capped, sequential)
@@ -1155,6 +1214,82 @@ export const inboxRouter = router({
           otherConversations: others,
         }
       }),
+
+    // Trengo "Views" — per-user saved filters surfaced as custom folders.
+    views: router({
+      list: protectedProcedure.query(async ({ ctx }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        const rows = await ctx.db.conversationView.findMany({
+          where: { ownerUserId: user.id },
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+          select: { id: true, name: true, filter: true, channel: true, tag: true },
+        })
+        return rows
+      }),
+      create: protectedProcedure
+        .input(
+          z.object({
+            name: z.string().trim().min(1).max(60),
+            filter: z.enum([
+              'active',
+              'mine',
+              'assigned',
+              'unassigned',
+              'snoozed',
+              'closed',
+              'mentioned',
+              'favorites',
+              'spam',
+            ]),
+            channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
+            tag: z.string().trim().min(1).max(80).nullish(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          if (!ALLOWED_ROLES.has(user.role)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+          }
+          const count = await ctx.db.conversationView.count({
+            where: { ownerUserId: user.id },
+          })
+          if (count >= 30) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'You have reached the maximum of 30 saved views.',
+            })
+          }
+          const row = await ctx.db.conversationView.create({
+            data: {
+              id: createId(),
+              ownerUserId: user.id,
+              name: input.name,
+              filter: input.filter,
+              channel: input.channel ?? null,
+              tag: input.tag ?? null,
+              sortOrder: count,
+            },
+            select: { id: true, name: true, filter: true, channel: true, tag: true },
+          })
+          return row
+        }),
+      delete: protectedProcedure
+        .input(z.object({ id: z.string().min(1) }))
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          if (!ALLOWED_ROLES.has(user.role)) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+          }
+          // Owner-scoped delete — a user can only remove their own views.
+          await ctx.db.conversationView.deleteMany({
+            where: { id: input.id, ownerUserId: user.id },
+          })
+          return { id: input.id }
+        }),
+    }),
 
     // ADR 0021 Phase 6 — internal notes + @mentions on a conversation. Notes
     // are staff↔staff (a `note` Interaction scoped by `payload.conversationId`)

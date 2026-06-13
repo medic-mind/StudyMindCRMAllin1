@@ -306,6 +306,7 @@ model User {
   permissions             UserPermission[]
   assignedCards           Card[]                   @relation("CardAssignee")
   conversationFavorites   ConversationFavorite[]
+  conversationViews       ConversationView[]
 
   @@index([email])
 }
@@ -1290,6 +1291,30 @@ model ConversationFavorite {
 
   @@id([userId, conversationId])
   @@index([conversationId])
+}
+
+/// Per-user saved inbox filter (Trengo "Views" parity). Captures the comms-
+/// centre filter dimensions we support — folder filter + channel + label —
+/// under a name, surfaced as a custom folder in the rail. Per-user (not
+/// shared) for v1.
+model ConversationView {
+  id          String   @id
+  ownerUserId String
+  name        String
+  /// One of the InboxFilter values (active|mine|assigned|unassigned|snoozed|
+  /// closed|mentioned|favorites|spam). Stored as text (forward-only §19),
+  /// validated by Zod at the procedure boundary.
+  filter      String
+  /// whatsapp|sms|email|web_chat, or null for "all channels".
+  channel     String?
+  /// Trengo label to narrow to, or null.
+  tag         String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId, sortOrder])
 }
 
 /// Pending contact-field edit suggested by an upstream provider.
