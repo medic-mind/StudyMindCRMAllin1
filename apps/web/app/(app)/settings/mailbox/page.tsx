@@ -10,6 +10,7 @@ import { MailIcon } from '@/components/ui/icon'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { DisconnectGmailButton } from './disconnect-button'
+import { GmailImportButton } from './GmailImportButton'
 
 const BREADCRUMBS = [
   { label: 'Settings', href: '/settings' },
@@ -107,13 +108,16 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
               <h2 className="text-sm font-semibold text-neutral-900">
                 Connected accounts ({mailboxes.length})
               </h2>
-              <a
-                href="/api/oauth/gmail/connect"
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700"
-              >
-                <MailIcon size={14} />
-                {mailboxes.length === 0 ? 'Connect Gmail' : 'Connect another'}
-              </a>
+              <div className="flex flex-wrap items-center gap-3">
+                {mailboxes.length > 0 ? <GmailImportButton /> : null}
+                <a
+                  href="/api/oauth/gmail/connect"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700"
+                >
+                  <MailIcon size={14} />
+                  {mailboxes.length === 0 ? 'Connect Gmail' : 'Connect another'}
+                </a>
+              </div>
             </div>
 
             {mailboxes.length === 0 ? (

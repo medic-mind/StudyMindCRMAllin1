@@ -24,9 +24,11 @@ import {
   markBackfillFailed,
   markBackfillRunning,
 } from '@studymind/core/backfill'
+import { prepareEmailHtml } from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { primaryAccountByContact } from './business-account-link'
 import {
   createClientForAgent,
   getHeader,
@@ -55,7 +57,7 @@ function ymd(date: Date): string {
 export const gmailBackfillRequested = inngest.createFunction(
   {
     id: 'gmail/backfill.requested',
-    name: 'Backfill last 90 days of Gmail history for an agent',
+    name: 'Backfill Gmail history for an agent (windowed)',
     concurrency: { limit: 2 },
     retries: 4,
   },
@@ -182,9 +184,12 @@ async function listMessageIds(
     actorId: agentId,
     purpose: 'gmail.backfill',
   })
+  // Same OAuth client the connect/refresh path uses (prefer the GOOGLE_OAUTH_*
+  // names, fall back to the legacy GOOGLE_* ones) so the refresh token resolves
+  // against the client that minted it — otherwise the list call 401s.
   const oauth2 = new google.auth.OAuth2(
-    process.env['GOOGLE_CLIENT_ID'],
-    process.env['GOOGLE_CLIENT_SECRET'],
+    process.env['GOOGLE_OAUTH_CLIENT_ID'] ?? process.env['GOOGLE_CLIENT_ID'],
+    process.env['GOOGLE_OAUTH_CLIENT_SECRET'] ?? process.env['GOOGLE_CLIENT_SECRET'],
   )
   oauth2.setCredentials({ refresh_token: refreshToken })
   const gmail = google.gmail({ version: 'v1', auth: oauth2 })
@@ -246,6 +251,9 @@ async function processBackfillMessage(
     select: { id: true, email: true },
   })
   if (matchedContacts.length === 0) return { matched: 0 }
+  const accountByContact = await primaryAccountByContact(
+    matchedContacts.map((c) => c.id),
+  )
 
   // Stream attachments to S3 (same behaviour as live sync).
   const attachmentRefs: Array<{
@@ -274,6 +282,8 @@ async function processBackfillMessage(
   const occurredAt = new Date(message.internalDate || Date.now())
   const dbType = direction === 'sent' ? 'email_sent' : 'email_received'
   const eventName = direction === 'sent' ? 'email.sent' : 'email.received'
+  // Parity with the live sync: capture the rich HTML body for the reading pane.
+  const bodyHtml = prepareEmailHtml(message.htmlBody)
 
   for (const contact of matchedContacts) {
     await db.interaction.create({
@@ -281,6 +291,7 @@ async function processBackfillMessage(
         id: createId(),
         type: dbType,
         contactId: contact.id,
+        businessAccountId: accountByContact.get(contact.id) ?? null,
         occurredAt,
         summary: subject.slice(0, 280),
         payload: {
@@ -295,6 +306,7 @@ async function processBackfillMessage(
           bcc: bccAddrs,
           matchedVia: contact.email,
           subject,
+          bodyHtml,
           attachments: attachmentRefs,
         },
       },

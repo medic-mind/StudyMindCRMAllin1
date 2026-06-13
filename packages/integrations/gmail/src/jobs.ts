@@ -29,6 +29,7 @@ import {
   parseAddresses,
   type GmailMessage,
 } from './client'
+import { primaryAccountByContact } from './business-account-link'
 import { isGoogleVoiceSender } from './google-voice'
 import { handleGoogleVoiceMessage } from './google-voice-handler'
 import { putAttachment } from './s3'
@@ -246,6 +247,12 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
     where: { email: { in: allAddrs }, deletedAt: null },
     select: { id: true, email: true },
   })
+  // Resolve the B2B school/account each matched contact belongs to, so the
+  // email also lands on the account's Activity timeline (parity with notes /
+  // tasks, which stamp Interaction.businessAccountId).
+  const accountByContact = await primaryAccountByContact(
+    matchedContacts.map((c) => c.id),
+  )
 
   // Stream attachments to S3 first; we reference them by key in payload.
   const attachmentRefs: Array<{
@@ -320,6 +327,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
         id: createId(),
         type: dbType,
         contactId: contact.id,
+        businessAccountId: accountByContact.get(contact.id) ?? null,
         occurredAt,
         summary: subject.slice(0, 280),
         payload: {
