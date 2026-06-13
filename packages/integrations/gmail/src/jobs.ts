@@ -72,6 +72,7 @@ export const gmailHistoryChanged = inngest.createFunction(
       result = await step.run('list-history', async () => {
         const client = await createClientForAgent({
           agentId: mailbox.agentId,
+          address: emailAddress,
           purpose: 'gmail.sync',
           requestId: eventId,
         })
@@ -107,6 +108,7 @@ export const gmailHistoryChanged = inngest.createFunction(
         processMessage({
           agentId: mailbox.agentId,
           mailboxId: mailbox.id,
+          address: emailAddress,
           messageId: added.messageId,
           requestId: eventId,
         }),
@@ -122,6 +124,7 @@ export const gmailHistoryChanged = inngest.createFunction(
       await step.run(`flags-${threadId}`, async () =>
         mirrorThreadFlags({
           agentId: mailbox.agentId,
+          address: emailAddress,
           threadId,
           requestId: eventId,
         }),
@@ -147,6 +150,8 @@ export const gmailHistoryChanged = inngest.createFunction(
 
 interface MirrorThreadFlagsInput {
   agentId: string
+  /** The mailbox to act as (its own token — multi-account). */
+  address: string
   threadId: string
   requestId: string
 }
@@ -160,6 +165,7 @@ interface MirrorThreadFlagsInput {
 async function mirrorThreadFlags(input: MirrorThreadFlagsInput): Promise<void> {
   const client = await createClientForAgent({
     agentId: input.agentId,
+    address: input.address,
     purpose: 'gmail.sync',
     requestId: input.requestId,
   })
@@ -178,6 +184,8 @@ interface ProcessMessageInput {
   /** GmailMailbox.id the sync is running for — used to resolve the MailAccount
    *  this thread belongs to (ADR 0021 Phase 3b). */
   mailboxId: string
+  /** The mailbox address to act as (its own token — multi-account). */
+  address: string
   messageId: string
   requestId: string
 }
@@ -191,6 +199,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   if (existing) return
 
   const client = await createClientForAgent({
+    address: input.address,
     agentId: input.agentId,
     purpose: 'gmail.sync',
     requestId: input.requestId,
@@ -415,6 +424,7 @@ export const gmailRefreshWatch = inngest.createFunction(
         try {
           const client = await createClientForAgent({
             agentId: mb.agentId,
+            address: mb.address,
             purpose: 'gmail.refresh-watch',
           })
           const result = await client.setupWatch({

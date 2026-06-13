@@ -170,10 +170,10 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
 
           {mailboxes.length > 1 ? (
             <p className="text-xs text-neutral-500">
-              Multiple accounts are listed for visibility. Today only the
-              default mailbox holds an active refresh token (re-connecting any
-              account replaces it). Full multi-account token storage is
-              tracked for the next iteration.
+              Each connected account syncs independently with its own token. If a
+              mailbox was connected before this was enabled, reconnect it once so
+              it stores its own token. The default mailbox drives outbound for
+              Trengo + board call summaries.
             </p>
           ) : null}
         </div>

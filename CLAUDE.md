@@ -445,7 +445,7 @@ channels.
 
 ### Gmail provider specifics (live today)
 
-**Auth.** OAuth 2.0 per agent. Refresh tokens encrypted with KMS, never logged. Granular scopes only — `gmail.readonly`, `gmail.send`, `gmail.modify` (no full account access).
+**Auth.** OAuth 2.0 per agent. Refresh tokens encrypted with KMS, never logged. Granular scopes only — `gmail.readonly`, `gmail.send`, `gmail.modify` (no full account access). **Multi-account: each connected mailbox stores its OWN refresh token** (`GmailMailbox.refreshTokenCipherId`), so several inboxes connected under one login (info@brandA, info@brandB, …) all sync independently. The single `User.gmailRefreshTokenCipherId` is kept only as the default-mailbox fallback (system send / outbound). The live sync, refresh-watch and backfill all act as a specific mailbox via `createClientForAgent({ address })`; the OAuth callback encrypts the token keyed on `${userId}:${address}` (possible because the `EncryptedField→Contact` FK was dropped, ADR 0012 follow-up). Mailboxes connected before this must reconnect once to store their own token.
 
 **Real-time push.** Google Cloud Pub/Sub `watch` for real-time delivery. Watch expires after 7 days, so we renew every 6 days via the `gmail/refresh-watch` job.
 
