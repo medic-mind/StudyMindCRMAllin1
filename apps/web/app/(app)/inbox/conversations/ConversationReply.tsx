@@ -46,7 +46,7 @@ interface Props {
   conversationId: string
   contactId: string
   ticketId: number
-  status: 'open' | 'closed' | 'snoozed' | 'archived'
+  status: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
   /** Channel of the conversation — drives the default send tab. */
   channel: string | null
   /** Contact display name — used to substitute {{first_name}} / {{name}}
@@ -313,7 +313,7 @@ export function ConversationReply({
               aria-pressed={active}
               className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors ${
                 active
-                  ? 'border-primary-200 bg-primary-50 text-primary-800'
+                  ? 'border-trengo-200 bg-trengo-50 text-trengo-800'
                   : 'border-neutral-200 bg-white text-neutral-500 hover:text-neutral-800'
               }`}
             >
@@ -336,7 +336,7 @@ export function ConversationReply({
           <button
             type="button"
             onClick={() => setModeOverride(mode === 'text' ? 'template' : 'text')}
-            className="ml-auto text-xs text-primary-700 hover:underline"
+            className="ml-auto text-xs text-trengo-700 hover:underline"
           >
             {mode === 'text' ? 'Use an approved template' : 'Write free text instead'}
           </button>
@@ -459,7 +459,7 @@ export function ConversationReply({
             type="button"
             onClick={() => void handleSend(false)}
             disabled={sendDisabled}
-            className="rounded bg-primary-600 px-3 py-1 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
+            className="rounded bg-trengo-600 px-3 py-1 text-sm text-white hover:bg-trengo-700 disabled:opacity-50"
           >
             {sending
               ? 'Sending…'
@@ -477,7 +477,7 @@ export function ConversationReply({
               type="button"
               onClick={() => void handleSend(true)}
               disabled={sendDisabled || close.isPending}
-              className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+              className="rounded border border-trengo-300 bg-trengo-50 px-3 py-1 text-sm font-medium text-trengo-800 hover:bg-trengo-100 disabled:opacity-50"
             >
               {close.isPending ? 'Closing…' : 'Send & close'}
             </button>

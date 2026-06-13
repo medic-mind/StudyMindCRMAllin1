@@ -18,6 +18,7 @@ const config: Config = {
         warning: colors.warning,
         danger: colors.danger,
         info: colors.info,
+        trengo: colors.trengo,
       },
       fontFamily: {
         sans: [...typography.fontFamily.sans],

@@ -17,6 +17,7 @@ import {
   CheckCircleIcon,
   ChevronLeftIcon,
   RepeatIcon,
+  StarIcon,
   UserCircleIcon,
 } from '@/components/ui/icon'
 import { displayMessageBody } from '@/lib/format/html-text'
@@ -73,6 +74,14 @@ export function ThreadPane({
       refreshConvo()
     },
     onError: (e) => toast.error(e.message ?? 'Could not reopen conversation'),
+  })
+  const favorite = trpc.inbox.conversations.favorite.useMutation({
+    onSuccess: () => {
+      void utils.inbox.conversations.get.invalidate({ conversationId })
+      void utils.inbox.conversations.list.invalidate()
+      void utils.inbox.conversations.counts.invalidate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not update favourite'),
   })
 
   if (convo.isLoading) {
@@ -142,6 +151,20 @@ export function ThreadPane({
             {replyWindowOpen ? '24h open' : '24h closed'}
           </span>
         ) : null}
+        <button
+          type="button"
+          onClick={() => favorite.mutate({ conversationId, on: !head.isFavorite })}
+          disabled={favorite.isPending}
+          aria-pressed={head.isFavorite}
+          aria-label={head.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+          title={head.isFavorite ? 'Favorited' : 'Add to favorites'}
+          className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 disabled:opacity-50"
+        >
+          <StarIcon
+            size={16}
+            className={head.isFavorite ? 'fill-warning-400 text-warning-400' : ''}
+          />
+        </button>
         {head.contactId && head.trengoTicketId !== null ? (
           head.status === 'closed' ? (
             <button
@@ -169,7 +192,7 @@ export function ThreadPane({
               }
               disabled={closeTicket.isPending}
               title="Close this conversation in Trengo"
-              className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-trengo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-trengo-700 disabled:opacity-50"
             >
               <CheckCircleIcon size={14} />
               {closeTicket.isPending ? 'Closing…' : 'Close'}
@@ -210,7 +233,7 @@ export function ThreadPane({
           {head.tags.map((t) => (
             <span
               key={t}
-              className="rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[10px] font-medium text-primary-800"
+              className="rounded-full border border-trengo-200 bg-trengo-50 px-2 py-0.5 text-[10px] font-medium text-trengo-800"
             >
               {t}
             </span>
@@ -265,7 +288,7 @@ export function ThreadPane({
                 <article
                   className={`max-w-[40rem] px-3.5 py-2 text-sm ${
                     outbound
-                      ? 'ml-auto rounded-2xl rounded-br-md bg-primary-600 text-white'
+                      ? 'ml-auto rounded-2xl rounded-br-md bg-trengo-600 text-white'
                       : 'mr-auto rounded-2xl rounded-bl-md bg-white text-neutral-900 ring-1 ring-neutral-200'
                   } ${sameRunAsPrev ? 'mt-1' : ''}`}
                 >
@@ -394,7 +417,7 @@ function TabButton({
       aria-pressed={active}
       className={
         active
-          ? 'rounded-t-md border-b-2 border-primary-600 px-3 py-1.5 text-sm font-medium text-primary-700'
+          ? 'rounded-t-md border-b-2 border-trengo-600 px-3 py-1.5 text-sm font-medium text-trengo-700'
           : 'rounded-t-md border-b-2 border-transparent px-3 py-1.5 text-sm text-neutral-500 hover:text-neutral-800'
       }
     >

@@ -305,6 +305,7 @@ model User {
   totpRecoveryCodes       TotpRecoveryCode[]
   permissions             UserPermission[]
   assignedCards           Card[]                   @relation("CardAssignee")
+  conversationFavorites   ConversationFavorite[]
 
   @@index([email])
 }
@@ -1250,6 +1251,7 @@ model Conversation {
   contact     Contact?     @relation("ContactConversations", fields: [contactId], references: [id])
   family      Family?      @relation("FamilyConversations", fields: [familyId], references: [id])
   mailAccount MailAccount? @relation(fields: [mailAccountId], references: [id])
+  favorites   ConversationFavorite[]
 
   @@unique([provider, externalThreadId])
   @@index([status, lastMessageAt])
@@ -1268,6 +1270,26 @@ enum ConversationStatus {
   closed
   snoozed
   archived
+  /// Trengo "Spam box" parity — a CRM-side head status (like snooze) the agent
+  /// sets via mark-as-spam. Excluded from the active inbox; surfaced in the
+  /// Spam folder. A new inbound does NOT auto-resurface a spam head.
+  spam
+}
+
+/// Per-user "Favorite" on a conversation (Trengo parity — star a conversation
+/// to keep an eye on it; it appears in the Personal → Favorites folder).
+/// Many-to-many between User and Conversation; the composite id makes the
+/// favourite idempotent and the toggle a single upsert/delete.
+model ConversationFavorite {
+  userId         String
+  conversationId String
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, conversationId])
+  @@index([conversationId])
 }
 
 /// Pending contact-field edit suggested by an upstream provider.

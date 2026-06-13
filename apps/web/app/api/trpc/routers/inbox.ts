@@ -6,6 +6,7 @@
 // replies (that gate lives in the outbound interaction routers).
 
 import { createId } from '@paralleldrive/cuid2'
+import type { PrismaClient } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -24,6 +25,34 @@ const ALLOWED_ROLES: ReadonlySet<UserRole> = new Set([
   'sales_executive',
   'virtual_assistant',
 ])
+
+/**
+ * Conversation ids where `userId` was @mentioned in an internal note — the
+ * Trengo "Mentioned" folder. Derived from the note Interactions
+ * (payload.conversationId + payload.mentionedUserIds) so it needs no extra
+ * table. Bounded so a heavily-mentioned user can't pull an unbounded set.
+ */
+async function mentionedConversationIds(
+  db: PrismaClient,
+  userId: string,
+): Promise<string[]> {
+  const rows = await db.interaction.findMany({
+    where: {
+      deletedAt: null,
+      type: 'note',
+      payload: { path: ['mentionedUserIds'], array_contains: userId },
+    },
+    orderBy: { occurredAt: 'desc' },
+    take: 500,
+    select: { payload: true },
+  })
+  const ids = new Set<string>()
+  for (const r of rows) {
+    const cid = (r.payload as Record<string, unknown> | null)?.['conversationId']
+    if (typeof cid === 'string' && cid !== '') ids.add(cid)
+  }
+  return [...ids]
+}
 
 const InboxListInput = z.object({
   cursor: z
@@ -272,6 +301,7 @@ export const inboxRouter = router({
             tags: true,
             lastMessagePreview: true,
             replyDeadlineAt: true,
+            favorites: { where: { userId: user.id }, select: { conversationId: true } },
             contact: {
               select: {
                 id: true,
@@ -518,6 +548,7 @@ export const inboxRouter = router({
             subject: head.subject,
             tags: head.tags,
             replyDeadlineAt: head.replyDeadlineAt,
+            isFavorite: head.favorites.length > 0,
             contactName: head.contact
               ? [head.contact.firstName, head.contact.lastName]
                   .filter((x): x is string => !!x)
@@ -536,7 +567,17 @@ export const inboxRouter = router({
       .input(
         z.object({
           filter: z
-            .enum(['active', 'mine', 'assigned', 'unassigned', 'closed', 'snoozed'])
+            .enum([
+              'active',
+              'mine',
+              'assigned',
+              'unassigned',
+              'closed',
+              'snoozed',
+              'mentioned',
+              'favorites',
+              'spam',
+            ])
             .default('active'),
           channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
           /** Trengo label filter — matches Conversation.tags. */
@@ -576,6 +617,19 @@ export const inboxRouter = router({
           case 'snoozed':
             where['status'] = 'snoozed'
             break
+          case 'spam':
+            where['status'] = 'spam'
+            break
+          case 'favorites':
+            // Personal → Favorites: conversations this user has starred.
+            where['favorites'] = { some: { userId: user.id } }
+            break
+          case 'mentioned': {
+            // Personal → Mentioned: conversations where a note @mentioned me.
+            // Derived from the note Interactions (no extra table).
+            where['id'] = { in: await mentionedConversationIds(ctx.db, user.id) }
+            break
+          }
           case 'active':
           default:
             where['status'] = 'open'
@@ -613,6 +667,7 @@ export const inboxRouter = router({
             tags: true,
             lastMessagePreview: true,
             replyDeadlineAt: true,
+            favorites: { where: { userId: user.id }, select: { conversationId: true } },
             contact: {
               select: {
                 id: true,
@@ -665,6 +720,7 @@ export const inboxRouter = router({
           tags: r.tags,
           lastMessagePreview: r.lastMessagePreview,
           replyDeadlineAt: r.replyDeadlineAt,
+          isFavorite: r.favorites.length > 0,
           contactName: r.contact
             ? [r.contact.firstName, r.contact.lastName]
                 .filter((x): x is string => !!x)
@@ -822,18 +878,31 @@ export const inboxRouter = router({
       if (!ALLOWED_ROLES.has(user.role)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
       }
-      const [newCount, assigned, mine, closed, snoozed] = await Promise.all([
-        ctx.db.conversation.count({ where: { status: 'open', assigneeUserId: null } }),
-        ctx.db.conversation.count({
-          where: { status: 'open', assigneeUserId: { not: null } },
-        }),
-        ctx.db.conversation.count({
-          where: { status: { in: ['open', 'snoozed'] }, assigneeUserId: user.id },
-        }),
-        ctx.db.conversation.count({ where: { status: 'closed' } }),
-        ctx.db.conversation.count({ where: { status: 'snoozed' } }),
-      ])
-      return { newCount, assigned, mine, closed, snoozed }
+      const [newCount, assigned, mine, closed, snoozed, favorites, spam, mentionIds] =
+        await Promise.all([
+          ctx.db.conversation.count({ where: { status: 'open', assigneeUserId: null } }),
+          ctx.db.conversation.count({
+            where: { status: 'open', assigneeUserId: { not: null } },
+          }),
+          ctx.db.conversation.count({
+            where: { status: { in: ['open', 'snoozed'] }, assigneeUserId: user.id },
+          }),
+          ctx.db.conversation.count({ where: { status: 'closed' } }),
+          ctx.db.conversation.count({ where: { status: 'snoozed' } }),
+          ctx.db.conversation.count({ where: { favorites: { some: { userId: user.id } } } }),
+          ctx.db.conversation.count({ where: { status: 'spam' } }),
+          mentionedConversationIds(ctx.db, user.id),
+        ])
+      return {
+        newCount,
+        assigned,
+        mine,
+        closed,
+        snoozed,
+        favorites,
+        spam,
+        mentioned: mentionIds.length,
+      }
     }),
 
     // ADR 0020 Phase 6i — bulk triage actions on the conversation list.
@@ -844,7 +913,7 @@ export const inboxRouter = router({
       .input(
         z.object({
           conversationIds: z.array(z.string().min(1)).min(1).max(100),
-          action: z.enum(['markRead', 'close', 'snooze', 'unsnooze']),
+          action: z.enum(['markRead', 'close', 'snooze', 'unsnooze', 'markSpam']),
           minutes: z.number().int().min(5).max(60 * 24 * 30).optional(),
         }),
       )
@@ -866,6 +935,24 @@ export const inboxRouter = router({
           }
           await ctx.audit({
             action: 'trengo.conversation_read',
+            target: { type: 'System', id: 'bulk' },
+            after: { count: r.count, ids: ids.length },
+          })
+          return { action: input.action, succeeded: r.count, failed: 0 }
+        }
+
+        if (input.action === 'markSpam') {
+          // CRM-side head status (Trengo Spam box parity). Like snooze, this
+          // does not push to Trengo — Trengo owns its own spam classification.
+          const r = await ctx.db.conversation.updateMany({
+            where: { id: { in: ids }, status: { not: 'spam' } },
+            data: { status: 'spam', snoozedUntil: null },
+          })
+          for (const id of ids) {
+            publishConversationUpdate({ id, trengoTicketId: null, lastMessageAt: null, contactId: null })
+          }
+          await ctx.audit({
+            action: 'trengo.conversation_marked_spam',
             target: { type: 'System', id: 'bulk' },
             after: { count: r.count, ids: ids.length },
           })
@@ -934,6 +1021,139 @@ export const inboxRouter = router({
           after: { succeeded, failed, skipped, selected: ids.length },
         })
         return { action: 'close', succeeded, failed, skipped }
+      }),
+
+    // Personal Favorite (star) — per-user, idempotent toggle. No audit: this
+    // is personal UI state (§20 audits Contact/finance/safeguarding writes).
+    favorite: protectedProcedure
+      .input(z.object({ conversationId: z.string().min(1), on: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        if (input.on) {
+          await ctx.db.conversationFavorite.upsert({
+            where: {
+              userId_conversationId: {
+                userId: user.id,
+                conversationId: input.conversationId,
+              },
+            },
+            create: { userId: user.id, conversationId: input.conversationId },
+            update: {},
+          })
+        } else {
+          await ctx.db.conversationFavorite.deleteMany({
+            where: { userId: user.id, conversationId: input.conversationId },
+          })
+        }
+        const { publishConversationUpdate } = await import('@studymind/core/realtime')
+        publishConversationUpdate({
+          id: input.conversationId,
+          trengoTicketId: null,
+          lastMessageAt: null,
+          contactId: null,
+        })
+        return { conversationId: input.conversationId, isFavorite: input.on }
+      }),
+
+    // Mark-as-spam / restore (Trengo Spam box parity). CRM-side head status,
+    // like snooze — Trengo keeps its own spam classification. Audited because
+    // it changes conversation state (mirrors snooze/close).
+    setSpam: auditedProcedure
+      .input(z.object({ conversationId: z.string().min(1), spam: z.boolean() }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        await ctx.db.conversation.update({
+          where: { id: input.conversationId },
+          data: input.spam
+            ? { status: 'spam', snoozedUntil: null }
+            : { status: 'open' },
+        })
+        const { publishConversationUpdate } = await import('@studymind/core/realtime')
+        publishConversationUpdate({
+          id: input.conversationId,
+          trengoTicketId: null,
+          lastMessageAt: null,
+          contactId: null,
+        })
+        await ctx.audit({
+          action: input.spam
+            ? 'trengo.conversation_marked_spam'
+            : 'trengo.conversation_unmarked_spam',
+          target: { type: 'Conversation', id: input.conversationId },
+          after: { spam: input.spam },
+        })
+        return { conversationId: input.conversationId, spam: input.spam }
+      }),
+
+    // Trengo-style right-pane context: contact "custom fields" + the contact's
+    // OTHER conversations (Trengo's "Previous conversations" / linked tickets).
+    context: protectedProcedure
+      .input(z.object({ conversationId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!ALLOWED_ROLES.has(user.role)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+        }
+        const head = await ctx.db.conversation.findUnique({
+          where: { id: input.conversationId },
+          select: { id: true, contactId: true },
+        })
+        if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (!head.contactId) {
+          return { contact: null, otherConversations: [] }
+        }
+        const [contact, others] = await Promise.all([
+          ctx.db.contact.findUnique({
+            where: { id: head.contactId },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneE164: true,
+              country: true,
+              referralSource: true,
+              bookingStatus: true,
+            },
+          }),
+          ctx.db.conversation.findMany({
+            where: { contactId: head.contactId, id: { not: head.id } },
+            orderBy: { lastMessageAt: 'desc' },
+            take: 8,
+            select: {
+              id: true,
+              channel: true,
+              status: true,
+              subject: true,
+              lastMessageAt: true,
+              lastMessagePreview: true,
+            },
+          }),
+        ])
+        return {
+          contact: contact
+            ? {
+                id: contact.id,
+                name:
+                  [contact.firstName, contact.lastName].filter(Boolean).join(' ') ||
+                  contact.email ||
+                  contact.phoneE164 ||
+                  null,
+                email: contact.email,
+                phone: contact.phoneE164,
+                country: contact.country,
+                referralSource: contact.referralSource,
+                bookingStatus: contact.bookingStatus,
+              }
+            : null,
+          otherConversations: others,
+        }
       }),
 
     // ADR 0021 Phase 6 — internal notes + @mentions on a conversation. Notes
