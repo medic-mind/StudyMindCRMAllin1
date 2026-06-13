@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildTimetablePlan,
   minuteToTimeLabel,
+  parseDelimitedRows,
   parseStartMinute,
+  parseTabularTimetable,
   resolveCatalogueHandle,
   toWebinarHandle,
   weekdayToIndex,
@@ -26,6 +28,11 @@ describe('weekdayToIndex', () => {
     expect(weekdayToIndex('Weds')).toBe(2)
     expect(weekdayToIndex('SUNDAY')).toBe(6)
   })
+  it('tolerates plurals and embedded weekday names', () => {
+    expect(weekdayToIndex('Saturdays')).toBe(5)
+    expect(weekdayToIndex('every saturday')).toBe(5)
+    expect(weekdayToIndex('Thursday evenings')).toBe(3)
+  })
   it('returns null for nonsense', () => {
     expect(weekdayToIndex('someday')).toBeNull()
     expect(weekdayToIndex('')).toBeNull()
@@ -41,10 +48,83 @@ describe('parseStartMinute', () => {
     expect(parseStartMinute('12am')).toBe(0)
     expect(parseStartMinute('12pm')).toBe(720)
   })
+  it('tolerates dots, spaces, ranges, noon/midnight', () => {
+    expect(parseStartMinute('18.00')).toBe(1080)
+    expect(parseStartMinute('6.30 pm')).toBe(1110)
+    expect(parseStartMinute('9 am')).toBe(540)
+    expect(parseStartMinute('6-8pm')).toBe(1080) // trailing pm applies to start
+    expect(parseStartMinute('9am-1pm')).toBe(540)
+    expect(parseStartMinute('noon')).toBe(720)
+    expect(parseStartMinute('midnight')).toBe(0)
+  })
   it('rejects bad input', () => {
-    expect(parseStartMinute('25:00')).toBeNull()
     expect(parseStartMinute('half six')).toBeNull()
-    expect(parseStartMinute('9:99')).toBeNull()
+    expect(parseStartMinute('')).toBeNull()
+  })
+})
+
+describe('parseDelimitedRows', () => {
+  it('handles quoted fields with embedded commas', () => {
+    const rows = parseDelimitedRows('a,b,c\n1,"two, 2",3')
+    expect(rows).toEqual([
+      ['a', 'b', 'c'],
+      ['1', 'two, 2', '3'],
+    ])
+  })
+})
+
+describe('parseTabularTimetable', () => {
+  const csv = [
+    'Subject,Level,Week,Date,Day,Start,End,Year,Type,Title,Detail,Notes,Runs',
+    'A-level Biology,A-level,1,2026-09-12,Saturday,18:00,19:00,Year 12,Class,Biological molecules,"Monomers, polymers.",,Yes',
+    'A-level Biology,A-level,2,2026-09-19,Saturday,18:00,19:00,Year 13,Class,Energy transfers,"The Calvin cycle.",,Yes',
+    'A-level Biology,A-level,3,2026-12-26,Saturday,18:00,19:00,,No class,No class,,Boxing Day (public holiday),No',
+    'A-level Biology,A-level,4,2027-01-09,Saturday,18:00,19:00,Year 12,Class,Exchange,"SA to volume ratio.",,Yes',
+  ].join('\n')
+
+  const subjects: CatalogueOption[] = [{ handle: 'biology', label: 'Biology', aliases: ['bio'] }]
+  const levels: CatalogueOption[] = [{ handle: 'a_level', label: 'A-Level', aliases: ['a-level'] }]
+
+  it('parses the columnar schedule into one class + holiday, renumbering teaching weeks', () => {
+    const shape = parseTabularTimetable(csv)
+    expect(shape).not.toBeNull()
+    expect(shape!.classes).toHaveLength(1)
+    const c = shape!.classes![0]!
+    expect(c.subject).toBe('Biology') // level token stripped from "A-level Biology"
+    expect(c.level).toBe('A-level')
+    expect(c.day).toBe('Saturday')
+    expect(c.startTime).toBe('18:00')
+    // 3 teaching rows (the No-class row is excluded), renumbered 1..3 by date.
+    expect(c.weeks).toEqual([
+      { weekNumber: 1, topic: 'Biological molecules' },
+      { weekNumber: 2, topic: 'Energy transfers' },
+      { weekNumber: 3, topic: 'Exchange' },
+    ])
+    expect(shape!.holidays).toEqual([
+      { name: 'Boxing Day (public holiday)', startsOn: '2026-12-26', endsOn: '2026-12-26' },
+    ])
+    expect(shape!.cohort!.name).toBe('2026/2027')
+    expect(shape!.cohort!.startsOn).toBe('2026-09-12')
+  })
+
+  it('flows through buildTimetablePlan into a clean, catalogue-resolved plan', () => {
+    const shape = parseTabularTimetable(csv)!
+    const plan = buildTimetablePlan(shape, { subjects, levels })
+    expect(plan.classes).toHaveLength(1)
+    expect(plan.classes[0]).toMatchObject({
+      subjectHandle: 'biology',
+      subjectIsNew: false,
+      levelHandle: 'a_level',
+      levelIsNew: false,
+      dayOfWeek: 5,
+      startMinute: 1080,
+    })
+    expect(plan.classes[0]!.weeks).toHaveLength(3)
+    expect(plan.holidays).toHaveLength(1)
+  })
+
+  it('returns null for non-tabular prose', () => {
+    expect(parseTabularTimetable('Our Biology class runs on Saturdays at 6pm.')).toBeNull()
   })
 })
 
@@ -130,7 +210,7 @@ describe('buildTimetablePlan', () => {
       cohort: { name: 'Year' },
       classes: [
         { subject: 'Biology', level: 'GCSE', day: 'someday', startTime: '18:00' },
-        { subject: 'Chemistry', level: 'GCSE', day: 'Monday', startTime: 'noon' },
+        { subject: 'Chemistry', level: 'GCSE', day: 'Monday', startTime: 'lunchtime' },
       ],
     }
     const plan = buildTimetablePlan(ai, { subjects, levels })

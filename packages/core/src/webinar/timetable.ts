@@ -24,41 +24,47 @@ export function toWebinarHandle(input: string): string {
     .slice(0, 40)
 }
 
-const WEEKDAY_ALIASES: Record<string, number> = {
-  monday: 0,
-  mon: 0,
-  tuesday: 1,
-  tue: 1,
-  tues: 1,
-  wednesday: 2,
-  wed: 2,
-  weds: 2,
-  thursday: 3,
-  thu: 3,
-  thur: 3,
-  thurs: 3,
-  friday: 4,
-  fri: 4,
-  saturday: 5,
-  sat: 5,
-  sunday: 6,
-  sun: 6,
-}
+// 0=Mon..6=Sun, matched by stem so "Saturday", "Saturdays", "Sat", "every
+// saturday", "sat 9am" all resolve. Order is irrelevant — stems are distinct.
+const WEEKDAY_STEMS: Array<[string, number]> = [
+  ['mon', 0],
+  ['tue', 1],
+  ['wed', 2],
+  ['thu', 3],
+  ['fri', 4],
+  ['sat', 5],
+  ['sun', 6],
+]
 
-/** Weekday name → 0=Mon..6=Sun, or null if unrecognised. */
+/** Weekday name → 0=Mon..6=Sun, or null. Tolerant of plurals/embedded text. */
 export function weekdayToIndex(name: string): number | null {
-  const key = name.trim().toLowerCase().replace(/[^a-z]/g, '')
-  return key in WEEKDAY_ALIASES ? WEEKDAY_ALIASES[key]! : null
+  const s = name.trim().toLowerCase()
+  if (!s) return null
+  for (const [stem, idx] of WEEKDAY_STEMS) {
+    if (s.includes(stem)) return idx
+  }
+  return null
 }
 
-/** "18:00" / "6:30pm" / "9am" → minutes from local midnight, or null. */
+/**
+ * Parse a start time to minutes-from-midnight. Tolerant: "18:00", "18.00",
+ * "6:30pm", "6.30 pm", "9am", "9 am", "noon", "midnight", and ranges like
+ * "6-8pm" / "9am-1pm" (takes the start, applying a trailing meridiem). null if
+ * no time is found.
+ */
 export function parseStartMinute(value: string): number | null {
   const s = value.trim().toLowerCase()
-  const m = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(s)
+  if (!s) return null
+  if (/\bnoon\b|\bmidday\b/.test(s)) return 12 * 60
+  if (/\bmidnight\b/.test(s)) return 0
+  // A trailing meridiem applies to the start of a range ("6-8pm" → 6pm).
+  const meridiemAll = /(am|pm)/.exec(s)?.[1]
+  // First time token: hour, optional :/./h minutes, optional own meridiem.
+  const m = /(\d{1,2})\s*(?:[:.h]\s*(\d{2}))?\s*(am|pm)?/.exec(s)
   if (!m) return null
   let hour = Number(m[1])
   const minute = m[2] ? Number(m[2]) : 0
-  const meridiem = m[3]
+  const meridiem = m[3] ?? meridiemAll
   if (minute > 59) return null
   if (meridiem) {
     if (hour < 1 || hour > 12) return null
@@ -117,20 +123,29 @@ export function resolveCatalogueHandle(
 /* AI shape → plan                                                             */
 /* -------------------------------------------------------------------------- */
 
-/** The (already schema-validated) AI output shape this module consumes. */
+/** Nullable free-text — the AI/tabular sources are deliberately permissive, so
+ *  every field can be missing or null and is validated/clamped here. */
+type Loose = string | null | undefined
+
+/** The (schema-validated but permissive) input shape this module consumes. */
 export interface TimetableImportAiShape {
-  cohort: { name: string; startsOn?: string | null; endsOn?: string | null }
-  holidays?: Array<{ name: string; startsOn: string; endsOn: string }>
-  classes: Array<{
-    subject: string
-    level: string
-    title?: string | null
-    day: string
-    startTime: string
+  cohort?: { name?: Loose; startsOn?: Loose; endsOn?: Loose } | null
+  holidays?: Array<{ name?: Loose; startsOn?: Loose; endsOn?: Loose }> | null
+  classes?: Array<{
+    subject?: Loose
+    level?: Loose
+    title?: Loose
+    day?: Loose
+    startTime?: Loose
     durationMins?: number | null
-    weeks?: Array<{ weekNumber: number; topic: string }>
-  }>
-  note?: string
+    weeks?: Array<{ weekNumber?: number | null; topic?: Loose }> | null
+  }> | null
+  note?: Loose
+}
+
+/** True when `v` is a non-empty ISO YYYY-MM-DD string. */
+function isIsoDate(v: Loose): v is string {
+  return typeof v === 'string' && ISO_DATE.test(v)
 }
 
 export interface PlannedWeek {
@@ -177,13 +192,15 @@ export interface BuildTimetablePlanOptions {
   levels: CatalogueOption[]
 }
 
-function cleanWeeks(weeks: Array<{ weekNumber: number; topic: string }> | undefined): PlannedWeek[] {
+function cleanWeeks(
+  weeks: Array<{ weekNumber?: number | null; topic?: Loose }> | null | undefined,
+): PlannedWeek[] {
   if (!weeks) return []
   const out: PlannedWeek[] = []
   for (const w of weeks) {
     const topic = (w.topic ?? '').trim()
-    const n = Math.trunc(w.weekNumber)
-    if (!topic || n < 1 || n > 60) continue
+    const n = Math.trunc(Number(w.weekNumber))
+    if (!topic || !Number.isFinite(n) || n < 1 || n > 60) continue
     out.push({ weekNumber: n, topic: topic.slice(0, 300) })
   }
   // Stable order; keep the first topic seen for any duplicated week number.
@@ -204,13 +221,13 @@ export function buildTimetablePlan(
   const warnings: string[] = []
 
   const cohortName = (ai.cohort?.name ?? '').trim().slice(0, 40)
-  const startsOn = ai.cohort?.startsOn && ISO_DATE.test(ai.cohort.startsOn) ? ai.cohort.startsOn : null
-  const endsOn = ai.cohort?.endsOn && ISO_DATE.test(ai.cohort.endsOn) ? ai.cohort.endsOn : null
+  const startsOn = isIsoDate(ai.cohort?.startsOn) ? ai.cohort!.startsOn : null
+  const endsOn = isIsoDate(ai.cohort?.endsOn) ? ai.cohort!.endsOn : null
 
   const holidays: PlannedHoliday[] = []
   for (const h of ai.holidays ?? []) {
     const name = (h.name ?? '').trim().slice(0, 80)
-    if (!name || !ISO_DATE.test(h.startsOn) || !ISO_DATE.test(h.endsOn)) {
+    if (!name || !isIsoDate(h.startsOn) || !isIsoDate(h.endsOn)) {
       if (name) warnings.push(`Skipped holiday "${name}" — dates were not clear.`)
       continue
     }
@@ -255,14 +272,16 @@ export function buildTimetablePlan(
         ? Math.trunc(c.durationMins)
         : 60
 
+    const subjectLabelClamped = subject.label.slice(0, 60)
+    const levelLabelClamped = level.label.slice(0, 60)
     classes.push({
       subjectHandle: subject.handle,
-      subjectLabel: subject.label,
+      subjectLabel: subjectLabelClamped,
       subjectIsNew: subject.isNew,
       levelHandle: level.handle,
-      levelLabel: level.label,
+      levelLabel: levelLabelClamped,
       levelIsNew: level.isNew,
-      title: (c.title ?? '').trim().slice(0, 120) || label,
+      title: (c.title ?? '').trim().slice(0, 120) || `${subjectLabelClamped} ${levelLabelClamped}`.slice(0, 120),
       dayOfWeek,
       dayLabel: WEEKDAY_LABEL[dayOfWeek] ?? '—',
       startMinute,
@@ -277,5 +296,236 @@ export function buildTimetablePlan(
     holidays,
     classes,
     warnings,
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Deterministic tabular parser (structured CSV / spreadsheet export)          */
+/* -------------------------------------------------------------------------- */
+//
+// Most real timetables are a clean spreadsheet: one row per week with Subject,
+// Level, Week, Date, Day, Start, Title columns (+ "No class" rows for breaks).
+// That parses perfectly WITHOUT AI — so we try this first (rules-first, §3/§18)
+// and only reach for the AI structurer when the input isn't a recognisable
+// table (a prose paste, an odd PDF). No clock, no I/O.
+
+/** RFC-4180-ish parse: handles quoted fields with embedded commas/newlines. */
+export function parseDelimitedRows(text: string, delimiter = ','): string[][] {
+  const rows: string[][] = []
+  let field = ''
+  let row: string[] = []
+  let inQuotes = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"'
+          i += 1
+        } else {
+          inQuotes = false
+        }
+      } else {
+        field += ch
+      }
+      continue
+    }
+    if (ch === '"') {
+      inQuotes = true
+    } else if (ch === delimiter) {
+      row.push(field)
+      field = ''
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i += 1
+      row.push(field)
+      rows.push(row)
+      field = ''
+      row = []
+    } else {
+      field += ch
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field)
+    rows.push(row)
+  }
+  return rows.filter((r) => r.some((c) => c.trim().length > 0))
+}
+
+/** Pick the delimiter the header row most likely uses (comma / tab / semicolon). */
+function detectDelimiter(firstLine: string): string {
+  const counts: Array<[string, number]> = [
+    [',', (firstLine.match(/,/g) ?? []).length],
+    ['\t', (firstLine.match(/\t/g) ?? []).length],
+    [';', (firstLine.match(/;/g) ?? []).length],
+  ]
+  counts.sort((a, b) => b[1] - a[1])
+  return counts[0]![1] > 0 ? counts[0]![0] : ','
+}
+
+type ColumnRole =
+  | 'subject'
+  | 'level'
+  | 'week'
+  | 'date'
+  | 'day'
+  | 'start'
+  | 'title'
+  | 'type'
+  | 'notes'
+  | 'runs'
+
+/** Map a header cell to a known column role (or null if unrecognised). */
+function headerRole(raw: string): ColumnRole | null {
+  const h = raw.trim().toLowerCase()
+  if (!h) return null
+  if (/^subjects?$/.test(h)) return 'subject'
+  if (/^(level|tier|qualification)$/.test(h)) return 'level'
+  if (/^(week|wk|week\s*(no|number|#)?)$/.test(h)) return 'week'
+  if (/^date$/.test(h)) return 'date'
+  if (/^(day|weekday)$/.test(h)) return 'day'
+  if (/^(start|start\s*time|time|from)$/.test(h)) return 'start'
+  if (/^(title|topic|lesson|content|theme)$/.test(h)) return 'title'
+  if (/^(type|category|kind)$/.test(h)) return 'type'
+  if (/^(notes?|comment|comments)$/.test(h)) return 'notes'
+  if (/^(runs?|running|active|on)$/.test(h)) return 'runs'
+  return null
+}
+
+const TEACHING_NO = /\b(no\s*class|cancelled|canceled|holiday|break|half\s*term|no\s*session)\b/i
+
+/** Drop a redundant level token from a subject cell: "A-level Biology" + level
+ *  "A-level" → "Biology". Leaves the subject as-is when nothing meaningful is
+ *  left (e.g. a "UCAT" subject whose level is also "UCAT"). */
+function stripLevelToken(subject: string, level: string): string {
+  const subj = subject.trim()
+  const lv = level.trim()
+  if (!lv) return subj
+  const re = new RegExp(`\\b${lv.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+  const stripped = subj.replace(re, '').replace(/\s{2,}/g, ' ').trim()
+  return stripped.length > 0 ? stripped : subj
+}
+
+/** Derive a "2026/2027"-style name from the spread of dates, else single year. */
+function cohortNameFromDates(dates: string[]): string {
+  const years = dates
+    .map((d) => Number(d.slice(0, 4)))
+    .filter((y) => Number.isFinite(y) && y > 2000)
+  if (years.length === 0) return ''
+  const min = Math.min(...years)
+  const max = Math.max(...years)
+  return min === max ? String(min) : `${min}/${max}`
+}
+
+/**
+ * Parse a structured timetable table into the import shape. Returns null when
+ * the text is not a recognisable table (no header row mapping to our columns),
+ * so the caller can fall back to the AI structurer.
+ *
+ * Teaching weeks are renumbered sequentially by date (so they line up with the
+ * holiday-aware session numbering the rest of the system computes), and "No
+ * class" rows become cohort holidays.
+ */
+export function parseTabularTimetable(text: string): TimetableImportAiShape | null {
+  const firstLine = text.split(/\r?\n/, 1)[0] ?? ''
+  const delimiter = detectDelimiter(firstLine)
+  const rows = parseDelimitedRows(text, delimiter)
+  if (rows.length < 2) return null
+
+  const header = rows[0]!.map(headerRole)
+  const roleAt = (role: ColumnRole): number => header.indexOf(role)
+  // Need enough structure to be confident this is a timetable table.
+  const hasTitle = roleAt('title') >= 0
+  const hasDate = roleAt('date') >= 0
+  const hasSubject = roleAt('subject') >= 0
+  if (!(hasTitle && (hasDate || roleAt('week') >= 0)) && !(hasSubject && hasDate)) {
+    return null
+  }
+
+  const cell = (row: string[], role: ColumnRole): string => {
+    const idx = roleAt(role)
+    return idx >= 0 ? (row[idx] ?? '').trim() : ''
+  }
+
+  interface Group {
+    subject: string
+    level: string
+    day: string
+    start: string
+    teaching: Array<{ date: string; topic: string }>
+  }
+  const groups = new Map<string, Group>()
+  const holidays: TimetableImportAiShape['holidays'] = []
+  const allDates: string[] = []
+
+  for (const row of rows.slice(1)) {
+    const subject = cell(row, 'subject')
+    const level = cell(row, 'level')
+    const date = cell(row, 'date')
+    const day = cell(row, 'day')
+    const start = cell(row, 'start')
+    const title = cell(row, 'title')
+    const type = cell(row, 'type')
+    const notes = cell(row, 'notes')
+    const runs = cell(row, 'runs')
+
+    if (ISO_DATE.test(date)) allDates.push(date)
+
+    const isNoClass =
+      /^(no|n)$/i.test(runs) || TEACHING_NO.test(type) || TEACHING_NO.test(title)
+    if (isNoClass) {
+      if (ISO_DATE.test(date)) {
+        holidays!.push({ name: notes || title || 'Break', startsOn: date, endsOn: date })
+      }
+      continue
+    }
+
+    const cleanSubject = stripLevelToken(subject, level)
+    const key = `${cleanSubject.toLowerCase()}|${level.toLowerCase()}`
+    let g = groups.get(key)
+    if (!g) {
+      g = { subject: cleanSubject, level, day, start, teaching: [] }
+      groups.set(key, g)
+    }
+    if (!g.day && day) g.day = day
+    if (!g.start && start) g.start = start
+    const topic = title || notes
+    if (topic) g.teaching.push({ date: ISO_DATE.test(date) ? date : '', topic })
+  }
+
+  const classes: TimetableImportAiShape['classes'] = []
+  for (const g of groups.values()) {
+    if (!g.subject && !g.level) continue
+    // Order by date when available so the sequential week numbers match the
+    // holiday-aware session numbering computeSessions() produces.
+    const ordered = g.teaching.some((t) => t.date)
+      ? [...g.teaching].sort((a, b) => a.date.localeCompare(b.date))
+      : g.teaching
+    classes.push({
+      subject: g.subject || 'Class',
+      level: g.level || g.subject || 'Class',
+      day: g.day,
+      startTime: g.start,
+      weeks: ordered.map((t, i) => ({ weekNumber: i + 1, topic: t.topic })),
+    })
+  }
+  if (classes.length === 0) return null
+
+  // Dedupe holidays by name+date.
+  const seenHol = new Set<string>()
+  const uniqueHolidays = (holidays ?? []).filter((h) => {
+    const k = `${(h.name ?? '').toLowerCase()}|${h.startsOn ?? ''}`
+    return seenHol.has(k) ? false : (seenHol.add(k), true)
+  })
+
+  const sortedDates = [...allDates].sort()
+  return {
+    cohort: {
+      name: cohortNameFromDates(allDates),
+      startsOn: sortedDates[0] ?? null,
+      endsOn: sortedDates[sortedDates.length - 1] ?? null,
+    },
+    holidays: uniqueHolidays,
+    classes,
   }
 }
