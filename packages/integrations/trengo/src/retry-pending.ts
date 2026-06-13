@@ -67,6 +67,7 @@ interface RetryablePayload {
   channel?: string
   body?: string
   assigneeUserId?: string
+  trengoAssigneeId?: number
   label?: string
   internalNote?: boolean
   newConversation?: boolean
@@ -293,7 +294,8 @@ export const trengoRetryPendingSend = inngest.createFunction(
           })
           recovered += 1
         } else if (row.type === 'ticket_assigned') {
-          if (typeof payload.assigneeUserId !== 'string') {
+          // Assignment recovers by the Trengo agent id stamped on the row.
+          if (typeof payload.trengoAssigneeId !== 'number') {
             skipped += 1
             continue
           }
@@ -301,7 +303,7 @@ export const trengoRetryPendingSend = inngest.createFunction(
             contactId: row.contactId,
             agentId: payload.agentId,
             ticketId: payload.ticketId,
-            assigneeUserId: payload.assigneeUserId,
+            trengoAssigneeId: payload.trengoAssigneeId,
             requestId: payload.outboundRequestId,
           })
           recovered += 1

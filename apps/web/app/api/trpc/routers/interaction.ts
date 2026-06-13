@@ -915,7 +915,9 @@ export const interactionRouter = router({
         z.object({
           contactId: z.string().min(1),
           ticketId: z.number().int().positive(),
-          assigneeUserId: z.string().min(1),
+          /** Target Trengo agent id (from the TrengoUser mirror) — assign to
+           *  ANY Trengo agent, not only CRM users who connected a token. */
+          trengoUserId: z.number().int().positive(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -937,7 +939,7 @@ export const interactionRouter = router({
             contactId: input.contactId,
             agentId: user.id,
             ticketId: input.ticketId,
-            assigneeUserId: input.assigneeUserId,
+            trengoAssigneeId: input.trengoUserId,
             requestId: ctx.requestId,
           })
           await ctx.audit({
@@ -946,7 +948,7 @@ export const interactionRouter = router({
             after: {
               interactionId: result.interactionId,
               ticketId: input.ticketId,
-              assigneeUserId: input.assigneeUserId,
+              trengoAssigneeId: input.trengoUserId,
             },
           })
           return result
@@ -975,19 +977,66 @@ export const interactionRouter = router({
         }
       }),
 
-    /** Users who can be assigned a Trengo conversation — i.e. those with a
-     *  Trengo identity (User.trengoUserId). Drives the assignee picker. */
+    /** The Trengo workspace's agents (from the TrengoUser mirror) — drives the
+     *  assignee picker, so a conversation can be assigned to ANY Trengo agent,
+     *  not only CRM users who connected a token. Falls back to CRM users with
+     *  a Trengo identity when the mirror hasn't been synced yet. */
     assignableUsers: protectedProcedure.query(async ({ ctx }) => {
       const user = requireUser(ctx)
       if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
         throw new TRPCError({ code: 'FORBIDDEN' })
       }
+      const mirror = await ctx.db.trengoUser.findMany({
+        where: { isActive: true },
+        orderBy: [{ name: 'asc' }, { email: 'asc' }],
+        select: { trengoUserId: true, name: true, email: true },
+      })
+      if (mirror.length > 0) {
+        return mirror.map((r) => ({
+          trengoUserId: r.trengoUserId,
+          name: r.name ?? r.email ?? `Agent ${r.trengoUserId}`,
+        }))
+      }
+      // Mirror not synced yet — fall back to CRM users with a Trengo identity.
       const rows = await ctx.db.user.findMany({
         where: { trengoUserId: { not: null }, isActive: true, deletedAt: null },
         orderBy: [{ name: 'asc' }, { email: 'asc' }],
-        select: { id: true, name: true, email: true },
+        select: { trengoUserId: true, name: true, email: true },
       })
-      return rows.map((r) => ({ id: r.id, name: r.name ?? r.email }))
+      return rows
+        .filter((r): r is typeof r & { trengoUserId: number } => r.trengoUserId !== null)
+        .map((r) => ({ trengoUserId: r.trengoUserId, name: r.name ?? r.email ?? '' }))
+    }),
+
+    /** Sync the Trengo workspace's team (users) into the mirror — Manager+.
+     *  Runs through the caller's own token; auto-links agents to CRM users by
+     *  email. The history import also runs this. */
+    syncTeam: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN' })
+      }
+      const { syncTrengoTeam } = await import('@studymind/integration-trengo/team')
+      try {
+        const res = await syncTrengoTeam(ctx.db, user.id, ctx.requestId)
+        await ctx.audit({
+          action: 'trengo.team_synced',
+          target: { type: 'Integration', id: 'trengo' },
+          after: res,
+        })
+        return { ok: true as const, ...res }
+      } catch (err) {
+        if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Connect your Trengo token (Account → Trengo) to sync the team.',
+          })
+        }
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Could not sync the Trengo team right now. Try again shortly.',
+        })
+      }
     }),
 
     // ADR 0020 Phase 6f — label (tag) add / remove on a conversation, synced

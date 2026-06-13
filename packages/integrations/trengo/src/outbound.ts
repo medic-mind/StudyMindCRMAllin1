@@ -736,40 +736,39 @@ export interface AssignConversationInput {
   /** The CRM agent performing the action — used for token + attribution. */
   agentId: string
   ticketId: number
-  /** Target CRM User.id whose Trengo identity we'll resolve. */
-  assigneeUserId: string
+  /** Target Trengo agent id (from the TrengoUser mirror) — lets the CRM
+   *  assign to ANY Trengo agent, not only CRM users who connected a token. */
+  trengoAssigneeId: number
   requestId: string
 }
 
 export interface AssignConversationResult {
   interactionId: string
   ticketId: number
-  assigneeUserId: string
+  /** Linked CRM user id, when the Trengo agent also logs into the CRM. */
+  assigneeUserId: string | null
   trengoAssigneeId: number
 }
 
 export async function assignConversation(
   input: AssignConversationInput,
 ): Promise<AssignConversationResult> {
-  // 1. Resolve the target user's Trengo identity. No Trengo id → no point
-  //    issuing the PATCH (Trengo would reject).
-  const target = await db.user.findUnique({
-    where: { id: input.assigneeUserId },
-    select: { id: true, trengoUserId: true },
+  // 1. Assign by the Trengo agent id directly. Resolve the linked CRM user
+  //    (mirror → User.trengoUserId) so the head can show a CRM name when the
+  //    agent also logs into the CRM; null is fine for Trengo-only agents.
+  const trengoAssigneeId = input.trengoAssigneeId
+  const mirror = await db.trengoUser.findUnique({
+    where: { trengoUserId: trengoAssigneeId },
+    select: { crmUserId: true },
   })
-  if (!target) {
-    throw new BusinessError('UNKNOWN_USER', 'Assignee user not found', {
-      assigneeUserId: input.assigneeUserId,
+  let assigneeUserId: string | null = mirror?.crmUserId ?? null
+  if (!assigneeUserId) {
+    const u = await db.user.findUnique({
+      where: { trengoUserId: trengoAssigneeId },
+      select: { id: true },
     })
+    assigneeUserId = u?.id ?? null
   }
-  if (target.trengoUserId === null) {
-    throw new BusinessError(
-      'NO_TRENGO_IDENTITY',
-      'Target user has no Trengo identity — they need to connect their Trengo token.',
-      { assigneeUserId: input.assigneeUserId },
-    )
-  }
-  const trengoAssigneeId = target.trengoUserId
 
   // 2. Persist the CRM-sourced Interaction first. Idempotent on requestId.
   const existing = await db.interaction.findFirst({
@@ -800,7 +799,7 @@ export async function assignConversation(
           status: 'pending_send',
           ticketId: input.ticketId,
           agentId: input.agentId,
-          assigneeUserId: input.assigneeUserId,
+          assigneeUserId,
           trengoAssigneeId,
           outboundRequestId: input.requestId,
         },
@@ -837,7 +836,7 @@ export async function assignConversation(
           status: 'sent',
           ticketId: input.ticketId,
           agentId: input.agentId,
-          assigneeUserId: input.assigneeUserId,
+          assigneeUserId,
           trengoAssigneeId,
           outboundRequestId: input.requestId,
           trengoTicketStatus: ticket.status,
@@ -853,7 +852,7 @@ export async function assignConversation(
       after: {
         interactionId,
         ticketId: input.ticketId,
-        assigneeUserId: input.assigneeUserId,
+        assigneeUserId,
         trengoAssigneeId,
       },
     })
@@ -863,14 +862,14 @@ export async function assignConversation(
       eventName: 'ticket.assigned',
       occurredAt: new Date(),
       contactId: input.contactId,
-      assigneeUserId: input.assigneeUserId,
+      assigneeUserId,
       trengoAssigneeId,
     })
 
     return {
       interactionId,
       ticketId: input.ticketId,
-      assigneeUserId: input.assigneeUserId,
+      assigneeUserId,
       trengoAssigneeId,
     }
   } catch (err) {

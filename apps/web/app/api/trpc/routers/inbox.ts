@@ -265,6 +265,7 @@ export const inboxRouter = router({
             channel: true,
             status: true,
             assigneeUserId: true,
+            trengoAssigneeId: true,
             lastMessageAt: true,
             unreadCount: true,
             subject: true,
@@ -484,6 +485,22 @@ export const inboxRouter = router({
           }
         })
 
+        // Resolve the assignee's display name — from the CRM user when the
+        // agent logs into the CRM, else the Trengo team mirror (so a Trengo-
+        // only agent still shows by name).
+        const assigneeRow = head.assigneeUserId
+          ? await ctx.db.user.findUnique({
+              where: { id: head.assigneeUserId },
+              select: { name: true, email: true },
+            })
+          : head.trengoAssigneeId !== null
+            ? await ctx.db.trengoUser.findUnique({
+                where: { trengoUserId: head.trengoAssigneeId },
+                select: { name: true, email: true },
+              })
+            : null
+        const assigneeName = assigneeRow ? (assigneeRow.name ?? assigneeRow.email ?? null) : null
+
         return {
           head: {
             id: head.id,
@@ -494,6 +511,8 @@ export const inboxRouter = router({
             channel: head.channel,
             status: head.status,
             assigneeUserId: head.assigneeUserId,
+            trengoAssigneeId: head.trengoAssigneeId,
+            assigneeName,
             lastMessageAt: head.lastMessageAt,
             unreadCount: head.unreadCount,
             subject: head.subject,

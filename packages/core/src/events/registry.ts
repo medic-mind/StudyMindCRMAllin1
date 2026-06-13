@@ -437,6 +437,7 @@ export const EVENT_NAMES = [
   'trengo.ticket_reopen_requested',
   // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
   'trengo.ticket_assign_requested',
+  'trengo.team_synced',
   // ADR 0020 Phase 6f — label (tag) add/remove from the CRM (drives the
   // Trengo /labels endpoints) and mark-read (CRM-side head state). Internal
   // notes flow through `conversation.note_added` (the unified notes path).

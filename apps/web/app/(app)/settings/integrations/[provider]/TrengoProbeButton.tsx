@@ -31,17 +31,39 @@ export function TrengoProbeButton(): JSX.Element {
     },
   })
 
+  const syncTeam = trpc.interaction.trengo.syncTeam.useMutation({
+    onSuccess: (r) =>
+      toast.success(
+        `Synced ${r.synced} Trengo agent${r.synced === 1 ? '' : 's'}${
+          r.linked > 0 ? ` (${r.linked} linked to CRM users)` : ''
+        }`,
+      ),
+    onError: (e) => toast.error(e.message ?? 'Could not sync the team'),
+  })
+
   return (
     <div className="flex flex-col items-end gap-1.5">
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        disabled={probe.isPending}
-        onClick={() => probe.mutate()}
-      >
-        {probe.isPending ? 'Testing…' : 'Test Trengo connection'}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={syncTeam.isPending}
+          onClick={() => syncTeam.mutate()}
+          title="Pull the Trengo workspace's agents so you can assign to any of them and names resolve"
+        >
+          {syncTeam.isPending ? 'Syncing…' : 'Sync Trengo team'}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={probe.isPending}
+          onClick={() => probe.mutate()}
+        >
+          {probe.isPending ? 'Testing…' : 'Test Trengo connection'}
+        </Button>
+      </div>
       {result ? (
         result.ok ? (
           <p className="max-w-xs text-right text-xs text-emerald-700">

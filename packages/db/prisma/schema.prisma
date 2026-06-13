@@ -2913,6 +2913,30 @@ model TrengoToken {
   @@index([expiresAt])
 }
 
+/// Mirror of the Trengo workspace's USERS (agents) — so the CRM reflects the
+/// Trengo team even for agents who never logged into the CRM. Drives the
+/// assignee picker (assign to ANY Trengo agent), resolves assignee + sender
+/// display names on conversations, and auto-links to a CRM User by email.
+/// Synced from `GET /users` on the Trengo history import, a manual "Sync
+/// Trengo team" button, and the recurring import. Idempotent on trengoUserId.
+model TrengoUser {
+  id           String   @id
+  /// Trengo's numeric user id (the value `assignee_id` / message `user_id`
+  /// carry). Unique — the upsert key.
+  trengoUserId Int      @unique
+  name         String?
+  email        String?
+  isActive     Boolean  @default(true)
+  /// Linked CRM User (matched by email), when this agent also logs into the
+  /// CRM. Null for Trengo-only agents — they still resolve to a name here.
+  crmUserId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([email])
+  @@index([crmUserId])
+}
+
 // -----------------------------------------------------------------------------
 // Feature flags
 // -----------------------------------------------------------------------------

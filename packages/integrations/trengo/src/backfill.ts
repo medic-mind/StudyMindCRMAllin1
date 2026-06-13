@@ -435,6 +435,19 @@ export const trengoBackfillRequested = inngest.createFunction(
         }
       })
 
+      // Mirror the FULL Trengo team into TrengoUser + auto-link to CRM users
+      // by email, so assignment + name resolution reflect Trengo (§11).
+      // Best-effort: a failure here must not abort the message import.
+      await step.run('sync-team', async () => {
+        try {
+          const { syncTrengoTeam } = await import('./team')
+          await syncTrengoTeam(db, agentId, jobId)
+        } catch {
+          // ignore — the import proceeds; the manual "Sync Trengo team" button
+          // and the userNames map above still cover attribution.
+        }
+      })
+
       let endpoint: TrengoListEndpoint | null = null
       let keepPaging = true
       while (keepPaging && page <= MAX_TICKET_PAGES) {
@@ -773,24 +786,31 @@ async function processTicket(
     const labels = ticket.labelsKnown
       ? ticket.labels
       : await fetchTicketDetailLabels(client.request, endpoint, ticket.id)
-    for (const label of labels) {
-      await applyEventToConversation(db, {
-        ticketId: ticket.id,
-        eventName: 'label.added',
-        occurredAt: lastAt,
-        channel: ticket.channel,
-        contactId,
-        familyId,
-        label,
-      })
-    }
-    // Assignee sync — Trengo's current assignee mirrors onto the head
-    // (resolved to a CRM user via User.trengoUserId when connected).
+    // FULL label sync (not additive): set the head's tags to Trengo's EXACT
+    // current label set, so a label removed in Trengo also disappears here.
+    // updateMany is a safe no-op if the head doesn't exist yet (it will once
+    // the message/assignee/status replays above created it).
+    await db.conversation.updateMany({
+      where: { trengoTicketId: ticket.id },
+      data: { tags: labels },
+    })
+    // Assignee sync — Trengo's current assignee mirrors onto the head,
+    // resolved to a CRM user via the TrengoUser mirror (crmUserId) or
+    // User.trengoUserId when the agent also logs into the CRM.
     if (ticket.assigneeId !== null) {
-      const assignee = await db.user.findUnique({
+      const mirror = await db.trengoUser.findUnique({
         where: { trengoUserId: ticket.assigneeId },
-        select: { id: true },
+        select: { crmUserId: true },
       })
+      const assigneeUserId =
+        mirror?.crmUserId ??
+        (
+          await db.user.findUnique({
+            where: { trengoUserId: ticket.assigneeId },
+            select: { id: true },
+          })
+        )?.id ??
+        null
       await applyEventToConversation(db, {
         ticketId: ticket.id,
         eventName: 'ticket.assigned',
@@ -799,7 +819,7 @@ async function processTicket(
         contactId,
         familyId,
         trengoAssigneeId: ticket.assigneeId,
-        assigneeUserId: assignee?.id ?? null,
+        assigneeUserId,
       })
     }
     // Status sync — BOTH directions. The old code only ever closed, so a

@@ -127,7 +127,7 @@ export function ContextPane({
                 conversationId={head.id}
                 contactId={head.contactId}
                 ticketId={head.trengoTicketId}
-                assigneeUserId={head.assigneeUserId}
+                trengoAssigneeId={head.trengoAssigneeId}
               />
             ) : null}
             <TrengoThreadActions
@@ -159,6 +159,9 @@ export function ContextPane({
           <MetaRow label="Ticket" value={`#${head.trengoTicketId}`} mono />
         ) : null}
         <MetaRow label="Status" value={head.status} />
+        {head.assigneeName ? (
+          <MetaRow label="Assigned to" value={head.assigneeName} />
+        ) : null}
         {head.lastMessageAt ? (
           <MetaRow
             label="Last message"
