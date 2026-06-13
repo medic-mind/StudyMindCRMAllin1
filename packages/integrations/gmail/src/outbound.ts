@@ -30,6 +30,8 @@ export interface SendReplyInput {
   threadId: string
   subject: string
   body: string
+  /** Optional HTML alternative (multipart/alternative). */
+  html?: string | undefined
   toAddresses: string[]
   cc?: string[] | undefined
   bcc?: string[] | undefined
@@ -84,6 +86,40 @@ function multipartBoundary(seed: string): string {
   return `==SMCRM_${seed.replace(/[^a-z0-9]/gi, '').slice(0, 24)}==`
 }
 
+function textPartBlock(boundary: string, text: string): string {
+  return (
+    `--${boundary}${CRLF}` +
+    `Content-Type: text/plain; charset=UTF-8${CRLF}` +
+    `Content-Transfer-Encoding: 8bit${CRLF}${CRLF}` +
+    `${text}${CRLF}`
+  )
+}
+
+function htmlPartBlock(boundary: string, html: string): string {
+  return (
+    `--${boundary}${CRLF}` +
+    `Content-Type: text/html; charset=UTF-8${CRLF}` +
+    `Content-Transfer-Encoding: 8bit${CRLF}${CRLF}` +
+    `${html}${CRLF}`
+  )
+}
+
+/** A multipart/alternative block (text + html) nested under `outerBoundary`. */
+function alternativeBlock(
+  outerBoundary: string,
+  altBoundary: string,
+  text: string,
+  html: string,
+): string {
+  return (
+    `--${outerBoundary}${CRLF}` +
+    `Content-Type: multipart/alternative; boundary="${altBoundary}"${CRLF}${CRLF}` +
+    textPartBlock(altBoundary, text) +
+    htmlPartBlock(altBoundary, html) +
+    `--${altBoundary}--${CRLF}`
+  )
+}
+
 export function buildRawReply(input: {
   fromAddress?: string | undefined
   subject: string
@@ -91,6 +127,9 @@ export function buildRawReply(input: {
   cc?: string[] | undefined
   bcc?: string[] | undefined
   body: string
+  /** Optional HTML alternative — sent as multipart/alternative so the message
+   *  renders rich (like Gmail) while plaintext clients still get `body`. */
+  html?: string | undefined
   originalMessageId?: string | undefined
   attachments?: ReadonlyArray<OutboundAttachment>
   /** Deterministic boundary seed (tests). Defaults to a fresh id. */
@@ -102,6 +141,7 @@ export function buildRawReply(input: {
     ? input.subject.trim()
     : normaliseReplySubject(input.subject)
   const hasAttachments = (input.attachments?.length ?? 0) > 0
+  const hasHtml = typeof input.html === 'string' && input.html.length > 0
 
   const headers: Record<string, string> = {
     'MIME-Version': '1.0',
@@ -116,19 +156,21 @@ export function buildRawReply(input: {
     headers['References'] = input.originalMessageId
   }
 
+  const seed = input.boundarySeed ?? createId()
   let body: string
   if (hasAttachments) {
-    const boundary = multipartBoundary(input.boundarySeed ?? createId())
+    // multipart/mixed wrapping either an alternative block (text+html) or a
+    // single text part, followed by the attachment parts.
+    const boundary = multipartBoundary(seed)
     headers['Content-Type'] = `multipart/mixed; boundary="${boundary}"`
     const parts: string[] = []
-    // Text part.
-    parts.push(
-      `--${boundary}${CRLF}` +
-        `Content-Type: text/plain; charset=UTF-8${CRLF}` +
-        `Content-Transfer-Encoding: 8bit${CRLF}${CRLF}` +
-        `${input.body}${CRLF}`,
-    )
-    // Attachment parts.
+    if (hasHtml) {
+      parts.push(
+        alternativeBlock(boundary, multipartBoundary(`${seed}alt`), input.body, input.html!),
+      )
+    } else {
+      parts.push(textPartBlock(boundary, input.body))
+    }
     for (const att of input.attachments!) {
       const name = quotedFilename(att.filename)
       parts.push(
@@ -141,6 +183,14 @@ export function buildRawReply(input: {
     }
     parts.push(`--${boundary}--${CRLF}`)
     body = parts.join('')
+  } else if (hasHtml) {
+    // multipart/alternative: text + html, no attachments.
+    const boundary = multipartBoundary(seed)
+    headers['Content-Type'] = `multipart/alternative; boundary="${boundary}"`
+    body =
+      textPartBlock(boundary, input.body) +
+      htmlPartBlock(boundary, input.html!) +
+      `--${boundary}--${CRLF}`
   } else {
     headers['Content-Type'] = 'text/plain; charset=UTF-8'
     headers['Content-Transfer-Encoding'] = '8bit'
@@ -216,6 +266,7 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
     cc: input.cc,
     bcc: input.bcc,
     body: input.body,
+    html: input.html,
     originalMessageId: input.originalMessageId,
     attachments: input.attachments,
   })
@@ -325,6 +376,8 @@ export interface SendEmailInput {
   fromAddress?: string | undefined
   subject: string
   body: string
+  /** Optional HTML alternative (multipart/alternative). */
+  html?: string | undefined
   toAddresses: string[]
   cc?: string[] | undefined
   bcc?: string[] | undefined
@@ -390,6 +443,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     cc: input.cc,
     bcc: input.bcc,
     body: input.body,
+    html: input.html,
     fromAddress: input.fromAddress,
     attachments: input.attachments,
     literalSubject: true,

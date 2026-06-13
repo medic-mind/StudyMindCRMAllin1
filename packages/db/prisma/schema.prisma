@@ -554,7 +554,6 @@ model Contact {
   /// surfaced for human confirmation; we never silent-merge (CLAUDE.md §3).
   fieldSuggestions   ContactFieldSuggestion[]
   safeguardingFlags  SafeguardingFlag[]
-  encryptedFields    EncryptedField[]
   cards              Card[]
   linksFrom          ContactLink[]            @relation("ContactLinkFrom")
   linksTo            ContactLink[]            @relation("ContactLinkTo")
@@ -1459,7 +1458,14 @@ model SafeguardingFlag {
 }
 
 model EncryptedField {
-  id            String @id
+  id String @id
+  /// Polymorphic OWNER id, despite the legacy column name. Holds a Contact id
+  /// (safeguarding fields), a User id (Gmail / Trengo OAuth tokens — ADR 0012,
+  /// §11), or a TrengoToken id — see `EncryptFieldInput.ownerType`. It is
+  /// therefore NOT a foreign key to Contact: enforcing one made the Gmail /
+  /// Trengo token flows (ownerId = User id) violate it and 500 on connect. The
+  /// full owner identity is bound into the AAD, so a row can never be decrypted
+  /// under the wrong owner despite the missing DB-level FK.
   contactId     String
   column        String
   ciphertext    Bytes
@@ -1472,8 +1478,6 @@ model EncryptedField {
   updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
-
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@unique([contactId, column])
 }

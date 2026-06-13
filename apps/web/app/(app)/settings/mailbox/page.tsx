@@ -34,6 +34,9 @@ function connectErrorMessage(code: string): string {
   if (code === 'gmail_api_disabled') {
     return 'Gmail is connected, but the Gmail API is switched off in your Google Cloud project. Enable the Gmail API for the same project as your OAuth client, wait a few minutes for it to propagate, then connect again.'
   }
+  if (code === 'connect_failed') {
+    return 'Sign-in succeeded but the server hit an error finishing the connection. This is usually a missing server setting (the encryption key, AUTH_SECRET, or the app URL). The exact cause was recorded in the audit log — check the server logs, then try again.'
+  }
   if (code.startsWith('profile_lookup_failed')) {
     return "Google approved the sign-in but rejected the first Gmail request. This is usually the Gmail API not being enabled yet (give it a few minutes after enabling), or the account not being a test user on the OAuth consent screen."
   }
