@@ -7,11 +7,18 @@
 // internal-notes island (staff-only). CLAUDE.md §11, §20, §26.
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Fragment, useState } from 'react'
+import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
-import { ChevronLeftIcon, UserCircleIcon } from '@/components/ui/icon'
+import {
+  CheckCircleIcon,
+  ChevronLeftIcon,
+  RepeatIcon,
+  UserCircleIcon,
+} from '@/components/ui/icon'
 import { displayMessageBody } from '@/lib/format/html-text'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
@@ -33,6 +40,8 @@ export function ThreadPane({
   onClose: () => void
 }) {
   const [tab, setTab] = useState<'reply' | 'comment'>('reply')
+  const router = useRouter()
+  const utils = trpc.useUtils()
 
   // Poll the open thread lightly so an inbound message that lands while you are
   // reading appears promptly. The list itself is kept live by the SSE stream.
@@ -42,6 +51,29 @@ export function ThreadPane({
     // fallback, so 30s is plenty and keeps the thread light.
     { refetchInterval: 30_000, refetchOnWindowFocus: true },
   )
+
+  // Trengo's signature header action: Close (✓) / Reopen the ticket from the
+  // top of the thread, where Trengo puts it — not buried in the composer.
+  const refreshConvo = () => {
+    void utils.inbox.conversations.get.invalidate({ conversationId })
+    void utils.inbox.conversations.list.invalidate()
+    void utils.inbox.conversations.counts.invalidate()
+    router.refresh()
+  }
+  const closeTicket = trpc.interaction.trengo.close.useMutation({
+    onSuccess: () => {
+      toast.success('Conversation closed in Trengo')
+      refreshConvo()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not close conversation'),
+  })
+  const reopenTicket = trpc.interaction.trengo.reopen.useMutation({
+    onSuccess: () => {
+      toast.success('Conversation reopened in Trengo')
+      refreshConvo()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not reopen conversation'),
+  })
 
   if (convo.isLoading) {
     return (
@@ -108,6 +140,40 @@ export function ThreadPane({
           >
             {replyWindowOpen ? '24h window open' : '24h window closed'}
           </span>
+        ) : null}
+        {head.contactId && head.trengoTicketId !== null ? (
+          head.status === 'closed' ? (
+            <button
+              type="button"
+              onClick={() =>
+                reopenTicket.mutate({
+                  contactId: head.contactId as string,
+                  ticketId: head.trengoTicketId as number,
+                })
+              }
+              disabled={reopenTicket.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+            >
+              <RepeatIcon size={14} />
+              {reopenTicket.isPending ? 'Reopening…' : 'Reopen'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                closeTicket.mutate({
+                  contactId: head.contactId as string,
+                  ticketId: head.trengoTicketId as number,
+                })
+              }
+              disabled={closeTicket.isPending}
+              title="Close this conversation in Trengo"
+              className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <CheckCircleIcon size={14} />
+              {closeTicket.isPending ? 'Closing…' : 'Close'}
+            </button>
+          )
         ) : null}
         {head.contactId ? (
           <Link
@@ -244,7 +310,7 @@ export function ThreadPane({
             Reply
           </TabButton>
           <TabButton active={tab === 'comment'} onClick={() => setTab('comment')}>
-            Internal note
+            Comment
           </TabButton>
         </div>
         <div className="p-3">
