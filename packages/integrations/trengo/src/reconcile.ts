@@ -42,7 +42,7 @@ type RequestFn = <T>(method: string, path: string) => Promise<T>
 export interface ReconcileHead {
   id: string
   trengoTicketId: number
-  status: 'open' | 'closed' | 'snoozed' | 'archived'
+  status: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
   trengoAssigneeId: number | null
   tags: string[]
   contactId: string | null

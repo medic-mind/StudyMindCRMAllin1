@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
-import { InboxIcon, SearchIcon } from '@/components/ui/icon'
+import { InboxIcon, SearchIcon, StarIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { useConversationStream } from '@/lib/hooks/use-conversation-stream'
@@ -37,19 +37,33 @@ import { ThreadPane } from './ThreadPane'
 // Trengo-style folders: Inbox (New = waiting unassigned, Assigned, Closed,
 // Snoozed) + Personal (Assigned to me). `countKey` maps to
 // inbox.conversations.counts for the rail badges ("New 4 · Assigned 36").
+type CountKey =
+  | 'newCount'
+  | 'assigned'
+  | 'mine'
+  | 'closed'
+  | 'snoozed'
+  | 'mentioned'
+  | 'favorites'
+  | 'spam'
+  | null
+
 const INBOX_FILTERS: ReadonlyArray<{
   value: InboxFilter
   label: string
-  countKey: 'newCount' | 'assigned' | 'mine' | 'closed' | 'snoozed' | null
+  countKey: CountKey
 }> = [
   { value: 'unassigned', label: 'New', countKey: 'newCount' },
   { value: 'assigned', label: 'Assigned', countKey: 'assigned' },
   { value: 'active', label: 'All open', countKey: null },
   { value: 'snoozed', label: 'Snoozed', countKey: 'snoozed' },
   { value: 'closed', label: 'Closed', countKey: 'closed' },
+  { value: 'spam', label: 'Spam', countKey: 'spam' },
 ]
 const PERSONAL_FILTERS: typeof INBOX_FILTERS = [
   { value: 'mine', label: 'Assigned to me', countKey: 'mine' },
+  { value: 'mentioned', label: 'Mentioned', countKey: 'mentioned' },
+  { value: 'favorites', label: 'Favorites', countKey: 'favorites' },
 ]
 
 const CHANNELS: ReadonlyArray<{ value: InboxChannel | null; label: string }> = [
@@ -138,7 +152,10 @@ export function InboxCockpit({
     },
     onError: (e) => toast.error(e.message ?? 'Bulk action failed'),
   })
-  const runBulk = (action: 'markRead' | 'close' | 'snooze' | 'unsnooze', minutes?: number) => {
+  const runBulk = (
+    action: 'markRead' | 'close' | 'snooze' | 'unsnooze' | 'markSpam',
+    minutes?: number,
+  ) => {
     const ids = [...selectedIds]
     if (ids.length === 0) return
     bulk.mutate({ conversationIds: ids, action, ...(minutes ? { minutes } : {}) })
@@ -334,6 +351,14 @@ export function InboxCockpit({
                   </button>
                   <button
                     type="button"
+                    disabled={bulk.isPending}
+                    onClick={() => runBulk('markSpam')}
+                    className="rounded border border-neutral-200 bg-white px-2 py-0.5 text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  >
+                    Spam
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setSelectedIds(new Set())}
                     className="text-neutral-400 hover:text-neutral-700"
                   >
@@ -405,6 +430,7 @@ export function InboxCockpit({
           conversationId={selectedId}
           me={me}
           onClose={() => setShowContext(false)}
+          onSelect={(id) => setSelectedId(id)}
         />
       ) : null}
     </div>
@@ -459,9 +485,9 @@ function FoldersRail({
   const badge = (key: (typeof INBOX_FILTERS)[number]['countKey']): number | null =>
     key && counts.data ? counts.data[key] : null
   return (
-    <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-200 bg-neutral-50/60 p-3 md:flex">
-      <div className="flex items-center gap-2 px-1 pt-1 text-sm font-semibold text-neutral-900">
-        <InboxIcon size={16} className="text-neutral-500" />
+    <aside className="hidden w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-800 bg-neutral-900 p-3 text-neutral-300 md:flex">
+      <div className="flex items-center gap-2 px-1 pt-1 text-sm font-semibold text-white">
+        <InboxIcon size={16} className="text-trengo-400" />
         Inbox
       </div>
 
@@ -536,7 +562,7 @@ function FoldersRail({
       <div className="mt-auto">
         <Link
           href="/inbox/suggestions"
-          className="block rounded-md px-2.5 py-1.5 text-xs text-primary-700 hover:bg-neutral-100"
+          className="block rounded-md px-2.5 py-1.5 text-xs text-trengo-300 hover:bg-neutral-800"
         >
           AI suggestions →
         </Link>
@@ -565,8 +591,8 @@ function RailItem({
       aria-current={active ? 'true' : undefined}
       className={
         active
-          ? 'flex items-center gap-2 truncate rounded-md bg-primary-100 px-2.5 py-1.5 text-left text-sm font-medium text-primary-800'
-          : 'flex items-center gap-2 truncate rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-700 transition-colors hover:bg-neutral-100'
+          ? 'flex items-center gap-2 truncate rounded-md bg-trengo-600 px-2.5 py-1.5 text-left text-sm font-medium text-white'
+          : 'flex items-center gap-2 truncate rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-300 transition-colors hover:bg-neutral-800'
       }
     >
       {icon ? <span className="shrink-0">{icon}</span> : null}
@@ -574,7 +600,7 @@ function RailItem({
       {count !== null && count > 0 ? (
         <span
           className={`ml-auto rounded-full px-1.5 text-[11px] font-medium tabular-nums ${
-            active ? 'bg-primary-200 text-primary-900' : 'bg-neutral-200 text-neutral-700'
+            active ? 'bg-trengo-700 text-white' : 'bg-neutral-800 text-neutral-300'
           }`}
         >
           {count > 999 ? '999+' : count}
@@ -610,12 +636,12 @@ function ConversationRow({
   return (
     <li
       className={`group relative flex cursor-pointer items-start gap-2 px-3 py-2.5 transition-colors ${
-        active ? 'bg-primary-50' : selected ? 'bg-primary-50/40' : 'hover:bg-neutral-50'
+        active ? 'bg-trengo-50' : selected ? 'bg-trengo-50/50' : 'hover:bg-neutral-50'
       }`}
       onClick={onOpen}
     >
       {unread ? (
-        <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary-500" />
+        <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-trengo-500" />
       ) : null}
       {/* Multi-select checkbox — click doesn't open the thread. */}
       <input
@@ -644,12 +670,21 @@ function ConversationRow({
           >
             {who}
           </span>
-          <time
-            className="shrink-0 text-[11px] tabular-nums text-neutral-400"
-            dateTime={item.lastMessageAt.toISOString()}
-          >
-            {formatRelativeTime(item.lastMessageAt, now)}
-          </time>
+          <span className="flex shrink-0 items-center gap-1">
+            {item.isFavorite ? (
+              <StarIcon
+                size={12}
+                className="fill-warning-400 text-warning-400"
+                aria-label="Favorite"
+              />
+            ) : null}
+            <time
+              className="text-[11px] tabular-nums text-neutral-400"
+              dateTime={item.lastMessageAt.toISOString()}
+            >
+              {formatRelativeTime(item.lastMessageAt, now)}
+            </time>
+          </span>
         </div>
         {item.lastMessagePreview ? (
           <div

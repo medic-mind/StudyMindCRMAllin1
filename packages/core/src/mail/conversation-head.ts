@@ -34,7 +34,7 @@ export interface MailConversationRow {
   contactId: string | null
   familyId: string | null
   channel: string | null
-  status: 'open' | 'closed' | 'snoozed' | 'archived'
+  status: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
   lastMessageAt: Date
   lastInboundAt: Date | null
   lastOutboundAt: Date | null

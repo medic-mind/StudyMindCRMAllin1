@@ -11,6 +11,9 @@ export type InboxFilter =
   | 'unassigned'
   | 'snoozed'
   | 'closed'
+  | 'mentioned'
+  | 'favorites'
+  | 'spam'
 export type InboxChannel = 'whatsapp' | 'sms' | 'email' | 'web_chat'
 
 export interface CockpitMe {
@@ -25,7 +28,7 @@ export interface CockpitConversation {
   contactId: string | null
   familyId: string | null
   channel: string | null
-  status: 'open' | 'closed' | 'snoozed' | 'archived'
+  status: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
   assigneeUserId: string | null
   assigneeName: string | null
   lastMessageAt: Date
@@ -36,6 +39,8 @@ export interface CockpitConversation {
   lastMessagePreview: string | null
   replyDeadlineAt: Date | null
   contactName: string | null
+  /** Starred by the current user (Personal → Favorites). */
+  isFavorite?: boolean
 }
 
 export const CHANNEL_LABEL: Record<string, string> = {

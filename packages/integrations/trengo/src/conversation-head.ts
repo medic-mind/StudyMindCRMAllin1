@@ -40,7 +40,7 @@ export interface ConversationRow {
   contactId: string | null
   familyId: string | null
   channel: string | null
-  status: 'open' | 'closed' | 'snoozed' | 'archived'
+  status: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
   assigneeUserId: string | null
   trengoAssigneeId: number | null
   lastMessageAt: Date
@@ -59,7 +59,7 @@ interface ConversationCreateInput {
   contactId: string | null
   familyId: string | null
   channel: string | null
-  status: 'open' | 'closed' | 'snoozed' | 'archived'
+  status: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
   assigneeUserId: string | null
   trengoAssigneeId: number | null
   lastMessageAt: Date
@@ -76,7 +76,7 @@ interface ConversationUpdateInput {
   contactId?: string | null
   familyId?: string | null
   channel?: string | null
-  status?: 'open' | 'closed' | 'snoozed' | 'archived'
+  status?: 'open' | 'closed' | 'snoozed' | 'archived' | 'spam'
   assigneeUserId?: string | null
   trengoAssigneeId?: number | null
   lastMessageAt?: Date
