@@ -64,6 +64,23 @@ Trengo-first staff fully functional.
 6. **Resilience & scale.** An outbound retry queue drains `pending_send` on
    Trengo recovery; the rate limiter and a response cache move to Redis.
 
+7. **Status reconcile (safety net).** Webhooks are only as complete as the
+   Trengo webhook _subscription_: if the workspace never subscribed
+   `ticket closed/reopened/assigned/label` (or a delivery is dropped, or Trengo
+   disabled the endpoint after failures), the conversation head silently drifts
+   from Trengo — the reported "tickets still open here that are closed on
+   Trengo". Golden rule #4 (§2) is the answer: do not trust our DB, refetch.
+   A `trengo/reconcile-status` cron (every 15 min) re-fetches each
+   conversation's CURRENT state from Trengo, oldest-checked-first via a
+   `Conversation.lastSyncCheckAt` cursor, and re-converges status, assignee, and
+   labels through the **same** monotonic `applyEventToConversation` merger the
+   webhook uses — so the CRM mirrors Trengo continuously without anyone running
+   a manual import. Idempotent, audited (`trengo.status_reconciled` on a status
+   flip), bounded (50/tick), and a no-op without a connected token. A ticket
+   deleted in Trengo leaves the head untouched (§3, no silent delete) and just
+   advances the cursor. This mirrors the booking-site (§15) and `aircall/sync-calls`
+   pull-as-safety-net pattern: webhooks are the fast path, the pull self-heals.
+
 ## Alternatives rejected
 
 - **A parallel Trengo message/conversation store that copies message bodies.**

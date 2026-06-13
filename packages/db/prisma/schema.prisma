@@ -1237,6 +1237,12 @@ model Conversation {
   /// `open` once this passes; a new inbound also resurfaces it immediately.
   /// Null when not snoozed.
   snoozedUntil     DateTime?
+  /// ADR 0020 — last time the `trengo/reconcile-status` cron re-fetched this
+  /// conversation's CURRENT state from Trengo and re-converged the head.
+  /// Drives a fair round-robin cursor (oldest-checked first) so a dropped or
+  /// unsubscribed lifecycle webhook can never leave the head permanently
+  /// drifted from Trengo. Null = never reconciled (checked first).
+  lastSyncCheckAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1254,6 +1260,7 @@ model Conversation {
   @@index([unreadCount])
   @@index([mailAccountId, status])
   @@index([provider, channel])
+  @@index([lastSyncCheckAt])
 }
 
 enum ConversationStatus {

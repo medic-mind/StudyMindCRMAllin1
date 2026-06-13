@@ -167,7 +167,7 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
       },
       {
         title: 'Register the webhook — subscribe to ALL conversation events',
-        body: 'Trengo Settings → Webhooks → Add. URL is https://<your-host>/api/webhooks/trengo. Save the secret into TRENGO_WEBHOOK_SECRET. Subscribe to EVERY conversation event — inbound message, outbound message, ticket closed, ticket reopened, ticket assigned, label added, label removed, contact updated. If only "inbound message" is subscribed, closes/assignments made inside Trengo never reach the CRM and statuses drift (the "Last 7 days (quick sync)" import re-converges them, but live sync needs the events).',
+        body: 'Trengo Settings → Webhooks → Add. URL is https://<your-host>/api/webhooks/trengo. Save the secret into TRENGO_WEBHOOK_SECRET. Subscribe to EVERY conversation event — inbound message, outbound message, ticket closed, ticket reopened, ticket assigned, label added, label removed, contact updated. If only "inbound message" is subscribed, closes/assignments made inside Trengo arrive late: live sync needs the events. As a safety net the CRM also re-fetches every conversation\'s current state from Trengo every 15 minutes and re-converges status/assignee/labels, so a missed or unsubscribed event self-heals within minutes rather than needing the manual "Last 7 days (quick sync)" import — but subscribing the events keeps it real-time.',
       },
     ],
     providerDashboardUrl: 'https://app.trengo.com/admin/api',

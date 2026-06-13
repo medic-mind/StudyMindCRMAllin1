@@ -684,6 +684,10 @@ import { trengoRetryPendingSend } from './retry-pending'
 import { trengoDownloadAttachments } from './attachments'
 // ADR 0020 Phase 6g: 5-minute cron that resurfaces due snoozed conversations.
 import { trengoUnsnoozeDue } from './snooze'
+// ADR 0020: 15-minute cron that re-fetches each conversation's CURRENT state
+// from Trengo and re-converges the head — the safety net for dropped or
+// unsubscribed lifecycle webhooks ("closed on Trengo, still open here").
+import { trengoReconcileStatus } from './reconcile'
 
 export const FUNCTIONS = [
   trengoEventReceived,
@@ -691,5 +695,6 @@ export const FUNCTIONS = [
   trengoRetryPendingSend,
   trengoDownloadAttachments,
   trengoUnsnoozeDue,
+  trengoReconcileStatus,
   ...TRENGO_BACKFILL_FUNCTIONS,
 ] as const
