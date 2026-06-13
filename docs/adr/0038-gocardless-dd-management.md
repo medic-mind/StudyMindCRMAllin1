@@ -243,3 +243,19 @@ and the worker boundary posts a combined `#crm-finops` summary — so finance is
 told, not just shown. The Direct Debits **Overview** carries matching headline
 tiles (count + total due, linking to Issues), and both Issues tables support
 column sorting + filter-honouring CSV export.
+
+### Follow-up (2026-06-13) — phone linking, self-healing, actionable issues
+
+- **Phone as a second link key.** `GcCustomer.phone` mirrors GoCardless
+  `phone_number`. `findContactForGcCustomer` tries the unambiguous email match
+  first, then an unambiguous E.164 phone match (`findContactForGcPhone`), used
+  by both the import auto-match and the `linkUnlinkedGcCustomers` backfill — so
+  a DD customer with no/non-matching email still reaches its CRM contact. Still
+  unambiguous-only; a shared landline (>1 match) never auto-links (§3/§41.1).
+- **Self-healing discrepancies.** `flagPlanIssues` resolves any open
+  `direct_debit_plan_shortfall`/`direct_debit_plan_arrears` discrepancy whose
+  plan no longer appears in the current issue set (e.g. an arrears plan caught
+  up), so the Issues queue reflects reality without manual cleanup (golden
+  rule #4).
+- **Actionable Issues rows.** Both plan-issue tables carry a "Chase" action
+  (opens a follow-up Task against the linked contact/family) for linked plans.

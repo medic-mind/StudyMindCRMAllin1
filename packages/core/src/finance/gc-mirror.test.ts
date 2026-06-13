@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  findContactForGcCustomer,
   linkGcCustomer,
   linkUnlinkedGcCustomers,
   pickUnambiguousContact,
@@ -22,10 +23,15 @@ interface FakeRow {
 }
 
 function makeFakeDb(opts: {
-  contacts?: Array<{ id: string; email: string | null; deletedAt?: Date | null }>
+  contacts?: Array<{
+    id: string
+    email: string | null
+    phoneE164?: string | null
+    deletedAt?: Date | null
+  }>
   familyMembers?: Array<{ contactId: string; familyId: string }>
 }) {
-  const contacts = (opts.contacts ?? []).map((c) => ({ deletedAt: null, ...c }))
+  const contacts = (opts.contacts ?? []).map((c) => ({ deletedAt: null, phoneE164: null, ...c }))
   const familyMembers = opts.familyMembers ?? []
   const gcCustomers: FakeRow[] = []
   const gcMandates: FakeRow[] = []
@@ -37,15 +43,17 @@ function makeFakeDb(opts: {
       findMany: ({
         where,
       }: {
-        where: { email: { equals: string }; deletedAt: null }
+        where: { email?: { equals: string }; phoneE164?: string; deletedAt: null }
       }) =>
         Promise.resolve(
           contacts
-            .filter(
-              (c) =>
-                c.deletedAt === null &&
-                (c.email ?? '').toLowerCase() === where.email.equals.toLowerCase(),
-            )
+            .filter((c) => {
+              if (c.deletedAt !== null) return false
+              if (where.phoneE164 !== undefined) return c.phoneE164 === where.phoneE164
+              if (where.email)
+                return (c.email ?? '').toLowerCase() === where.email.equals.toLowerCase()
+              return false
+            })
             .map((c) => ({ id: c.id })),
         ),
       findFirst: ({ where }: { where: { id: string } }) =>
@@ -72,10 +80,12 @@ function makeFakeDb(opts: {
         ),
       findMany: ({ where, take }: { where?: Record<string, unknown>; take?: number } = {}) => {
         const wantsUnlinked = where ? 'contactId' in where : false
-        const wantsEmail = where ? 'email' in where : false
+        // linkUnlinkedGcCustomers asks for rows with an email OR a phone.
+        const wantsContactKey = where ? 'OR' in where : false
         const rows = gcCustomers.filter((c) => {
           if (wantsUnlinked && c['contactId'] != null) return false
-          if (wantsEmail && (c['email'] ?? null) == null) return false
+          if (wantsContactKey && (c['email'] ?? null) == null && (c['phone'] ?? null) == null)
+            return false
           return (c['deletedAt'] ?? null) === null
         })
         return Promise.resolve((take ? rows.slice(0, take) : rows).map((c) => ({ ...c })))
@@ -411,5 +421,49 @@ describe('linkUnlinkedGcCustomers', () => {
     await upsertGcCustomerMirror(db, { gcCustomerId: 'CU1', email: null })
     const result = await linkUnlinkedGcCustomers(db)
     expect(result).toEqual({ scanned: 0, linked: 0 })
+  })
+
+  it('links by phone when the customer has no email', async () => {
+    const db = makeFakeDb({
+      contacts: [{ id: 'c1', email: null, phoneE164: '+447700900123' }],
+      familyMembers: [{ contactId: 'c1', familyId: 'f1' }],
+    })
+    await upsertGcCustomerMirror(db, {
+      gcCustomerId: 'CU1',
+      phone: '+447700900123',
+      autoMatch: true,
+    })
+    // create-time auto-match links it immediately by phone.
+    expect(db._state.gcCustomers[0]['contactId']).toBe('c1')
+    expect(db._state.gcCustomers[0]['familyId']).toBe('f1')
+  })
+})
+
+describe('findContactForGcCustomer', () => {
+  it('prefers an email match, then falls back to phone', async () => {
+    const db = makeFakeDb({
+      contacts: [
+        { id: 'c_email', email: 'match@example.com', phoneE164: '+447700900001' },
+        { id: 'c_phone', email: 'other@example.com', phoneE164: '+447700900222' },
+      ],
+    })
+    expect(
+      (await findContactForGcCustomer(db, { email: 'match@example.com', phone: '+447700900222' }))
+        ?.id,
+    ).toBe('c_email')
+    expect(
+      (await findContactForGcCustomer(db, { email: 'nobody@example.com', phone: '+447700900222' }))
+        ?.id,
+    ).toBe('c_phone')
+  })
+
+  it('never links on an ambiguous phone (shared landline)', async () => {
+    const db = makeFakeDb({
+      contacts: [
+        { id: 'c1', email: null, phoneE164: '+441234567890' },
+        { id: 'c2', email: null, phoneE164: '+441234567890' },
+      ],
+    })
+    expect(await findContactForGcCustomer(db, { phone: '+441234567890' })).toBeNull()
   })
 })

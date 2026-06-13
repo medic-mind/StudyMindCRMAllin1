@@ -180,14 +180,23 @@ interface FakeSub {
   gcCustomerId: string | null
 }
 
+interface OpenDiscrepancy {
+  id: string
+  category: string
+  gcSubscriptionId: string
+}
+
 function makePlanDb(opts: {
   subs: FakeSub[]
   paymentsBySub: Record<string, Array<{ status: string; amountMinor: number; chargeDate: Date }>>
   customers: Array<{ gcCustomerId: string; familyId: string | null; givenName?: string }>
   existing?: CreatedRow[]
-}): { db: PrismaClient; created: CreatedRow[] } {
+  open?: OpenDiscrepancy[]
+}): { db: PrismaClient; created: CreatedRow[]; resolvedIds: string[] } {
   const created: CreatedRow[] = []
+  const resolvedIds: string[] = []
   const existing = opts.existing ?? []
+  const open = opts.open ?? []
 
   const db = {
     gcSubscription: {
@@ -228,10 +237,18 @@ function makePlanDb(opts: {
         })
         return { id: 'new' }
       },
+      findMany: async (args: { where: { category: { in: string[] } } }) =>
+        open
+          .filter((o) => args.where.category.in.includes(o.category))
+          .map((o) => ({ id: o.id, payload: { gcSubscriptionId: o.gcSubscriptionId } })),
+      update: async (args: { where: { id: string } }) => {
+        resolvedIds.push(args.where.id)
+        return { id: args.where.id }
+      },
     },
   } as unknown as PrismaClient
 
-  return { db, created }
+  return { db, created, resolvedIds }
 }
 
 describe('flagPlanIssues', () => {
@@ -312,5 +329,57 @@ describe('flagPlanIssues', () => {
     const result = await flagPlanIssues(db, NOW)
     expect(result.newlyFlagged.some((p) => p.kind === 'arrears')).toBe(true)
     expect(created.some((c) => c.category === 'direct_debit_plan_arrears')).toBe(true)
+  })
+
+  it('auto-resolves an open discrepancy whose plan has recovered', async () => {
+    // No current issues, but an open arrears discrepancy exists for a plan that
+    // is no longer behind → it should be resolved.
+    const { db, resolvedIds } = makePlanDb({
+      subs: [
+        {
+          gcSubscriptionId: 'SB_OK',
+          status: 'active',
+          amountMinor: 5_000,
+          currency: 'GBP',
+          intervalUnit: 'monthly',
+          interval: 1,
+          totalPaymentCount: null,
+          startDate: D('2026-05-01T00:00:00Z'), // started recently → on schedule
+          gcCustomerId: 'CU3',
+        },
+      ],
+      paymentsBySub: {
+        SB_OK: [{ status: 'confirmed', amountMinor: 5_000, chargeDate: D('2026-05-01T00:00:00Z') }],
+      },
+      customers: [{ gcCustomerId: 'CU3', familyId: 'fam_3' }],
+      open: [{ id: 'disc_old', category: 'direct_debit_plan_arrears', gcSubscriptionId: 'SB_OLD' }],
+    })
+    const result = await flagPlanIssues(db, NOW)
+    expect(result.resolved).toBe(1)
+    expect(resolvedIds).toEqual(['disc_old'])
+  })
+
+  it('does NOT resolve a discrepancy whose plan is still an issue', async () => {
+    const { db, resolvedIds } = makePlanDb({
+      subs: [
+        {
+          gcSubscriptionId: 'SB_BAD',
+          status: 'active',
+          amountMinor: 5_000,
+          currency: 'GBP',
+          intervalUnit: 'monthly',
+          interval: 1,
+          totalPaymentCount: null,
+          startDate: D('2026-01-01T00:00:00Z'),
+          gcCustomerId: 'CU4',
+        },
+      ],
+      paymentsBySub: { SB_BAD: [] }, // nothing collected → still behind
+      customers: [{ gcCustomerId: 'CU4', familyId: 'fam_4' }],
+      open: [{ id: 'disc_keep', category: 'direct_debit_plan_arrears', gcSubscriptionId: 'SB_BAD' }],
+    })
+    const result = await flagPlanIssues(db, NOW)
+    expect(result.resolved).toBe(0)
+    expect(resolvedIds).toEqual([])
   })
 })

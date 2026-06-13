@@ -195,6 +195,8 @@ export interface GcCustomerResource {
   given_name?: string | null
   family_name?: string | null
   company_name?: string | null
+  /** E.164-ish phone the customer gave GoCardless; used for CRM contact matching. */
+  phone_number?: string | null
   metadata?: Record<string, string>
 }
 

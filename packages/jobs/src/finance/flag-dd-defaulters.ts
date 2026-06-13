@@ -136,12 +136,48 @@ export interface FlagPlanIssuesResult {
   shortfallsScanned: number
   arrearsScanned: number
   newlyFlagged: NewlyFlaggedPlan[]
+  /** Open plan discrepancies auto-resolved because the plan recovered. */
+  resolved: number
+}
+
+const PLAN_ISSUE_CATEGORIES = [
+  'direct_debit_plan_shortfall',
+  'direct_debit_plan_arrears',
+] as const
+
+/**
+ * Resolve open plan discrepancies whose subscription no longer appears in the
+ * current issue set — the system heals itself (golden rule #4) when an arrears
+ * plan catches up or a shortfall is otherwise cleared. Read-only on money.
+ */
+async function resolveRecoveredPlanIssues(
+  db: DbClient,
+  now: Date,
+  stillIssue: Set<string>,
+): Promise<number> {
+  const open = await db.reconciliationDiscrepancy.findMany({
+    where: { category: { in: [...PLAN_ISSUE_CATEGORIES] }, resolvedAt: null },
+    select: { id: true, payload: true },
+  })
+  let resolved = 0
+  for (const d of open) {
+    const payload = (d.payload ?? {}) as { gcSubscriptionId?: string }
+    const subId = payload.gcSubscriptionId
+    if (subId && stillIssue.has(subId)) continue
+    await db.reconciliationDiscrepancy.update({
+      where: { id: d.id },
+      data: { resolvedAt: now },
+    })
+    resolved += 1
+  }
+  return resolved
 }
 
 /**
  * Recompute plan shortfalls + active arrears and upsert a discrepancy for each
- * family-linked plan, idempotent on (familyId, category, contextHash). Returns
- * the plans newly flagged this run so the caller can notify finops.
+ * family-linked plan, idempotent on (familyId, category, contextHash). Resolves
+ * any open plan discrepancy whose plan has recovered. Returns the plans newly
+ * flagged this run so the caller can notify finops.
  */
 export async function flagPlanIssues(
   db: DbClient,
@@ -230,9 +266,17 @@ export async function flagPlanIssues(
     })
   }
 
+  // Self-heal: resolve open plan discrepancies whose plan is no longer an issue.
+  const stillIssue = new Set<string>([
+    ...shortfalls.map((s) => s.gcSubscriptionId),
+    ...arrears.map((a) => a.gcSubscriptionId),
+  ])
+  const resolved = await resolveRecoveredPlanIssues(db, now, stillIssue)
+
   return {
     shortfallsScanned: shortfalls.length,
     arrearsScanned: arrears.length,
     newlyFlagged,
+    resolved,
   }
 }

@@ -8,7 +8,9 @@ export * from './sync-gocardless'
 // Complete GoCardless provider mirror (ADR 0038). MandateStateValue is
 // deliberately not re-exported here — sync-gocardless already owns that name.
 export {
+  findContactForGcCustomer,
   findContactForGcEmail,
+  findContactForGcPhone,
   linkGcCustomer,
   linkUnlinkedGcCustomers,
   pickUnambiguousContact,
