@@ -232,6 +232,12 @@ export function ContactDirectDebitPanel({ contactId, canManage }: Props) {
                       {formatMoneyMinor(s.amountMinor, s.currency)}
                     </span>
                     <span className="text-xs text-neutral-500">{describeSchedule(s)}</span>
+                    {s.totalPaymentCount ? (
+                      <span className="text-xs text-neutral-500">
+                        · {s.totalPaymentCount}-payment plan · total{' '}
+                        {formatMoneyMinor(s.amountMinor * s.totalPaymentCount, s.currency)}
+                      </span>
+                    ) : null}
                     {s.name ? <span className="text-xs text-neutral-500">· {s.name}</span> : null}
                     {s.nextChargeAt ? (
                       <span className="ml-auto text-xs text-neutral-500">

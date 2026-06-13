@@ -10,12 +10,14 @@ export * from './sync-gocardless'
 export {
   findContactForGcEmail,
   linkGcCustomer,
+  linkUnlinkedGcCustomers,
   pickUnambiguousContact,
   upsertGcCustomerMirror,
   upsertGcMandateMirror,
   upsertGcPaymentMirror,
   upsertGcPayoutMirror,
   upsertGcSubscriptionMirror,
+  type BackfillLinkResult,
   type ContactMatchCandidate,
   type GcPaymentStateValue,
   type GcSubscriptionStateValue,
@@ -103,3 +105,22 @@ export {
   monthlyRunRateMinor,
   type PlanCadence,
 } from './dd-insights'
+// Direct Debit plan shortfalls (ADR 0038) — cancelled-part-way / underpaid plans
+// and active plans behind their collection schedule.
+export {
+  ARREARS_THRESHOLD,
+  classifyActivePlanArrears,
+  classifyPlanShortfall,
+  expectedInstalmentsByNow,
+  listActivePlanArrears,
+  listPlanShortfalls,
+  type ActivePlanArrears,
+  type ActivePlanArrearsWithCustomer,
+  type ActivePlanFacts,
+  type ListActivePlanArrearsOptions,
+  type PlanFacts,
+  type PlanScheduleInput,
+  type PlanShortfall,
+  type PlanShortfallReason,
+  type PlanShortfallWithCustomer,
+} from './dd-plan-shortfall'

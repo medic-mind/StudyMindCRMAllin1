@@ -1810,6 +1810,11 @@ model GcSubscription {
   /// every sync. Null once the subscription is terminal.
   nextChargeAt     DateTime?
   nextChargeMinor  Int?
+  /// GoCardless `count` — the total number of payments a fixed-length plan
+  /// will ever collect. Null for open-ended plans. Lets us compute a plan's
+  /// total contracted value (`count × amountMinor`) and, when a plan is
+  /// cancelled/finished early, the collection shortfall (ADR 0038, §6.3).
+  totalPaymentCount Int?
   metadata         Json?
   gcCreatedAt      DateTime?
 

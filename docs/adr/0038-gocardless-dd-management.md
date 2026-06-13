@@ -200,3 +200,36 @@ URL-driven via the shared list-controls primitives (CLAUDE.md §26):
 - Cursor pagination on these mirrors was replaced by offset paging — an
   operator table needs arbitrary sorts and jumpable pages; the keyset
   cursor convention remains for timeline-shaped feeds (the Activity tab).
+
+## Amendment (2026-06-13, sixth) — plan total + cancelled-part-way shortfalls
+
+The defaulter engine (`dd-defaulters.ts`) is invoice- and failed-payment-
+driven, so a family that quietly cancelled a fixed-length plan part-way —
+without ever bouncing a Direct Debit or leaving an unpaid invoice — was
+invisible. Two changes close that gap:
+
+- **`GcSubscription.totalPaymentCount`** mirrors GoCardless `count` (total
+  instalments for a fixed-length plan; null when open-ended). It lets us
+  compute a plan's contracted value (`count × amountMinor`). Synced in
+  `subscriptionMirrorInput` and persisted via `upsertGcSubscriptionMirror`;
+  surfaced on the contact's Direct Debit panel as the plan term + total.
+- **`dd-plan-shortfall.ts`** (pure + tested) reconciles every ended plan
+  (`cancelled`/`finished`) against its contracted total and reports the
+  amount still due, the instalments collected vs contracted, and whether the
+  plan was cancelled part-way. Open-ended plans have no contracted total and
+  are excluded (fail closed, §8). Surfaced read-only as a second section of
+  the Issues tab and at `finance.directDebit.listPlanShortfalls` (audited).
+  It never charges or duns — humans act (§3).
+
+Contact linking also gained a backfill: **`linkUnlinkedGcCustomers`** re-runs
+the unambiguous email auto-link for customers imported before their CRM
+contact existed (still unambiguous-only — never auto-merge, §3/§41.1),
+propagating the Family to orphaned mandates so their plans/payments reach the
+contact panel. It runs as the final step of the GoCardless backfill.
+
+A follow-up in the same area adds **active-plan arrears**: `dd-plan-shortfall.ts`
+also estimates, from a plan's cadence + start date, how many instalments an
+*active* plan should have collected by now and flags any that are at least two
+behind (`finance.directDebit.listActivePlanArrears`, audited; a third Issues
+section). This is a conservative proxy — GoCardless owns the real charge
+calendar — so it only surfaces a plan for a human to check, never charges.
