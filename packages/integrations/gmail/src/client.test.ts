@@ -15,7 +15,12 @@ vi.mock('@studymind/db', () => ({
   },
 }))
 
-import { isInvalidGrantError, markNeedsReconnect } from './client'
+import {
+  createClientForAgent,
+  isInvalidGrantError,
+  isNotFoundError,
+  markNeedsReconnect,
+} from './client'
 
 describe('isInvalidGrantError', () => {
   it('detects google response.data.error', () => {
@@ -46,5 +51,94 @@ describe('markNeedsReconnect', () => {
       where: { agentId: 'u_x', deletedAt: null },
       data: { watchExpiresAt: null },
     })
+  })
+})
+
+describe('isNotFoundError', () => {
+  it('detects code 404 and response.status 404', () => {
+    expect(isNotFoundError({ code: 404 })).toBe(true)
+    expect(isNotFoundError({ response: { status: 404 } })).toBe(true)
+    expect(isNotFoundError({ status: '404' })).toBe(true)
+  })
+  it('returns false otherwise', () => {
+    expect(isNotFoundError({ code: 500 })).toBe(false)
+    expect(isNotFoundError(null)).toBe(false)
+  })
+})
+
+// Two-way sync (ADR 0021 Phase 5): the history pull must surface label/delete
+// changes as changedThreadIds (minus threads with a new message), and
+// getThreadState must aggregate labels / map a 404 to null.
+describe('listHistorySince — flag-change capture', () => {
+  function fakeSdk(history: unknown[], historyId = '99') {
+    return () =>
+      ({
+        users: {
+          history: {
+            list: vi.fn(async () => ({ data: { history, historyId } })),
+          },
+        },
+      }) as never
+  }
+
+  it('captures label + delete changes, excludes threads with a new message', async () => {
+    const client = await createClientForAgent({
+      agentId: 'u_1',
+      factory: fakeSdk([
+        { messagesAdded: [{ message: { id: 'm1', threadId: 't_new' } }] },
+        { labelsAdded: [{ message: { id: 'm2', threadId: 't_star' } }] },
+        { labelsRemoved: [{ message: { id: 'm3', threadId: 't_read' } }] },
+        { messagesDeleted: [{ message: { id: 'm4', threadId: 't_del' } }] },
+        // A thread that both got a new message AND a label change → message wins.
+        { labelsAdded: [{ message: { id: 'm5', threadId: 't_new' } }] },
+      ]),
+    })
+    const res = await client.listHistorySince('10')
+    expect(res.added).toEqual([{ messageId: 'm1', threadId: 't_new' }])
+    expect([...res.changedThreadIds].sort()).toEqual(['t_del', 't_read', 't_star'])
+    expect(res.newHistoryId).toBe('99')
+  })
+})
+
+describe('getThreadState', () => {
+  it('aggregates label ids across messages', async () => {
+    const client = await createClientForAgent({
+      agentId: 'u_1',
+      factory: () =>
+        ({
+          users: {
+            threads: {
+              get: vi.fn(async () => ({
+                data: {
+                  messages: [
+                    { labelIds: ['INBOX', 'UNREAD'] },
+                    { labelIds: ['INBOX', 'STARRED'] },
+                  ],
+                },
+              })),
+            },
+          },
+        }) as never,
+    })
+    const state = await client.getThreadState('t_1')
+    expect(state?.threadId).toBe('t_1')
+    expect([...(state?.labelIds ?? [])].sort()).toEqual(['INBOX', 'STARRED', 'UNREAD'])
+  })
+
+  it('maps a 404 to null (thread permanently deleted)', async () => {
+    const client = await createClientForAgent({
+      agentId: 'u_1',
+      factory: () =>
+        ({
+          users: {
+            threads: {
+              get: vi.fn(async () => {
+                throw { code: 404 }
+              }),
+            },
+          },
+        }) as never,
+    })
+    expect(await client.getThreadState('gone')).toBeNull()
   })
 })

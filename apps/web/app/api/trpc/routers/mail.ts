@@ -143,6 +143,7 @@ export const mailRouter = router({
         displayName: true,
         ownerKind: true,
         status: true,
+        signatureHtml: true,
       },
     })
     return rows.map((r) => ({
@@ -151,6 +152,7 @@ export const mailRouter = router({
       displayName: r.displayName,
       ownerKind: r.ownerKind,
       status: r.status,
+      signatureHtml: r.signatureHtml,
     }))
   }),
 
@@ -164,7 +166,9 @@ export const mailRouter = router({
       .input(
         z.object({
           mailAccountId: z.string().nullish(),
-          filter: z.enum(['all', 'unread']).default('all'),
+          filter: z
+            .enum(['all', 'unread', 'starred', 'archived', 'trash'])
+            .default('all'),
           q: z.string().trim().min(1).max(120).nullish(),
           cursor: z
             .object({ id: z.string(), lastMessageAt: z.date() })
@@ -178,7 +182,27 @@ export const mailRouter = router({
 
         const where: Record<string, unknown> = { provider: 'email' }
         if (input.mailAccountId) where['mailAccountId'] = input.mailAccountId
-        if (input.filter === 'unread') where['unreadCount'] = { gt: 0 }
+        // Gmail-style folders. Trash is its own view; every other folder hides
+        // trashed threads (Gmail's "All Mail" excludes Trash).
+        switch (input.filter) {
+          case 'unread':
+            where['unreadCount'] = { gt: 0 }
+            where['isTrashed'] = false
+            break
+          case 'starred':
+            where['isStarred'] = true
+            where['isTrashed'] = false
+            break
+          case 'archived':
+            where['status'] = 'archived'
+            where['isTrashed'] = false
+            break
+          case 'trash':
+            where['isTrashed'] = true
+            break
+          default:
+            where['isTrashed'] = false
+        }
         // Compose cursor + search as AND clauses so neither clobbers the other.
         const and: unknown[] = []
         if (input.cursor) {
@@ -220,6 +244,9 @@ export const mailRouter = router({
             subject: true,
             unreadCount: true,
             status: true,
+            isStarred: true,
+            isTrashed: true,
+            lastMessagePreview: true,
             lastMessageAt: true,
             mailAccountId: true,
             contact: {
@@ -237,6 +264,9 @@ export const mailRouter = router({
           subject: r.subject,
           unreadCount: r.unreadCount,
           status: r.status,
+          isStarred: r.isStarred,
+          isTrashed: r.isTrashed,
+          preview: r.lastMessagePreview,
           lastMessageAt: r.lastMessageAt,
           accountAddress: r.mailAccount?.address ?? null,
           contactName: r.contact
@@ -429,6 +459,16 @@ export const mailRouter = router({
           purpose: 'mail.set_starred',
         })
         await provider.setStarred(head.externalThreadId, input.starred)
+        await ctx.db.conversation.update({
+          where: { id: head.id },
+          data: { isStarred: input.starred },
+        })
+        publishConversationUpdate({
+          id: head.id,
+          trengoTicketId: null,
+          lastMessageAt: head.lastMessageAt.toISOString(),
+          contactId: head.contactId,
+        })
         await ctx.audit({
           action: 'mail.thread_starred',
           target: { type: 'Conversation', id: head.id },
@@ -452,7 +492,7 @@ export const mailRouter = router({
         await provider.setTrashed(head.externalThreadId, input.trashed)
         await ctx.db.conversation.update({
           where: { id: head.id },
-          data: { status: input.trashed ? 'archived' : 'open' },
+          data: { status: input.trashed ? 'archived' : 'open', isTrashed: input.trashed },
         })
         publishConversationUpdate({
           id: head.id,

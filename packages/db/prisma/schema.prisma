@@ -1250,6 +1250,17 @@ model Conversation {
   /// unsubscribed lifecycle webhook can never leave the head permanently
   /// drifted from Trengo. Null = never reconciled (checked first).
   lastSyncCheckAt  DateTime?
+  /// ADR 0021 Phase 5 — Gmail flag mirror (two-way sync). Maintained by BOTH
+  /// the CRM outbound actions (`mail.thread.*`) and the inbound history sync
+  /// (`mirrorThreadFlags`), so a star/archive/trash/read change made in Gmail
+  /// flows back into the CRM and vice-versa. `isArchived`/read state still live
+  /// on `status`/`unreadCount`; these two capture what those columns can't.
+  isStarred        Boolean            @default(false)
+  /// True when the Gmail thread is in TRASH. Distinct from `status='archived'`
+  /// (no INBOX label) so the mail client can show separate Archive / Trash.
+  isTrashed        Boolean            @default(false)
+  /// Last time `mirrorThreadFlags` re-read this thread's Gmail label state.
+  flagsSyncedAt    DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1269,6 +1280,8 @@ model Conversation {
   @@index([mailAccountId, status])
   @@index([provider, channel])
   @@index([lastSyncCheckAt])
+  @@index([provider, isStarred])
+  @@index([provider, isTrashed])
 }
 
 enum ConversationStatus {
@@ -3365,6 +3378,12 @@ model MailAccount {
   lastSyncedAt   DateTime?
   /// Bridge to the legacy per-agent Gmail row (provider=gmail only). 1:1.
   gmailMailboxId String? @unique
+  /// ADR 0021 — the account's own email signature, copied verbatim from the
+  /// provider (Gmail `users.settings.sendAs` for this address). HTML; appended
+  /// to compose/reply so outgoing mail matches what the agent sends from Gmail.
+  /// Null until first synced. `signatureSyncedAt` records the last copy.
+  signatureHtml     String?
+  signatureSyncedAt DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

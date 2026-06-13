@@ -28,6 +28,33 @@ function fmt(date: Date | null | undefined): string {
   return new Date(date).toUTCString()
 }
 
+// Friendly, actionable copy for the OAuth error codes the connect flow can
+// redirect back with (CLAUDE.md §4 — say what failed and what to do now).
+function connectErrorMessage(code: string): string {
+  if (code === 'gmail_api_disabled') {
+    return 'Gmail is connected, but the Gmail API is switched off in your Google Cloud project. Enable the Gmail API for the same project as your OAuth client, wait a few minutes for it to propagate, then connect again.'
+  }
+  if (code.startsWith('profile_lookup_failed')) {
+    return "Google approved the sign-in but rejected the first Gmail request. This is usually the Gmail API not being enabled yet (give it a few minutes after enabling), or the account not being a test user on the OAuth consent screen."
+  }
+  if (code === 'oauth_not_configured') {
+    return 'Gmail OAuth is not configured on the server. Set GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / NEXT_PUBLIC_APP_URL and redeploy.'
+  }
+  if (code === 'scope_mismatch') {
+    return 'Some Gmail permissions were not granted. When Google asks, tick all the requested boxes and continue.'
+  }
+  if (code === 'no_refresh_token') {
+    return 'Google did not return a refresh token. Remove this app at myaccount.google.com → Security → Third-party access, then connect again.'
+  }
+  if (code === 'token_exchange_failed' || code === 'oauth_not_configured') {
+    return 'We could not exchange the sign-in code. Check the OAuth client secret and that the redirect URI matches exactly.'
+  }
+  if (code === 'invalid_state' || code === 'invalid_request') {
+    return 'The sign-in link expired or was reused. Start the connection again from this page.'
+  }
+  return 'We could not connect that mailbox. Try again; if it persists, contact support.'
+}
+
 export default async function MailboxSettingsPage({ searchParams }: PageProps) {
   const params = (await searchParams) ?? {}
   const errorParam = typeof params.error === 'string' ? params.error : null
@@ -50,8 +77,10 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
         <div className="max-w-3xl space-y-5">
           {errorParam ? (
             <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900">
-              We couldn&apos;t connect that mailbox: <code>{errorParam}</code>. Try
-              again; if the problem persists, contact support.
+              <p>{connectErrorMessage(errorParam)}</p>
+              <p className="mt-1 text-xs text-red-700/80">
+                Reference: <code>{errorParam}</code>
+              </p>
             </div>
           ) : null}
           {connectedParam ? (

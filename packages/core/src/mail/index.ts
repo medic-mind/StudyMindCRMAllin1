@@ -9,6 +9,8 @@ import { z } from 'zod'
 
 export * from './sync-provider'
 export * from './conversation-head'
+export * from './signature'
+export * from './html-email'
 
 // -----------------------------------------------------------------------------
 // Enumerations — mirror the Prisma enums one-for-one.

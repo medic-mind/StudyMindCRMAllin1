@@ -36,9 +36,23 @@ interface AccountOption {
   id: string
   address: string
   displayName: string | null
+  signatureHtml: string | null
 }
 
-type Folder = 'all' | 'unread'
+// The agent's Gmail signature, copied verbatim, rendered as the plaintext the
+// composer sends today (HTML send arrives with the rich composer). Appended
+// below the cursor like Gmail. Empty when the account has no signature.
+function signatureText(account: AccountOption | undefined): string {
+  const html = account?.signatureHtml
+  if (!html) return ''
+  return displayMessageBody(html)?.trim() ?? ''
+}
+
+function signatureBlock(text: string): string {
+  return text ? `\n\n${text}` : ''
+}
+
+type Folder = 'all' | 'unread' | 'starred' | 'archived' | 'trash'
 
 export function MailWorkspace({
   accounts,
@@ -263,6 +277,7 @@ export function MailWorkspace({
         {selectedId ? (
           <ReadingPane
             conversationId={selectedId}
+            accounts={accounts}
             onClose={() => setSelectedId(null)}
             onChanged={invalidateList}
           />
@@ -362,6 +377,13 @@ function Rail({
       <nav aria-label="Folders" className="flex flex-col gap-0.5">
         <RailItem label="All mail" active={folder === 'all'} onClick={() => onFolder('all')} />
         <RailItem label="Unread" active={folder === 'unread'} onClick={() => onFolder('unread')} />
+        <RailItem label="Starred" active={folder === 'starred'} onClick={() => onFolder('starred')} />
+        <RailItem
+          label="Archived"
+          active={folder === 'archived'}
+          onClick={() => onFolder('archived')}
+        />
+        <RailItem label="Trash" active={folder === 'trash'} onClick={() => onFolder('trash')} />
       </nav>
 
       <div>
@@ -435,6 +457,9 @@ type ThreadItem = {
   subject: string | null
   unreadCount: number
   status: string
+  isStarred: boolean
+  isTrashed: boolean
+  preview: string | null
   lastMessageAt: Date
   accountAddress: string | null
   contactName: string | null
@@ -485,12 +510,21 @@ function ThreadRow({
       <Avatar name={who} size={30} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span
-            className={`truncate text-sm ${
-              unread ? 'font-semibold text-neutral-900' : 'font-medium text-neutral-700'
-            }`}
-          >
-            {who}
+          <span className="flex min-w-0 items-center gap-1">
+            {item.isStarred ? (
+              <StarIcon
+                size={12}
+                aria-label="Starred"
+                className="shrink-0 fill-amber-400 text-amber-400"
+              />
+            ) : null}
+            <span
+              className={`truncate text-sm ${
+                unread ? 'font-semibold text-neutral-900' : 'font-medium text-neutral-700'
+              }`}
+            >
+              {who}
+            </span>
           </span>
           <time
             className="shrink-0 text-[11px] tabular-nums text-neutral-400"
@@ -506,9 +540,14 @@ function ThreadRow({
         >
           {item.subject ?? '(no subject)'}
         </div>
+        {item.preview ? (
+          <div className="truncate text-[12px] text-neutral-400">{item.preview}</div>
+        ) : null}
         <div className="flex items-center gap-1.5 text-[11px] text-neutral-400">
           {item.accountAddress ? <span className="truncate">{item.accountAddress}</span> : null}
-          {item.status === 'archived' ? (
+          {item.isTrashed ? (
+            <span className="rounded bg-red-50 px-1 text-red-500">Trash</span>
+          ) : item.status === 'archived' ? (
             <span className="rounded bg-neutral-100 px-1 text-neutral-500">Archived</span>
           ) : null}
           {item.unreadCount > 1 ? (
@@ -645,10 +684,12 @@ function IconBtn({
 
 function ReadingPane({
   conversationId,
+  accounts,
   onClose,
   onChanged,
 }: {
   conversationId: string
+  accounts: AccountOption[]
   onClose: () => void
   onChanged: () => void
 }) {
@@ -662,9 +703,21 @@ function ReadingPane({
   const [body, setBody] = useState('')
   const [confirmTrash, setConfirmTrash] = useState(false)
   const markedRef = useRef<Set<string>>(new Set())
+  const sigInitRef = useRef<string | null>(null)
 
   const head = convo.data?.head
   const messages = useMemo(() => convo.data?.messages ?? [], [convo.data])
+
+  // Prefill the reply with the account's Gmail signature once per conversation
+  // (Gmail parity). Only when the box is still untouched, so we never clobber
+  // a draft the agent has started.
+  const replyAccount = accounts.find((a) => a.id === head?.mailAccountId)
+  useEffect(() => {
+    if (!head || sigInitRef.current === head.id) return
+    sigInitRef.current = head.id
+    const sig = signatureText(replyAccount)
+    if (sig) setBody((prev) => (prev.trim() ? prev : signatureBlock(sig)))
+  }, [head?.id, replyAccount])
 
   // Mark read on open (like Gmail). Once per conversation per mount.
   useEffect(() => {
@@ -811,9 +864,13 @@ function ReadingPane({
                     {formatRelativeTime(m.occurredAt, now)}
                   </time>
                 </div>
-                <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
-                  {displayMessageBody(m.body) ?? '(no content)'}
-                </p>
+                {m.bodyHtml ? (
+                  <EmailHtmlBody html={m.bodyHtml} text={displayMessageBody(m.body) ?? ''} />
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
+                    {displayMessageBody(m.body) ?? '(no content)'}
+                  </p>
+                )}
                 {m.mailAttachments.length > 0 ? (
                   <ul className="mt-2 flex flex-wrap gap-1.5">
                     {m.mailAttachments.map((a) => (
@@ -865,6 +922,57 @@ function ReadingPane({
 }
 
 // -----------------------------------------------------------------------------
+// Email HTML body — rendered exactly like Gmail. ADR 0041.
+//
+// Security: the message HTML is shown in a LOCKED, opaque-origin sandboxed
+// iframe — `sandbox` WITHOUT `allow-scripts` (no JS can ever run) and WITHOUT
+// `allow-same-origin` (the frame is a unique origin: it can't read our cookies/
+// DOM, and it does NOT inherit our strict CSP, so the email's inline styles
+// render — which is what makes it look identical to Gmail). The HTML was also
+// sanitised server-side (packages/core/src/mail/html-email.ts) as defence in
+// depth. `allow-popups` + `<base target="_blank">` lets links open in a new tab.
+// -----------------------------------------------------------------------------
+
+function EmailHtmlBody({ html, text }: { html: string; text: string }) {
+  const [showHtml, setShowHtml] = useState(true)
+  const srcDoc = useMemo(
+    () =>
+      `<!doctype html><html><head><base target="_blank">` +
+      `<meta name="color-scheme" content="light">` +
+      `<style>html,body{margin:0;padding:0;background:#fff;` +
+      `font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;` +
+      `color:#1f2933;font-size:14px;line-height:1.5;word-break:break-word}` +
+      `img{max-width:100%;height:auto}a{color:#2563eb}` +
+      `table{max-width:100%}</style></head><body>${html}</body></html>`,
+    [html],
+  )
+  return (
+    <div>
+      {showHtml ? (
+        <iframe
+          title="Email message"
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          srcDoc={srcDoc}
+          className="w-full rounded-md border border-neutral-100 bg-white"
+          style={{ height: 420 }}
+        />
+      ) : (
+        <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
+          {text || '(no content)'}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => setShowHtml((v) => !v)}
+        className="mt-1 text-[11px] font-medium text-neutral-400 hover:text-neutral-600"
+      >
+        {showHtml ? 'View plain text' : 'View formatted'}
+      </button>
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
 // Compose modal
 // -----------------------------------------------------------------------------
 
@@ -879,8 +987,24 @@ function ComposeModal({
   const compose = trpc.mail.compose.useMutation()
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
   const [to, setTo] = useState('')
+  const [cc, setCc] = useState('')
+  const [showCc, setShowCc] = useState(false)
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
+
+  // Keep the agent's Gmail signature pinned to the bottom of the draft, and
+  // swap it cleanly when the From account changes — mirroring Gmail.
+  const prevSigRef = useRef('')
+  useEffect(() => {
+    const sig = signatureText(accounts.find((a) => a.id === accountId))
+    setBody((prev) => {
+      let base = prev
+      const oldBlock = signatureBlock(prevSigRef.current)
+      if (oldBlock && base.endsWith(oldBlock)) base = base.slice(0, -oldBlock.length)
+      prevSigRef.current = sig
+      return base + signatureBlock(sig)
+    })
+  }, [accountId, accounts])
 
   async function send() {
     const recipients = to
@@ -891,10 +1015,15 @@ function ComposeModal({
       toast.error('Add a recipient, subject and message.')
       return
     }
+    const ccList = cc
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
     try {
       await compose.mutateAsync({
         mailAccountId: accountId,
         to: recipients,
+        ...(ccList.length > 0 ? { cc: ccList } : {}),
         subject: subject.trim(),
         body: body.trim(),
       })
@@ -942,7 +1071,21 @@ function ComposeModal({
               </option>
             ))}
           </select>
-          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To: name@example.com, …" aria-label="To" />
+          <div className="relative">
+            <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To: name@example.com, …" aria-label="To" />
+            {!showCc ? (
+              <button
+                type="button"
+                onClick={() => setShowCc(true)}
+                className="absolute right-2 top-1.5 text-xs font-medium text-neutral-400 hover:text-neutral-600"
+              >
+                Cc
+              </button>
+            ) : null}
+          </div>
+          {showCc ? (
+            <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc: name@example.com, …" aria-label="Cc" />
+          ) : null}
           <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" aria-label="Subject" />
           <Textarea
             value={body}
