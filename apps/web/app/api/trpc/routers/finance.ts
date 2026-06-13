@@ -9,6 +9,7 @@ import { z } from 'zod'
 import {
   defaulterDetail,
   dismissUnresolvedStripePayment,
+  listActivePlanArrears,
   listDefaulters,
   listPlanShortfalls,
   listUnresolvedStripePayments,
@@ -341,6 +342,23 @@ export const financeRouter = router({
           action: 'finance.dd_defaulters_viewed',
           target: { type: 'System', id: 'direct-debit-plan-shortfalls' },
           purpose: 'view_dd_plan_shortfalls',
+          after: { count: items.length },
+        })
+        return { items }
+      }),
+
+    // Active plans that have fallen behind their expected collection schedule
+    // (ADR 0038) — money leaking before anyone cancels the plan. Estimate only
+    // (GoCardless owns the real calendar); read-only and audited.
+    listActivePlanArrears: protectedProcedure
+      .input(z.object({}).optional())
+      .query(async ({ ctx }) => {
+        assertFinanceRole(requireUser(ctx))
+        const items = await listActivePlanArrears(ctx.db)
+        await ctx.audit({
+          action: 'finance.dd_defaulters_viewed',
+          target: { type: 'System', id: 'direct-debit-active-arrears' },
+          purpose: 'view_dd_active_arrears',
           after: { count: items.length },
         })
         return { items }

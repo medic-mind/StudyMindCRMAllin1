@@ -226,3 +226,10 @@ the unambiguous email auto-link for customers imported before their CRM
 contact existed (still unambiguous-only — never auto-merge, §3/§41.1),
 propagating the Family to orphaned mandates so their plans/payments reach the
 contact panel. It runs as the final step of the GoCardless backfill.
+
+A follow-up in the same area adds **active-plan arrears**: `dd-plan-shortfall.ts`
+also estimates, from a plan's cadence + start date, how many instalments an
+*active* plan should have collected by now and flags any that are at least two
+behind (`finance.directDebit.listActivePlanArrears`, audited; a third Issues
+section). This is a conservative proxy — GoCardless owns the real charge
+calendar — so it only surfaces a plan for a human to check, never charges.

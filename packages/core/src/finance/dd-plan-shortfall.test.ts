@@ -4,7 +4,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { classifyPlanShortfall, type PlanFacts } from './dd-plan-shortfall'
+import {
+  ARREARS_THRESHOLD,
+  classifyActivePlanArrears,
+  classifyPlanShortfall,
+  expectedInstalmentsByNow,
+  type ActivePlanFacts,
+  type PlanFacts,
+} from './dd-plan-shortfall'
 
 function facts(overrides: Partial<PlanFacts> = {}): PlanFacts {
   return {
@@ -84,5 +91,128 @@ describe('classifyPlanShortfall', () => {
     expect(row?.reasons).toContain('collection_shortfall')
     expect(row?.reasons).not.toContain('cancelled_partway')
     expect(row?.shortfallMinor).toBe(10_000)
+  })
+})
+
+describe('expectedInstalmentsByNow', () => {
+  const start = new Date('2026-01-15T00:00:00Z')
+
+  it('counts the first instalment from the start date', () => {
+    expect(
+      expectedInstalmentsByNow(
+        { startDate: start, intervalUnit: 'monthly', interval: 1, totalPaymentCount: null },
+        start,
+      ),
+    ).toBe(1)
+  })
+
+  it('counts whole monthly cycles elapsed', () => {
+    // 15 Jan → 20 Apr = 3 whole months → 4 instalments due.
+    expect(
+      expectedInstalmentsByNow(
+        { startDate: start, intervalUnit: 'monthly', interval: 1, totalPaymentCount: null },
+        new Date('2026-04-20T00:00:00Z'),
+      ),
+    ).toBe(4)
+  })
+
+  it('respects the interval and the contracted cap', () => {
+    // Every 3 months from Jan; by Dec = 11 months → 3 cycles → 4 due, capped at 3.
+    expect(
+      expectedInstalmentsByNow(
+        { startDate: start, intervalUnit: 'monthly', interval: 3, totalPaymentCount: 3 },
+        new Date('2026-12-15T00:00:00Z'),
+      ),
+    ).toBe(3)
+  })
+
+  it('handles weekly cadence', () => {
+    // 4 weeks after start → 4 cycles → 5 instalments due.
+    expect(
+      expectedInstalmentsByNow(
+        { startDate: start, intervalUnit: 'weekly', interval: 1, totalPaymentCount: null },
+        new Date('2026-02-12T00:00:00Z'),
+      ),
+    ).toBe(5)
+  })
+
+  it('returns 0 before the plan starts and null on unknown cadence/no start', () => {
+    expect(
+      expectedInstalmentsByNow(
+        { startDate: start, intervalUnit: 'monthly', interval: 1, totalPaymentCount: null },
+        new Date('2026-01-01T00:00:00Z'),
+      ),
+    ).toBe(0)
+    expect(
+      expectedInstalmentsByNow(
+        { startDate: start, intervalUnit: 'fortnightly', interval: 1, totalPaymentCount: null },
+        start,
+      ),
+    ).toBeNull()
+    expect(
+      expectedInstalmentsByNow(
+        { startDate: null, intervalUnit: 'monthly', interval: 1, totalPaymentCount: null },
+        start,
+      ),
+    ).toBeNull()
+  })
+})
+
+describe('classifyActivePlanArrears', () => {
+  const start = new Date('2026-01-15T00:00:00Z')
+  const now = new Date('2026-06-20T00:00:00Z') // ~5 months in → 6 instalments due
+
+  function activeFacts(overrides: Partial<ActivePlanFacts> = {}): ActivePlanFacts {
+    return {
+      gcSubscriptionId: 'SB1',
+      name: 'Monthly tutoring',
+      status: 'active',
+      amountMinor: 10_000,
+      currency: 'GBP',
+      intervalUnit: 'monthly',
+      interval: 1,
+      totalPaymentCount: null,
+      startDate: start,
+      gcCustomerId: 'CU1',
+      nextChargeAt: new Date('2026-07-15T00:00:00Z'),
+      collectedCount: 6,
+      collectedMinor: 60_000,
+      lastCollectedAt: new Date('2026-06-15T00:00:00Z'),
+      ...overrides,
+    }
+  }
+
+  it('flags a plan two or more instalments behind schedule', () => {
+    // 6 due, only 3 collected → 3 behind.
+    const row = classifyActivePlanArrears(
+      activeFacts({ collectedCount: 3, collectedMinor: 30_000 }),
+      now,
+    )
+    expect(row).not.toBeNull()
+    expect(row?.expectedByNow).toBe(6)
+    expect(row?.missedCount).toBe(3)
+    expect(row?.estimatedArrearsMinor).toBe(30_000)
+  })
+
+  it('does not flag a plan that is on schedule or only one behind', () => {
+    expect(classifyActivePlanArrears(activeFacts({ collectedCount: 6 }), now)).toBeNull()
+    expect(
+      classifyActivePlanArrears(activeFacts({ collectedCount: 6 - (ARREARS_THRESHOLD - 1) }), now),
+    ).toBeNull()
+  })
+
+  it('only considers active plans', () => {
+    expect(
+      classifyActivePlanArrears(activeFacts({ status: 'cancelled', collectedCount: 1 }), now),
+    ).toBeNull()
+  })
+
+  it('never flags an open-ended plan with an unknown cadence', () => {
+    expect(
+      classifyActivePlanArrears(
+        activeFacts({ intervalUnit: 'fortnightly', collectedCount: 0 }),
+        now,
+      ),
+    ).toBeNull()
   })
 })

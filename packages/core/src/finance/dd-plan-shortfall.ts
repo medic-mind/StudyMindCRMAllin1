@@ -260,3 +260,252 @@ export async function listPlanShortfalls(
   withCustomer.sort((a, b) => b.shortfallMinor - a.shortfallMinor)
   return withCustomer
 }
+
+// -----------------------------------------------------------------------------
+// Active plans behind schedule (arrears)
+//
+// The shortfall engine above only looks at *ended* plans. A plan that is still
+// `active` but has quietly stopped collecting — the bank keeps declining, or
+// GoCardless paused charging — leaks money for months before anyone cancels
+// it. This second pass catches those: it estimates how many instalments a plan
+// *should* have collected by now from its cadence and start date, and compares
+// that to what actually landed.
+//
+// This is a deliberately conservative *proxy*, not GoCardless's exact
+// scheduler (day-of-month, bank-holiday shifting and submission lead time all
+// move real charge dates). We only flag a plan once it is at least
+// `ARREARS_THRESHOLD` instalments behind, so a single in-flight cycle never
+// raises a false alarm. GoCardless stays the source of truth; this only
+// surfaces a plan for a human to check (CLAUDE.md §3, §4, §8).
+// -----------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** Minimum instalments behind before a plan is surfaced as in arrears. */
+export const ARREARS_THRESHOLD = 2
+
+/** Whole calendar months between two UTC dates (a ≤ b assumed). */
+function monthsBetweenUtc(a: Date, b: Date): number {
+  let months = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth())
+  if (b.getUTCDate() < a.getUTCDate()) months -= 1
+  return Math.max(0, months)
+}
+
+export interface PlanScheduleInput {
+  startDate: Date | null
+  intervalUnit: string
+  interval: number
+  totalPaymentCount: number | null
+}
+
+/**
+ * Estimate how many instalments a plan should have collected by `now`,
+ * inclusive of the first charge at/after the start date. Returns null when the
+ * cadence is unknown (fail closed, §8) or the plan has no start date. Capped at
+ * the contracted total when one exists. Pure — time is injected for tests
+ * (CLAUDE.md §30).
+ */
+export function expectedInstalmentsByNow(input: PlanScheduleInput, now: Date): number | null {
+  if (!input.startDate) return null
+  const start = input.startDate
+  if (now.getTime() < start.getTime()) return 0
+
+  const interval = input.interval > 0 ? input.interval : 1
+  let cycles: number
+  switch (input.intervalUnit) {
+    case 'weekly':
+      cycles = Math.floor(Math.floor((now.getTime() - start.getTime()) / DAY_MS) / (7 * interval))
+      break
+    case 'monthly':
+      cycles = Math.floor(monthsBetweenUtc(start, now) / interval)
+      break
+    case 'yearly':
+      cycles = Math.floor(monthsBetweenUtc(start, now) / (12 * interval))
+      break
+    default:
+      return null
+  }
+
+  let expected = cycles + 1
+  if (input.totalPaymentCount != null) expected = Math.min(expected, input.totalPaymentCount)
+  return Math.max(0, expected)
+}
+
+export interface ActivePlanFacts extends PlanScheduleInput {
+  gcSubscriptionId: string
+  name: string | null
+  status: string
+  amountMinor: number
+  currency: string
+  gcCustomerId: string | null
+  nextChargeAt: Date | null
+  collectedCount: number
+  collectedMinor: number
+  lastCollectedAt: Date | null
+}
+
+export interface ActivePlanArrears {
+  gcSubscriptionId: string
+  name: string | null
+  currency: string
+  amountMinor: number
+  intervalUnit: string
+  interval: number
+  startDate: Date
+  /** Instalments the plan should have collected by now (cadence estimate). */
+  expectedByNow: number
+  collectedCount: number
+  /** Instalments behind schedule = expectedByNow − collectedCount. */
+  missedCount: number
+  /** Estimated money in arrears = missedCount × amountMinor. */
+  estimatedArrearsMinor: number
+  totalPaymentCount: number | null
+  nextChargeAt: Date | null
+  lastCollectedAt: Date | null
+  gcCustomerId: string | null
+}
+
+/**
+ * Pure classifier. Flags an active plan that is at least `ARREARS_THRESHOLD`
+ * instalments behind its expected schedule, else null.
+ */
+export function classifyActivePlanArrears(
+  facts: ActivePlanFacts,
+  now: Date,
+): ActivePlanArrears | null {
+  if (facts.status !== 'active') return null
+
+  const expectedByNow = expectedInstalmentsByNow(facts, now)
+  if (expectedByNow == null) return null
+
+  const missedCount = expectedByNow - facts.collectedCount
+  if (missedCount < ARREARS_THRESHOLD) return null
+
+  return {
+    gcSubscriptionId: facts.gcSubscriptionId,
+    name: facts.name,
+    currency: facts.currency,
+    amountMinor: facts.amountMinor,
+    intervalUnit: facts.intervalUnit,
+    interval: facts.interval,
+    startDate: facts.startDate as Date,
+    expectedByNow,
+    collectedCount: facts.collectedCount,
+    missedCount,
+    estimatedArrearsMinor: missedCount * facts.amountMinor,
+    totalPaymentCount: facts.totalPaymentCount,
+    nextChargeAt: facts.nextChargeAt,
+    lastCollectedAt: facts.lastCollectedAt,
+    gcCustomerId: facts.gcCustomerId,
+  }
+}
+
+export interface ActivePlanArrearsWithCustomer extends ActivePlanArrears {
+  customerName: string | null
+  contactId: string | null
+  familyId: string | null
+}
+
+export interface ListActivePlanArrearsOptions {
+  /** Reference time, injected for determinism in tests. Defaults to now. */
+  now?: Date
+}
+
+/**
+ * List active GoCardless plans that are behind their expected collection
+ * schedule, sorted by estimated arrears desc. Read-only.
+ */
+export async function listActivePlanArrears(
+  db: DbClient,
+  opts: ListActivePlanArrearsOptions = {},
+): Promise<ActivePlanArrearsWithCustomer[]> {
+  const now = opts.now ?? new Date()
+
+  const subscriptions = await db.gcSubscription.findMany({
+    where: { deletedAt: null, status: 'active' },
+    select: {
+      gcSubscriptionId: true,
+      name: true,
+      status: true,
+      amountMinor: true,
+      currency: true,
+      intervalUnit: true,
+      interval: true,
+      totalPaymentCount: true,
+      startDate: true,
+      nextChargeAt: true,
+      gcCustomerId: true,
+    },
+  })
+  if (subscriptions.length === 0) return []
+
+  const subscriptionIds = subscriptions.map((s) => s.gcSubscriptionId)
+  const payments = await db.gcPayment.findMany({
+    where: { gcSubscriptionId: { in: subscriptionIds }, deletedAt: null },
+    select: { gcSubscriptionId: true, status: true, amountMinor: true, chargeDate: true },
+  })
+
+  const paymentsBySub = new Map<
+    string,
+    Array<{ status: string; amountMinor: number; chargeDate: Date | null }>
+  >()
+  for (const p of payments) {
+    if (!p.gcSubscriptionId) continue
+    const list = paymentsBySub.get(p.gcSubscriptionId) ?? []
+    list.push({ status: p.status, amountMinor: p.amountMinor, chargeDate: p.chargeDate })
+    paymentsBySub.set(p.gcSubscriptionId, list)
+  }
+
+  const rows: ActivePlanArrears[] = []
+  for (const sub of subscriptions) {
+    const collected = collectedFromPayments(paymentsBySub.get(sub.gcSubscriptionId) ?? [])
+    const row = classifyActivePlanArrears(
+      {
+        gcSubscriptionId: sub.gcSubscriptionId,
+        name: sub.name,
+        status: sub.status,
+        amountMinor: sub.amountMinor,
+        currency: sub.currency,
+        intervalUnit: sub.intervalUnit,
+        interval: sub.interval,
+        totalPaymentCount: sub.totalPaymentCount,
+        startDate: sub.startDate,
+        nextChargeAt: sub.nextChargeAt,
+        gcCustomerId: sub.gcCustomerId,
+        ...collected,
+      },
+      now,
+    )
+    if (row) rows.push(row)
+  }
+
+  const customerIds = Array.from(
+    new Set(rows.map((r) => r.gcCustomerId).filter((id): id is string => id !== null)),
+  )
+  const customers =
+    customerIds.length > 0
+      ? await db.gcCustomer.findMany({
+          where: { gcCustomerId: { in: customerIds }, deletedAt: null },
+          select: {
+            gcCustomerId: true,
+            givenName: true,
+            familyName: true,
+            companyName: true,
+            contactId: true,
+            familyId: true,
+          },
+        })
+      : []
+  const customerById = new Map(customers.map((c) => [c.gcCustomerId, c]))
+
+  const withCustomer: ActivePlanArrearsWithCustomer[] = rows.map((r) => {
+    const c = r.gcCustomerId ? customerById.get(r.gcCustomerId) : undefined
+    const customerName = c
+      ? [c.givenName, c.familyName].filter(Boolean).join(' ') || c.companyName || null
+      : null
+    return { ...r, customerName, contactId: c?.contactId ?? null, familyId: c?.familyId ?? null }
+  })
+
+  withCustomer.sort((a, b) => b.estimatedArrearsMinor - a.estimatedArrearsMinor)
+  return withCustomer
+}

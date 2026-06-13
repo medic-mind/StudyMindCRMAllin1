@@ -20,7 +20,7 @@ import { OverviewTab } from './OverviewTab'
 import { PaymentsTab } from './PaymentsTab'
 import { PayoutsTab } from './PayoutsTab'
 import { PlansTab } from './PlansTab'
-import { PlanShortfallsSection } from './PlanShortfallsSection'
+import { ActivePlanArrearsSection, PlanShortfallsSection } from './PlanShortfallsSection'
 
 export const DD_TABS = [
   { value: 'overview', label: 'Overview', href: '/direct-debits' },
@@ -114,6 +114,7 @@ function IssuesTab() {
     <div className="space-y-6">
       <DefaultersSection />
       <PlanShortfallsSection />
+      <ActivePlanArrearsSection />
     </div>
   )
 }
