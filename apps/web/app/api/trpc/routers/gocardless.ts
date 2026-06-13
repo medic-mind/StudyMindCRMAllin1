@@ -19,6 +19,8 @@ import { BackfillAlreadyRunningError, startBackfill } from '@studymind/core/back
 import {
   createMandateSetupLink,
   linkGcCustomer,
+  listActivePlanArrears,
+  listPlanShortfalls,
   monthlyRunRateMinor,
   revokeSetupLink,
 } from '@studymind/core/finance'
@@ -668,8 +670,22 @@ export const gocardlessRouter = router({
       subscriptions[row.status] = row._count._all
     }
 
+    // Plan-level issues for the dashboard (ADR 0038, sixth amendment): plans
+    // cancelled/finished early with money still due, and active plans behind
+    // their collection schedule. Reuses the same read the Issues tab uses.
+    const [planShortfalls, planArrears] = await Promise.all([
+      listPlanShortfalls(ctx.db),
+      listActivePlanArrears(ctx.db),
+    ])
+
     return {
       subscriptions,
+      planIssues: {
+        shortfallCount: planShortfalls.length,
+        shortfallDueMinor: planShortfalls.reduce((s, p) => s + p.shortfallMinor, 0),
+        arrearsCount: planArrears.length,
+        arrearsDueMinor: planArrears.reduce((s, p) => s + p.estimatedArrearsMinor, 0),
+      },
       customers: { total: customerTotal, unlinked: customerUnlinked },
       activeMandates: mandateActive,
       collected: {

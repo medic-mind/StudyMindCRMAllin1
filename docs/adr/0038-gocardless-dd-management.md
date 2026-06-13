@@ -233,3 +233,13 @@ also estimates, from a plan's cadence + start date, how many instalments an
 behind (`finance.directDebit.listActivePlanArrears`, audited; a third Issues
 section). This is a conservative proxy — GoCardless owns the real charge
 calendar — so it only surfaces a plan for a human to check, never charges.
+
+These plan-level signals are also raised **proactively** by the nightly
+`finance/flag-dd-defaulters` job (`flagPlanIssues`): for any plan whose
+GoCardless customer is linked to a Family it upserts a
+`direct_debit_plan_shortfall` or `direct_debit_plan_arrears`
+ReconciliationDiscrepancy (idempotent on `(familyId, category, contextHash)`)
+and the worker boundary posts a combined `#crm-finops` summary — so finance is
+told, not just shown. The Direct Debits **Overview** carries matching headline
+tiles (count + total due, linking to Issues), and both Issues tables support
+column sorting + filter-honouring CSV export.

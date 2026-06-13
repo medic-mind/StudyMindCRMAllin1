@@ -96,6 +96,18 @@ export function OverviewTab() {
           label="Sign-up links out"
           value={String(o.setupLinks.outstanding)}
         />
+        <StatLink
+          href="/direct-debits/issues"
+          label={`Cancelled/underpaid · ${o.planIssues.shortfallCount} plan${o.planIssues.shortfallCount === 1 ? '' : 's'}`}
+          value={formatMoneyMinor(o.planIssues.shortfallDueMinor)}
+          warn={o.planIssues.shortfallCount > 0}
+        />
+        <StatLink
+          href="/direct-debits/issues"
+          label={`Behind schedule · ${o.planIssues.arrearsCount} plan${o.planIssues.arrearsCount === 1 ? '' : 's'}`}
+          value={formatMoneyMinor(o.planIssues.arrearsDueMinor)}
+          warn={o.planIssues.arrearsCount > 0}
+        />
       </div>
 
       {/* Quick actions */}
