@@ -1,20 +1,22 @@
-// Client island for /call-summaries. Two parts:
-//  1. "New call summary" — identify who you spoke to (name / email / phone);
-//     a debounced de-dup guard surfaces existing matches so you reuse a
-//     contact instead of duplicating it, or create a fresh one. Once a
-//     contact is resolved the shared CallSummaryWizard takes over (the same
-//     VA-vs-self flow as the contact page).
-//  2. A recent-summaries queue so the team can see what's been logged.
+// Client island for /call-summaries. Search-first: type a name / email /
+// phone and matching customers appear instantly beneath the box — pick one to
+// log a call against them. Genuinely new person? "Add a new contact" expands a
+// tidy create form, and a de-dup guard still catches a near-duplicate before
+// it's created (CLAUDE.md §3 — never auto-merge). Once a contact is resolved
+// the shared CallSummaryWizard takes over (same VA-vs-self flow as the contact
+// page). A recent-summaries queue sits below.
 
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { CallSummaryWizard } from '@/components/contact/call-summary-wizard'
+import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
+import { MailIcon, PhoneIcon, SearchIcon, UserPlusIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
@@ -22,10 +24,20 @@ import { trpc } from '@/lib/trpc/client'
 
 type Kind = 'unclassified' | 'parent' | 'student' | 'tutor' | 'other'
 
+const KIND_LABEL: Record<string, string> = {
+  unclassified: 'Unclassified',
+  parent: 'Parent',
+  student: 'Student',
+  tutor: 'Tutor',
+  other: 'Other',
+}
+
 function clean(s: string): string | undefined {
   const t = s.trim()
   return t.length > 0 ? t : undefined
 }
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 interface Resolved {
   contactId: string
@@ -36,29 +48,35 @@ export function CallSummariesWorkspace() {
   const [resolved, setResolved] = useState<Resolved | null>(null)
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       {resolved ? (
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-                Call summary for
-              </p>
-              <p className="text-sm font-semibold text-neutral-900">
-                <Link href={`/contacts/${resolved.contactId}`} className="hover:underline">
+        <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 bg-gradient-to-b from-neutral-50/70 to-white px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Avatar name={resolved.contactName} size={34} />
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+                  Logging a call for
+                </p>
+                <Link
+                  href={`/contacts/${resolved.contactId}`}
+                  className="block truncate text-sm font-semibold text-neutral-900 hover:text-primary-700 hover:underline"
+                >
                   {resolved.contactName}
                 </Link>
-              </p>
+              </div>
             </div>
             <Button type="button" size="sm" variant="secondary" onClick={() => setResolved(null)}>
-              ← Someone else
+              ← Search again
             </Button>
           </div>
-          <CallSummaryWizard
-            mode="contact"
-            contactId={resolved.contactId}
-            contactName={resolved.contactName}
-          />
+          <div className="p-4">
+            <CallSummaryWizard
+              mode="contact"
+              contactId={resolved.contactId}
+              contactName={resolved.contactName}
+            />
+          </div>
         </section>
       ) : (
         <IdentifyContact onResolved={setResolved} />
@@ -70,37 +88,169 @@ export function CallSummariesWorkspace() {
 }
 
 function IdentifyContact({ onResolved }: { onResolved: (r: Resolved) => void }) {
+  const [q, setQ] = useState('')
+  const [debounced, setDebounced] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q.trim()), 250)
+    return () => clearTimeout(t)
+  }, [q])
+
+  const ready = debounced.length >= 2
+  const results = trpc.contact.list.useQuery(
+    { q: debounced, limit: 8 },
+    { enabled: ready && !creating, staleTime: 10_000 },
+  )
+  const items = results.data?.items ?? []
+
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+      <h2 className="text-sm font-semibold text-neutral-900">Log a call</h2>
+      <p className="mt-0.5 text-sm text-neutral-500">
+        Search the customer you spoke to, or add a new one.
+      </p>
+
+      {!creating ? (
+        <>
+          <div className="relative mt-3">
+            <SearchIcon
+              size={16}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"
+            />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search by name, email or phone…"
+              aria-label="Search customer"
+              className="h-11 w-full rounded-lg border border-neutral-200 bg-white pl-9 pr-3 text-sm shadow-sm transition-colors placeholder:text-neutral-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+
+          {/* Results — right under the box, where you're already looking. */}
+          {ready ? (
+            <div className="mt-2 overflow-hidden rounded-lg border border-neutral-200">
+              {results.isLoading ? (
+                <p className="px-3 py-6 text-center text-sm text-neutral-400">Searching…</p>
+              ) : items.length === 0 ? (
+                <div className="px-3 py-6 text-center">
+                  <p className="text-sm text-neutral-600">No customer matches “{debounced}”.</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setCreating(true)}
+                  >
+                    <UserPlusIcon size={14} /> Add a new contact
+                  </Button>
+                </div>
+              ) : (
+                <ul className="divide-y divide-neutral-100">
+                  {items.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => onResolved({ contactId: c.id, contactName: c.displayName })}
+                        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-primary-50/60"
+                      >
+                        <Avatar name={c.displayName} size={32} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-neutral-900">
+                            {c.displayName}
+                          </span>
+                          <span className="flex flex-wrap items-center gap-x-3 text-xs text-neutral-500">
+                            {c.email ? (
+                              <span className="inline-flex items-center gap-1 truncate">
+                                <MailIcon size={11} /> {c.email}
+                              </span>
+                            ) : null}
+                            {c.phoneE164 ? (
+                              <span className="inline-flex items-center gap-1">
+                                <PhoneIcon size={11} /> {c.phoneE164}
+                              </span>
+                            ) : null}
+                            {!c.email && !c.phoneE164 ? 'No contact details' : null}
+                          </span>
+                        </span>
+                        <span className="shrink-0 rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500">
+                          {KIND_LABEL[c.kind] ?? c.kind}
+                        </span>
+                        <span aria-hidden className="shrink-0 text-primary-600">
+                          →
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-neutral-400">Type at least 2 characters to search.</p>
+          )}
+
+          {/* Always-available escape hatch for a brand-new person. */}
+          {ready && items.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
+              className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-primary-700 hover:underline"
+            >
+              <UserPlusIcon size={14} /> Not here? Add a new contact
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <CreateContact
+          initialQuery={q}
+          onCancel={() => setCreating(false)}
+          onCreated={onResolved}
+        />
+      )}
+    </section>
+  )
+}
+
+function CreateContact({
+  initialQuery,
+  onCancel,
+  onCreated,
+}: {
+  initialQuery: string
+  onCancel: () => void
+  onCreated: (r: Resolved) => void
+}) {
+  // Prefill from whatever they were searching: an email-looking query lands in
+  // Email, otherwise it seeds the name. (Phone formats vary too much to safely
+  // pre-compose, so we leave that to the proper input.)
+  const seed = initialQuery.trim()
+  const seedIsEmail = EMAIL_RE.test(seed)
+  const seedNameParts = !seedIsEmail && /[a-z]/i.test(seed) ? seed.split(/\s+/) : []
+
   const [kind, setKind] = useState<Kind>('unclassified')
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [email, setEmail] = useState('')
+  const [firstName, setFirstName] = useState(seedNameParts[0] ?? '')
+  const [lastName, setLastName] = useState(seedNameParts.slice(1).join(' '))
+  const [email, setEmail] = useState(seedIsEmail ? seed : '')
   const [phone, setPhone] = useState('')
 
-  // Debounce the lookup so we don't query on every keystroke.
-  const [debounced, setDebounced] = useState({ name: '', email: '', phone: '' })
+  // De-dup guard: as the create fields fill, check we're not about to make a
+  // duplicate. Surfaced inline, above the Create button (never auto-merges).
+  const [dq, setDq] = useState({ name: '', email: '', phone: '' })
   useEffect(() => {
     const name = `${firstName} ${lastName}`.trim()
-    const t = setTimeout(() => setDebounced({ name, email: email.trim(), phone: phone.trim() }), 350)
+    const t = setTimeout(() => setDq({ name, email: email.trim(), phone: phone.trim() }), 300)
     return () => clearTimeout(t)
   }, [firstName, lastName, email, phone])
-
-  const hasQuery = Boolean(debounced.name || debounced.email || debounced.phone)
-  const candidatesQuery = trpc.callSummaries.findContactCandidates.useQuery(
-    { name: debounced.name || undefined, email: debounced.email || undefined, phone: debounced.phone || undefined },
-    { enabled: hasQuery, staleTime: 10_000 },
+  const dupReady = Boolean(dq.name || dq.email || dq.phone)
+  const dupQuery = trpc.callSummaries.findContactCandidates.useQuery(
+    { name: dq.name || undefined, email: dq.email || undefined, phone: dq.phone || undefined },
+    { enabled: dupReady, staleTime: 10_000 },
   )
-  const data = candidatesQuery.data
-  const strongMatch = useMemo(
-    () =>
-      data?.match
-        ? data.candidates.find((c) => c.id === data.match!.contactId) ?? null
-        : null,
-    [data],
-  )
+  const candidates = dupQuery.data?.candidates ?? []
 
   const create = trpc.contact.create.useMutation()
 
-  async function createAndContinue() {
+  async function submit() {
     if (!firstName.trim() && !lastName.trim() && !email.trim() && !phone.trim()) {
       toast.error('Add at least a name, email, or phone.')
       return
@@ -115,20 +265,26 @@ function IdentifyContact({ onResolved }: { onResolved: (r: Resolved) => void }) 
       })
       const name = `${firstName} ${lastName}`.trim() || email.trim() || phone.trim() || 'New contact'
       toast.success('Contact created')
-      onResolved({ contactId: id, contactName: name })
+      onCreated({ contactId: id, contactName: name })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not create contact')
     }
   }
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
-        New call summary
-      </p>
-      <p className="mt-0.5 text-sm text-neutral-700">Who did you speak to?</p>
+    <div className="mt-3">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-medium text-neutral-800">New contact</p>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-800"
+        >
+          <XIcon size={13} /> Back to search
+        </button>
+      </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="First name" htmlFor="cs-first">
           <Input id="cs-first" value={firstName} onChange={(e) => setFirstName(e.target.value)} autoFocus />
         </Field>
@@ -147,7 +303,7 @@ function IdentifyContact({ onResolved }: { onResolved: (r: Resolved) => void }) 
         <Field label="Phone" htmlFor="cs-phone">
           <PhoneInput id="cs-phone" value={phone} onChange={setPhone} />
         </Field>
-        <Field label="Role (if creating new)" htmlFor="cs-kind">
+        <Field label="Role" htmlFor="cs-kind">
           <Select id="cs-kind" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
             <option value="unclassified">Unclassified</option>
             <option value="parent">Parent</option>
@@ -158,80 +314,46 @@ function IdentifyContact({ onResolved }: { onResolved: (r: Resolved) => void }) 
         </Field>
       </div>
 
-      {/* De-dup guard */}
-      {hasQuery ? (
-        <div className="mt-3">
-          {candidatesQuery.isLoading ? (
-            <p className="text-xs text-neutral-500">Checking for an existing contact…</p>
-          ) : strongMatch ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50/70 p-3">
-              <p className="text-xs font-medium text-emerald-900">
-                This looks like an existing contact ({data?.match?.via} match) — log against
-                them so it doesn&apos;t duplicate:
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="text-sm font-semibold text-neutral-900">{strongMatch.name}</span>
-                {strongMatch.email ? (
-                  <span className="text-xs text-neutral-500">{strongMatch.email}</span>
-                ) : null}
-                {strongMatch.phoneE164 ? (
-                  <span className="text-xs text-neutral-500">{strongMatch.phoneE164}</span>
-                ) : null}
-                <Button
+      {/* Duplicate safety net */}
+      {dupReady && candidates.length > 0 ? (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/70 p-3">
+          <p className="text-xs font-medium text-amber-900">
+            {dupQuery.data?.match
+              ? 'This looks like someone already in the CRM — use them instead of creating a duplicate:'
+              : 'Possible existing contacts — use one to avoid a duplicate:'}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {candidates.map((c) => (
+              <li
+                key={c.id}
+                className="flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 bg-white px-2.5 py-1.5"
+              >
+                <Avatar name={c.name} size={24} />
+                <span className="text-sm font-medium text-neutral-800">{c.name}</span>
+                {c.email ? <span className="text-xs text-neutral-500">{c.email}</span> : null}
+                {c.phoneE164 ? <span className="text-xs text-neutral-500">{c.phoneE164}</span> : null}
+                <button
                   type="button"
-                  size="sm"
-                  onClick={() => onResolved({ contactId: strongMatch.id, contactName: strongMatch.name })}
+                  onClick={() => onCreated({ contactId: c.id, contactName: c.name })}
+                  className="ml-auto text-xs font-semibold text-primary-700 hover:underline"
                 >
-                  Use this contact →
-                </Button>
-              </div>
-            </div>
-          ) : (data?.candidates.length ?? 0) > 0 ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3">
-              <p className="text-xs font-medium text-amber-900">
-                {data?.ambiguous
-                  ? 'More than one contact could match — pick the right one (we never merge for you):'
-                  : 'Possible existing contacts — pick one to avoid a duplicate:'}
-              </p>
-              <ul className="mt-2 space-y-1">
-                {data?.candidates.map((c) => (
-                  <li
-                    key={c.id}
-                    className="flex flex-wrap items-center gap-2 rounded border border-neutral-200 bg-white px-2 py-1"
-                  >
-                    <span className="text-sm font-medium text-neutral-800">{c.name}</span>
-                    {c.email ? <span className="text-xs text-neutral-500">{c.email}</span> : null}
-                    {c.phoneE164 ? (
-                      <span className="text-xs text-neutral-500">{c.phoneE164}</span>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => onResolved({ contactId: c.id, contactName: c.name })}
-                      className="ml-auto text-xs font-medium text-primary-700 hover:underline"
-                    >
-                      Use →
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p className="text-xs text-neutral-500">
-              No existing contact found — a new one will be created.
-            </p>
-          )}
+                  Use →
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button type="button" onClick={createAndContinue} disabled={create.isPending}>
-          {create.isPending ? 'Creating…' : 'New contact & continue →'}
+      <div className="mt-4 flex items-center gap-2">
+        <Button type="button" onClick={submit} disabled={create.isPending}>
+          {create.isPending ? 'Creating…' : 'Create & log call →'}
         </Button>
-        <span className="text-[11px] text-neutral-500">
-          Or pick an existing match above to log against them.
-        </span>
+        <button type="button" onClick={onCancel} className="text-sm text-neutral-500 hover:underline">
+          Cancel
+        </button>
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -247,7 +369,7 @@ function RecentSummaries() {
   const rows = query.data ?? []
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white shadow-card">
+    <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-4 py-2.5">
         <h2 className="text-sm font-semibold text-neutral-900">Recent call summaries</h2>
         <div className="flex items-center gap-1">
@@ -276,7 +398,8 @@ function RecentSummaries() {
       ) : (
         <ul className="divide-y divide-neutral-100">
           {rows.map((r) => (
-            <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+            <li key={r.id} className="flex items-center gap-3 px-4 py-2.5">
+              <Avatar name={r.contact?.name ?? 'Unlinked'} size={30} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-neutral-900">
                   {r.contact ? (
@@ -296,7 +419,7 @@ function RecentSummaries() {
                   {OUTCOME_LABEL[r.outcome] ?? r.outcome}
                 </span>
               ) : null}
-              <span className="shrink-0 text-[11px] text-neutral-400">
+              <span className="hidden shrink-0 text-[11px] text-neutral-400 sm:block">
                 {r.authorName ? `${r.authorName} · ` : ''}
                 {new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(
                   new Date(r.occurredAt),
