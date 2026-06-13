@@ -512,6 +512,7 @@ export const gocardlessRouter = router({
                 interval: true,
                 dayOfMonth: true,
                 nextChargeAt: true,
+                totalPaymentCount: true,
               },
             })
           : Promise.resolve([]),
