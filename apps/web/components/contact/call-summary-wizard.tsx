@@ -1,18 +1,27 @@
 // The call-summary send wizard — shared by the contact page and the board
-// card modal so both surfaces behave identically. Three questions, in order:
-//   Step 1 — "Send an email?"  Compose from templates / AI draft, attach
-//            PDFs from the document library (info packs, brochures), contact
-//            documents, invoices, or device uploads.
-//   Step 2 — "Send a text or WhatsApp?"  Pick WhatsApp or SMS. WhatsApp
-//            surfaces the agent's approved Trengo templates just as they
-//            would on Trengo (sent as a real template via /wa_sessions, so
-//            the 24-hour window doesn't matter). No PDF picker here — the
-//            approved templates already carry the pack links, attaching the
-//            PDF again would duplicate them.
-//   Step 3 — Internal note + optional Slack post + optional VA follow-up
-//            task (never seen by the customer).
-// Everything sends in ONE audited fan-out at the end of step 2; each channel
-// stays best-effort and independent. CLAUDE.md §10, §11, §12, §26.
+// card modal so both surfaces behave identically. It opens with a fork:
+//
+//   Step 0 — "Who's sending this summary?"
+//            • "I'll send it now"  → the full self-send flow below.
+//            • "Hand to a VA"      → write the summary, post it to Slack in
+//              the VA-team format, and open a task for the VA team to action
+//              it on the CRM. A clean hand-off — no customer message is sent.
+//
+// Self-send flow:
+//   Step 1 — "Send an email?"  Full Gmail compose (send-from picker, To/Cc/Bcc
+//            overrides, subject), templates / AI draft, attach PDFs from the
+//            document library (info packs, brochures), contact documents,
+//            invoices, or device uploads.
+//   Step 2 — "Send a text or WhatsApp?"  Pick WhatsApp or SMS and the sender
+//            line. WhatsApp surfaces the agent's approved Trengo templates
+//            just as they would on Trengo (a real /wa_sessions send, valid
+//            outside the 24-hour window). No PDF picker here — the approved
+//            templates already carry the pack links.
+//   Step 3 — Internal note + optional Slack post + optional follow-up task
+//            (person or whole team; never seen by the customer).
+//
+// Everything sends in ONE audited fan-out; each channel stays best-effort and
+// independent. CLAUDE.md §10, §11, §12, §26.
 
 'use client'
 
@@ -29,7 +38,16 @@ import { trpc } from '@/lib/trpc/client'
 import { missingWaParams, parseWaTemplateSegments, renderWaTemplate } from './wa-template'
 
 type Outcome = 'answered' | 'voicemail' | 'no_answer'
-type Step = 'email' | 'text' | 'internal'
+type SendPath = 'self' | 'va'
+type Step = 'who' | 'email' | 'text' | 'internal' | 'va'
+
+/** Split a comma/semicolon/space-separated address list into trimmed emails. */
+function splitEmails(raw: string): string[] {
+  return raw
+    .split(/[,;\s]+/u)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
 
 type AttachmentKind =
   | 'contactDocument'
@@ -90,13 +108,20 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
   const router = useRouter()
 
   // ── Wizard position + shared facts ────────────────────────────────
-  const [step, setStep] = useState<Step>('email')
+  const [step, setStep] = useState<Step>('who')
+  const [sendPath, setSendPath] = useState<SendPath | null>(null)
   const [outcome, setOutcome] = useState<Outcome>('answered')
 
   // ── Step 1: email ──────────────────────────────────────────────────
   const [emailWanted, setEmailWanted] = useState<boolean | null>(null)
   const [emailBody, setEmailBody] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
+  // Full-Gmail compose extras.
+  const [emailFrom, setEmailFrom] = useState('')
+  const [emailTo, setEmailTo] = useState('')
+  const [emailCc, setEmailCc] = useState('')
+  const [emailBcc, setEmailBcc] = useState('')
+  const [showCcBcc, setShowCcBcc] = useState(false)
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null)
   const [pickedAttachments, setPickedAttachments] = useState<
     Array<{ kind: AttachmentKind; id: string }>
@@ -113,6 +138,16 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
   const [waTemplateId, setWaTemplateId] = useState<number | null>(null)
   const [waParams, setWaParams] = useState<Record<string, string>>({})
   const [textBody, setTextBody] = useState('')
+  // Trengo sender line (which WhatsApp/SMS number to send from) — only used
+  // when STARTING a new conversation. Empty = workspace default.
+  const [trengoChannelId, setTrengoChannelId] = useState('')
+
+  // ── VA hand-off path ──────────────────────────────────────────────
+  const [vaBody, setVaBody] = useState('')
+  const [vaSlackChannelId, setVaSlackChannelId] = useState('')
+  const [vaTaskTarget, setVaTaskTarget] = useState('')
+  const [vaDueAt, setVaDueAt] = useState('')
+  const [draftingVa, setDraftingVa] = useState(false)
 
   // ── Step 3: internal note ─────────────────────────────────────────
   const [summaryId, setSummaryId] = useState<string | null>(null)
@@ -162,6 +197,35 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
   // pod, anything in Settings → Teams).
   const teamsQuery = trpc.team.pickList.useQuery()
   const teams = teamsQuery.data ?? []
+  // A team that looks like the VA team — preselected for the hand-off task.
+  const vaTeam = useMemo(
+    () => teams.find((t) => /\bva\b|virtual assistant/i.test(t.name)) ?? null,
+    [teams],
+  )
+
+  // Full-Gmail "From" picker — the agent's connected send-from addresses.
+  const mailboxesQuery = trpc.contact.callSummary.mailboxes.useQuery(undefined, {
+    enabled: step === 'email',
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  const mailboxes = mailboxesQuery.data ?? []
+  useEffect(() => {
+    if (!emailFrom && mailboxes.length > 0) {
+      setEmailFrom(mailboxes.find((m) => m.isDefault)?.address ?? mailboxes[0]!.address)
+    }
+  }, [mailboxes, emailFrom])
+
+  // Trengo sender lines (WhatsApp/SMS numbers) for the "send from" picker.
+  const trengoChannelsQuery = trpc.interaction.trengo.channels.useQuery(undefined, {
+    enabled: step === 'text',
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  const trengoChannels = trengoChannelsQuery.data?.available
+    ? trengoChannelsQuery.data.channels
+    : []
+  const trengoLinesForChannel = trengoChannels.filter((c) => c.kind === textChannel)
 
   // Attachment sources for the EMAIL step. Info packs come from the shared
   // document library (Settings → Documents); the rest are per-contact.
@@ -328,12 +392,48 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     }
   }
 
+  // AI-draft the VA hand-off summary from the latest call (mirrors the email
+  // draft but writes into the hand-off body).
+  async function draftVaSummary() {
+    setDraftingVa(true)
+    const hadBase = vaBody.trim().length > 0
+    try {
+      const result =
+        mode === 'card' && cardId
+          ? await utils.card.callSummary.draftFromCall.fetch({
+              cardId,
+              baseText: vaBody.trim() || undefined,
+            })
+          : await utils.contact.callSummary.draftFromCall.fetch({
+              contactId,
+              baseText: vaBody.trim() || undefined,
+            })
+      setVaBody(result.text)
+      if (result.outcomeHint) setOutcome(result.outcomeHint as Outcome)
+      if (!result.aiUsed) {
+        toast.warning('AI is unavailable right now — your text was left unchanged.')
+      } else {
+        toast.success(hadBase ? 'AI enhanced your summary.' : 'AI summary ready — review it.')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not draft summary')
+    } finally {
+      setDraftingVa(false)
+    }
+  }
+
   function resetAll() {
-    setStep('email')
+    setStep('who')
+    setSendPath(null)
     setOutcome('answered')
     setEmailWanted(null)
     setEmailBody('')
     setEmailSubject('')
+    setEmailFrom('')
+    setEmailTo('')
+    setEmailCc('')
+    setEmailBcc('')
+    setShowCcBcc(false)
     setActiveTemplateId(null)
     setPickedAttachments([])
     setUploadedFiles([])
@@ -343,6 +443,11 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     setWaTemplateId(null)
     setWaParams({})
     setTextBody('')
+    setTrengoChannelId('')
+    setVaBody('')
+    setVaSlackChannelId('')
+    setVaTaskTarget('')
+    setVaDueAt('')
     setSummaryId(null)
     setSentSomething(false)
     setInternalNote('')
@@ -352,6 +457,70 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     setTaskTitle('')
     setTaskAssigneeId('')
     setTaskDueAt('')
+  }
+
+  // ── Step 0 — who's sending? ───────────────────────────────────────
+  function choosePath(path: SendPath) {
+    setSendPath(path)
+    setStep(path === 'self' ? 'email' : 'va')
+  }
+
+  // VA hand-off: record the summary, post it to Slack in the VA-team format,
+  // and open a task for the VA team to action it on the CRM. No customer
+  // message is sent on this path.
+  async function submitVaHandoff() {
+    if (!vaBody.trim()) {
+      toast.error('Write the call summary first.')
+      return
+    }
+    // The dropdown shows the VA team as a preselected default; honour it even
+    // when the agent never opens the menu.
+    const effectiveTarget = vaTaskTarget || (vaTeam ? `team:${vaTeam.id}` : '')
+    if (!effectiveTarget) {
+      toast.error('Pick who should action this (a person or the VA team).')
+      return
+    }
+    setBusy(true)
+    try {
+      const body = mode === 'card' ? vaBody.trim().slice(0, 4000) : vaBody.trim().slice(0, 8000)
+      const created =
+        mode === 'card' && cardId
+          ? await addCard.mutateAsync({ cardId, body, outcome })
+          : await addContact.mutateAsync({ contactId, body, outcome })
+      setSummaryId(created.id)
+
+      // Post to Slack in the VA-team format (outcome — name — phone — email +
+      // pending tasks).
+      const effectiveVaSlack = vaSlackChannelId || defaultSlackChannelId
+      const res = await logInternal.mutateAsync({
+        contactId,
+        note: vaBody.trim(),
+        postToSlack: true,
+        slackChannelId: effectiveVaSlack || undefined,
+        outcome,
+      })
+      if (res.slack?.status === 'sent') toast('Posted to Slack ✓')
+      else if (res.slack)
+        toast(`Slack ${res.slack.status}${res.slack.detail ? ` (${res.slack.detail})` : ''}`)
+
+      // Open the VA-team task to clear the summary on the CRM.
+      const isTeam = effectiveTarget.startsWith('team:')
+      await taskCreate.mutateAsync({
+        title: `Send call summary: ${contactName}`,
+        description: `${vaBody.trim()}\n\n— Please send this to the customer and clear the call summary on the CRM.`,
+        contactId,
+        assigneeId: isTeam ? undefined : effectiveTarget.replace(/^user:/, ''),
+        teamId: isTeam ? effectiveTarget.slice('team:'.length) : undefined,
+        dueAt: vaDueAt ? new Date(vaDueAt) : undefined,
+      })
+      toast.success('Handed to the VA team — task created')
+      resetAll()
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not hand off')
+    } finally {
+      setBusy(false)
+    }
   }
 
   // Step 1 → step 2. Prefill the text body from the email so the agent can
@@ -427,12 +596,22 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           ...(channels.whatsapp ? { whatsapp: textOut } : {}),
           ...(channels.sms ? { sms: textOut } : {}),
         }
+        const ccList = sendEmailChannel ? splitEmails(emailCc) : []
+        const bccList = sendEmailChannel ? splitEmails(emailBcc) : []
+        const toList = sendEmailChannel ? splitEmails(emailTo) : []
         const payload = {
           summaryInteractionId: created.id,
           channels,
           channelBodies,
           ...(sendEmailChannel && emailSubject.trim()
             ? { emailSubject: emailSubject.trim() }
+            : {}),
+          ...(toList.length > 0 ? { emailTo: toList } : {}),
+          ...(ccList.length > 0 ? { emailCc: ccList } : {}),
+          ...(bccList.length > 0 ? { emailBcc: bccList } : {}),
+          ...(sendEmailChannel && emailFrom ? { emailFromAddress: emailFrom } : {}),
+          ...(sendText && trengoChannelId
+            ? { trengoChannelId: Number(trengoChannelId) }
             : {}),
           ...(usingWaTemplate && waTemplate
             ? {
@@ -538,11 +717,18 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
   }
 
   // ── Render ─────────────────────────────────────────────────────────
-  const steps: Array<{ key: Step; label: string }> = [
-    { key: 'email', label: 'Email' },
-    { key: 'text', label: 'Text / WhatsApp' },
-    { key: 'internal', label: 'Internal note' },
-  ]
+  const steps: Array<{ key: Step; label: string }> =
+    sendPath === 'va'
+      ? [
+          { key: 'who', label: 'Who sends' },
+          { key: 'va', label: 'Hand to VA' },
+        ]
+      : [
+          { key: 'who', label: 'Who sends' },
+          { key: 'email', label: 'Email' },
+          { key: 'text', label: 'Text / WhatsApp' },
+          { key: 'internal', label: 'Internal note' },
+        ]
   const stepIndex = steps.findIndex((s) => s.key === step)
 
   return (
@@ -567,6 +753,175 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           </li>
         ))}
       </ol>
+
+      {step === 'who' ? (
+        <div className="rounded-lg border border-primary-200 bg-primary-50/40 p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-primary-900">
+            Step 1 — Who&apos;s sending this call summary?
+          </p>
+          <p className="mt-0.5 text-sm text-neutral-800">
+            Send it to {contactName} yourself now, or hand it to a VA to send and clear on
+            the CRM.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => choosePath('self')}
+              className="rounded-lg border border-primary-300 bg-white p-3 text-left transition-colors hover:border-primary-400 hover:bg-primary-50"
+            >
+              <span className="block text-sm font-semibold text-primary-900">
+                ✍️ I&apos;ll send it now
+              </span>
+              <span className="mt-0.5 block text-xs text-neutral-600">
+                Email (full Gmail) and/or WhatsApp / SMS via Trengo, then log an internal
+                note.
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => choosePath('va')}
+              className="rounded-lg border border-amber-300 bg-white p-3 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
+            >
+              <span className="block text-sm font-semibold text-amber-900">
+                🤝 Hand it to a VA
+              </span>
+              <span className="mt-0.5 block text-xs text-neutral-600">
+                Post the summary to Slack and open a task for the VA team to send it and
+                clear it on the CRM.
+              </span>
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {step === 'va' ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                Step 2 — Hand to a VA
+              </p>
+              <p className="mt-0.5 text-sm text-neutral-800">
+                Write the call summary. It posts to Slack and opens a task for the VA team
+                to send it and clear it on the CRM.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                Call outcome
+              </label>
+              <Select
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value as Outcome)}
+                aria-label="Call outcome"
+                className="w-36"
+              >
+                <option value="answered">Answered</option>
+                <option value="voicemail">Voicemail</option>
+                <option value="no_answer">No answer</option>
+              </Select>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={draftVaSummary}
+            disabled={draftingVa}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100/70 px-3 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50"
+          >
+            <span aria-hidden="true">✨</span>
+            {draftingVa ? 'Thinking…' : 'AI draft from latest call'}
+          </button>
+
+          <Textarea
+            className="mt-2"
+            rows={6}
+            value={vaBody}
+            onChange={(e) => setVaBody(e.target.value)}
+            placeholder={`What happened on the call with ${contactName}, and what the VA should send…`}
+          />
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                Slack channel
+              </label>
+              {slackChannels.length > 0 ? (
+                <Select
+                  className="mt-1"
+                  value={vaSlackChannelId || defaultSlackChannelId}
+                  onChange={(e) => setVaSlackChannelId(e.target.value)}
+                  aria-label="Slack channel"
+                >
+                  {slackChannels.map((c) => (
+                    <option key={c.id} value={c.channelId}>
+                      {c.label}
+                      {c.isDefault ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <p className="mt-1 text-[11px] text-amber-900/70">
+                  No channels configured — posts to the fallback channel.
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                Task for
+              </label>
+              <Select
+                className="mt-1"
+                value={vaTaskTarget || (vaTeam ? `team:${vaTeam.id}` : '')}
+                onChange={(e) => setVaTaskTarget(e.target.value)}
+                aria-label="VA task assignee"
+              >
+                <option value="">Choose…</option>
+                {teams.length > 0 ? (
+                  <optgroup label="Teams">
+                    {teams.map((t) => (
+                      <option key={t.id} value={`team:${t.id}`}>
+                        {t.name} (whole team)
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                <optgroup label="People">
+                  {assignableUsers.map((u) => (
+                    <option key={u.id} value={`user:${u.id}`}>
+                      {u.name ?? u.email}
+                    </option>
+                  ))}
+                </optgroup>
+              </Select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                Due (optional)
+              </label>
+              <Input
+                className="mt-1"
+                type="date"
+                value={vaDueAt}
+                onChange={(e) => setVaDueAt(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button type="button" variant="secondary" onClick={() => setStep('who')} disabled={busy}>
+              ← Back
+            </Button>
+            <Button
+              type="button"
+              onClick={submitVaHandoff}
+              disabled={busy || !vaBody.trim() || !(vaTaskTarget || vaTeam)}
+            >
+              {busy ? 'Handing off…' : 'Post to Slack & create VA task →'}
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {step === 'email' ? (
         <div className="rounded-lg border border-primary-200 bg-primary-50/40 p-3">
@@ -680,9 +1035,82 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                 </div>
               ) : null}
 
+              {/* Full-Gmail compose header: From / To / Cc / Bcc */}
+              <div className="grid grid-cols-1 gap-2 rounded-md border border-primary-200/60 bg-white/60 p-2 sm:grid-cols-2">
+                <div>
+                  <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                    From
+                  </label>
+                  {mailboxes.length > 0 ? (
+                    <Select
+                      className="mt-1"
+                      value={emailFrom}
+                      onChange={(e) => setEmailFrom(e.target.value)}
+                      aria-label="Send from"
+                    >
+                      {mailboxes.map((m) => (
+                        <option key={m.address} value={m.address}>
+                          {m.address}
+                          {m.isDefault ? ' (default)' : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-neutral-500">
+                      Your default connected mailbox.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                    To
+                  </label>
+                  <Input
+                    className="mt-1"
+                    value={emailTo}
+                    onChange={(e) => setEmailTo(e.target.value)}
+                    placeholder="Contact's email on file"
+                  />
+                </div>
+                {showCcBcc ? (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                        Cc
+                      </label>
+                      <Input
+                        className="mt-1"
+                        value={emailCc}
+                        onChange={(e) => setEmailCc(e.target.value)}
+                        placeholder="name@example.com, …"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                        Bcc
+                      </label>
+                      <Input
+                        className="mt-1"
+                        value={emailBcc}
+                        onChange={(e) => setEmailBcc(e.target.value)}
+                        placeholder="name@example.com, …"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowCcBcc(true)}
+                    className="self-end text-left text-[11px] font-medium text-primary-700 hover:underline sm:col-span-2"
+                  >
+                    + Add Cc / Bcc
+                  </button>
+                )}
+              </div>
+
               <div>
                 <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-                  Subject (used when there&apos;s no email thread yet)
+                  Subject (used for a new email; a reply keeps the thread&apos;s subject)
                 </label>
                 <Input
                   className="mt-1"
@@ -690,6 +1118,10 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                   onChange={(e) => setEmailSubject(e.target.value)}
                   placeholder="Following up on our call"
                 />
+                <p className="mt-1 text-[10px] text-neutral-500">
+                  Setting a From or To address sends a fresh email instead of replying on
+                  the latest thread.
+                </p>
               </div>
 
               <Textarea
@@ -790,6 +1222,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button type="button" variant="secondary" onClick={() => setStep('who')} disabled={busy}>
+              ← Back
+            </Button>
             <Button
               type="button"
               onClick={continueToText}
@@ -831,6 +1266,33 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                   </label>
                 ))}
               </div>
+
+              {/* Sender line — which Trengo number to send a NEW conversation
+                  from. An existing thread keeps its own line. */}
+              {trengoLinesForChannel.length > 1 ? (
+                <div className="max-w-sm">
+                  <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                    Send from line
+                  </label>
+                  <Select
+                    className="mt-1"
+                    value={trengoChannelId}
+                    onChange={(e) => setTrengoChannelId(e.target.value)}
+                    aria-label="Trengo sender line"
+                  >
+                    <option value="">Workspace default</option>
+                    {trengoLinesForChannel.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <p className="mt-1 text-[10px] text-neutral-500">
+                    Only applies when starting a new conversation; an existing thread keeps
+                    its line.
+                  </p>
+                </div>
+              ) : null}
 
               {textChannel === 'whatsapp' ? (
                 <div className="space-y-2">

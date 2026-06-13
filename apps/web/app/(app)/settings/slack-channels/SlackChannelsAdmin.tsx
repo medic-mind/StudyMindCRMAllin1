@@ -8,6 +8,7 @@
 
 'use client'
 
+import Link from 'next/link'
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -182,11 +183,21 @@ function SlackChannelPicker({
 
   return (
     <div className="space-y-3 rounded-lg border border-primary-200 bg-primary-50/30 p-4 shadow-card">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-neutral-900">Add a channel from Slack</h3>
-        <button type="button" onClick={onClose} className="text-xs text-neutral-500 hover:underline">
-          Close
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void discover.refetch()}
+            disabled={discover.isFetching}
+            className="text-xs font-medium text-primary-700 hover:underline disabled:opacity-50"
+          >
+            {discover.isFetching ? 'Refreshing…' : 'Refresh'}
+          </button>
+          <button type="button" onClick={onClose} className="text-xs text-neutral-500 hover:underline">
+            Close
+          </button>
+        </div>
       </div>
 
       {status === 'loading' && (
@@ -196,9 +207,9 @@ function SlackChannelPicker({
       {status === 'not_configured' && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Slack isn&apos;t connected yet — set up the bot under{' '}
-          <a href="/settings/integrations/slack" className="font-medium underline">
+          <Link href="/settings/integrations/slack" className="font-medium underline">
             Settings → Integrations → Slack
-          </a>{' '}
+          </Link>{' '}
           first. You can still add a channel by id with &quot;Enter id manually&quot;.
         </p>
       )}
@@ -232,6 +243,16 @@ function SlackChannelPicker({
 
       {status === 'ok' && (
         <>
+          {discover.data?.status === 'ok' && discover.data.botName ? (
+            <p className="rounded-md border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-600">
+              The CRM&apos;s token is{' '}
+              <span className="font-semibold text-neutral-900">@{discover.data.botName}</span>
+              {discover.data.teamName ? <> in <span className="font-medium">{discover.data.teamName}</span></> : null}
+              . If a channel shows &quot;Bot not invited&quot; after you invited a bot, make
+              sure it was <span className="font-semibold">exactly @{discover.data.botName}</span>{' '}
+              — inviting a different app doesn&apos;t count. After inviting, hit Refresh.
+            </p>
+          ) : null}
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -254,11 +275,20 @@ function SlackChannelPicker({
                   >
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-900">
                       #{c.name}
+                      {c.isPrivate ? (
+                        <span className="ml-1.5 rounded bg-neutral-100 px-1 text-[9px] font-semibold uppercase tracking-wide text-neutral-500">
+                          Private
+                        </span>
+                      ) : null}
                     </span>
                     {!c.isMember && (
                       <span
                         className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
-                        title="The bot has not been invited to this channel yet — posts will fail until you type /invite @YourBot in it."
+                        title={`The bot has not been invited to this channel yet — posts will fail until you type /invite @${
+                          discover.data?.status === 'ok' && discover.data.botName
+                            ? discover.data.botName
+                            : 'YourBot'
+                        } in it. Invited it already? Make sure it was that exact app, then hit Refresh.`}
                       >
                         Bot not invited
                       </span>
@@ -282,8 +312,9 @@ function SlackChannelPicker({
             </ul>
           )}
           <p className="text-[11px] text-neutral-500">
-            Private channels can&apos;t be listed here — add those by id with &quot;Enter id
-            manually&quot; (and /invite the bot into them).
+            Private channels list here once the Slack app has the{' '}
+            <code className="rounded bg-neutral-100 px-1">groups:read</code> scope and the
+            bot is invited; otherwise add them by id with &quot;Enter id manually&quot;.
           </p>
         </>
       )}

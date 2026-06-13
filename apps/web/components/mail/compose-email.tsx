@@ -11,6 +11,7 @@
 
 'use client'
 
+import Link from 'next/link'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -181,9 +182,9 @@ function ComposeEmailModal({
         ) : accounts.length === 0 ? (
           <div className="space-y-2 p-4 text-sm text-neutral-600">
             <p>You have no email account connected to send from.</p>
-            <a href="/settings/email-accounts" className="font-medium text-primary-700 hover:underline">
+            <Link href="/settings/email-accounts" className="font-medium text-primary-700 hover:underline">
               Connect an email account →
-            </a>
+            </Link>
           </div>
         ) : (
           <>

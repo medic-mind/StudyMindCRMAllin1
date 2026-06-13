@@ -4,6 +4,7 @@
 // per-card "Move to…" dropdown + tick/cross quick actions remain as
 // keyboard-accessible fallbacks (CLAUDE.md §26, §28, §20, §3).
 
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { PageBody } from '@/components/shell/page-body'
@@ -136,13 +137,13 @@ export default async function BoardPage({ params, searchParams }: PageProps) {
           <AddCardButton boardId={board.id} stages={stageOptions} labels={labels} />
         ) : null}
         {canManage ? (
-          <a
+          <Link
             href={`/boards/${board.id}/settings`}
             className="inline-flex h-8 items-center gap-1.5 rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-200"
           >
             <SettingsIcon size={15} className="text-neutral-500" />
             Settings
-          </a>
+          </Link>
         ) : null}
         <div className="ml-auto">
           <BoardViewToggle view={view} />

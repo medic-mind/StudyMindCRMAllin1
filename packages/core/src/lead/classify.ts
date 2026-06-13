@@ -176,25 +176,32 @@ export function classifyLead(
   confidence = Math.min(1, Number(confidence.toFixed(2)))
 
   // Routing: a "Free Resources" category (from a configurable URL rule, or a
-  // form/slug that reads as a freebie/download) sends the lead to the Free
-  // Resources board instead of the Sales Pipeline.
-  // Two signal tiers: the strong freebie words match ANYWHERE (slug, URL,
-  // form title, source, the product/subject the form carried, even the
-  // message body), while product-shaped words like "book(s)" only count on
-  // the product-ish signals — "please book me a call" in a message must not
-  // route a real enquiry off the Sales Pipeline.
+  // form/slug/field that reads as a freebie / book / download) sends the lead
+  // to the Free Resources board instead of the Sales Pipeline.
+  //
+  // Scan the WHOLE lead, not just the slug/title — a CF7 free-resource form
+  // often carries "GAMSAT Book" in a product field that ends up as an
+  // unmapped extraField (or was mis-read as the name), so a slug/title-only
+  // scan let books leak onto Sales. Two tiers keep it honest:
+  //  • strong freebie words (free resource, download, ebook, sample paper, …)
+  //    match ANYWHERE — they can't be confused with a real enquiry;
+  //  • a bare "book(s)" matches everywhere EXCEPT the message body, so
+  //    "please book me a call" stays a sales lead while a "GAMSAT Book"
+  //    product/title/field routes to Free Resources.
+  const nameText = [lead.name, lead.firstName, lead.lastName].filter(Boolean).join(' ')
+  const extraText = Object.values(lead.extraFields ?? {}).join(' ')
+  const everything =
+    `${lead.landingSlug ?? ''} ${lead.landingUrl ?? ''} ${lead.formTitle ?? ''} ${prods.join(' ')} ${lead.requestedSubject ?? ''} ${lead.source} ${lead.message ?? ''} ${nameText} ${extraText}`.toLowerCase()
+  // Everything a product name could ride on EXCEPT the free-text message and
+  // URL — the bare-"book" tier reads this so "book a call" never trips it.
   const productSignals =
-    `${lead.landingSlug ?? ''} ${lead.formTitle ?? ''} ${prods.join(' ')} ${lead.requestedSubject ?? ''}`.toLowerCase()
-  const broadSignals =
-    `${productSignals} ${lead.landingUrl ?? ''} ${lead.source} ${lead.message ?? ''}`.toLowerCase()
+    `${lead.landingSlug ?? ''} ${lead.formTitle ?? ''} ${prods.join(' ')} ${lead.requestedSubject ?? ''} ${nameText} ${extraText}`.toLowerCase()
   const looksFree =
     cats.includes(FREE_RESOURCES_CATEGORY) ||
-    /\b(free[- ]?resource|free[- ]?download|download|freebie|cheat[- ]?sheet|free[- ]?guide|free[- ]?ebook|free[- ]?e[- ]?book|free[- ]?books?|lead[- ]?magnet|free[- ]?webinar|free[- ]?taster|sample[- ]?paper)\b/u.test(
-      broadSignals,
+    /\b(free[- ]?resources?|free[- ]?downloads?|downloads?|freebies?|cheat[- ]?sheets?|free[- ]?guides?|free[- ]?e-?books?|free[- ]?books?|e-?books?|guide[- ]?books?|workbooks?|lead[- ]?magnets?|free[- ]?webinars?|free[- ]?tasters?|sample[- ]?papers?|past[- ]?papers?|revision[- ]?notes?)\b/u.test(
+      everything,
     ) ||
-    /\b(books?|e-?books?|ebooks?|guidebooks?|revision[- ]?notes?|past[- ]?papers?)\b/u.test(
-      productSignals,
-    )
+    /\bbooks?\b/u.test(productSignals)
   const destination: LeadClassification['destination'] = looksFree ? 'free_resources' : 'sales'
   if (looksFree) reasons.push('Routed to Free Resources board')
 

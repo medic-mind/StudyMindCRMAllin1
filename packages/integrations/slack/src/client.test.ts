@@ -46,9 +46,9 @@ describe('listChannels', () => {
     expect(calls[0]).toContain('types=public_channel')
     expect(calls[1]).toContain('cursor=page2')
     expect(channels).toEqual([
-      { id: 'C1', name: 'alerts', isMember: true },
-      { id: 'C3', name: 'finance', isMember: true },
-      { id: 'C2', name: 'zeta', isMember: false },
+      { id: 'C1', name: 'alerts', isMember: true, isPrivate: false },
+      { id: 'C3', name: 'finance', isMember: true, isPrivate: false },
+      { id: 'C2', name: 'zeta', isMember: false, isPrivate: false },
     ])
   })
 

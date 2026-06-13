@@ -43,6 +43,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
     contactId: string,
     body: string,
     attachments?: ReadonlyArray<{ filename: string; contentType: string; data: Buffer }>,
+    trengoChannelId?: number,
   ): Promise<ChannelResult> {
     const { resolveActiveTrengoConversation } = await import(
       '@studymind/integration-trengo/conversations'
@@ -83,6 +84,8 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
         body,
         requestId,
         attachments: atts,
+        // The agent's chosen sender line (workspaces run several WA/SMS lines).
+        ...(trengoChannelId ? { trengoChannelId } : {}),
       })
       return {
         status: 'sent',
@@ -190,7 +193,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       }
     },
 
-    async whatsapp({ body, contactId, attachments, trengoTemplate }): Promise<ChannelResult> {
+    async whatsapp({ body, contactId, attachments, trengoTemplate, trengoChannelId }): Promise<ChannelResult> {
       // An approved Trengo WhatsApp template goes out via the template
       // session (/wa_sessions) — the same thing the Trengo composer does, so
       // it works outside the 24-hour window. Free text keeps the thread path.
@@ -233,20 +236,34 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           return { status: 'failed', detail: err instanceof Error ? err.message : String(err) }
         }
       }
-      return sendViaTrengoChannel('whatsapp', contactId, body, attachments)
+      return sendViaTrengoChannel('whatsapp', contactId, body, attachments, trengoChannelId)
     },
 
-    async sms({ body, contactId, attachments }): Promise<ChannelResult> {
-      return sendViaTrengoChannel('sms', contactId, body, attachments)
+    async sms({ body, contactId, attachments, trengoChannelId }): Promise<ChannelResult> {
+      return sendViaTrengoChannel('sms', contactId, body, attachments, trengoChannelId)
     },
 
-    async email({ body, contactId, attachments, subject: subjectOverride }): Promise<ChannelResult> {
+    async email({
+      body,
+      contactId,
+      attachments,
+      subject: subjectOverride,
+      to,
+      cc,
+      bcc,
+      fromAddress,
+    }): Promise<ChannelResult> {
       const contact = await db.contact.findFirst({
         where: { id: contactId, deletedAt: null },
         select: { email: true },
       })
-      if (!contact?.email) {
-        return { status: 'skipped', detail: 'Contact has no email address' }
+      // Recipient: the agent's explicit To override wins; else the contact's
+      // stored address (full-Gmail compose lets you mail someone before their
+      // email is on file).
+      const toAddresses =
+        to && to.length > 0 ? [...to] : contact?.email ? [contact.email] : []
+      if (toAddresses.length === 0) {
+        return { status: 'skipped', detail: 'No recipient email address' }
       }
       // The acting agent must have a connected Gmail mailbox.
       const mailbox = await db.gmailMailbox.findFirst({
@@ -257,6 +274,8 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       if (!mailbox) {
         return { status: 'skipped', detail: 'Agent has no Gmail connected' }
       }
+      const ccList = cc && cc.length > 0 ? [...cc] : undefined
+      const bccList = bcc && bcc.length > 0 ? [...bcc] : undefined
       const mappedAttachments =
         attachments && attachments.length > 0
           ? attachments.map((a) => ({
@@ -284,8 +303,13 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
             ? (payload['gmailThreadId'] as string)
             : null
 
+      // An explicit To override or a fresh subject means the agent is
+      // composing a NEW email (full-Gmail compose), so don't bury it inside an
+      // old reply thread — start fresh. Otherwise reply on the latest thread.
+      const forceNew = (to && to.length > 0) || Boolean(fromAddress)
+
       try {
-        if (!threadId) {
+        if (!threadId || forceNew) {
           // No prior thread — start a fresh one rather than skipping, so the
           // wizard's email step works for brand-new enquiries too.
           const { sendEmail } = await import('@studymind/integration-gmail/outbound')
@@ -293,7 +317,10 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
             agentId,
             subject: subjectOverride?.trim() || 'Following up on our call',
             body,
-            toAddresses: [contact.email],
+            toAddresses,
+            cc: ccList,
+            bcc: bccList,
+            ...(fromAddress ? { fromAddress } : {}),
             requestId,
             attachments: mappedAttachments,
           })
@@ -301,9 +328,10 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
         }
 
         const subject =
-          typeof payload['subject'] === 'string'
+          subjectOverride?.trim() ||
+          (typeof payload['subject'] === 'string'
             ? (payload['subject'] as string)
-            : recent?.summary ?? 'Call summary'
+            : recent?.summary ?? 'Call summary')
         const originalMessageId =
           typeof payload['messageId'] === 'string' ? (payload['messageId'] as string) : undefined
 
@@ -313,7 +341,9 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           threadId,
           subject,
           body,
-          toAddresses: [contact.email],
+          toAddresses,
+          cc: ccList,
+          bcc: bccList,
           requestId,
           originalMessageId,
           attachments: mappedAttachments,

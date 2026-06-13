@@ -9,6 +9,7 @@ import { ComposeEmailProvider } from '@/components/mail/compose-email'
 import { ConfirmProvider } from '@/components/ui/confirm'
 import { BackfillProgressBanner } from '@/components/shell/backfill-progress-banner'
 import { GmailReconnectBanner } from '@/components/shell/gmail-reconnect-banner'
+import { NavigationProgress } from '@/components/shell/navigation-progress'
 import { TopBar } from '@/components/shell/top-bar'
 import { TrengoTokenBanner } from '@/components/shell/trengo-token-banner'
 
@@ -63,6 +64,9 @@ function buildNav(role: Role): NavItem[] {
         { href: '/calls/history', label: 'Call history' },
       ],
     },
+    // Call Summaries — submit a summary for anyone (even someone not yet on
+    // the CRM); a smart de-dup guard aligns it with an existing contact.
+    { href: '/call-summaries', label: 'Call Summaries' },
     // Internal — staff↔staff chat. Renamed from the colliding "Messages"
     // (the sidebar said "Messages" for staff chat while the inbox said
     // "Messages" for customer messages).
@@ -236,6 +240,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <ConfirmProvider>
       <ComposeEmailProvider canSend={role !== 'virtual_assistant'}>
         <div className="flex min-h-screen flex-col bg-neutral-50">
+          <NavigationProgress />
           <TopBar
             user={{
               email: me.email,

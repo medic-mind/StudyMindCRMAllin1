@@ -8,6 +8,7 @@
 
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -133,9 +134,12 @@ function QuickAddModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-neutral-200 px-4 py-2.5">
-          <a href="/contacts/new" className="text-xs font-medium text-neutral-500 hover:text-primary-700 hover:underline">
+          <Link
+            href="/contacts/new"
+            className="text-xs font-medium text-neutral-500 hover:text-primary-700 hover:underline"
+          >
             Need more fields? Full form →
-          </a>
+          </Link>
           <div className="flex items-center gap-2">
             <Button type="button" size="sm" variant="ghost" disabled={create.isPending} onClick={() => submit(false)}>
               Save
