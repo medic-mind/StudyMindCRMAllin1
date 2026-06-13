@@ -449,6 +449,10 @@ export const EVENT_NAMES = [
   // state; the unsnooze-due cron resurfaces them, a new inbound too).
   'trengo.conversation_snoozed',
   'trengo.conversation_unsnoozed',
+  // ADR 0020 — the `trengo/reconcile-status` cron corrected a head whose
+  // status/assignee drifted from Trengo (a dropped or unsubscribed lifecycle
+  // webhook). `after` carries { ticketId, from, to, source: 'reconcile' }.
+  'trengo.status_reconciled',
 
   // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
   'task.assigned',

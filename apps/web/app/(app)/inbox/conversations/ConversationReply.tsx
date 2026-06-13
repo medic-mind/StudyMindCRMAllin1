@@ -191,15 +191,6 @@ export function ConversationReply({
     onError: (e) => toast.error(e.message ?? 'Could not close conversation'),
   })
 
-  const reopen = trpc.interaction.trengo.reopen.useMutation({
-    onSuccess: () => {
-      toast.success('Conversation reopened in Trengo')
-      invalidate()
-      router.refresh()
-    },
-    onError: (e) => toast.error(e.message ?? 'Could not reopen conversation'),
-  })
-
   const waSegments = useMemo(
     () => (waTemplate ? parseWaTemplateSegments(waTemplate.body) : []),
     [waTemplate],
@@ -245,59 +236,72 @@ export function ConversationReply({
       reader.readAsDataURL(file)
     })
 
-  const handleSend = async () => {
+  // Trengo's "Send and close": send the reply, then (when asked) close the
+  // ticket in one step. We use mutateAsync so the close only fires after the
+  // send actually succeeds; a send error surfaces its own toast and we stop.
+  const handleSend = async (thenClose = false) => {
     if (sendDisabled) return
-    if (sendingSeparateSms) {
-      sendSms.mutate({
-        contactId,
-        channel: 'sms',
-        body,
-        ...(fromChannelId ? { trengoChannelId: fromChannelId } : {}),
-      })
-      return
-    }
-    if (mode === 'template') {
-      if (!waTemplate) return
-      sendTemplate.mutate({
-        contactId,
-        templateId: waTemplate.id,
-        templateTitle: waTemplate.title,
-        params: waTemplate.params.map((key) => ({
-          key,
-          value: (waParams[key] ?? '').trim(),
-        })),
-        renderedBody: waPreview,
-      })
-      return
-    }
-    if (!latestInteractionId) return
-    let attachments:
-      | Array<{ filename: string; contentType: string; dataBase64: string }>
-      | undefined
-    if (files.length > 0) {
-      setReading(true)
-      try {
-        attachments = await Promise.all(
-          files.map(async (f) => ({
-            filename: f.name,
-            contentType: f.type || 'application/octet-stream',
-            dataBase64: await fileToBase64(f),
+    try {
+      if (sendingSeparateSms) {
+        await sendSms.mutateAsync({
+          contactId,
+          channel: 'sms',
+          body,
+          ...(fromChannelId ? { trengoChannelId: fromChannelId } : {}),
+        })
+      } else if (mode === 'template') {
+        if (!waTemplate) return
+        await sendTemplate.mutateAsync({
+          contactId,
+          templateId: waTemplate.id,
+          templateTitle: waTemplate.title,
+          params: waTemplate.params.map((key) => ({
+            key,
+            value: (waParams[key] ?? '').trim(),
           })),
-        )
-      } catch {
-        toast.error('Could not read the attached file(s)')
-        setReading(false)
-        return
+          renderedBody: waPreview,
+        })
+      } else {
+        if (!latestInteractionId) return
+        let attachments:
+          | Array<{ filename: string; contentType: string; dataBase64: string }>
+          | undefined
+        if (files.length > 0) {
+          setReading(true)
+          try {
+            attachments = await Promise.all(
+              files.map(async (f) => ({
+                filename: f.name,
+                contentType: f.type || 'application/octet-stream',
+                dataBase64: await fileToBase64(f),
+              })),
+            )
+          } catch {
+            toast.error('Could not read the attached file(s)')
+            setReading(false)
+            return
+          }
+          setReading(false)
+        }
+        await send.mutateAsync({
+          interactionId: latestInteractionId,
+          body,
+          attachments,
+          ticketId,
+          ...(threadChannel ? { channel: threadChannel } : {}),
+        })
       }
-      setReading(false)
+    } catch {
+      // The mutation's onError already toasted; don't close on a failed send.
+      return
     }
-    send.mutate({
-      interactionId: latestInteractionId,
-      body,
-      attachments,
-      ticketId,
-      ...(threadChannel ? { channel: threadChannel } : {}),
-    })
+    if (thenClose && status !== 'closed') {
+      try {
+        await close.mutateAsync({ contactId, ticketId })
+      } catch {
+        // onError toast already shown; the reply still went out.
+      }
+    }
   }
 
   return (
@@ -459,7 +463,7 @@ export function ConversationReply({
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => void handleSend()}
+            onClick={() => void handleSend(false)}
             disabled={sendDisabled}
             className="rounded bg-primary-600 px-3 py-1 text-sm text-white hover:bg-primary-700 disabled:opacity-50"
           >
@@ -471,6 +475,19 @@ export function ConversationReply({
                   ? 'Send SMS'
                   : 'Send'}
           </button>
+          {/* Trengo's "Send and close" — fire the reply then close the ticket
+              in one step. Hidden once the conversation is already closed
+              (the thread header owns Reopen). */}
+          {status !== 'closed' ? (
+            <button
+              type="button"
+              onClick={() => void handleSend(true)}
+              disabled={sendDisabled || close.isPending}
+              className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+            >
+              {close.isPending ? 'Closing…' : 'Send & close'}
+            </button>
+          ) : null}
           {mode === 'text' ? (
             <EmojiPicker onPick={(e) => setBody((cur) => cur + e)} />
           ) : null}
@@ -488,25 +505,6 @@ export function ConversationReply({
               />
             </label>
           ) : null}
-          {status === 'closed' ? (
-            <button
-              type="button"
-              onClick={() => reopen.mutate({ contactId, ticketId })}
-              disabled={reopen.isPending}
-              className="rounded border border-primary-200 bg-primary-50 px-3 py-1 text-sm text-primary-800 hover:bg-primary-100 disabled:opacity-50"
-            >
-              {reopen.isPending ? 'Reopening…' : 'Reopen'}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => close.mutate({ contactId, ticketId })}
-              disabled={close.isPending}
-              className="rounded border border-neutral-300 bg-white px-3 py-1 text-sm text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
-            >
-              {close.isPending ? 'Closing…' : 'Close'}
-            </button>
-          )}
           <span className="ml-auto text-xs text-neutral-400">Syncs to Trengo</span>
         </div>
       </div>
