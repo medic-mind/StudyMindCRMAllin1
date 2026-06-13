@@ -159,6 +159,13 @@ export {
   type ScheduleImportPromptInput,
 } from './prompts/webinar-schedule-import'
 export {
+  buildTimetableImportPrompt,
+  timetableImportSchema,
+  VERSION as WEBINAR_TIMETABLE_IMPORT_PROMPT_VERSION,
+  type TimetableImportAi,
+  type TimetableImportPromptInput,
+} from './prompts/webinar-timetable-import'
+export {
   buildKnowledgeQaPrompt,
   knowledgeAnswerShape,
   VERSION as KNOWLEDGE_QA_PROMPT_VERSION,

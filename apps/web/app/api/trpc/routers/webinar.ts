@@ -10,6 +10,7 @@ import { z } from 'zod'
 
 import {
   AUTO_ENROLL_CONFIDENCE,
+  buildTimetablePlan,
   computeSessions,
   currentWeekInfo,
   DEFAULT_EMAIL_BODY_TEMPLATE,
@@ -29,9 +30,12 @@ import {
 
 import {
   buildScheduleImportPrompt,
+  buildTimetableImportPrompt,
   runStructured,
   scheduleImportSchema,
+  timetableImportSchema,
   WEBINAR_SCHEDULE_IMPORT_PROMPT_VERSION,
+  WEBINAR_TIMETABLE_IMPORT_PROMPT_VERSION,
 } from '@studymind/ai'
 
 import {
@@ -1107,6 +1111,299 @@ const syllabusRouter = router({
 })
 
 /* -------------------------------------------------------------------------- */
+/* Timetable import (whole cohort + classes + schedule from one PDF)            */
+/* -------------------------------------------------------------------------- */
+
+/** Editable plan shape the reviewer confirms before anything is written (§3). */
+const plannedWeekSchema = z.object({
+  weekNumber: z.number().int().min(1).max(60),
+  topic: z.string().trim().min(1).max(300),
+})
+const plannedClassSchema = z.object({
+  subjectHandle: z.string().trim().min(1).max(40),
+  subjectLabel: z.string().trim().min(1).max(60),
+  levelHandle: z.string().trim().min(1).max(40),
+  levelLabel: z.string().trim().min(1).max(60),
+  title: z.string().trim().min(1).max(120),
+  dayOfWeek: z.number().int().min(0).max(6),
+  startMinute: z.number().int().min(0).max(1439),
+  durationMins: z.number().int().min(15).max(480).default(60),
+  weeks: z.array(plannedWeekSchema).max(60).default([]),
+})
+
+const timetableRouter = router({
+  /**
+   * Read one master timetable (PDF / CSV / paste) and return an editable PLAN —
+   * the cohort, its holidays, and every weekly group class with its schedule.
+   * AI-structured, grounded on the operator subject/level catalogues. Writes
+   * nothing: the human confirms and `timetable.apply` creates everything (§3).
+   */
+  importPreview: protectedProcedure
+    .input(
+      z.object({
+        kind: z.enum(['pdf', 'csv', 'text']),
+        dataBase64: z.string().max(16_000_000).optional(),
+        text: z.string().max(120_000).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+
+      const text = importToText(input.kind as ImportKind, {
+        base64: input.dataBase64,
+        text: input.text,
+      })
+      const emptyPlan = {
+        cohort: { name: '', startsOn: null as string | null, endsOn: null as string | null },
+        holidays: [] as Array<{ name: string; startsOn: string; endsOn: string }>,
+        classes: [] as ReturnType<typeof buildTimetablePlan>['classes'],
+        warnings: [] as string[],
+      }
+      if (text.trim().length === 0) {
+        return {
+          ...emptyPlan,
+          note:
+            input.kind === 'pdf'
+              ? 'Could not read text from that PDF (it may be scanned). Paste the timetable or upload a CSV instead.'
+              : 'No text found to import.',
+          source: 'none' as const,
+        }
+      }
+
+      const [subjects, levels] = await Promise.all([
+        ctx.db.webinarSubjectOption.findMany({
+          where: { archivedAt: null },
+          orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+          select: { handle: true, label: true, aliases: true },
+        }),
+        ctx.db.webinarLevelOption.findMany({
+          where: { archivedAt: null },
+          orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+          select: { handle: true, label: true, aliases: true },
+        }),
+      ])
+
+      try {
+        const prompt = buildTimetableImportPrompt({
+          text,
+          knownSubjects: subjects.map((s) => s.label),
+          knownLevels: levels.map((l) => l.label),
+          today: new Date().toISOString().slice(0, 10),
+        })
+        const out = await runStructured({
+          task: 'webinar_timetable_import',
+          promptVersion: WEBINAR_TIMETABLE_IMPORT_PROMPT_VERSION,
+          schema: timetableImportSchema,
+          system: prompt.system,
+          user: prompt.user,
+          model: 'gpt-4o-mini',
+          ctx: { requestId: ctx.requestId, source: 'webinar.timetable_import' },
+        })
+        const plan = buildTimetablePlan(out, { subjects, levels })
+        return {
+          ...plan,
+          note: out.note || (plan.classes.length > 0 ? 'Parsed with AI.' : 'No classes found.'),
+          source: 'ai' as const,
+        }
+      } catch {
+        // Degrade cleanly when AI is unavailable / over budget (§18 guardrail):
+        // there is no deterministic parser for a full timetable, so we ask the
+        // operator to create the cohort by hand and use the per-class importer.
+        return {
+          ...emptyPlan,
+          note: 'AI could not structure that timetable right now. Create the cohort manually, then import each class schedule from its page.',
+          source: 'fallback' as const,
+        }
+      }
+    }),
+
+  /**
+   * Create everything in the reviewed plan: the cohort (find-or-create by name),
+   * its holidays, each class (find-or-create per subject+level, inline-creating
+   * any new subject/level option), and each class's weekly schedule. Zoom links
+   * are left blank for staff to fill in. Idempotent on re-run. Audited.
+   */
+  apply: auditedProcedure
+    .input(
+      z.object({
+        cohort: z.object({
+          name: z.string().trim().min(1).max(40),
+          startsOn: dateSchema,
+          endsOn: dateSchema,
+          timezone: z.string().trim().min(1).max(64).default('Europe/London'),
+          status: z.enum(['planning', 'active']).default('planning'),
+        }),
+        holidays: z
+          .array(z.object({ name: z.string().trim().min(1).max(80), startsOn: dateSchema, endsOn: dateSchema }))
+          .max(30)
+          .default([]),
+        classes: z.array(plannedClassSchema).min(1).max(60),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      if (input.cohort.endsOn.getTime() <= input.cohort.startsOn.getTime()) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'End date must be after start date.' })
+      }
+
+      // 1. Cohort — find-or-create by its (unique) name.
+      let cohort = await ctx.db.webinarCohort.findUnique({ where: { name: input.cohort.name } })
+      let cohortCreated = false
+      if (!cohort) {
+        cohort = await ctx.db.webinarCohort.create({
+          data: {
+            id: createId(),
+            name: input.cohort.name,
+            startsOn: input.cohort.startsOn,
+            endsOn: input.cohort.endsOn,
+            timezone: input.cohort.timezone,
+            status: input.cohort.status,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        })
+        cohortCreated = true
+      }
+      const cohortId = cohort.id
+
+      // 2. Holidays — add any that aren't already present (dedupe by name+range).
+      let holidaysAdded = 0
+      const existingHolidays = await ctx.db.webinarHoliday.findMany({
+        where: { cohortId },
+        select: { name: true, startsOn: true, endsOn: true },
+      })
+      const holidayKey = (n: string, s: Date, e: Date) =>
+        `${n.toLowerCase()}|${s.toISOString().slice(0, 10)}|${e.toISOString().slice(0, 10)}`
+      const existingHolidayKeys = new Set(
+        existingHolidays.map((h) => holidayKey(h.name, h.startsOn, h.endsOn)),
+      )
+      for (const h of input.holidays) {
+        if (h.endsOn.getTime() < h.startsOn.getTime()) continue
+        if (existingHolidayKeys.has(holidayKey(h.name, h.startsOn, h.endsOn))) continue
+        await ctx.db.webinarHoliday.create({
+          data: {
+            id: createId(),
+            cohortId,
+            name: h.name,
+            startsOn: h.startsOn,
+            endsOn: h.endsOn,
+            createdById: user.id,
+            updatedById: user.id,
+          },
+        })
+        holidaysAdded += 1
+      }
+
+      // 3. Catalogue — inline-create any subject/level the timetable introduced.
+      const ensureSubject = async (handle: string, label: string) => {
+        await ctx.db.webinarSubjectOption.upsert({
+          where: { handle },
+          update: {},
+          create: { id: createId(), handle, label, createdById: user.id, updatedById: user.id },
+        })
+      }
+      const ensureLevel = async (handle: string, label: string) => {
+        await ctx.db.webinarLevelOption.upsert({
+          where: { handle },
+          update: {},
+          create: { id: createId(), handle, label, createdById: user.id, updatedById: user.id },
+        })
+      }
+
+      // 4. Classes — find-or-create per (cohort, subject, level); set syllabus.
+      let classesCreated = 0
+      let classesExisting = 0
+      let weeksSet = 0
+      for (const c of input.classes) {
+        await ensureSubject(c.subjectHandle, c.subjectLabel)
+        await ensureLevel(c.levelHandle, c.levelLabel)
+
+        let cls = await ctx.db.webinarClass.findUnique({
+          where: {
+            cohortId_subject_level: { cohortId, subject: c.subjectHandle, level: c.levelHandle },
+          },
+          select: { id: true },
+        })
+        if (!cls) {
+          cls = await ctx.db.webinarClass.create({
+            data: {
+              id: createId(),
+              cohortId,
+              subject: c.subjectHandle,
+              level: c.levelHandle,
+              title: c.title,
+              dayOfWeek: c.dayOfWeek,
+              startMinute: c.startMinute,
+              durationMins: c.durationMins,
+              timezone: input.cohort.timezone,
+              createdById: user.id,
+              updatedById: user.id,
+            },
+            select: { id: true },
+          })
+          classesCreated += 1
+          await ctx.audit({
+            action: 'webinar.class_created',
+            target: { type: 'WebinarClass', id: cls.id },
+            after: { subject: c.subjectHandle, level: c.levelHandle, via: 'timetable_import' },
+          })
+        } else {
+          classesExisting += 1
+        }
+
+        // Set the weekly schedule when the import found one (replace, like
+        // syllabus.set, so a re-run reflects the latest timetable).
+        if (c.weeks.length > 0) {
+          await ctx.db.$transaction([
+            ctx.db.webinarSyllabusWeek.deleteMany({ where: { classId: cls.id } }),
+            ctx.db.webinarSyllabusWeek.createMany({
+              data: c.weeks.map((w) => ({
+                id: createId(),
+                classId: cls!.id,
+                weekNumber: w.weekNumber,
+                topic: w.topic,
+                createdById: user.id,
+                updatedById: user.id,
+              })),
+            }),
+          ])
+          weeksSet += c.weeks.length
+        }
+      }
+
+      if (cohortCreated) {
+        await ctx.audit({
+          action: 'webinar.cohort_created',
+          target: { type: 'WebinarCohort', id: cohortId },
+          after: { name: input.cohort.name, status: input.cohort.status, via: 'timetable_import' },
+        })
+      }
+      await ctx.audit({
+        action: 'webinar.timetable_imported',
+        target: { type: 'WebinarCohort', id: cohortId },
+        after: {
+          cohortCreated,
+          classesCreated,
+          classesExisting,
+          holidaysAdded,
+          weeksSet,
+        },
+      })
+
+      return {
+        cohortId,
+        cohortCreated,
+        classesCreated,
+        classesExisting,
+        holidaysAdded,
+        weeksSet,
+      }
+    }),
+})
+
+/* -------------------------------------------------------------------------- */
 /* Enrolments                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -1478,6 +1775,7 @@ export const webinarRouter = router({
   cohort: cohortRouter,
   class: classRouter,
   syllabus: syllabusRouter,
+  timetable: timetableRouter,
   enrollment: enrollmentRouter,
   settings: settingsRouter,
   subject: webinarSubjectRouter,

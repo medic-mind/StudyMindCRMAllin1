@@ -486,6 +486,7 @@ export const EVENT_NAMES = [
   'webinar.zoom_link_rotated',
   'webinar.syllabus_set',
   'webinar.syllabus_generated',
+  'webinar.timetable_imported',
   'webinar.syllabus_pdf_uploaded',
   'webinar.syllabus_pdf_removed',
   'webinar.enrollment_detected',

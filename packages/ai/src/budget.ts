@@ -24,6 +24,7 @@ export type AiTaskCategory =
   | 'product_classification'
   | 'webinar_class_match'
   | 'webinar_schedule_import'
+  | 'webinar_timetable_import'
   | 'knowledge_qa'
   | 'knowledge_edit'
   | 'contact_name_extraction'
@@ -57,6 +58,9 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   webinar_class_match: { daily: 2, monthly: 40 },
   // One-shot schedule import (CSV/PDF/paste → weekly topics). Rare, mini-tier.
   webinar_schedule_import: { daily: 2, monthly: 40 },
+  // One-shot whole-timetable import (PDF/CSV/paste → cohort + classes + weeks).
+  // Rare (a few per academic year), larger context than a single schedule.
+  webinar_timetable_import: { daily: 3, monthly: 30 },
   // AI Knowledge assistant (ADR 0040). Each call carries the whole imported
   // knowledge base as context (~90k input tokens), so per-call cost is high
   // relative to other tasks; the cap covers a full day of staff questions on

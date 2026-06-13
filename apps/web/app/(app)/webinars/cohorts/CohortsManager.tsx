@@ -11,6 +11,8 @@ import { Field } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { trpc } from '@/lib/trpc/client'
 
+import { TimetableImport } from './TimetableImport'
+
 import type { CohortRow } from '../types'
 
 const STATUS_TONE: Record<string, 'success' | 'info' | 'neutral'> = {
@@ -54,6 +56,8 @@ export function CohortsManager({
 
   return (
     <div className="space-y-6">
+      {canManage ? <TimetableImport /> : null}
+
       {canManage ? (
         <Card>
           <CardBody>

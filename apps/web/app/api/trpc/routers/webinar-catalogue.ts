@@ -7,6 +7,8 @@ import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { toWebinarHandle as toHandle } from '@studymind/core/webinar'
+
 import {
   auditedProcedure,
   protectedProcedure,
@@ -21,16 +23,6 @@ function assertCanManage(role: UserRole): void {
   if (!MANAGE_ROLES.has(role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Only Manager or above can manage this' })
   }
-}
-
-/** Normalise a label into a stable handle: "A-Level" → "a_level". */
-function toHandle(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 40)
 }
 
 const CreateInput = z.object({
