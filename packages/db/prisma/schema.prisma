@@ -3148,6 +3148,11 @@ model GmailMailbox {
   historyId      String?
   watchExpiresAt DateTime?
   topicName      String?
+  /// Per-mailbox OAuth refresh token (EncryptedField.id), so EACH connected
+  /// mailbox syncs with its OWN token rather than sharing the single
+  /// User.gmailRefreshTokenCipherId (which the previous connect overwrote — only
+  /// one mailbox could sync). Null for rows connected before this column.
+  refreshTokenCipherId String?
   /// One mailbox per agent is the default outbound + drives Trengo/board
   /// senders. Only one row per agentId can be true at a time (app-level).
   isDefault      Boolean   @default(false)

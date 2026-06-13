@@ -120,10 +120,184 @@ export function renderPaginatedTextDocumentPdf(blocks: PdfTextBlock[]): Buffer {
   return assemblePdf(objects)
 }
 
+// -----------------------------------------------------------------------------
+// Branded single-page documents (ADR 0021). Adds colour to the otherwise
+// text-only writer: a trust-blue header band with the brand wordmark, an accent
+// rule, and an optional bordered "card" for key fields (e.g. login details), so
+// the emailed PDFs match the branded HTML emails instead of looking like a bare
+// text dump. Still dependency-free + ASCII (the byte-length invariant holds —
+// colour/rect operators are ASCII).
+// -----------------------------------------------------------------------------
+
+type Rgb = readonly [number, number, number]
+
+const C_BRAND: Rgb = [0.043, 0.31, 0.541] // #0b4f8a
+const C_ACCENT: Rgb = [0.184, 0.502, 0.761] // #2f80c2
+const C_TEXT: Rgb = [0.122, 0.161, 0.2] // #1f2933
+const C_MUTED: Rgb = [0.404, 0.447, 0.49] // #67717d
+const C_WHITE: Rgb = [1, 1, 1]
+const C_CARD_BG: Rgb = [0.969, 0.976, 0.984] // #f7f9fb
+const C_CARD_BORDER: Rgb = [0.894, 0.906, 0.922] // #e4e7eb
+
+const BAND_H = 92
+const ACCENT_H = 4
+const CARD_PAD = 18
+
+export interface BrandedPdfField {
+  label: string
+  value: string
+  /** Render the value larger/bold (e.g. a temporary password). */
+  emphasise?: boolean
+}
+
+export interface BrandedPdfDoc {
+  /** Header wordmark, e.g. "StudyMind CRM". */
+  brandName: string
+  headline: string
+  /** Intro paragraphs above the field card. */
+  intro?: string[]
+  /** Key/value rows rendered inside a bordered card. */
+  fields?: BrandedPdfField[]
+  /** Paragraphs below the card. */
+  notes?: string[]
+  /** Small print at the foot of the page. */
+  footer?: string
+}
+
+function fmtRgb(c: Rgb, op: 'rg' | 'RG'): string {
+  return `${formatNumber(c[0])} ${formatNumber(c[1])} ${formatNumber(c[2])} ${op}`
+}
+
+function fillRectOp(x: number, y: number, w: number, h: number, color: Rgb): string {
+  return `${fmtRgb(color, 'rg')} ${formatNumber(x)} ${formatNumber(y)} ${formatNumber(w)} ${formatNumber(h)} re f`
+}
+
+function strokeRectOp(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: Rgb,
+  lineWidth = 0.75,
+): string {
+  return `${fmtRgb(color, 'RG')} ${formatNumber(lineWidth)} w ${formatNumber(x)} ${formatNumber(y)} ${formatNumber(w)} ${formatNumber(h)} re S`
+}
+
+function textOp(
+  font: '/F1' | '/F2',
+  size: number,
+  x: number,
+  y: number,
+  text: string,
+  color: Rgb,
+): string {
+  return `BT ${font} ${size} Tf ${fmtRgb(color, 'rg')} ${formatNumber(x)} ${formatNumber(y)} Td (${escapePdfText(text)}) Tj ET`
+}
+
+/** Render a branded, single-page A4 document (header band + accent + content). */
+export function renderBrandedDocumentPdf(doc: BrandedPdfDoc): Buffer {
+  const rectOps: string[] = []
+  const textOps: string[] = []
+
+  // Header band + accent rule + wordmark.
+  rectOps.push(fillRectOp(0, PAGE_HEIGHT - BAND_H, PAGE_WIDTH, BAND_H, C_BRAND))
+  rectOps.push(
+    fillRectOp(0, PAGE_HEIGHT - BAND_H - ACCENT_H, PAGE_WIDTH, ACCENT_H, C_ACCENT),
+  )
+  textOps.push(
+    textOp('/F2', 22, MARGIN_X, PAGE_HEIGHT - 56, doc.brandName, C_WHITE),
+  )
+
+  let y = PAGE_HEIGHT - BAND_H - ACCENT_H - 44
+
+  // Headline.
+  for (const line of wrapWidth(doc.headline, 19, true, CONTENT_WIDTH)) {
+    y -= 19 * LINE_FACTOR
+    textOps.push(textOp('/F2', 19, MARGIN_X, y, line, C_TEXT))
+  }
+
+  // Intro paragraphs.
+  for (const para of doc.intro ?? []) {
+    y -= 10
+    for (const line of wrapWidth(para, 11, false, CONTENT_WIDTH)) {
+      y -= 11 * LINE_FACTOR
+      textOps.push(textOp('/F1', 11, MARGIN_X, y, line, C_TEXT))
+    }
+  }
+
+  // Field card.
+  if (doc.fields && doc.fields.length > 0) {
+    y -= 22
+    const cardTop = y
+    let inner = cardTop - CARD_PAD
+    const innerX = MARGIN_X + CARD_PAD
+    const innerWidth = CONTENT_WIDTH - CARD_PAD * 2
+    doc.fields.forEach((field, i) => {
+      if (i > 0) inner -= 14
+      inner -= 9 * LINE_FACTOR
+      textOps.push(textOp('/F2', 9, innerX, inner, field.label.toUpperCase(), C_MUTED))
+      const valueSize = field.emphasise ? 15 : 12
+      const valueFont = field.emphasise ? '/F2' : '/F1'
+      for (const line of wrapWidth(field.value, valueSize, field.emphasise ?? false, innerWidth)) {
+        inner -= valueSize * LINE_FACTOR
+        textOps.push(textOp(valueFont, valueSize, innerX, inner, line, C_TEXT))
+      }
+    })
+    const cardBottom = inner - CARD_PAD
+    const cardHeight = cardTop - cardBottom
+    // Card drawn behind the field text (painter's model: rects emitted first).
+    rectOps.push(fillRectOp(MARGIN_X, cardBottom, CONTENT_WIDTH, cardHeight, C_CARD_BG))
+    rectOps.push(strokeRectOp(MARGIN_X, cardBottom, CONTENT_WIDTH, cardHeight, C_CARD_BORDER))
+    y = cardBottom
+  }
+
+  // Notes.
+  for (const para of doc.notes ?? []) {
+    y -= 16
+    for (const line of wrapWidth(para, 10, false, CONTENT_WIDTH)) {
+      y -= 10 * LINE_FACTOR
+      textOps.push(textOp('/F1', 10, MARGIN_X, y, line, C_MUTED))
+    }
+  }
+
+  // Footer pinned near the bottom.
+  if (doc.footer) {
+    let fy = BOTTOM_Y
+    for (const line of wrapWidth(doc.footer, 9, false, CONTENT_WIDTH).reverse()) {
+      textOps.push(textOp('/F1', 9, MARGIN_X, fy, line, C_MUTED))
+      fy += 9 * LINE_FACTOR
+    }
+  }
+
+  const content = [...rectOps, ...textOps].join('\n')
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] ` +
+      '/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
+  ]
+  return assemblePdf(objects)
+}
+
+/** Word-wrap to a specific width (points). Generalises `wrapText`. */
+function wrapWidth(text: string, size: number, bold: boolean, width: number): string[] {
+  const charWidth = (bold ? 0.56 : 0.52) * size
+  const maxChars = Math.max(8, Math.floor(width / charWidth))
+  return wrapToMaxChars(text, maxChars)
+}
+
 /** Word-wrap `text` to the content width using an approximate Helvetica metric. */
 function wrapText(text: string, size: number, bold: boolean): string[] {
   const charWidth = (bold ? 0.56 : 0.52) * size
   const maxChars = Math.max(8, Math.floor(CONTENT_WIDTH / charWidth))
+  return wrapToMaxChars(text, maxChars)
+}
+
+/** Greedy word-wrap to a character budget, hard-breaking over-long tokens. */
+function wrapToMaxChars(text: string, maxChars: number): string[] {
   const words = text.split(/\s+/).filter((w) => w.length > 0)
   if (words.length === 0) return ['']
   const lines: string[] = []
