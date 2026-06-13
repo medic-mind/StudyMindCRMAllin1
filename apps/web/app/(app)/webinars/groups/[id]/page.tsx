@@ -10,8 +10,8 @@ import { PageHeader } from '@/components/shell/page-header'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 
-import { ClassDetail } from '../../classes/[id]/ClassDetail'
 import { GroupExtras } from '../GroupExtras'
+import { GroupWorkspace } from '../GroupWorkspace'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,7 +46,7 @@ export default async function GroupDetailPage({ params }: { params: Promise<{ id
       />
       <PageBody>
         <div className="space-y-5">
-          <ClassDetail detail={detail} enrollments={enrollments} canManage={canManage} />
+          <GroupWorkspace detail={detail} enrollments={enrollments} canManage={canManage} />
           <GroupExtras detail={detail} cohort={cohort} canManage={canManage} />
         </div>
       </PageBody>

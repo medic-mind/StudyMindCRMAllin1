@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { htmlToPlainText } from '@/lib/html-text'
 import { trpc } from '@/lib/trpc/client'
 
-import type { ClassDetailView as Detail, EnrollmentRow } from '../../types'
+import type { ClassDetailView as Detail, EnrollmentRow } from '../types'
 
 type EnrollmentStatus = 'pending_review' | 'active' | 'paused' | 'expired' | 'cancelled'
 
@@ -29,7 +29,7 @@ const STATUS_TONE: Record<string, 'success' | 'warn' | 'neutral' | 'danger' | 'i
   cancelled: 'neutral',
 }
 
-export function ClassDetail({
+export function GroupWorkspace({
   detail,
   enrollments,
   canManage,

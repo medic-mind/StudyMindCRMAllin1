@@ -11,8 +11,8 @@ import { Card, CardBody } from '@/components/ui/card'
 import { trpc } from '@/lib/trpc/client'
 
 import { NewClassForm } from '../NewClassForm'
-import { TimetableImport } from '../cohorts/TimetableImport'
 import type { ClassRow } from '../types'
+import { TimetableImport } from './TimetableImport'
 
 const WEEK_TONE: Record<string, 'success' | 'info' | 'neutral'> = {
   in_week: 'success',
