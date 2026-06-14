@@ -19,6 +19,7 @@ import { BackfillAlreadyRunningError, startBackfill } from '@studymind/core/back
 import {
   classifyPlanShortfall,
   createMandateSetupLink,
+  getCasesForSubscriptions,
   linkGcCustomer,
   listActivePlanArrears,
   listPlanShortfalls,
@@ -272,6 +273,13 @@ async function loadGcCustomerSummary(
     collectedBySub.set(p.gcSubscriptionId, cur)
   }
 
+  // Recovery-case status for these plans, so the contact/family panel reflects
+  // where each shortfall is in the workflow.
+  const cases = await getCasesForSubscriptions(
+    db,
+    subscriptions.map((s) => s.gcSubscriptionId),
+  )
+
   return {
     customers: opts.customers.map((c) => ({
       gcCustomerId: c.gcCustomerId,
@@ -303,6 +311,7 @@ async function loadGcCustomerSummary(
         ...s,
         shortfallMinor: shortfall?.shortfallMinor ?? null,
         collectedCount: shortfall ? shortfall.collectedCount : null,
+        caseStatus: cases.get(s.gcSubscriptionId)?.status ?? null,
       }
     }),
     payments,

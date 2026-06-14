@@ -17,6 +17,7 @@ import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
 import { formatDate, statusLabel } from './shared'
+import { ShortfallCaseCell } from './ShortfallCaseCell'
 
 /** A compact "chase" action for an Issues row: open a follow-up task against the
  * contact/family, plus a jump to the contact. Shown only when the plan's
@@ -171,6 +172,15 @@ export function PlanShortfallsSection() {
   })
   const rows = useSortedRows(items, sort.key, sort.dir)
 
+  const subIds = items.map((i) => i.gcSubscriptionId)
+  const casesQuery = trpc.finance.directDebit.cases.forSubscriptions.useQuery(
+    { gcSubscriptionIds: subIds },
+    { enabled: subIds.length > 0 },
+  )
+  const usersQuery = trpc.finance.directDebit.cases.assignableUsers.useQuery()
+  const caseBySub = new Map((casesQuery.data?.cases ?? []).map((c) => [c.gcSubscriptionId, c]))
+  const assignableUsers = usersQuery.data ?? []
+
   if (query.isLoading) {
     return <p className="px-1 py-6 text-sm text-neutral-500">Loading cancelled plans…</p>
   }
@@ -262,6 +272,7 @@ export function PlanShortfallsSection() {
                   align="right"
                 />
                 <Th>Why</Th>
+                <Th className="text-right">Case</Th>
                 <Th className="text-right">Action</Th>
               </Tr>
             </Thead>
@@ -313,6 +324,19 @@ export function PlanShortfallsSection() {
                         </Badge>
                       ))}
                     </div>
+                  </Td>
+                  <Td className="text-right">
+                    <ShortfallCaseCell
+                      links={{
+                        gcSubscriptionId: s.gcSubscriptionId,
+                        gcCustomerId: s.gcCustomerId,
+                        contactId: s.contactId,
+                        familyId: s.familyId,
+                        openingShortfallMinor: s.shortfallMinor,
+                      }}
+                      caseData={caseBySub.get(s.gcSubscriptionId)}
+                      assignableUsers={assignableUsers}
+                    />
                   </Td>
                   <Td className="text-right">
                     <RowActions
