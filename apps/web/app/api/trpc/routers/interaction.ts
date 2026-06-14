@@ -1024,6 +1024,22 @@ export const interactionRouter = router({
           target: { type: 'Integration', id: 'trengo' },
           after: res,
         })
+        // Also mirror the workspace's named channels ("business numbers") so
+        // the inbox lists them by name. Best-effort — team sync already
+        // succeeded; a channel failure must not fail the whole action.
+        try {
+          const { syncTrengoChannels } = await import(
+            '@studymind/integration-trengo/channels'
+          )
+          const chRes = await syncTrengoChannels(ctx.db, user.id, ctx.requestId)
+          await ctx.audit({
+            action: 'trengo.channels_synced',
+            target: { type: 'Integration', id: 'trengo' },
+            after: chRes,
+          })
+        } catch {
+          // ignore — channels mirror on the next sync / import.
+        }
         return { ok: true as const, ...res }
       } catch (err) {
         if (err instanceof BusinessError && err.code === 'TOKEN_EXPIRED') {

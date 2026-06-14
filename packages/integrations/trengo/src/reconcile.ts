@@ -31,10 +31,15 @@ import {
   normaliseTicketRow,
 } from './backfill'
 
-/** Per tick. Small team scale: 50 every 15 min = 4,800/day, far more than the
- *  open-conversation population, so every head is rechecked many times a day
- *  while a burst can never overwhelm Trengo's rate limit. */
-const BATCH = 50
+/** Per tick. 120 every 10 min ≈ 17k/day, far more than the open-conversation
+ *  population, so every head is rechecked many times a day while staying under
+ *  Trengo's 120 req/min limit. The on-demand sync converges the recent set in
+ *  one go. */
+const BATCH = 120
+/** On-demand "Sync now" cap — the most-recently-active OPEN heads (the ones
+ *  most likely to have been closed/spam-boxed in Trengo) converged in one run.
+ *  ~500 GETs ≈ 5 min at the rate limit; the cron covers the long tail. */
+const SYNC_NOW_CAP = 500
 
 type RequestFn = <T>(method: string, path: string) => Promise<T>
 
@@ -48,17 +53,23 @@ export interface ReconcileHead {
   contactId: string | null
   familyId: string | null
   channel: string | null
+  trengoChannelId: number | null
+  trengoChannelName: string | null
 }
 
 export interface ReconcilePlan {
-  /** Status transition to apply, or null when Trengo already agrees. */
+  /** Status transition to apply via the event merger, or null. */
   statusEvent: 'ticket.closed' | 'ticket.reopened' | null
+  /** Set the head directly to `spam` (Trengo Spam box — not an event). */
+  setSpam: boolean
   /** Audit detail when status actually flips; null otherwise. */
-  statusChange: { from: string; to: 'closed' | 'open' } | null
+  statusChange: { from: string; to: 'closed' | 'open' | 'spam' } | null
   /** Apply a `ticket.assigned` when Trengo's assignee differs from ours. */
   applyAssignee: boolean
   /** Full label set to write when Trengo's labels differ; null = leave as-is. */
   tags: string[] | null
+  /** The SPECIFIC Trengo channel id to stamp, when it differs / is missing. */
+  channelId: number | null
 }
 
 /**
@@ -80,12 +91,22 @@ export function planReconcile(
   ticket: NormalisedTicket,
 ): ReconcilePlan {
   let statusEvent: ReconcilePlan['statusEvent'] = null
+  let setSpam = false
   let statusChange: ReconcilePlan['statusChange'] = null
 
-  if (ticket.status === 'closed' && head.status !== 'closed') {
+  if (ticket.status === 'spam' && head.status !== 'spam') {
+    // Trengo Spam box — import it (the head has no spam *event*; set directly).
+    setSpam = true
+    statusChange = { from: head.status, to: 'spam' }
+  } else if (ticket.status === 'closed' && head.status !== 'closed') {
     statusEvent = 'ticket.closed'
     statusChange = { from: head.status, to: 'closed' }
-  } else if (ticket.status === 'open' && head.status === 'closed') {
+  } else if (
+    ticket.status === 'open' &&
+    (head.status === 'closed' || head.status === 'spam')
+  ) {
+    // Reopen a head Trengo now shows open — whether we had it closed or spam
+    // (Trengo un-marked it as spam).
     statusEvent = 'ticket.reopened'
     statusChange = { from: head.status, to: 'open' }
   }
@@ -98,7 +119,12 @@ export function planReconcile(
       ? ticket.labels
       : null
 
-  return { statusEvent, statusChange, applyAssignee, tags }
+  const channelId =
+    ticket.trengoChannelId !== null && ticket.trengoChannelId !== head.trengoChannelId
+      ? ticket.trengoChannelId
+      : null
+
+  return { statusEvent, setSpam, statusChange, applyAssignee, tags, channelId }
 }
 
 function sameTagSet(a: string[], b: string[]): boolean {
@@ -170,9 +196,10 @@ export const trengoReconcileStatus = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 2,
   },
-  // Every 15 minutes. Mirrors the booking-site pull cadence (CLAUDE.md §15):
-  // webhooks are the fast path, the pull is the safety net.
-  { cron: '*/15 * * * *' },
+  // Every 10 minutes. Mirrors the booking-site pull cadence (CLAUDE.md §15):
+  // webhooks are the fast path, the pull is the safety net. Staff can also
+  // force an immediate full re-sync from the inbox (trengo/reconcile-now).
+  { cron: '*/10 * * * *' },
   async ({ runId, step, logger }) => {
     // A valid (non-deleted, non-expired) per-agent token can list the whole
     // workspace's tickets — Trengo API tokens are workspace-scoped. We pick
@@ -207,6 +234,8 @@ export const trengoReconcileStatus = inngest.createFunction(
           contactId: true,
           familyId: true,
           channel: true,
+          trengoChannelId: true,
+          trengoChannelName: true,
         },
       }),
     )
@@ -251,6 +280,85 @@ export const trengoReconcileStatus = inngest.createFunction(
       'trengo reconcile-status tick complete',
     )
     return { checked: heads.length, converged, deleted }
+  },
+)
+
+// -----------------------------------------------------------------------------
+// On-demand "Sync from Trengo" — staff-triggered immediate convergence of the
+// most-recently-active OPEN conversations, so "closed on Trengo, still open
+// here" clears within minutes instead of waiting for the round-robin cron.
+// -----------------------------------------------------------------------------
+
+export const trengoReconcileNow = inngest.createFunction(
+  {
+    id: 'trengo/reconcile-now',
+    name: 'Trengo: force-sync conversation status now',
+    concurrency: { limit: 1 },
+    retries: 1,
+  },
+  { event: 'trengo/reconcile-now.requested' },
+  async ({ runId, step, logger }) => {
+    const agentId = await step.run('select-token', async () => {
+      const tok = await db.trengoToken.findFirst({
+        where: { deletedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { expiresAt: 'desc' },
+        select: { agentId: true },
+      })
+      return tok?.agentId ?? null
+    })
+    if (!agentId) return { skipped: true, reason: 'no_token' }
+
+    // The set most likely to be wrongly-open: OPEN / SNOOZED heads, newest
+    // activity first (a ticket closed in Trengo was usually active recently).
+    const heads = await step.run('select-open-heads', async () =>
+      db.conversation.findMany({
+        where: {
+          trengoTicketId: { not: null },
+          status: { in: ['open', 'snoozed'] },
+          OR: [{ provider: null }, { provider: 'trengo' }],
+        },
+        orderBy: [{ lastMessageAt: 'desc' }],
+        take: SYNC_NOW_CAP,
+        select: {
+          id: true,
+          trengoTicketId: true,
+          status: true,
+          trengoAssigneeId: true,
+          tags: true,
+          contactId: true,
+          familyId: true,
+          channel: true,
+          trengoChannelId: true,
+          trengoChannelName: true,
+        },
+      }),
+    )
+    if (heads.length === 0) return { checked: 0, converged: 0 }
+
+    let client: TrengoClient
+    try {
+      client = await createClientForAgent({ agentId, purpose: 'trengo.reconcile_now', requestId: runId })
+    } catch (err) {
+      logger.warn({ err }, 'reconcile-now could not build a Trengo client')
+      return { skipped: true, reason: 'client_unavailable' }
+    }
+    const endpoint = await step.run('detect-endpoint', async () => {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const page = await listTicketsPage(client.request, 1, null, since)
+      return page.endpoint
+    })
+
+    let converged = 0
+    for (const head of heads) {
+      const ticketId = head.trengoTicketId
+      if (ticketId === null) continue
+      const result = await step.run(`sync-now-${ticketId}`, async () =>
+        reconcileOne({ client, endpoint, head: { ...head, trengoTicketId: ticketId }, runId }),
+      )
+      if (result.converged) converged += 1
+    }
+    logger.info({ checked: heads.length, converged }, 'trengo reconcile-now complete')
+    return { checked: heads.length, converged }
   },
 )
 
@@ -327,12 +435,59 @@ async function reconcileOne(
     converged = true
   }
 
+  if (plan.setSpam) {
+    // Trengo Spam box — set the head status directly (no spam Interaction
+    // event). Audited like a status flip so the change is traceable.
+    await db.conversation.updateMany({
+      where: { trengoTicketId: head.trengoTicketId, status: { not: 'spam' } },
+      data: { status: 'spam' },
+    })
+    converged = true
+    if (plan.statusChange && (head.contactId || head.familyId)) {
+      await writeAuditLogEntry(db, {
+        actorId: null,
+        action: 'trengo.status_reconciled',
+        target: head.familyId
+          ? { type: 'Family', id: head.familyId }
+          : { type: 'Contact', id: head.contactId as string },
+        requestId: `${runId}:reconcile-spam:${head.trengoTicketId}`,
+        after: {
+          ticketId: head.trengoTicketId,
+          from: plan.statusChange.from,
+          to: plan.statusChange.to,
+          source: 'reconcile',
+        },
+      })
+    }
+  }
+
   if (plan.tags) {
     // FULL set sync (not additive) so a label removed in Trengo disappears
     // here too. updateMany is a safe no-op if the row vanished mid-sweep.
     await db.conversation.updateMany({
       where: { trengoTicketId: head.trengoTicketId },
       data: { tags: plan.tags },
+    })
+    converged = true
+  }
+
+  if (plan.channelId !== null) {
+    // The SPECIFIC Trengo channel ("business number"). Resolve its display
+    // name from the channel mirror when the ticket didn't carry one.
+    let channelName = ticket.trengoChannelName
+    if (!channelName) {
+      const ch = await db.trengoChannel.findUnique({
+        where: { trengoId: plan.channelId },
+        select: { name: true },
+      })
+      channelName = ch?.name ?? null
+    }
+    await db.conversation.updateMany({
+      where: { trengoTicketId: head.trengoTicketId },
+      data: {
+        trengoChannelId: plan.channelId,
+        ...(channelName ? { trengoChannelName: channelName } : {}),
+      },
     })
     converged = true
   }

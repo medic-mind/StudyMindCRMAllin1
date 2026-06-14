@@ -438,6 +438,9 @@ export const EVENT_NAMES = [
   // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
   'trengo.ticket_assign_requested',
   'trengo.team_synced',
+  'trengo.channels_synced',
+  // Staff "Sync from Trengo" — force an immediate status reconcile.
+  'trengo.sync_now_requested',
   // ADR 0020 Phase 6f — label (tag) add/remove from the CRM (drives the
   // Trengo /labels endpoints) and mark-read (CRM-side head state). Internal
   // notes flow through `conversation.note_added` (the unified notes path).
@@ -595,6 +598,10 @@ export const INNGEST_EVENT_NAMES = [
   // Concurrency capped on the worker (4) so a burst of attachments doesn't
   // starve the rest of the queue.
   'trengo/download-attachments.requested',
+  // ADR 0020 — staff-triggered immediate status re-sync from the inbox
+  // ("Sync from Trengo"): converges the recent open set now instead of
+  // waiting for the round-robin reconcile cron.
+  'trengo/reconcile-now.requested',
   // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
   // persists a Lead then hands off async classification + pipeline routing.
   'lead/classify.requested',

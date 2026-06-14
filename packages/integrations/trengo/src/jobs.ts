@@ -10,6 +10,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { extractTicketChannelMeta } from './backfill'
 import { applyEventToConversation } from './conversation-head'
 import {
   buildContactSuggestionWrites,
@@ -138,6 +139,62 @@ export const trengoEventReceived = inngest.createFunction(
           return { skipped: true, reason: 'crm_outbound_echo', linkedTo: linked }
         }
       }
+    }
+
+    // Trengo Spam box (TICKET_MARKED_AS_SPAM / _UNMARKED_AS_SPAM). Mirror the
+    // head status directly — spam is not an Interaction event. Terminal: it
+    // never becomes a timeline row. Idempotent (the updateMany is a no-op when
+    // the head is already in the target state).
+    if (eventName === 'ticket.marked_as_spam' || eventName === 'ticket.unmarked_as_spam') {
+      const spamTicketId = coerceTrengoId(envelope.data.ticket_id)
+      if (spamTicketId !== null) {
+        const toSpam = eventName === 'ticket.marked_as_spam'
+        const result = await step.run('apply-spam', async () =>
+          db.conversation.updateMany({
+            where: toSpam
+              ? { trengoTicketId: spamTicketId, status: { not: 'spam' } }
+              : { trengoTicketId: spamTicketId, status: 'spam' },
+            data: toSpam ? { status: 'spam' } : { status: 'open' },
+          }),
+        )
+        if (result.count > 0) {
+          const { publishConversationUpdate } = await import('@studymind/core/realtime')
+          const row = await db.conversation.findUnique({
+            where: { trengoTicketId: spamTicketId },
+            select: { id: true, contactId: true, lastMessageAt: true },
+          })
+          if (row) {
+            publishConversationUpdate({
+              id: row.id,
+              trengoTicketId: spamTicketId,
+              lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
+              contactId: row.contactId,
+            })
+          }
+          if (match.contactId || match.familyId) {
+            await step.run('audit-spam', async () =>
+              writeAuditLogEntry(db, {
+                actorId: null,
+                action: toSpam
+                  ? 'trengo.conversation_marked_spam'
+                  : 'trengo.conversation_unmarked_spam',
+                target: match.familyId
+                  ? { type: 'Family', id: match.familyId }
+                  : { type: 'Contact', id: match.contactId as string },
+                requestId: eventId,
+                after: { ticketId: spamTicketId, source: 'trengo_webhook' },
+              }),
+            )
+          }
+        }
+      }
+      await step.run('mark-processed', async () => {
+        await db.providerEvent.update({
+          where: { id: providerEventRowId },
+          data: { processedAt: new Date() },
+        })
+      })
+      return { ok: true, spam: eventName === 'ticket.marked_as_spam' }
     }
 
     // ADR 0020 Phase 6c — `contact.updated` from Trengo. NEVER silently
@@ -281,6 +338,23 @@ export const trengoEventReceived = inngest.createFunction(
         assigneeUserId = u?.id ?? null
       }
 
+      // The SPECIFIC Trengo channel ("business number") this ticket is on.
+      // Resolve its display name from the channel mirror when the payload
+      // didn't embed one, so the head shows "Support Manager" not "whatsapp".
+      const channelMeta = extractTicketChannelMeta(
+        envelope.data as unknown as Record<string, unknown>,
+      )
+      let trengoChannelName = channelMeta.trengoChannelName
+      if (channelMeta.trengoChannelId !== null && !trengoChannelName) {
+        const ch = await step.run('resolve-channel-name', async () =>
+          db.trengoChannel.findUnique({
+            where: { trengoId: channelMeta.trengoChannelId as number },
+            select: { name: true },
+          }),
+        )
+        trengoChannelName = ch?.name ?? null
+      }
+
       await step.run('upsert-conversation-head', async () =>
         applyEventToConversation(db, {
           ticketId: headTicketId,
@@ -298,6 +372,8 @@ export const trengoEventReceived = inngest.createFunction(
           label: envelope.data.label?.name ?? null,
           preview:
             typeof envelope.data.body === 'string' ? envelope.data.body : null,
+          trengoChannelId: channelMeta.trengoChannelId,
+          trengoChannelName,
         }),
       )
 
@@ -620,7 +696,10 @@ async function upsertTrengoInteraction(
 // `contact.updated` is handled in its own branch (it never becomes an
 // Interaction), so these helpers narrow the input to the Interaction-bound
 // subset of event names — the switch stays exhaustive at compile time.
-type InteractionEventName = Exclude<TrengoEventName, 'contact.updated'>
+type InteractionEventName = Exclude<
+  TrengoEventName,
+  'contact.updated' | 'ticket.marked_as_spam' | 'ticket.unmarked_as_spam'
+>
 
 function mapTrengoEventToDbType(
   name: InteractionEventName,
@@ -687,7 +766,7 @@ import { trengoUnsnoozeDue } from './snooze'
 // ADR 0020: 15-minute cron that re-fetches each conversation's CURRENT state
 // from Trengo and re-converges the head — the safety net for dropped or
 // unsubscribed lifecycle webhooks ("closed on Trengo, still open here").
-import { trengoReconcileStatus } from './reconcile'
+import { trengoReconcileStatus, trengoReconcileNow } from './reconcile'
 
 export const FUNCTIONS = [
   trengoEventReceived,
@@ -696,5 +775,6 @@ export const FUNCTIONS = [
   trengoDownloadAttachments,
   trengoUnsnoozeDue,
   trengoReconcileStatus,
+  trengoReconcileNow,
   ...TRENGO_BACKFILL_FUNCTIONS,
 ] as const

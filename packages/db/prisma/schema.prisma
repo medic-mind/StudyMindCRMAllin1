@@ -1245,6 +1245,13 @@ model Conversation {
   /// unsubscribed lifecycle webhook can never leave the head permanently
   /// drifted from Trengo. Null = never reconciled (checked first).
   lastSyncCheckAt  DateTime?
+  /// The SPECIFIC Trengo channel ("business number" / inbox) this conversation
+  /// belongs to — e.g. "Support Manager" vs "Tutor Manager". The generic
+  /// `channel` above is only the type (whatsapp/sms/email/web_chat); this is
+  /// WHICH line/number. Synced from the ticket's channel id; the name is
+  /// denormalised here for display without a join. Null until first synced.
+  trengoChannelId   Int?
+  trengoChannelName String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1264,6 +1271,7 @@ model Conversation {
   @@index([mailAccountId, status])
   @@index([provider, channel])
   @@index([lastSyncCheckAt])
+  @@index([trengoChannelId, status])
 }
 
 enum ConversationStatus {
@@ -2994,6 +3002,31 @@ model TrengoUser {
 
   @@index([email])
   @@index([crmUserId])
+}
+
+/// Trengo channel mirror — the workspace's individual channels / "business
+/// numbers" (a WhatsApp Business line named "Support Manager", an SMS sender
+/// "Tutor Manager", a mailbox, the web widget, …). Synced from `GET /channels`
+/// so the inbox can list them by name with counts and a conversation can show
+/// WHICH line it is on. Idempotent on `trengoId`. CLAUDE.md §11.
+model TrengoChannel {
+  id          String   @id
+  /// Trengo's numeric channel id. Unique — the upsert key, and what a
+  /// conversation's `trengoChannelId` points at.
+  trengoId    Int      @unique
+  /// Operator-facing name (the "business number"): "Support Manager", "Tutor
+  /// Manager", "Study Mind Support", …. Null until synced.
+  name        String?
+  /// Trengo's raw channel type tag (WA_BUSINESS / SMS / EMAIL / CHAT / …).
+  trengoType  String?
+  /// Our normalised channel kind (whatsapp/sms/email/web_chat), or null for
+  /// types we don't model (Facebook, Telegram, …).
+  channelType String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([channelType])
 }
 
 // -----------------------------------------------------------------------------
