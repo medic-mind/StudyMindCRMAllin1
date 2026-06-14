@@ -1,5 +1,5 @@
 // Webinars overview. At-a-glance health of the weekly-class auto-enrollment
-// system: the active cohort, class count, live enrolments, the review queue,
+// system: groups, classes this week, live enrolments, the review queue,
 // expiring subscriptions, and Zoom links due for rotation.
 
 import Link from 'next/link'
@@ -116,13 +116,13 @@ export default async function WebinarsOverviewPage() {
               <li>
                 Press <strong>Detect from Stripe</strong> on Enrolments — the app reads your active
                 subscriptions (name, description and metadata, monthly or yearly), works out the
-                subject &amp; level, and organises each payer into the right class in the cohort that
-                applies today. Confident matches enrol automatically; anything unclear waits in the
+                subject &amp; level, and organises each payer into the right group for the current
+                academic year. Confident matches enrol automatically; anything unclear waits in the
                 review queue (threshold {Math.round(o.autoEnrollThreshold * 100)}%). You can also add
-                or remove people by hand on any class.
+                or remove people by hand on any group.
               </li>
               <li>
-                On each class&apos;s reminder days (Monday &amp; Tuesday by default, fully
+                On each group&apos;s reminder days (Monday &amp; Tuesday by default, fully
                 customisable) the system emails active enrolments the Zoom link and the PDF schedule
                 from info@studymind.co.uk, and reminds the team to rotate Zoom links on their
                 interval. When a subscription lapses, the enrolment expires and the emails stop — a

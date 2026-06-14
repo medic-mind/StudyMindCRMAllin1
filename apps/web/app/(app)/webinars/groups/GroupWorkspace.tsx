@@ -791,9 +791,9 @@ function ImportScheduleCard({ classId, cohortId }: { classId: string; cohortId: 
         <h2 className="text-sm font-semibold text-neutral-900">Import schedule (AI)</h2>
         <p className="mt-1 text-xs text-neutral-500">
           Paste your schedule, or upload a CSV or PDF. The app uses AI to pull out the weekly topics
-          <strong> and any holidays/breaks</strong> — review and save. Holidays are added to the
-          cohort so no emails go out on those dates. The uploaded PDF (if any) is still attached to
-          every email.
+          <strong> and any holidays/breaks</strong> — review and save. Holidays are added to this
+          group&apos;s academic year so no emails go out on those dates. The uploaded PDF (if any) is
+          still attached to every email.
         </p>
 
         <div className="mt-3 flex gap-1">
@@ -871,8 +871,8 @@ function ImportScheduleCard({ classId, cohortId }: { classId: string; cohortId: 
             {holidays.length > 0 ? (
               <div className="rounded-md border border-amber-200 bg-amber-50/50 p-3">
                 <p className="text-xs font-medium text-amber-900">
-                  Holidays detected in the timetable — these are added to the cohort (no emails on
-                  these dates):
+                  Holidays detected in the timetable — these are added to this group&apos;s academic
+                  year (no emails on these dates):
                 </p>
                 <div className="mt-2 space-y-1">
                   {holidays.map((h, i) => (

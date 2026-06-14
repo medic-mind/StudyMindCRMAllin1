@@ -311,6 +311,9 @@ async function loadGcCustomerSummary(
         ...s,
         shortfallMinor: shortfall?.shortfallMinor ?? null,
         collectedCount: shortfall ? shortfall.collectedCount : null,
+        collectedMinor: collected.minor,
+        expectedTotalMinor:
+          s.totalPaymentCount != null ? s.totalPaymentCount * s.amountMinor : null,
         caseStatus: cases.get(s.gcSubscriptionId)?.status ?? null,
       }
     }),

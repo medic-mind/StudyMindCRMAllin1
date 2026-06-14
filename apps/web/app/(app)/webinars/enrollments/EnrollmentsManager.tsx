@@ -83,8 +83,8 @@ export function EnrollmentsManager({
                 <h2 className="text-sm font-semibold text-neutral-900">Detect from Stripe</h2>
                 <p className="mt-1 text-xs text-neutral-500">
                   Reads your active Stripe subscriptions, works out each one&apos;s subject &amp;
-                  level, and organises payers into the matching class in the active cohort. New
-                  payers become contacts automatically. Safe to run repeatedly.
+                  level, and organises payers into the matching group for the current academic year.
+                  New payers become contacts automatically. Safe to run repeatedly.
                 </p>
               </div>
               <Button onClick={() => detect.mutate({ useAi: true })} disabled={detect.isPending}>

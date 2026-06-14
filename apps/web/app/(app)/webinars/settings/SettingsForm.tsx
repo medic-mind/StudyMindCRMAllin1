@@ -13,7 +13,7 @@ import { trpc } from '@/lib/trpc/client'
 import type { WebinarSettingsView as Settings } from '../types'
 
 // Webinar Settings is now just the platform connections. Email templates +
-// send schedules live per cohort (CLAUDE.md §47) to avoid duplication.
+// send schedules live per group (CLAUDE.md §47) to avoid duplication.
 export function SettingsForm({ initial, canManage }: { initial: Settings; canManage: boolean }) {
   const [rotate, setRotate] = useState(initial.defaultZoomRotateEveryWeeks)
   const [zoomHostEmail, setZoomHostEmail] = useState(initial.zoomHostEmail)
@@ -49,16 +49,16 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
     >
       <Card>
         <CardBody>
-          <h2 className="text-sm font-semibold text-neutral-900">Emails are set per cohort</h2>
+          <h2 className="text-sm font-semibold text-neutral-900">Emails are set per group</h2>
           <p className="mt-1 text-sm text-neutral-600">
-            Each cohort has its own weekly email template, from-name and send days/times. Open a
-            cohort to edit them — they apply to every class in that year.
+            Each group has its own weekly email — edit the template, send days and times on the
+            group&apos;s page, with a live preview and a “send test to me” button.
           </p>
           <Link
-            href="/webinars/cohorts"
+            href="/webinars/groups"
             className="mt-2 inline-block text-sm text-primary-700 hover:underline"
           >
-            Go to Cohorts →
+            Go to Groups →
           </Link>
         </CardBody>
       </Card>

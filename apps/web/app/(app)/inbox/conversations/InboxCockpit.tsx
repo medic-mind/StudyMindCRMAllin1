@@ -248,6 +248,7 @@ export function InboxCockpit({
   return (
     <div className="flex h-[calc(100vh-var(--shell-topbar-height))] overflow-hidden bg-neutral-50">
       <FoldersRail
+        meRole={me.role}
         filter={filter}
         channel={channel}
         selectedTags={selectedTags}
@@ -496,6 +497,7 @@ function emptyCopyFor(filter: InboxFilter): string {
 // -----------------------------------------------------------------------------
 
 function FoldersRail({
+  meRole,
   filter,
   channel,
   selectedTags,
@@ -510,6 +512,7 @@ function FoldersRail({
   onApplyView,
   currentView,
 }: {
+  meRole: string
   filter: InboxFilter
   channel: InboxChannel | null
   selectedTags: string[]
@@ -550,6 +553,24 @@ function FoldersRail({
     onSuccess: () =>
       toast.success('Syncing from Trengo — statuses will converge in a moment.'),
     onError: (e) => toast.error(e.message ?? 'Could not start the sync'),
+  })
+  // Full historic import (CEO / Senior Manager) — pulls EVERY Trengo ticket
+  // (creating a contact per sender), so the app matches Trengo from scratch.
+  const canImport = meRole === 'ceo' || meRole === 'senior_manager'
+  const importJobs = trpc.admin.backfill.list.useQuery(
+    { provider: 'trengo', limit: 1 },
+    { enabled: canImport, refetchInterval: 5000, retry: false },
+  )
+  const latestImport = importJobs.data?.[0]
+  const importRunning =
+    latestImport?.status === 'pending' || latestImport?.status === 'running'
+  const startImport = trpc.admin.backfill.trengoImport.useMutation({
+    onSuccess: () => {
+      toast.success('Importing from Trengo — this can take a few minutes.')
+      void utils.inbox.conversations.list.invalidate()
+      void importJobs.refetch()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not start the import'),
   })
   const views = trpc.inbox.conversations.views.list.useQuery(undefined, {
     staleTime: 60_000,
@@ -802,6 +823,39 @@ function FoldersRail({
       </div>
 
       <div className="mt-auto space-y-1">
+        {/* Full import (CEO / Senior Manager): pulls EVERY Trengo ticket so the
+            app matches Trengo from scratch. The lighter "Sync" below only
+            re-converges conversations already imported. */}
+        {canImport ? (
+          importRunning ? (
+            <div className="rounded-md border border-trengo-700 bg-trengo-900/40 px-2.5 py-1.5 text-[11px] text-trengo-200">
+              Importing from Trengo…
+              {typeof latestImport?.processedCount === 'number'
+                ? ` ${latestImport.processedCount}${
+                    latestImport.totalCount ? ` / ${latestImport.totalCount}` : ''
+                  } tickets`
+                : ''}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Import ALL Trengo conversations into the CRM? This pulls every ticket (creating a contact per sender) so the inbox matches Trengo. Runs in the background.',
+                  )
+                ) {
+                  startImport.mutate({ windowDays: 1825, createContacts: true })
+                }
+              }}
+              disabled={startImport.isPending}
+              title="Pull every Trengo conversation into the CRM"
+              className="flex w-full items-center justify-center gap-1.5 rounded-md bg-trengo-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-trengo-700 disabled:opacity-50"
+            >
+              {startImport.isPending ? 'Starting…' : 'Import all from Trengo'}
+            </button>
+          )
+        ) : null}
         <button
           type="button"
           onClick={() => syncNow.mutate()}

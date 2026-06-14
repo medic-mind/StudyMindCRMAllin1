@@ -181,15 +181,29 @@ async function resolveRecoveredPlanIssues(
     select: { id: true, payload: true },
   })
   let resolved = 0
+  const recoveredSubIds = new Set<string>()
   for (const d of open) {
     const payload = (d.payload ?? {}) as { gcSubscriptionId?: string }
     const subId = payload.gcSubscriptionId
     if (subId && stillIssue.has(subId)) continue
+    if (subId) recoveredSubIds.add(subId)
     await db.reconciliationDiscrepancy.update({
       where: { id: d.id },
       data: { resolvedAt: now },
     })
     resolved += 1
+  }
+  // Auto-clear any open recovery case whose plan has recovered (the money came
+  // in). System write — updatedById null (§19); never reopens a written-off
+  // case. The Issues tab still allows a manual Record-recovery with amount/ref.
+  if (recoveredSubIds.size > 0) {
+    await db.directDebitCase.updateMany({
+      where: {
+        gcSubscriptionId: { in: [...recoveredSubIds] },
+        status: { in: ['new', 'chasing', 'escalated'] },
+      },
+      data: { status: 'recovered', recoveredAt: now, updatedById: null },
+    })
   }
   return resolved
 }
