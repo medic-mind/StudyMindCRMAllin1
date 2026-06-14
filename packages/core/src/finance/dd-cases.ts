@@ -192,6 +192,59 @@ export async function setCaseNotes(
   return updated as unknown as DirectDebitCaseRow
 }
 
+export type RecoveryMethodValue =
+  | 'bank_transfer'
+  | 'stripe'
+  | 'direct_debit'
+  | 'manual'
+  | 'other'
+
+export const RECOVERY_METHODS: RecoveryMethodValue[] = [
+  'bank_transfer',
+  'stripe',
+  'direct_debit',
+  'manual',
+  'other',
+]
+
+/**
+ * Record how a shortfall was recovered — an agent confirming £X came back via
+ * a bank transfer (invoicing site), Stripe, a re-collected Direct Debit, or a
+ * manual route, with an optional reference (invoice id / Stripe payment id).
+ * Closes the case as `recovered`. Read-only on money — this only RECORDS that
+ * money arrived elsewhere; it never charges (§3). `now` injected for tests.
+ */
+export async function recordRecovery(
+  db: DbClient,
+  input: {
+    gcSubscriptionId: string
+    recoveredMinor: number
+    method: RecoveryMethodValue
+    ref?: string | null
+    actorId: string
+    now?: Date
+    links?: Omit<UpsertCaseInput, 'gcSubscriptionId' | 'actorId'>
+  },
+): Promise<DirectDebitCaseRow> {
+  const current = await getOrCreateCase(db, {
+    gcSubscriptionId: input.gcSubscriptionId,
+    actorId: input.actorId,
+    ...input.links,
+  })
+  const updated = await db.directDebitCase.update({
+    where: { id: current.id },
+    data: {
+      status: 'recovered',
+      recoveredMinor: Math.max(0, Math.round(input.recoveredMinor)),
+      recoveredAt: input.now ?? new Date(),
+      recoveryMethod: input.method,
+      recoveryRef: input.ref ?? null,
+      updatedById: input.actorId,
+    },
+  })
+  return updated as unknown as DirectDebitCaseRow
+}
+
 /**
  * Fetch the cases for a set of plans, keyed by gcSubscriptionId, for hydrating
  * the Issues tab / contact panel. Read-only.

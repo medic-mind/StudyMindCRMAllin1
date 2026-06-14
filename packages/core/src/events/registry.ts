@@ -283,6 +283,7 @@ export const EVENT_NAMES = [
   'direct_debit.case_status_changed',
   'direct_debit.case_assigned',
   'direct_debit.case_note_updated',
+  'direct_debit.case_recovered',
   'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',

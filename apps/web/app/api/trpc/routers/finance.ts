@@ -17,6 +17,8 @@ import {
   listDefaulters,
   listPlanShortfalls,
   listUnresolvedStripePayments,
+  recordRecovery,
+  RECOVERY_METHODS,
   setCaseNotes,
   setCaseStatus,
   paymentsForFamily,
@@ -414,6 +416,8 @@ export const financeRouter = router({
               notes: c.notes,
               recoveredMinor: c.recoveredMinor,
               recoveredAt: c.recoveredAt,
+              recoveryMethod: c.recoveryMethod,
+              recoveryRef: c.recoveryRef,
             })),
           }
         }),
@@ -520,6 +524,50 @@ export const financeRouter = router({
             after: { hasNotes: Boolean(input.notes) },
           })
           return { ok: true }
+        }),
+
+      // Record how a shortfall was recovered (bank transfer via the invoicing
+      // site, Stripe, re-collected DD, or manual) — an agent confirming money
+      // arrived elsewhere. Closes the case as recovered. Records only; never
+      // charges (CLAUDE.md §3). Audited as a money-adjacent write.
+      recordRecovery: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            recoveredMinor: z.number().int().nonnegative(),
+            method: z.enum(RECOVERY_METHODS as [string, ...string[]]),
+            ref: z.string().max(200).nullish(),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                contactId: z.string().nullish(),
+                familyId: z.string().nullish(),
+                openingShortfallMinor: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const updated = await recordRecovery(ctx.db, {
+            gcSubscriptionId: input.gcSubscriptionId,
+            recoveredMinor: input.recoveredMinor,
+            method: input.method as (typeof RECOVERY_METHODS)[number],
+            ref: input.ref ?? null,
+            actorId: user.id,
+            links: input.links,
+          })
+          await ctx.audit({
+            action: 'direct_debit.case_recovered',
+            target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
+            after: {
+              recoveredMinor: updated.recoveredMinor,
+              method: updated.recoveryMethod,
+              ref: updated.recoveryRef,
+            },
+          })
+          return { status: updated.status, recoveredMinor: updated.recoveredMinor }
         }),
     }),
   }),

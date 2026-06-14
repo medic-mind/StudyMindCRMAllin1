@@ -303,3 +303,5 @@ role, audited `direct_debit.case_*`). The case is created lazily on first
 action. Surfaced as a Case column on the Issues tab and reflected as a status
 badge on the contact + family Direct Debit panels. All outbound recovery comms
 (reminders, legal escalation, Trengo) are human-confirmed drafts — Phase 3.
+
+**Phase 2 — reconciliation recording.** `recordRecovery` (core, tested) closes a case as `recovered` with the amount, method (`bank_transfer` via the invoicing site / `stripe` / `direct_debit` / `manual` / `other`) and an optional reference (invoice id, Stripe payment id). tRPC `finance.directDebit.cases.recordRecovery` (finance role, audited `direct_debit.case_recovered`); UI `RecordRecoveryDialog` on the Issues case cell. Records that money arrived elsewhere — never charges (§3). Auto-clear from invoicing/Stripe webhooks is a follow-up.

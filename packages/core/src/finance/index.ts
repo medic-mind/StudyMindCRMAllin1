@@ -117,10 +117,13 @@ export {
   getCasesForSubscriptions,
   getOrCreateCase,
   isClosedStatus,
+  recordRecovery,
+  RECOVERY_METHODS,
   setCaseNotes,
   setCaseStatus,
   type DirectDebitCaseRow,
   type DirectDebitCaseStatusValue,
+  type RecoveryMethodValue,
   type UpsertCaseInput,
 } from './dd-cases'
 // Direct Debit plan shortfalls (ADR 0038) — cancelled-part-way / underpaid plans

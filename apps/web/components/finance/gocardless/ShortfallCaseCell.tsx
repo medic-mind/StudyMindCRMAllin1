@@ -8,7 +8,10 @@
 import { toast } from 'sonner'
 
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
+
+import { RecordRecoveryDialog } from './RecordRecoveryDialog'
 
 const STATUS_LABEL: Record<string, string> = {
   new: 'New',
@@ -40,6 +43,7 @@ interface CaseData {
   status: string
   ownerUserId: string | null
   ownerName: string | null
+  recoveredMinor?: number
 }
 
 export function ShortfallCaseCell({
@@ -75,7 +79,14 @@ export function ShortfallCaseCell({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Badge tone={STATUS_TONE[status] ?? 'neutral'}>{STATUS_LABEL[status] ?? status}</Badge>
+      <div className="flex items-center gap-1.5">
+        <Badge tone={STATUS_TONE[status] ?? 'neutral'}>{STATUS_LABEL[status] ?? status}</Badge>
+        {status === 'recovered' && caseData?.recoveredMinor ? (
+          <span className="font-mono text-[11px] tabular-nums text-emerald-700">
+            {formatMoneyMinor(caseData.recoveredMinor)}
+          </span>
+        ) : null}
+      </div>
       <div className="flex items-center gap-1">
         <select
           aria-label="Case status"
@@ -117,6 +128,9 @@ export function ShortfallCaseCell({
           ))}
         </select>
       </div>
+      {status !== 'recovered' ? (
+        <RecordRecoveryDialog links={links} defaultAmountMinor={links.openingShortfallMinor} />
+      ) : null}
     </div>
   )
 }
