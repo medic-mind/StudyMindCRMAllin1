@@ -277,3 +277,29 @@ column sorting + filter-honouring CSV export.
   per-plan shortfall for the contact's ended fixed-length plans (reusing
   `classifyPlanShortfall`), and `ContactDirectDebitPanel` renders a
   "£X still due" badge on a plan cancelled/finished early.
+
+## Amendment (2026-06-14, seventh) — prospective tracking + recovery cases
+
+Two changes turn the cancelled/underpaid surface into a working recovery system.
+
+**Prospective only.** `GcSubscription.shortfallIgnored` excludes plans that were
+already cancelled/finished at go-live (June 2026) — handled on another system —
+so the CRM only tracks cancellations from go-live onward. The go-live migration
+snapshots the existing terminal set as ignored; `upsertGcSubscriptionMirror`
+sets the flag at create-time for any plan first seen already terminal (a
+historic import), while a plan first seen active that later cancels stays
+tracked. `listPlanShortfalls` filters `shortfallIgnored = false`; the job's
+resolve-on-recovery then clears stale discrepancies for the removed plans. No
+separate "ignored" view (avoids duplication).
+
+**Recovery cases.** `DirectDebitCase` (one per plan, soft-linked like the GC
+mirror) is the agent workflow over a shortfall: `DirectDebitCaseStatus`
+(`new → chasing → escalated → recovered | written_off`, reopenable), an owner,
+notes, and a recovery record (Phase 2 links the actual invoicing/Stripe
+payment). Pure transition table in `packages/core/src/finance/dd-cases.ts`
+(`canTransition`, unit-tested); tRPC `finance.directDebit.cases.*`
+(forSubscriptions / setStatus / assign / setNotes / assignableUsers, finance
+role, audited `direct_debit.case_*`). The case is created lazily on first
+action. Surfaced as a Case column on the Issues tab and reflected as a status
+badge on the contact + family Direct Debit panels. All outbound recovery comms
+(reminders, legal escalation, Trengo) are human-confirmed drafts — Phase 3.

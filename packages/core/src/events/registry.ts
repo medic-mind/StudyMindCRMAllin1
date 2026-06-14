@@ -277,6 +277,12 @@ export const EVENT_NAMES = [
   // human; the job records the unresolved charge in the first place.
   'finance.unresolved_payment_resolved',
   'finance.unresolved_payment_dismissed',
+  // Direct Debit recovery cases (ADR 0038, seventh amendment): the agent
+  // workflow to recover a cancelled/underpaid plan's shortfall.
+  'direct_debit.case_opened',
+  'direct_debit.case_status_changed',
+  'direct_debit.case_assigned',
+  'direct_debit.case_note_updated',
   'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',

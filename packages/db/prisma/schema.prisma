@@ -229,6 +229,15 @@ enum ReconciliationCategory {
   other
 }
 
+/// Direct Debit recovery case workflow (ADR 0038, seventh amendment).
+enum DirectDebitCaseStatus {
+  new
+  chasing
+  escalated
+  recovered
+  written_off
+}
+
 enum TaskStatus {
   open
   in_progress
@@ -1885,6 +1894,44 @@ model GcSubscription {
   @@index([status])
   @@index([gcCustomerId])
   @@index([gcMandateId])
+}
+
+/// Direct Debit recovery case (ADR 0038, seventh amendment). One per plan that
+/// has cancelled/finished underpaid from go-live onward — the workflow an agent
+/// drives to recover the shortfall: status, owner, and how it was recovered.
+/// Soft links to the GoCardless mirror + Contact/Family/User (JS-joined, no DB
+/// FKs — same pattern as the GC mirror) so it never trips on import ordering.
+model DirectDebitCase {
+  id               String                @id
+  gcSubscriptionId String                @unique
+  gcCustomerId     String?
+  contactId        String?
+  familyId         String?
+  status           DirectDebitCaseStatus @default(new)
+  ownerUserId      String?
+  /// Shortfall (pence) captured when the case was opened — a stable record even
+  /// as later collections change the live figure.
+  openingShortfallMinor Int               @default(0)
+  /// Recovery. Phase 2 links the actual invoicing/Stripe payment; Phase 1 keeps
+  /// the agent's manual record.
+  recoveredMinor   Int                   @default(0)
+  recoveredAt      DateTime?
+  /// bank_transfer | stripe | direct_debit | manual | other (normalised text).
+  recoveryMethod   String?
+  /// Invoice id (b2b.studymind.co.uk), Stripe payment id, or a free reference.
+  recoveryRef      String?
+  notes            String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([ownerUserId])
+  @@index([contactId])
+  @@index([familyId])
 }
 
 /// Complete mirror of a GoCardless payment (ADR 0038). Wider population than

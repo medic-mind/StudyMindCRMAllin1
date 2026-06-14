@@ -132,6 +132,11 @@ export function FamilyDirectDebitPanel({ familyId }: { familyId: string }) {
                     {formatMoneyMinor(s.shortfallMinor, s.currency)} still due
                   </Badge>
                 ) : null}
+                {s.caseStatus && s.caseStatus !== 'new' ? (
+                  <Badge tone={s.caseStatus === 'recovered' ? 'success' : 'info'}>
+                    {s.caseStatus.replaceAll('_', ' ')}
+                  </Badge>
+                ) : null}
                 {s.name ? <span className="text-xs text-neutral-500">· {s.name}</span> : null}
                 {s.nextChargeAt ? (
                   <span className="ml-auto text-xs text-neutral-500">
