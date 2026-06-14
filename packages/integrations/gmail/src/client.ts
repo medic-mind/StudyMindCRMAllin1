@@ -122,6 +122,10 @@ export interface GmailClient {
 
 export interface CreateGmailClientOptions {
   agentId: string
+  /** Specific connected mailbox to act as. When set, its OWN refresh token is
+   *  used (per-mailbox multi-account); falls back to the agent's default token
+   *  if that mailbox has none yet. */
+  address?: string
   /** Override decrypted refresh token (tests). */
   refreshToken?: string
   /** Audit/correlation context for the decryption call. */
@@ -139,8 +143,24 @@ export async function createClientForAgent(
   }
 
   let refreshToken = opts.refreshToken
+  // Per-mailbox token first (multi-account): each connected mailbox syncs with
+  // its OWN token instead of sharing the single User pointer.
+  if (!refreshToken && opts.address) {
+    const mailbox = await db.gmailMailbox.findUnique({
+      where: { address: opts.address },
+      select: { refreshTokenCipherId: true },
+    })
+    if (mailbox?.refreshTokenCipherId) {
+      refreshToken = await decryptFieldById(db, {
+        encryptedFieldId: mailbox.refreshTokenCipherId,
+        actorId: opts.agentId,
+        purpose: opts.purpose ?? 'gmail.sync',
+        ...(opts.requestId ? { requestId: opts.requestId } : {}),
+      })
+    }
+  }
   if (!refreshToken) {
-    // ADR 0012: prefer the EncryptedField pointer on User.
+    // ADR 0012: prefer the EncryptedField pointer on User (default mailbox).
     const user = await db.user.findUnique({
       where: { id: opts.agentId },
       select: { gmailRefreshTokenCipherId: true },
@@ -415,6 +435,9 @@ function getPubSubTopic(): string {
 export interface SetupWatchForUserOptions {
   /** Address discovered during the OAuth handshake. */
   address: string
+  /** Per-mailbox refresh token (EncryptedField.id) to persist + watch with, so
+   *  this mailbox syncs with its OWN token (multi-account). */
+  refreshTokenCipherId?: string
   /** Override the gmail SDK constructor (tests). */
   factory?: () => gmail_v1.Gmail
 }
@@ -422,19 +445,16 @@ export interface SetupWatchForUserOptions {
 /**
  * Start (or restart) the Pub/Sub watch for a user's mailbox and persist the
  * resulting historyId/expiry. Idempotent — re-calling refreshes the watch.
+ *
+ * The per-mailbox token is stored on the row FIRST so the watch (and every
+ * later sync) acts as THIS mailbox via `createClientForAgent({ address })`,
+ * rather than the single shared User token.
  */
 export async function setupWatchForUser(
   userId: string,
   opts: SetupWatchForUserOptions,
 ): Promise<GmailWatchResult> {
-  const factory = opts.factory
-  const client = await createClientForAgent(
-    factory
-      ? { agentId: userId, factory }
-      : { agentId: userId, purpose: 'gmail.oauth_connect' },
-  )
   const topicName = getPubSubTopic()
-  const result = await client.setupWatch({ topicName })
   // Multi-mailbox: agent may already have N mailboxes. Key on address (which
   // is globally unique to a Google account). The first mailbox an agent
   // connects becomes their default; subsequent ones land as additional.
@@ -442,6 +462,8 @@ export async function setupWatchForUser(
     where: { agentId: userId, deletedAt: null },
     select: { id: true },
   })
+  // Persist the row (with this mailbox's own token) before watching, so the
+  // watch client below resolves the per-mailbox token by address.
   await db.gmailMailbox.upsert({
     where: { address: opts.address },
     create: {
@@ -449,15 +471,31 @@ export async function setupWatchForUser(
       agentId: userId,
       address: opts.address,
       topicName,
-      historyId: result.historyId,
-      watchExpiresAt: new Date(result.expirationMs),
       isDefault: !existingForAgent,
+      ...(opts.refreshTokenCipherId
+        ? { refreshTokenCipherId: opts.refreshTokenCipherId }
+        : {}),
     },
     update: {
       topicName,
+      deletedAt: null,
+      ...(opts.refreshTokenCipherId
+        ? { refreshTokenCipherId: opts.refreshTokenCipherId }
+        : {}),
+    },
+  })
+
+  const client = await createClientForAgent(
+    opts.factory
+      ? { agentId: userId, factory: opts.factory }
+      : { agentId: userId, address: opts.address, purpose: 'gmail.oauth_connect' },
+  )
+  const result = await client.setupWatch({ topicName })
+  await db.gmailMailbox.update({
+    where: { address: opts.address },
+    data: {
       historyId: result.historyId,
       watchExpiresAt: new Date(result.expirationMs),
-      deletedAt: null,
     },
   })
   return result

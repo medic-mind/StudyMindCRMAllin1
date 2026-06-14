@@ -200,10 +200,13 @@ async function runCallback(
     return redirectWithError(req, 'profile_lookup_failed')
   }
 
-  // Encrypt + persist the refresh token.
+  // Encrypt + persist the refresh token PER MAILBOX, keyed on the address, so
+  // every connected account keeps its own token (multi-account). Also mirror it
+  // onto User.gmailRefreshTokenCipherId so default-mailbox callers + system send
+  // keep working — the most-recently-connected mailbox becomes the user default.
   const cipher = await encryptField(db, {
     ownerType: 'User',
-    ownerId: me.id,
+    ownerId: `${me.id}:${address}`,
     fieldName: 'gmail.refresh_token',
     plaintext: tokens.refresh_token,
     ctx: { actorId: me.id, purpose: 'gmail.oauth_connect' },
@@ -221,7 +224,7 @@ async function runCallback(
   // can prompt; the user keeps the encrypted token so retry is cheap.
   let watchOk = true
   try {
-    await setupWatchForUser(me.id, { address })
+    await setupWatchForUser(me.id, { address, refreshTokenCipherId: cipher.id })
   } catch {
     watchOk = false
     await db.user.update({

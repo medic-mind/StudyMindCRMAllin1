@@ -24,9 +24,11 @@ import {
   markBackfillFailed,
   markBackfillRunning,
 } from '@studymind/core/backfill'
+import { applyMailToConversation, prepareEmailHtml } from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { primaryAccountByContact } from './business-account-link'
 import {
   createClientForAgent,
   getHeader,
@@ -55,7 +57,7 @@ function ymd(date: Date): string {
 export const gmailBackfillRequested = inngest.createFunction(
   {
     id: 'gmail/backfill.requested',
-    name: 'Backfill last 90 days of Gmail history for an agent',
+    name: 'Backfill Gmail history for an agent (windowed)',
     concurrency: { limit: 2 },
     retries: 4,
   },
@@ -73,60 +75,67 @@ export const gmailBackfillRequested = inngest.createFunction(
     let processed = 0
     let matched = 0
     let skipped = 0
-    let pageToken: string | undefined
     const query = `after:${ymd(new Date(windowFrom))} before:${ymd(
       new Date(new Date(windowTo).getTime() + 24 * 60 * 60 * 1000),
     )}`
 
     try {
-      const mailbox = await step.run('load-mailbox', async () =>
-        db.gmailMailbox.findFirst({
+      // Walk EVERY connected mailbox for this agent, each with its OWN token
+      // (multi-account). A single backfill job covers all connected accounts.
+      const mailboxes = await step.run('load-mailboxes', async () =>
+        db.gmailMailbox.findMany({
           where: { agentId, deletedAt: null },
           orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-          select: { address: true },
+          select: { id: true, address: true },
         }),
       )
-      const agentAddr = mailbox?.address.toLowerCase() ?? ''
 
-      do {
-        const { ids, nextPageToken } = await step.run(
-          `list-page-${pageToken ?? 'first'}`,
-          async () => {
-            const client = await createClientForAgent({
-              agentId,
-              purpose: 'gmail.backfill',
-              requestId: jobId,
-            })
-            return listMessageIds(client.agentId, query, pageToken)
-          },
-        )
+      for (const mb of mailboxes) {
+        const agentAddr = mb.address.toLowerCase()
+        let pageToken: string | undefined
+        do {
+          const { ids, nextPageToken } = await step.run(
+            `list-${mb.id}-${pageToken ?? 'first'}`,
+            async () => listMessageIds(agentId, mb.address, query, pageToken),
+          )
 
-        for (const messageId of ids) {
-          try {
-            const result = await step.run(`message-${messageId}`, async () =>
-              processBackfillMessage({ agentId, messageId, agentAddr, requestId: jobId }),
-            )
-            processed += 1
-            if (result.matched > 0) matched += result.matched
-            else skipped += 1
-          } catch (err) {
-            // One unreadable/oddly-shaped message must not abort the whole
-            // import. Skip it and keep going so the rest of the mailbox lands.
-            processed += 1
-            skipped += 1
-            logger.warn({ jobId, messageId, err }, 'gmail backfill: skipped a message that failed to import')
+          for (const messageId of ids) {
+            try {
+              const result = await step.run(`message-${mb.id}-${messageId}`, async () =>
+                processBackfillMessage({
+                  agentId,
+                  mailboxId: mb.id,
+                  address: mb.address,
+                  agentAddr,
+                  messageId,
+                  requestId: jobId,
+                }),
+              )
+              processed += 1
+              if (result.matched > 0) matched += result.matched
+              else skipped += 1
+            } catch (err) {
+              // One unreadable/oddly-shaped message must not abort the whole
+              // import. Skip it and keep going so the rest of the mailbox lands.
+              processed += 1
+              skipped += 1
+              logger.warn(
+                { jobId, messageId, err },
+                'gmail backfill: skipped a message that failed to import',
+              )
+            }
           }
-        }
-        await step.run(`progress-${pageToken ?? 'first'}`, async () =>
-          incrementBackfillProgress(db, jobId, {
-            processed,
-            matched,
-            skipped,
-            lastEventId: ids[ids.length - 1] ?? null,
-          }),
-        )
-        pageToken = nextPageToken ?? undefined
-      } while (pageToken)
+          await step.run(`progress-${mb.id}-${pageToken ?? 'first'}`, async () =>
+            incrementBackfillProgress(db, jobId, {
+              processed,
+              matched,
+              skipped,
+              lastEventId: ids[ids.length - 1] ?? null,
+            }),
+          )
+          pageToken = nextPageToken ?? undefined
+        } while (pageToken)
+      }
 
       await step.run('mark-completed', async () =>
         markBackfillCompleted(db, jobId, {
@@ -157,34 +166,40 @@ export const gmailBackfillRequested = inngest.createFunction(
 // minimal — the list endpoint is only used by backfill.
 async function listMessageIds(
   agentId: string,
+  address: string,
   query: string,
   pageToken: string | undefined,
 ): Promise<{ ids: string[]; nextPageToken: string | null }> {
-  const wrappedClient = await createClientForAgent({
-    agentId,
-    purpose: 'gmail.backfill',
+  // Resolve THIS mailbox's own token (multi-account); fall back to the agent's
+  // default User token for rows connected before per-mailbox tokens existed.
+  const mailbox = await db.gmailMailbox.findUnique({
+    where: { address },
+    select: { refreshTokenCipherId: true },
   })
-  void wrappedClient // We only need the OAuth setup as a side-effect; we re-derive auth below for the raw call.
-  // Re-derive a raw client so we can call users.messages.list directly.
-  // The token decryption inside createClientForAgent has already happened —
-  // here we issue a parallel call with the same env credentials.
-  const user = await db.user.findUnique({
-    where: { id: agentId },
-    select: { gmailRefreshTokenCipherId: true },
-  })
-  if (!user?.gmailRefreshTokenCipherId) return { ids: [], nextPageToken: null }
+  let cipherId = mailbox?.refreshTokenCipherId ?? null
+  if (!cipherId) {
+    const user = await db.user.findUnique({
+      where: { id: agentId },
+      select: { gmailRefreshTokenCipherId: true },
+    })
+    cipherId = user?.gmailRefreshTokenCipherId ?? null
+  }
+  if (!cipherId) return { ids: [], nextPageToken: null }
 
   // Build a thin gmail client straight from googleapis — same auth path as
   // createClientForAgent but exposing `messages.list`.
   const { decryptFieldById } = await import('@studymind/core/safeguarding')
   const refreshToken = await decryptFieldById(db, {
-    encryptedFieldId: user.gmailRefreshTokenCipherId,
+    encryptedFieldId: cipherId,
     actorId: agentId,
     purpose: 'gmail.backfill',
   })
+  // Same OAuth client the connect/refresh path uses (prefer the GOOGLE_OAUTH_*
+  // names, fall back to the legacy GOOGLE_* ones) so the refresh token resolves
+  // against the client that minted it — otherwise the list call 401s.
   const oauth2 = new google.auth.OAuth2(
-    process.env['GOOGLE_CLIENT_ID'],
-    process.env['GOOGLE_CLIENT_SECRET'],
+    process.env['GOOGLE_OAUTH_CLIENT_ID'] ?? process.env['GOOGLE_CLIENT_ID'],
+    process.env['GOOGLE_OAUTH_CLIENT_SECRET'] ?? process.env['GOOGLE_CLIENT_SECRET'],
   )
   oauth2.setCredentials({ refresh_token: refreshToken })
   const gmail = google.gmail({ version: 'v1', auth: oauth2 })
@@ -202,6 +217,10 @@ async function listMessageIds(
 
 interface ProcessInput {
   agentId: string
+  /** GmailMailbox.id — resolves the owning MailAccount for the head. */
+  mailboxId: string
+  /** Mailbox address to act as (its own token — multi-account). */
+  address: string
   messageId: string
   agentAddr: string
   requestId: string
@@ -219,6 +238,7 @@ async function processBackfillMessage(
 
   const client = await createClientForAgent({
     agentId: input.agentId,
+    address: input.address,
     purpose: 'gmail.backfill',
     requestId: input.requestId,
   })
@@ -245,7 +265,10 @@ async function processBackfillMessage(
     where: { email: { in: allAddrs }, deletedAt: null },
     select: { id: true, email: true },
   })
-  if (matchedContacts.length === 0) return { matched: 0 }
+  const accountByContact =
+    matchedContacts.length > 0
+      ? await primaryAccountByContact(matchedContacts.map((c) => c.id))
+      : new Map<string, string>()
 
   // Stream attachments to S3 (same behaviour as live sync).
   const attachmentRefs: Array<{
@@ -274,32 +297,71 @@ async function processBackfillMessage(
   const occurredAt = new Date(message.internalDate || Date.now())
   const dbType = direction === 'sent' ? 'email_sent' : 'email_received'
   const eventName = direction === 'sent' ? 'email.sent' : 'email.received'
+  // Parity with the live sync: capture the rich HTML body for the reading pane.
+  const bodyHtml = prepareEmailHtml(message.htmlBody)
+  const basePayload = {
+    event: eventName,
+    backfill: true,
+    gmailMessageId: message.id,
+    gmailThreadId: message.threadId,
+    messageIdHeader,
+    from: fromAddrs,
+    to: toAddrs,
+    cc: ccAddrs,
+    bcc: bccAddrs,
+    subject,
+    bodyHtml,
+    attachments: attachmentRefs,
+  }
 
-  for (const contact of matchedContacts) {
+  // Unmatched mail is still recorded (contactId null — never a ghost contact,
+  // §14) so it shows in /mail; matched mail gets one row per contact + the B2B
+  // account stamp.
+  if (matchedContacts.length === 0) {
     await db.interaction.create({
       data: {
         id: createId(),
         type: dbType,
-        contactId: contact.id,
+        contactId: null,
         occurredAt,
         summary: subject.slice(0, 280),
-        payload: {
-          event: eventName,
-          backfill: true,
-          gmailMessageId: message.id,
-          gmailThreadId: message.threadId,
-          messageIdHeader,
-          from: fromAddrs,
-          to: toAddrs,
-          cc: ccAddrs,
-          bcc: bccAddrs,
-          matchedVia: contact.email,
-          subject,
-          attachments: attachmentRefs,
-        },
+        payload: basePayload,
       },
     })
+  } else {
+    for (const contact of matchedContacts) {
+      await db.interaction.create({
+        data: {
+          id: createId(),
+          type: dbType,
+          contactId: contact.id,
+          businessAccountId: accountByContact.get(contact.id) ?? null,
+          occurredAt,
+          summary: subject.slice(0, 280),
+          payload: { ...basePayload, matchedVia: contact.email },
+        },
+      })
+    }
   }
+
+  // Upsert the email Conversation head so the thread shows in /mail + the Comms
+  // Centre — parity with the live sync (which the backfill previously skipped,
+  // leaving /mail empty after a connect+import).
+  const account = await db.mailAccount.findFirst({
+    where: { gmailMailboxId: input.mailboxId, deletedAt: null },
+    select: { id: true },
+  })
+  await applyMailToConversation(db, {
+    provider: 'email',
+    externalThreadId: message.threadId,
+    mailAccountId: account?.id ?? null,
+    direction,
+    occurredAt,
+    contactId: matchedContacts[0]?.id ?? null,
+    familyId: null,
+    subject: subject || null,
+  })
+
   return { matched: matchedContacts.length }
 }
 

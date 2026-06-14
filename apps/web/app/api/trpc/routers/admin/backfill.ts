@@ -39,6 +39,16 @@ const WRITE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'senior_manager',
 ])
 
+// A full-history Gmail import only touches the CALLER's own connected mailbox
+// and only matches to existing contacts (no ghost contacts), so the mailbox
+// owner can run it — Sales Executive and above (VA is read-only).
+const MAILBOX_IMPORT_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+])
+
 const ProviderEnum = z.enum(['gmail', 'aircall', 'trengo', 'slack'])
 
 export const adminBackfillRouter = router({
@@ -190,6 +200,65 @@ export const adminBackfillRouter = router({
           throw new TRPCError({
             code: 'CONFLICT',
             message: 'A Trengo backfill is already pending or running.',
+          })
+        }
+        throw err
+      }
+    }),
+
+  /**
+   * Import the caller's own Gmail history for a chosen window (up to "all" —
+   * ~20 years). Mirrors `trengoImport` but matches-only (never creates ghost
+   * contacts). The 90-day auto-backfill runs on connect; this is the manual
+   * "import everything" surface. Sales Executive and above.
+   */
+  gmailImport: auditedProcedure
+    .input(
+      z.object({
+        windowDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(7305) // ~20 years — effectively all of an account's history
+          .default(365),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (!MAILBOX_IMPORT_ROLES.has(user.role))
+        throw new TRPCError({ code: 'FORBIDDEN' })
+
+      const mailbox = await ctx.db.gmailMailbox.findFirst({
+        where: { agentId: user.id, deletedAt: null },
+        select: { agentId: true },
+      })
+      if (!mailbox) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message:
+            'Connect a Gmail account first (Settings → Mailbox), then start the import.',
+        })
+      }
+
+      const { inngest } = await import('@studymind/jobs')
+      try {
+        const res = await startBackfill(ctx.db, inngest, {
+          provider: 'gmail',
+          agentId: user.id,
+          windowDays: input.windowDays,
+          ctx: { actorId: user.id, requestId: ctx.requestId },
+        })
+        await ctx.audit({
+          action: 'backfill.started',
+          target: { type: 'BackfillJob', id: res.jobId },
+          after: { provider: 'gmail', windowDays: input.windowDays, initiatedBy: user.id },
+        })
+        return { jobId: res.jobId }
+      } catch (err) {
+        if (err instanceof BackfillAlreadyRunningError) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'A Gmail import is already pending or running for your mailbox.',
           })
         }
         throw err

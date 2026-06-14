@@ -489,6 +489,7 @@ const classRouter = router({
       sendHourLocal: cl.sendHourLocal,
       emailSubjectTemplate: cl.emailSubjectTemplate,
       emailBodyTemplate: cl.emailBodyTemplate,
+      emailBodyHtml: cl.emailBodyHtml,
       active: cl.active,
       hasUploadedPdf: (cl.syllabusPdfByteSize ?? 0) > 0,
       uploadedPdfFileName: cl.syllabusPdfFileName,
@@ -610,6 +611,7 @@ const classRouter = router({
         zoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
         emailSubjectTemplate: z.string().trim().max(300).nullish(),
         emailBodyTemplate: z.string().trim().max(8000).nullish(),
+        emailBodyHtml: z.string().trim().max(40_000).nullish(),
         active: z.boolean().optional(),
       }),
     )

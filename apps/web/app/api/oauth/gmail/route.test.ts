@@ -258,12 +258,16 @@ describe('GET /api/oauth/gmail/callback', () => {
       expect.anything(),
       expect.objectContaining({
         ownerType: 'User',
-        ownerId: 'u_1',
+        // Per-mailbox token key: `${userId}:${address}` (multi-account).
+        ownerId: 'u_1:me@studymind.dev',
         fieldName: 'gmail.refresh_token',
         plaintext: 'rt',
       }),
     )
-    expect(setupWatchForUserMock).toHaveBeenCalledWith('u_1', expect.objectContaining({ address: 'me@studymind.dev' }))
+    expect(setupWatchForUserMock).toHaveBeenCalledWith(
+      'u_1',
+      expect.objectContaining({ address: 'me@studymind.dev', refreshTokenCipherId: 'cipher_new' }),
+    )
     expect(userRows[0]!.gmailRefreshTokenCipherId).toBe('cipher_new')
     expect(userRows[0]!.gmailConnectionStatus).toBe('connected')
     expect(auditCalls.some((a) => a.action === 'gmail.oauth_connected')).toBe(true)

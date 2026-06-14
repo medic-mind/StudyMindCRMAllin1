@@ -4,8 +4,36 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildWelcomeEmail, escapeHtml } from './templates'
-import { renderTextDocumentPdf } from './pdf/pdf-writer'
+import { renderBrandedDocumentPdf, renderTextDocumentPdf } from './pdf/pdf-writer'
 import { buildWelcomePdf } from './welcome-pdf'
+
+describe('renderBrandedDocumentPdf', () => {
+  it('produces a valid PDF with the brand band, fields and footer', () => {
+    const pdf = renderBrandedDocumentPdf({
+      brandName: 'StudyMind CRM',
+      headline: 'Welcome',
+      intro: ['Hello Sam,'],
+      fields: [
+        { label: 'Email', value: 'sam@studymind.co.uk' },
+        { label: 'Temporary password', value: 'Temp-Pass-2345', emphasise: true },
+      ],
+      notes: ['Keep these details private.'],
+      footer: 'StudyMind CRM',
+    }).toString('latin1')
+    expect(pdf.startsWith('%PDF-1.4')).toBe(true)
+    expect(pdf.trimEnd().endsWith('%%EOF')).toBe(true)
+    // Colour band + card draw operators are present (re f / re S).
+    expect(pdf).toMatch(/0\.04 0\.31 0\.54 rg/) // brand blue fill (rounded to 2dp)
+    expect(pdf).toContain(' re f')
+    expect(pdf).toContain(' re S')
+    // Content rendered as text.
+    expect(pdf).toContain('StudyMind CRM')
+    expect(pdf).toContain('sam@studymind.co.uk')
+    expect(pdf).toContain('Temp-Pass-2345')
+    // Labels are upper-cased in the card.
+    expect(pdf).toContain('TEMPORARY PASSWORD')
+  })
+})
 
 describe('renderTextDocumentPdf', () => {
   it('produces a structurally valid single-page PDF', () => {
