@@ -289,6 +289,9 @@ export const EVENT_NAMES = [
   'dd_recovery_template.updated',
   'dd_recovery_template.archived',
   'dd_recovery_template.restored',
+  // A human-confirmed recovery message (reminder / legal escalation) sent from
+  // a case (Phase 3b). Audited; also logged as an email_sent Interaction.
+  'direct_debit.recovery_sent',
   'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
