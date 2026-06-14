@@ -1867,6 +1867,12 @@ model GcSubscription {
   /// total contracted value (`count × amountMinor`) and, when a plan is
   /// cancelled/finished early, the collection shortfall (ADR 0038, §6.3).
   totalPaymentCount Int?
+  /// When true, this plan is excluded from the cancelled/underpaid shortfall
+  /// surfaces (ADR 0038, seventh amendment). Set at create-time for any plan
+  /// first seen already terminal (a historic import) and by the go-live
+  /// migration that snapshotted the existing cancelled/finished set — so the
+  /// CRM only tracks plans that cancel from go-live (June 2026) onward.
+  shortfallIgnored Boolean @default(false)
   metadata         Json?
   gcCreatedAt      DateTime?
 

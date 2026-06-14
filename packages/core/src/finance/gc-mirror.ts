@@ -30,6 +30,13 @@ export type GcSubscriptionStateValue =
   | 'paused'
   | 'unknown'
 
+/** Subscription states that mean the plan has stopped collecting. A plan first
+ *  mirrored in one of these is a historic record (excluded from shortfalls). */
+const TERMINAL_SUBSCRIPTION_STATES = new Set<GcSubscriptionStateValue>([
+  'cancelled',
+  'finished',
+])
+
 export type GcPaymentStateValue =
   | 'pending_customer_approval'
   | 'pending_submission'
@@ -381,9 +388,21 @@ export async function upsertGcSubscriptionMirror(
     ...(input.gcCustomerId !== undefined ? { gcCustomerId: input.gcCustomerId } : {}),
   }
 
+  // A plan first seen ALREADY terminal is a historic import — exclude it from
+  // the cancelled/underpaid shortfall surfaces (ADR 0038, seventh amendment).
+  // A plan first seen active that later cancels keeps shortfallIgnored=false
+  // (we never touch it on update), so it is tracked. The update path never
+  // changes shortfallIgnored, so a live cancellation stays visible.
+  const firstSeenTerminal = TERMINAL_SUBSCRIPTION_STATES.has(input.status)
+
   const row = await db.gcSubscription.upsert({
     where: { gcSubscriptionId: input.gcSubscriptionId },
-    create: { id: createId(), gcSubscriptionId: input.gcSubscriptionId, ...data },
+    create: {
+      id: createId(),
+      gcSubscriptionId: input.gcSubscriptionId,
+      ...data,
+      shortfallIgnored: firstSeenTerminal,
+    },
     update: data,
     select: { id: true },
   })
