@@ -90,6 +90,9 @@ function makeDb(opts: {
         return { id: args.where.id }
       },
     },
+    directDebitCase: {
+      updateMany: async () => ({ count: 0 }),
+    },
   } as unknown as PrismaClient
 
   return { db, created, resolvedIds }
@@ -233,9 +236,15 @@ function makePlanDb(opts: {
   customers: Array<{ gcCustomerId: string; familyId: string | null; givenName?: string }>
   existing?: CreatedRow[]
   open?: OpenDiscrepancy[]
-}): { db: PrismaClient; created: CreatedRow[]; resolvedIds: string[] } {
+}): {
+  db: PrismaClient
+  created: CreatedRow[]
+  resolvedIds: string[]
+  caseCleared: string[]
+} {
   const created: CreatedRow[] = []
   const resolvedIds: string[] = []
+  const caseCleared: string[] = []
   const existing = opts.existing ?? []
   const open = opts.open ?? []
 
@@ -287,9 +296,15 @@ function makePlanDb(opts: {
         return { id: args.where.id }
       },
     },
+    directDebitCase: {
+      updateMany: async (args: { where: { gcSubscriptionId: { in: string[] } } }) => {
+        caseCleared.push(...args.where.gcSubscriptionId.in)
+        return { count: args.where.gcSubscriptionId.in.length }
+      },
+    },
   } as unknown as PrismaClient
 
-  return { db, created, resolvedIds }
+  return { db, created, resolvedIds, caseCleared }
 }
 
 describe('flagPlanIssues', () => {
@@ -375,7 +390,7 @@ describe('flagPlanIssues', () => {
   it('auto-resolves an open discrepancy whose plan has recovered', async () => {
     // No current issues, but an open arrears discrepancy exists for a plan that
     // is no longer behind → it should be resolved.
-    const { db, resolvedIds } = makePlanDb({
+    const { db, resolvedIds, caseCleared } = makePlanDb({
       subs: [
         {
           gcSubscriptionId: 'SB_OK',
@@ -398,6 +413,8 @@ describe('flagPlanIssues', () => {
     const result = await flagPlanIssues(db, NOW)
     expect(result.resolved).toBe(1)
     expect(resolvedIds).toEqual(['disc_old'])
+    // The recovered plan's open case is auto-cleared in the same pass.
+    expect(caseCleared).toEqual(['SB_OLD'])
   })
 
   it('does NOT resolve a discrepancy whose plan is still an issue', async () => {

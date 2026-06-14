@@ -583,8 +583,9 @@ export const financeRouter = router({
           z.object({
             gcSubscriptionId: z.string().min(1),
             contactId: z.string().min(1),
+            channel: z.enum(['email', 'sms']).default('email'),
             templateId: z.string().nullish(),
-            subject: z.string().trim().min(1).max(300),
+            subject: z.string().trim().max(300).optional(),
             body: z.string().trim().min(1).max(10_000),
             links: z
               .object({
@@ -601,54 +602,97 @@ export const financeRouter = router({
 
           const contact = await ctx.db.contact.findFirst({
             where: { id: input.contactId, deletedAt: null },
-            select: { id: true, email: true },
+            select: { id: true, email: true, phoneE164: true },
           })
           if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'contact not found' })
-          if (!contact.email) {
-            throw new TRPCError({
-              code: 'BAD_REQUEST',
-              message: 'This contact has no email address — add one before sending.',
-            })
-          }
 
-          const result = await sendSystemEmail({
-            to: contact.email,
-            subject: input.subject,
-            text: input.body,
-          })
-          if (result.status !== 'sent') {
-            throw new TRPCError({
-              code: 'INTERNAL_SERVER_ERROR',
-              message:
-                result.detail ??
-                (result.status === 'skipped'
-                  ? 'No system mailbox connected — connect Gmail in Settings.'
-                  : 'The email could not be sent.'),
+          if (input.channel === 'email') {
+            if (!contact.email) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: 'This contact has no email address — add one before sending.',
+              })
+            }
+            const subject = input.subject?.trim()
+            if (!subject) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'A subject is required.' })
+            }
+            const result = await sendSystemEmail({
+              to: contact.email,
+              subject,
+              text: input.body,
             })
-          }
-
-          // Reflect on the customer's CRM page.
-          await ctx.db.interaction.create({
-            data: {
-              id: createId(),
-              type: 'email_sent',
-              contactId: contact.id,
-              occurredAt: new Date(),
-              summary: `Direct Debit recovery email: ${input.subject}`.slice(0, 140),
-              payload: {
-                kind: 'dd_recovery',
-                subject: input.subject,
-                body: input.body,
-                to: contact.email,
-                gcSubscriptionId: input.gcSubscriptionId,
-                templateId: input.templateId ?? null,
-                gmailId: result.id,
-                authorId: user.id,
+            if (result.status !== 'sent') {
+              throw new TRPCError({
+                code: 'INTERNAL_SERVER_ERROR',
+                message:
+                  result.detail ??
+                  (result.status === 'skipped'
+                    ? 'No system mailbox connected — connect Gmail in Settings.'
+                    : 'The email could not be sent.'),
+              })
+            }
+            // Reflect on the customer's CRM page.
+            await ctx.db.interaction.create({
+              data: {
+                id: createId(),
+                type: 'email_sent',
+                contactId: contact.id,
+                occurredAt: new Date(),
+                summary: `Direct Debit recovery email: ${subject}`.slice(0, 140),
+                payload: {
+                  kind: 'dd_recovery',
+                  subject,
+                  body: input.body,
+                  to: contact.email,
+                  gcSubscriptionId: input.gcSubscriptionId,
+                  templateId: input.templateId ?? null,
+                  gmailId: result.id,
+                  authorId: user.id,
+                },
+                createdById: user.id,
+                updatedById: user.id,
               },
-              createdById: user.id,
-              updatedById: user.id,
-            },
-          })
+            })
+          } else {
+            // SMS via Trengo — continue the contact's active SMS thread, else
+            // start a new one to their E.164 number. The Trengo outbound logs
+            // its own `message` Interaction (pending_send → delivered), so the
+            // send already reflects on the customer's timeline.
+            const phone = contact.phoneE164?.trim()
+            if (!phone || !phone.startsWith('+')) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: 'This contact has no usable phone number for SMS.',
+              })
+            }
+            const { resolveActiveTrengoConversation } = await import(
+              '@studymind/integration-trengo/conversations'
+            )
+            const { sendMessage, startConversation } = await import(
+              '@studymind/integration-trengo/outbound'
+            )
+            const conv = await resolveActiveTrengoConversation(ctx.db, contact.id, 'sms')
+            if (conv) {
+              await sendMessage({
+                contactId: contact.id,
+                agentId: user.id,
+                ticketId: conv.ticketId,
+                channel: 'sms',
+                body: input.body,
+                requestId: ctx.requestId,
+              })
+            } else {
+              await startConversation({
+                contactId: contact.id,
+                agentId: user.id,
+                channel: 'sms',
+                recipient: phone,
+                body: input.body,
+                requestId: ctx.requestId,
+              })
+            }
+          }
 
           // Nudge a brand-new case into `chasing` once the first message goes out.
           const current = await getOrCreateCase(ctx.db, {
@@ -670,7 +714,10 @@ export const financeRouter = router({
           await ctx.audit({
             action: 'direct_debit.recovery_sent',
             target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
-            after: { channel: 'email', to: contact.email, subject: input.subject },
+            after: {
+              channel: input.channel,
+              to: input.channel === 'email' ? contact.email : contact.phoneE164,
+            },
           })
           return { status: 'sent' as const }
         }),
