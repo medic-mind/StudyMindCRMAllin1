@@ -322,6 +322,51 @@ describe('upsertGcSubscriptionMirror', () => {
     expect(db._state.gcSubscriptions[0]['status']).toBe('cancelled')
     expect(db._state.gcSubscriptions[0]['currency']).toBe('GBP')
   })
+
+  it('tracks a plan that starts active and later cancels (shortfallIgnored stays false)', async () => {
+    const db = makeFakeDb({})
+    await upsertGcSubscriptionMirror(db, {
+      gcSubscriptionId: 'SB_LIVE',
+      status: 'active',
+      amountMinor: 4000,
+      currency: 'gbp',
+      intervalUnit: 'monthly',
+    })
+    expect(db._state.gcSubscriptions[0]['shortfallIgnored']).toBe(false)
+    // Live cancellation arrives later — the update must NOT flip it to ignored.
+    await upsertGcSubscriptionMirror(db, {
+      gcSubscriptionId: 'SB_LIVE',
+      status: 'cancelled',
+      amountMinor: 4000,
+      currency: 'gbp',
+      intervalUnit: 'monthly',
+    })
+    expect(db._state.gcSubscriptions[0]['shortfallIgnored']).toBe(false)
+  })
+
+  it('excludes a plan first seen already cancelled (historic import → shortfallIgnored true)', async () => {
+    const db = makeFakeDb({})
+    await upsertGcSubscriptionMirror(db, {
+      gcSubscriptionId: 'SB_HISTORIC',
+      status: 'cancelled',
+      amountMinor: 4000,
+      currency: 'gbp',
+      intervalUnit: 'monthly',
+    })
+    expect(db._state.gcSubscriptions[0]['shortfallIgnored']).toBe(true)
+  })
+
+  it('excludes a plan first seen finished (historic import → shortfallIgnored true)', async () => {
+    const db = makeFakeDb({})
+    await upsertGcSubscriptionMirror(db, {
+      gcSubscriptionId: 'SB_DONE',
+      status: 'finished',
+      amountMinor: 4000,
+      currency: 'gbp',
+      intervalUnit: 'monthly',
+    })
+    expect(db._state.gcSubscriptions[0]['shortfallIgnored']).toBe(true)
+  })
 })
 
 describe('upsertGcPayoutMirror', () => {

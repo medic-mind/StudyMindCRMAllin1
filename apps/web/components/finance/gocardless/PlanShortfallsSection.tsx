@@ -180,9 +180,15 @@ export function PlanShortfallsSection() {
   return (
     <section className="space-y-2">
       <div className="flex items-baseline justify-between gap-2 px-1">
-        <h2 className="text-sm font-semibold text-neutral-900">
-          Cancelled &amp; underpaid plans
-        </h2>
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-900">
+            Cancelled &amp; underpaid plans
+          </h2>
+          <p className="text-xs text-neutral-500">
+            Plans cancelled from June 2026 onward only — earlier cancellations are managed
+            separately.
+          </p>
+        </div>
         <div className="flex items-center gap-3">
           {items.length > 0 ? (
             <p className="text-xs text-neutral-500">
