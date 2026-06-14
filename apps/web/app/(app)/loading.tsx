@@ -1,5 +1,5 @@
-// Dashboard loading skeleton sized to match the eventual layout (KPI row +
-// "Needs attention" queue grid + two panels + quick links) so there is no CLS.
+// Dashboard loading skeleton sized to match the eventual layout (greeting hero
+// + KPI row + "Needs attention" queue grid + two panels) so there is no CLS.
 // CLAUDE.md §26 (skeleton matches final layout), §28.
 
 export default function Loading() {
@@ -12,32 +12,37 @@ export default function Loading() {
         <div className="h-7 w-40 animate-pulse rounded bg-neutral-200" aria-hidden />
       </div>
 
-      {/* KPI row */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-28 animate-pulse rounded-xl border border-neutral-200 bg-white"
-            aria-hidden
-          />
-        ))}
-      </div>
+      <div className="space-y-8">
+        {/* Greeting hero */}
+        <div className="h-28 animate-pulse rounded-2xl border border-neutral-200 bg-white" aria-hidden />
 
-      {/* Needs attention queue grid */}
-      <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-[68px] animate-pulse rounded-xl border border-neutral-200 bg-white"
-            aria-hidden
-          />
-        ))}
-      </div>
+        {/* KPI row */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-28 animate-pulse rounded-2xl border border-neutral-200 bg-white"
+              aria-hidden
+            />
+          ))}
+        </div>
 
-      {/* Two panels */}
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="h-72 animate-pulse rounded-lg border border-neutral-200 bg-white" aria-hidden />
-        <div className="h-72 animate-pulse rounded-lg border border-neutral-200 bg-white" aria-hidden />
+        {/* Needs attention queue grid */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-[76px] animate-pulse rounded-2xl border border-neutral-200 bg-white"
+              aria-hidden
+            />
+          ))}
+        </div>
+
+        {/* Two panels */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="h-72 animate-pulse rounded-xl border border-neutral-200 bg-white" aria-hidden />
+          <div className="h-72 animate-pulse rounded-xl border border-neutral-200 bg-white" aria-hidden />
+        </div>
       </div>
 
       <span className="sr-only">Loading dashboard…</span>

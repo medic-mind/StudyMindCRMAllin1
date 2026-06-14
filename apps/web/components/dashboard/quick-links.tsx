@@ -58,14 +58,16 @@ const LINKS: readonly QuickLink[] = [
 export function QuickLinks({ role }: { role: UserRole }) {
   const links = LINKS.filter((l) => !l.financeOnly || FINANCE_ROLES.has(role))
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
       {links.map(({ href, label, icon: Icon }) => (
         <Link
           key={href}
           href={href}
-          className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 shadow-card transition-colors hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          className="group flex items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-medium text-neutral-700 shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-200 hover:text-neutral-900 hover:shadow-card-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
         >
-          <Icon size={16} className="shrink-0 text-neutral-400" />
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500 transition-colors group-hover:bg-primary-50 group-hover:text-primary-600">
+            <Icon size={15} />
+          </span>
           <span className="truncate">{label}</span>
         </Link>
       ))}

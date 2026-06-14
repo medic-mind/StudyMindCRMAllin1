@@ -1,8 +1,9 @@
 // Recent activity feed for the dashboard. Renders the last N AuditLogEntry
-// rows the caller is allowed to see. RSC — pure presentational.
+// rows the caller is allowed to see, in a headed card. RSC — pure presentational.
 
 import Link from 'next/link'
 
+import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 
 export interface ActivityRow {
@@ -50,49 +51,59 @@ function actionLabel(action: string): string {
   return known[action] ?? action.replace(/[._]/g, ' ')
 }
 
+function initialOf(actor: string): string {
+  const trimmed = actor.trim()
+  return trimmed ? trimmed[0]!.toUpperCase() : '·'
+}
+
 export function RecentActivity({ rows, now }: Props) {
-  if (rows.length === 0) {
-    return (
-      <div className="rounded-lg border border-neutral-200 bg-white p-6 text-sm text-neutral-500 shadow-sm">
-        No activity yet — recent reads, writes, and audited actions will appear
-        here.
-      </div>
-    )
-  }
   const reference = now ?? new Date()
   return (
-    <ul className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white shadow-sm">
-      {rows.map((r) => {
-        const actor = r.actorEmail ?? 'system'
-        const phrase = actionLabel(r.action)
-        const targetWord = `${r.targetType}`
-        return (
-          <li key={r.id} className="px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 text-sm">
-                <span className="font-medium text-neutral-900">{actor}</span>{' '}
-                <span className="text-neutral-700">{phrase}</span>{' '}
-                {r.href ? (
-                  <Link
-                    href={r.href}
-                    className="text-primary-700 hover:underline"
-                  >
-                    {targetWord}
-                  </Link>
-                ) : (
-                  <span className="text-neutral-500">{targetWord}</span>
-                )}
-              </div>
-              <time
-                className="shrink-0 font-mono text-xs tabular-nums text-neutral-500"
-                dateTime={r.occurredAt.toISOString()}
-              >
-                {formatRelativeTime(r.occurredAt, reference)}
-              </time>
-            </div>
-          </li>
-        )
-      })}
-    </ul>
+    <Card className="overflow-hidden">
+      <CardHeader>
+        <CardTitle>Recent activity</CardTitle>
+        <span className="text-xs text-neutral-400">Audit log</span>
+      </CardHeader>
+      {rows.length === 0 ? (
+        <div className="p-6 text-sm text-neutral-500">
+          No activity yet — recent writes and audited actions will appear here.
+        </div>
+      ) : (
+        <ul className="divide-y divide-neutral-100">
+          {rows.map((r) => {
+            const actor = r.actorEmail ?? 'system'
+            const phrase = actionLabel(r.action)
+            const targetWord = `${r.targetType}`
+            return (
+              <li key={r.id} className="flex items-start gap-3 px-5 py-3">
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-50 text-[11px] font-semibold text-primary-700 ring-1 ring-inset ring-primary-100"
+                >
+                  {initialOf(actor)}
+                </span>
+                <div className="min-w-0 flex-1 text-sm">
+                  <span className="font-medium text-neutral-900">{actor}</span>{' '}
+                  <span className="text-neutral-600">{phrase}</span>{' '}
+                  {r.href ? (
+                    <Link href={r.href} className="text-primary-700 hover:underline">
+                      {targetWord}
+                    </Link>
+                  ) : (
+                    <span className="text-neutral-500">{targetWord}</span>
+                  )}
+                </div>
+                <time
+                  className="shrink-0 font-mono text-xs tabular-nums text-neutral-400"
+                  dateTime={r.occurredAt.toISOString()}
+                >
+                  {formatRelativeTime(r.occurredAt, reference)}
+                </time>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Card>
   )
 }
