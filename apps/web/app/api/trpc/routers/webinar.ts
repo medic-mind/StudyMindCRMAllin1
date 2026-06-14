@@ -53,6 +53,7 @@ import { client as zoomClient } from '@studymind/integration-zoom'
 import { detectEnrollmentsFromStripe } from '@/lib/webinar/enrollment-service'
 import { importToText, parseScheduleFallback, type ImportKind } from '@/lib/webinar/import-helpers'
 import { sendRecordingsForClassId } from '@/lib/webinar/recordings-service'
+import { sendTestReminderForClass } from '@/lib/webinar/test-reminder'
 
 import { webinarLevelRouter, webinarSubjectRouter } from './webinar-catalogue'
 
@@ -750,6 +751,26 @@ const classRouter = router({
         after: { zoomMeetingId: String(meeting.id) },
       })
       return { id: input.id, joinUrl: meeting.join_url }
+    }),
+
+  /** Send a real reminder (rendered email + the schedule PDF) to the acting
+   *  user, so staff preview exactly what students receive. */
+  sendTestReminder: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      if (!user.email) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Your account has no email address.' })
+      }
+      const res = await sendTestReminderForClass(ctx.db, input.id, user.email, ctx.requestId)
+      if (res.status === 'error') {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: res.detail || 'Could not send the test email.',
+        })
+      }
+      return { status: res.status, to: user.email }
     }),
 
   /** Manually email this class's latest Zoom recording to the active list now. */

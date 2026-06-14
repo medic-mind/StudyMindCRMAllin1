@@ -327,7 +327,7 @@ function wrapToMaxChars(text: string, maxChars: number): string[] {
 }
 
 /** Escape a string for a PDF literal `( … )`, encoding Latin-1 as octal. */
-function escapePdfText(input: string): string {
+export function escapePdfText(input: string): string {
   let out = ''
   for (const ch of input) {
     const code = ch.codePointAt(0) ?? 0x3f
@@ -341,12 +341,12 @@ function escapePdfText(input: string): string {
   return out
 }
 
-function formatNumber(n: number): string {
+export function formatNumber(n: number): string {
   return (Math.round(n * 100) / 100).toString()
 }
 
 /** Stitch object bodies into a PDF file with a correct xref table + trailer. */
-function assemblePdf(objects: string[]): Buffer {
+export function assemblePdf(objects: string[]): Buffer {
   let body = '%PDF-1.4\n'
   const offsets: number[] = []
   for (let i = 0; i < objects.length; i += 1) {

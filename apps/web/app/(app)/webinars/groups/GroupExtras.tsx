@@ -65,6 +65,10 @@ function ReminderEmailCard({ detail }: { detail: ClassDetailView }) {
     },
     onError: (e) => toast.error(e.message),
   })
+  const sendTest = trpc.webinar.class.sendTestReminder.useMutation({
+    onSuccess: (r) => toast.success(`Test reminder + PDF sent to ${r.to}`),
+    onError: (e) => toast.error(e.message),
+  })
 
   function applyPreset(p: (typeof REMINDER_PRESETS)[number]) {
     setSubject(p.subject)
@@ -190,9 +194,30 @@ function ReminderEmailCard({ detail }: { detail: ClassDetailView }) {
               />
             </Field>
           </div>
-          <Button onClick={save} disabled={update.isPending}>
-            {update.isPending ? 'Saving…' : 'Save reminder email'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={save} disabled={update.isPending}>
+              {update.isPending ? 'Saving…' : 'Save reminder email'}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={sendTest.isPending}
+              onClick={() => sendTest.mutate({ id: detail.id })}
+            >
+              {sendTest.isPending ? 'Sending…' : 'Send test to me'}
+            </Button>
+            <a
+              href={`/webinars/groups/${detail.id}/schedule.pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary-700 hover:underline"
+            >
+              Preview attached PDF →
+            </a>
+          </div>
+          <p className="text-xs text-neutral-400">
+            “Send test to me” emails you the real reminder with the schedule PDF attached, so you see
+            exactly what students get. Save first to test your latest edits.
+          </p>
         </div>
       </CardBody>
     </Card>

@@ -427,9 +427,19 @@ function SyllabusCard({ detail, canManage }: { detail: Detail; canManage: boolea
               each, or upload a ready-made PDF.
             </p>
           </div>
-          {detail.hasUploadedPdf ? (
-            <Badge tone="info">PDF: {detail.uploadedPdfFileName}</Badge>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {detail.hasUploadedPdf ? (
+              <Badge tone="info">PDF: {detail.uploadedPdfFileName}</Badge>
+            ) : null}
+            <a
+              href={`/webinars/groups/${detail.id}/schedule.pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center rounded-md border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              Preview schedule PDF
+            </a>
+          </div>
         </div>
 
         {canManage ? (
