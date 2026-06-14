@@ -12,6 +12,7 @@ import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
 import { RecordRecoveryDialog } from './RecordRecoveryDialog'
+import { SendRecoveryDialog, type SendRecoveryContext } from './SendRecoveryDialog'
 
 const STATUS_LABEL: Record<string, string> = {
   new: 'New',
@@ -50,10 +51,12 @@ export function ShortfallCaseCell({
   links,
   caseData,
   assignableUsers,
+  sendContext,
 }: {
   links: ShortfallCaseLinks
   caseData: CaseData | undefined
   assignableUsers: Array<{ id: string; name: string }>
+  sendContext: SendRecoveryContext
 }) {
   const utils = trpc.useUtils()
   const invalidate = () => utils.finance.directDebit.cases.forSubscriptions.invalidate()
@@ -129,7 +132,10 @@ export function ShortfallCaseCell({
         </select>
       </div>
       {status !== 'recovered' ? (
-        <RecordRecoveryDialog links={links} defaultAmountMinor={links.openingShortfallMinor} />
+        <div className="flex items-center gap-1">
+          <SendRecoveryDialog context={sendContext} />
+          <RecordRecoveryDialog links={links} defaultAmountMinor={links.openingShortfallMinor} />
+        </div>
       ) : null}
     </div>
   )

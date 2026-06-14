@@ -13,6 +13,7 @@ import {
   defaulterDetail,
   dismissUnresolvedStripePayment,
   getCasesForSubscriptions,
+  getOrCreateCase,
   listActivePlanArrears,
   listDefaulters,
   listPlanShortfalls,
@@ -26,6 +27,7 @@ import {
   resolveUnresolvedStripePayment,
 } from '@studymind/core/finance'
 
+import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 import {
   createPaymentLink,
   refundCharge,
@@ -568,6 +570,109 @@ export const financeRouter = router({
             },
           })
           return { status: updated.status, recoveredMinor: updated.recoveredMinor }
+        }),
+
+      // Send a human-confirmed recovery email (reminder / legal escalation) from
+      // a case (Phase 3b). The agent has already reviewed/edited the final
+      // subject + body in the dialog — this just sends it via the system mailbox,
+      // logs it on the customer's timeline (so it reflects on the customer page),
+      // and nudges a `new` case to `chasing`. Email only for now. CLAUDE.md §3,
+      // §14 (system Gmail, never a third-party email API).
+      sendRecovery: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            contactId: z.string().min(1),
+            templateId: z.string().nullish(),
+            subject: z.string().trim().min(1).max(300),
+            body: z.string().trim().min(1).max(10_000),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                familyId: z.string().nullish(),
+                openingShortfallMinor: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+
+          const contact = await ctx.db.contact.findFirst({
+            where: { id: input.contactId, deletedAt: null },
+            select: { id: true, email: true },
+          })
+          if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'contact not found' })
+          if (!contact.email) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This contact has no email address — add one before sending.',
+            })
+          }
+
+          const result = await sendSystemEmail({
+            to: contact.email,
+            subject: input.subject,
+            text: input.body,
+          })
+          if (result.status !== 'sent') {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message:
+                result.detail ??
+                (result.status === 'skipped'
+                  ? 'No system mailbox connected — connect Gmail in Settings.'
+                  : 'The email could not be sent.'),
+            })
+          }
+
+          // Reflect on the customer's CRM page.
+          await ctx.db.interaction.create({
+            data: {
+              id: createId(),
+              type: 'email_sent',
+              contactId: contact.id,
+              occurredAt: new Date(),
+              summary: `Direct Debit recovery email: ${input.subject}`.slice(0, 140),
+              payload: {
+                kind: 'dd_recovery',
+                subject: input.subject,
+                body: input.body,
+                to: contact.email,
+                gcSubscriptionId: input.gcSubscriptionId,
+                templateId: input.templateId ?? null,
+                gmailId: result.id,
+                authorId: user.id,
+              },
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+
+          // Nudge a brand-new case into `chasing` once the first message goes out.
+          const current = await getOrCreateCase(ctx.db, {
+            gcSubscriptionId: input.gcSubscriptionId,
+            actorId: user.id,
+            contactId: input.contactId,
+            gcCustomerId: input.links?.gcCustomerId,
+            familyId: input.links?.familyId,
+            openingShortfallMinor: input.links?.openingShortfallMinor,
+          })
+          if (current.status === 'new') {
+            await setCaseStatus(ctx.db, {
+              gcSubscriptionId: input.gcSubscriptionId,
+              to: 'chasing',
+              actorId: user.id,
+            })
+          }
+
+          await ctx.audit({
+            action: 'direct_debit.recovery_sent',
+            target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
+            after: { channel: 'email', to: contact.email, subject: input.subject },
+          })
+          return { status: 'sent' as const }
         }),
     }),
   }),

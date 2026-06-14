@@ -336,6 +336,18 @@ export function PlanShortfallsSection() {
                       }}
                       caseData={caseBySub.get(s.gcSubscriptionId)}
                       assignableUsers={assignableUsers}
+                      sendContext={{
+                        gcSubscriptionId: s.gcSubscriptionId,
+                        contactId: s.contactId,
+                        gcCustomerId: s.gcCustomerId,
+                        familyId: s.familyId,
+                        customerName: s.customerName,
+                        planName: s.name,
+                        currency: s.currency,
+                        shortfallMinor: s.shortfallMinor,
+                        collectedMinor: s.collectedMinor,
+                        expectedTotalMinor: s.expectedTotalMinor,
+                      }}
                     />
                   </Td>
                   <Td className="text-right">
