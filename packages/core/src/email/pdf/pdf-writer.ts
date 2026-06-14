@@ -282,6 +282,100 @@ export function renderBrandedDocumentPdf(doc: BrandedPdfDoc): Buffer {
   return assemblePdf(objects)
 }
 
+export interface BrandedReportPdf {
+  /** Header wordmark, e.g. "StudyMind CRM". */
+  brandName: string
+  /** Report title shown in the header band. */
+  title: string
+  /** Optional subtitle (e.g. the period) shown under the title. */
+  subtitle?: string
+  /** Optional muted line under the band (e.g. "Generated …"). */
+  generatedLine?: string
+  /** Body content as text blocks (bold = section heading / emphasis). */
+  blocks: PdfTextBlock[]
+}
+
+const REPORT_BAND_H = 78
+const REPORT_BAND_H_CONT = 38
+
+/**
+ * Render a branded, **multi-page** report: a trust-blue header band with the
+ * wordmark + title on every page (slim on continuations), an accent rule, and
+ * paginated body blocks beneath. Bold blocks render as brand-coloured section
+ * headings. Used for the Aircall report and any future analytics export so they
+ * match the branded emails instead of looking like a text dump.
+ */
+export function renderBrandedReportPdf(doc: BrandedReportPdf): Buffer {
+  const pages: string[][] = []
+  let ops: string[] = []
+  let y = 0
+
+  const drawBand = (first: boolean): void => {
+    const h = first ? REPORT_BAND_H : REPORT_BAND_H_CONT
+    ops.push(fillRectOp(0, PAGE_HEIGHT - h, PAGE_WIDTH, h, C_BRAND))
+    ops.push(fillRectOp(0, PAGE_HEIGHT - h - ACCENT_H, PAGE_WIDTH, ACCENT_H, C_ACCENT))
+    if (first) {
+      ops.push(textOp('/F2', 17, MARGIN_X, PAGE_HEIGHT - 32, doc.brandName, C_WHITE))
+      ops.push(textOp('/F1', 12.5, MARGIN_X, PAGE_HEIGHT - 52, doc.title, C_WHITE))
+      if (doc.subtitle) {
+        ops.push(textOp('/F1', 10, MARGIN_X, PAGE_HEIGHT - 68, doc.subtitle, [0.85, 0.9, 0.97]))
+      }
+    } else {
+      ops.push(textOp('/F2', 12, MARGIN_X, PAGE_HEIGHT - 25, doc.brandName, C_WHITE))
+      ops.push(textOp('/F1', 10, PAGE_WIDTH - MARGIN_X - 120, PAGE_HEIGHT - 25, `${doc.title} (cont.)`, [0.85, 0.9, 0.97]))
+    }
+  }
+
+  const startPage = (first: boolean): void => {
+    ops = []
+    drawBand(first)
+    y = PAGE_HEIGHT - (first ? REPORT_BAND_H : REPORT_BAND_H_CONT) - ACCENT_H - 20
+    if (first && doc.generatedLine) {
+      y -= 12
+      ops.push(textOp('/F1', 9, MARGIN_X, y, doc.generatedLine, C_MUTED))
+      y -= 6
+    }
+  }
+
+  startPage(true)
+
+  for (const block of doc.blocks) {
+    const size = block.size ?? DEFAULT_SIZE
+    y -= block.spacingBefore ?? 0
+    const heading = (block.bold ?? false) && size >= 12
+    const colour: Rgb = heading ? C_BRAND : block.bold ? C_TEXT : size <= 9 ? C_MUTED : C_TEXT
+    const font = block.bold ? '/F2' : '/F1'
+    const lines = block.text === '' ? [''] : wrapWidth(block.text, size, block.bold ?? false, CONTENT_WIDTH)
+    for (const line of lines) {
+      y -= size * LINE_FACTOR
+      if (y < BOTTOM_Y) {
+        pages.push(ops)
+        startPage(false)
+        y -= size * LINE_FACTOR
+      }
+      if (line !== '') ops.push(textOp(font, size, MARGIN_X, y, line, colour))
+    }
+  }
+  pages.push(ops)
+
+  const pageObjectNumbers = pages.map((_, i) => 5 + i * 2)
+  const objects: string[] = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    `<< /Type /Pages /Kids [${pageObjectNumbers.map((n) => `${n} 0 R`).join(' ')}] /Count ${pages.length} >>`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
+  ]
+  pages.forEach((pageOps, i) => {
+    const content = pageOps.join('\n')
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] ` +
+        `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${6 + i * 2} 0 R >>`,
+    )
+    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`)
+  })
+  return assemblePdf(objects)
+}
+
 /** Word-wrap to a specific width (points). Generalises `wrapText`. */
 function wrapWidth(text: string, size: number, bold: boolean, width: number): string[] {
   const charWidth = (bold ? 0.56 : 0.52) * size
@@ -326,7 +420,48 @@ function wrapToMaxChars(text: string, maxChars: number): string[] {
   return lines
 }
 
-/** Escape a string for a PDF literal `( … )`, encoding Latin-1 as octal. */
+// Unicode → WinAnsi (CP1252) byte for the 0x80–0x9F "specials" that are NOT in
+// Latin-1 but ARE in the fonts' WinAnsiEncoding. Without this, smart quotes,
+// dashes, bullets, the euro/trademark signs etc. fell through to "?" — the
+// cause of the question marks across the PDFs. Mapping them to their WinAnsi
+// byte makes them render correctly.
+const WINANSI_SPECIALS: Record<number, number> = {
+  0x20ac: 0x80, // €
+  0x201a: 0x82, // ‚
+  0x0192: 0x83, // ƒ
+  0x201e: 0x84, // „
+  0x2026: 0x85, // …
+  0x2020: 0x86, // †
+  0x2021: 0x87, // ‡
+  0x02c6: 0x88, // ˆ
+  0x2030: 0x89, // ‰
+  0x0160: 0x8a, // Š
+  0x2039: 0x8b, // ‹
+  0x0152: 0x8c, // Œ
+  0x017d: 0x8e, // Ž
+  0x2018: 0x91, // ‘
+  0x2019: 0x92, // ’
+  0x201c: 0x93, // “
+  0x201d: 0x94, // ”
+  0x2022: 0x95, // •
+  0x2013: 0x96, // –
+  0x2014: 0x97, // —
+  0x02dc: 0x98, // ˜
+  0x2122: 0x99, // ™
+  0x0161: 0x9a, // š
+  0x203a: 0x9b, // ›
+  0x0153: 0x9c, // œ
+  0x017e: 0x9e, // ž
+  0x0178: 0x9f, // Ÿ
+}
+
+/**
+ * Escape a string for a PDF literal `( … )`. ASCII passes through; common
+ * Unicode punctuation maps to its WinAnsi byte (so it renders, not "?"); other
+ * Latin-1 (0xA0–0xFF, incl. £ § © etc.) is octal-escaped; anything truly
+ * outside the font (emoji, CJK) degrades to "?". The output is pure ASCII so
+ * the xref byte-offset invariant in `assemblePdf` holds.
+ */
 export function escapePdfText(input: string): string {
   let out = ''
   for (const ch of input) {
@@ -335,8 +470,10 @@ export function escapePdfText(input: string): string {
     else if (ch === ')') out += '\\)'
     else if (ch === '\\') out += '\\\\'
     else if (code >= 0x20 && code <= 0x7e) out += ch
-    else if (code >= 0xa0 && code <= 0xff) out += `\\${code.toString(8).padStart(3, '0')}`
-    else out += '?'
+    else {
+      const byte = WINANSI_SPECIALS[code] ?? (code >= 0xa0 && code <= 0xff ? code : undefined)
+      out += byte === undefined ? '?' : `\\${byte.toString(8).padStart(3, '0')}`
+    }
   }
   return out
 }
