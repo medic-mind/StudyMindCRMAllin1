@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
-import { InboxIcon, SearchIcon, StarIcon } from '@/components/ui/icon'
+import { ChevronDownIcon, InboxIcon, RepeatIcon, SearchIcon, StarIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { useConversationStream } from '@/lib/hooks/use-conversation-stream'
@@ -89,10 +89,13 @@ export function InboxCockpit({
 
   const [filter, setFilter] = useState<InboxFilter>(initialFilter)
   const [channel, setChannel] = useState<InboxChannel | null>(initialChannel)
-  const [tag, setTag] = useState<string | null>(null)
+  // Labels are now a multi-select (Trengo lets you filter by several labels).
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
   // Trengo "Teams" folder — when set, the list shows that team's open
   // conversations and the status folders are visually deselected.
   const [teamId, setTeamId] = useState<string | null>(null)
+  // Trengo "Channel" folder — the specific business number / inbox.
+  const [trengoChannelId, setTrengoChannelId] = useState<number | null>(null)
   const [unansweredOnly, setUnansweredOnly] = useState(false)
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
@@ -115,7 +118,14 @@ export function InboxCockpit({
   }, [rawQuery])
 
   const list = trpc.inbox.conversations.list.useQuery(
-    { filter, channel: channel ?? null, tag: tag ?? null, teamId: teamId ?? null, limit: 100 },
+    {
+      filter,
+      channel: channel ?? null,
+      tags: selectedTags.length > 0 ? selectedTags : undefined,
+      teamId: teamId ?? null,
+      trengoChannelId: trengoChannelId ?? null,
+      limit: 100,
+    },
     { refetchOnWindowFocus: true },
   )
 
@@ -176,7 +186,7 @@ export function InboxCockpit({
   // Clear selection when the folder/filter/search changes (the rows changed).
   useEffect(() => {
     setSelectedIds(new Set())
-  }, [filter, channel, tag, teamId, searching])
+  }, [filter, channel, selectedTags, teamId, trengoChannelId, searching])
 
   // Keep the URL shareable (?c=…) without a server round-trip, and clear it
   // when nothing is selected. Deep links are read on the server and arrive as
@@ -240,33 +250,45 @@ export function InboxCockpit({
       <FoldersRail
         filter={filter}
         channel={channel}
-        tag={tag}
+        selectedTags={selectedTags}
         teamId={teamId}
+        trengoChannelId={trengoChannelId}
         onFilter={(f) => {
           setFilter(f)
           setTeamId(null)
+          setTrengoChannelId(null)
           setSelectedId(null)
         }}
         onChannel={(c) => {
           setChannel(c)
           setSelectedId(null)
         }}
-        onTag={(t) => {
-          setTag(t)
+        onToggleTag={(t) => {
+          setSelectedTags((cur) =>
+            cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t],
+          )
           setSelectedId(null)
         }}
+        onClearTags={() => setSelectedTags([])}
         onTeam={(id) => {
           setTeamId(id)
+          setTrengoChannelId(null)
+          setSelectedId(null)
+        }}
+        onChannelInbox={(id) => {
+          setTrengoChannelId(id)
+          setTeamId(null)
           setSelectedId(null)
         }}
         onApplyView={(v) => {
           setFilter(v.filter)
           setChannel(v.channel)
-          setTag(v.tag)
+          setSelectedTags(v.tag ? [v.tag] : [])
           setTeamId(null)
+          setTrengoChannelId(null)
           setSelectedId(null)
         }}
-        currentView={{ filter, channel, tag }}
+        currentView={{ filter, channel, tag: selectedTags[0] ?? null }}
       />
 
       {/* Conversation list — full-width on mobile; on a phone we show EITHER
@@ -476,27 +498,34 @@ function emptyCopyFor(filter: InboxFilter): string {
 function FoldersRail({
   filter,
   channel,
-  tag,
+  selectedTags,
   teamId,
+  trengoChannelId,
   onFilter,
   onChannel,
-  onTag,
+  onToggleTag,
+  onClearTags,
   onTeam,
+  onChannelInbox,
   onApplyView,
   currentView,
 }: {
   filter: InboxFilter
   channel: InboxChannel | null
-  tag: string | null
+  selectedTags: string[]
   teamId: string | null
+  trengoChannelId: number | null
   onFilter: (f: InboxFilter) => void
   onChannel: (c: InboxChannel | null) => void
-  onTag: (t: string | null) => void
+  onToggleTag: (t: string) => void
+  onClearTags: () => void
   onTeam: (id: string) => void
+  onChannelInbox: (id: number | null) => void
   onApplyView: (v: { filter: InboxFilter; channel: InboxChannel | null; tag: string | null }) => void
   currentView: { filter: InboxFilter; channel: InboxChannel | null; tag: string | null }
 }) {
   const utils = trpc.useUtils()
+  const [labelMenuOpen, setLabelMenuOpen] = useState(false)
   // Trengo labels across the workspace — synced from tickets onto the
   // Conversation heads; clicking one narrows the list server-side.
   const tags = trpc.inbox.conversations.tags.useQuery(undefined, {
@@ -508,10 +537,19 @@ function FoldersRail({
     refetchInterval: 60_000,
     retry: false,
   })
-  // Trengo "Teams" + "Views" folders.
+  // Trengo "Teams" + "Channels" (named business numbers) + "Views" folders.
   const teams = trpc.inbox.conversations.teams.useQuery(undefined, {
     staleTime: 60_000,
     retry: false,
+  })
+  const inboxChannels = trpc.inbox.conversations.channels.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: false,
+  })
+  const syncNow = trpc.inbox.conversations.syncNow.useMutation({
+    onSuccess: () =>
+      toast.success('Syncing from Trengo — statuses will converge in a moment.'),
+    onError: (e) => toast.error(e.message ?? 'Could not start the sync'),
   })
   const views = trpc.inbox.conversations.views.list.useQuery(undefined, {
     staleTime: 60_000,
@@ -595,42 +633,121 @@ function FoldersRail({
         </div>
       ) : null}
 
+      {/* Channels = the workspace's named "business numbers" (Support Manager,
+          Tutor Manager, …). Falls back to the generic 4 types until the channel
+          mirror is synced, so it's never blank. */}
       <div>
         <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
           Channels
         </h2>
         <nav aria-label="Channels" className="flex flex-col gap-0.5">
-          {CHANNELS.map((c) => (
-            <RailItem
-              key={c.label}
-              label={c.label}
-              icon={c.value ? <ChannelIcon channel={c.value} size={13} /> : null}
-              active={channel === c.value}
-              onClick={() => onChannel(c.value)}
-            />
-          ))}
+          {(inboxChannels.data?.length ?? 0) > 0 ? (
+            <>
+              {trengoChannelId !== null ? (
+                <RailItem
+                  label="All channels"
+                  active={false}
+                  onClick={() => onChannelInbox(null)}
+                />
+              ) : null}
+              {inboxChannels.data!.map((c) => (
+                <RailItem
+                  key={c.trengoId}
+                  label={c.name ?? `Channel ${c.trengoId}`}
+                  icon={<ChannelIcon channel={c.channelType} size={13} />}
+                  count={c.count > 0 ? c.count : null}
+                  active={trengoChannelId === c.trengoId}
+                  onClick={() =>
+                    onChannelInbox(trengoChannelId === c.trengoId ? null : c.trengoId)
+                  }
+                />
+              ))}
+            </>
+          ) : (
+            CHANNELS.map((c) => (
+              <RailItem
+                key={c.label}
+                label={c.label}
+                icon={c.value ? <ChannelIcon channel={c.value} size={13} /> : null}
+                active={channel === c.value}
+                onClick={() => onChannel(c.value)}
+              />
+            ))
+          )}
         </nav>
       </div>
 
+      {/* Labels = a compact multi-select dropdown (not a cluttered list). Pick
+          any number of labels to narrow the inbox (Trengo's multi-label
+          filter). */}
       {(tags.data?.length ?? 0) > 0 ? (
-        <div>
+        <div className="relative">
           <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
             Labels
           </h2>
-          <nav aria-label="Labels" className="flex flex-col gap-0.5">
-            {tag !== null ? (
-              <RailItem label="Clear label filter" active={false} onClick={() => onTag(null)} />
-            ) : null}
-            {tags.data!.slice(0, 30).map((t) => (
-              <RailItem
-                key={t.name}
-                label={t.name}
-                count={t.count > 0 ? t.count : null}
-                active={tag === t.name}
-                onClick={() => onTag(tag === t.name ? null : t.name)}
-              />
-            ))}
-          </nav>
+          <button
+            type="button"
+            onClick={() => setLabelMenuOpen((o) => !o)}
+            aria-expanded={labelMenuOpen}
+            className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-300 hover:bg-neutral-800"
+          >
+            <span className="truncate">
+              {selectedTags.length === 0
+                ? 'Filter by label…'
+                : `${selectedTags.length} selected`}
+            </span>
+            <ChevronDownIcon size={14} className="shrink-0 text-neutral-500" />
+          </button>
+          {selectedTags.length > 0 ? (
+            <div className="mt-1 flex flex-wrap gap-1 px-2">
+              {selectedTags.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => onToggleTag(t)}
+                  className="inline-flex items-center gap-1 rounded-full bg-trengo-600 px-2 py-0.5 text-[10px] font-medium text-white"
+                  title="Remove label"
+                >
+                  {t} <span aria-hidden>×</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={onClearTags}
+                className="text-[10px] text-neutral-400 hover:text-neutral-200"
+              >
+                clear
+              </button>
+            </div>
+          ) : null}
+          {labelMenuOpen ? (
+            <div className="mt-1 max-h-64 overflow-y-auto rounded-md border border-neutral-700 bg-neutral-800 p-1 shadow-lg">
+              {tags.data!.slice(0, 60).map((t) => {
+                const on = selectedTags.includes(t.name)
+                return (
+                  <button
+                    key={t.name}
+                    type="button"
+                    onClick={() => onToggleTag(t.name)}
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-700"
+                  >
+                    <span
+                      aria-hidden
+                      className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                        on ? 'border-trengo-400 bg-trengo-500 text-white' : 'border-neutral-500'
+                      }`}
+                    >
+                      {on ? '✓' : ''}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{t.name}</span>
+                    {t.count > 0 ? (
+                      <span className="text-[10px] tabular-nums text-neutral-500">{t.count}</span>
+                    ) : null}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -684,7 +801,17 @@ function FoldersRail({
         )}
       </div>
 
-      <div className="mt-auto">
+      <div className="mt-auto space-y-1">
+        <button
+          type="button"
+          onClick={() => syncNow.mutate()}
+          disabled={syncNow.isPending}
+          title="Pull each conversation's current status from Trengo now"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+        >
+          <RepeatIcon size={13} />
+          {syncNow.isPending ? 'Syncing…' : 'Sync from Trengo'}
+        </button>
         <Link
           href="/inbox/suggestions"
           className="block rounded-md px-2.5 py-1.5 text-xs text-trengo-300 hover:bg-neutral-800"

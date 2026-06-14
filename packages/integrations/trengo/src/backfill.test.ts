@@ -165,6 +165,8 @@ describe('normaliseTicketRow', () => {
     expect(t).toEqual({
       id: 9,
       channel: 'whatsapp',
+      trengoChannelId: null,
+      trengoChannelName: null,
       status: 'open',
       assigneeId: null,
       subject: 'Re: trial lesson',
@@ -179,6 +181,29 @@ describe('normaliseTicketRow', () => {
     expect(normaliseTicketRow({ id: 1, labels: [] })?.labelsKnown).toBe(true)
     expect(normaliseTicketRow({ id: 1, tags: [] })?.labelsKnown).toBe(true)
     expect(normaliseTicketRow({ id: 1 })?.labelsKnown).toBe(false)
+  })
+
+  it('extracts the specific channel id + name ("business number")', () => {
+    const t = normaliseTicketRow({
+      id: 5,
+      channel: { id: 42, name: 'Tutor Manager', type: 'WA_BUSINESS' },
+    })
+    expect(t?.trengoChannelId).toBe(42)
+    expect(t?.trengoChannelName).toBe('Tutor Manager')
+    expect(t?.channel).toBe('whatsapp')
+  })
+
+  it('reads a flat channel_id when there is no channel object', () => {
+    const t = normaliseTicketRow({ id: 6, channel_id: 99 })
+    expect(t?.trengoChannelId).toBe(99)
+    expect(t?.trengoChannelName).toBeNull()
+  })
+
+  it('imports the Trengo Spam box (status SPAM / is_spam) as spam', () => {
+    expect(normaliseTicketRow({ id: 1, status: 'SPAM' })?.status).toBe('spam')
+    expect(normaliseTicketRow({ id: 2, is_spam: true })?.status).toBe('spam')
+    expect(normaliseTicketRow({ id: 3, status: 'open' })?.status).toBe('open')
+    expect(normaliseTicketRow({ id: 4, status: 'closed' })?.status).toBe('closed')
   })
 })
 

@@ -28,6 +28,10 @@ export const TRENGO_EVENT_NAMES = [
   'ticket.reopened',
   'label.added',
   'label.removed',
+  // Trengo Spam box (reversible — TICKET_MARKED_AS_SPAM / _UNMARKED_AS_SPAM).
+  // Imported so the CRM's Spam folder mirrors Trengo's.
+  'ticket.marked_as_spam',
+  'ticket.unmarked_as_spam',
   // ADR 0020 Phase 6c — counterparty edited their details in Trengo. We do
   // NOT silently apply this (CLAUDE.md §3) — the job writes a
   // ContactFieldSuggestion the staff review queue surfaces.
@@ -56,6 +60,12 @@ const TRENGO_EVENT_ALIASES: Record<string, TrengoEventName> = {
   label_detached: 'label.removed',
   label_removed: 'label.removed',
   ticket_label_removed: 'label.removed',
+  ticket_marked_as_spam: 'ticket.marked_as_spam',
+  marked_as_spam: 'ticket.marked_as_spam',
+  ticket_spam: 'ticket.marked_as_spam',
+  ticket_unmarked_as_spam: 'ticket.unmarked_as_spam',
+  unmarked_as_spam: 'ticket.unmarked_as_spam',
+  ticket_not_spam: 'ticket.unmarked_as_spam',
   contact_updated: 'contact.updated',
 }
 

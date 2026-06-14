@@ -19,6 +19,8 @@ function head(over: Partial<ReconcileHead> = {}): ReconcileHead {
     contactId: 'contact-1',
     familyId: null,
     channel: 'whatsapp',
+    trengoChannelId: null,
+    trengoChannelName: null,
     ...over,
   }
 }
@@ -27,6 +29,8 @@ function ticket(over: Partial<NormalisedTicket> = {}): NormalisedTicket {
   return {
     id: 100,
     channel: 'whatsapp',
+    trengoChannelId: null,
+    trengoChannelName: null,
     status: 'open',
     assigneeId: null,
     subject: null,
@@ -71,6 +75,51 @@ describe('planReconcile — status', () => {
   it('leaves a snoozed head alone when Trengo shows open (snooze is local-open)', () => {
     const plan = planReconcile(head({ status: 'snoozed' }), ticket({ status: 'open' }))
     expect(plan.statusEvent).toBeNull()
+  })
+})
+
+describe('planReconcile — spam (Trengo Spam box import)', () => {
+  it('marks a head spam when Trengo shows the ticket as spam', () => {
+    const plan = planReconcile(head({ status: 'open' }), ticket({ status: 'spam' }))
+    expect(plan.setSpam).toBe(true)
+    expect(plan.statusEvent).toBeNull()
+    expect(plan.statusChange).toEqual({ from: 'open', to: 'spam' })
+  })
+
+  it('is a no-op when both already agree on spam', () => {
+    const plan = planReconcile(head({ status: 'spam' }), ticket({ status: 'spam' }))
+    expect(plan.setSpam).toBe(false)
+    expect(plan.statusChange).toBeNull()
+  })
+
+  it('reopens a spam head when Trengo un-marked it (now open)', () => {
+    const plan = planReconcile(head({ status: 'spam' }), ticket({ status: 'open' }))
+    expect(plan.statusEvent).toBe('ticket.reopened')
+    expect(plan.setSpam).toBe(false)
+    expect(plan.statusChange).toEqual({ from: 'spam', to: 'open' })
+  })
+
+  it('closes a spam head when Trengo shows it closed', () => {
+    const plan = planReconcile(head({ status: 'spam' }), ticket({ status: 'closed' }))
+    expect(plan.statusEvent).toBe('ticket.closed')
+  })
+})
+
+describe('planReconcile — channel ("business number")', () => {
+  it('stamps the channel when Trengo carries one the head lacks', () => {
+    const plan = planReconcile(
+      head({ trengoChannelId: null }),
+      ticket({ trengoChannelId: 42, trengoChannelName: 'Support Manager' }),
+    )
+    expect(plan.channelId).toBe(42)
+  })
+
+  it('is a no-op when the channel already matches', () => {
+    const plan = planReconcile(
+      head({ trengoChannelId: 42 }),
+      ticket({ trengoChannelId: 42 }),
+    )
+    expect(plan.channelId).toBeNull()
   })
 })
 

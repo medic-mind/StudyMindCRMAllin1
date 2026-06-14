@@ -14,6 +14,7 @@
     "./conversations": "./src/conversations.ts",
     "./conversation-head": "./src/conversation-head.ts",
     "./team": "./src/team.ts",
+    "./channels": "./src/channels.ts",
     "./attachments": "./src/attachments.ts",
     "./s3": "./src/s3.ts",
     "./types": "./src/types.ts"

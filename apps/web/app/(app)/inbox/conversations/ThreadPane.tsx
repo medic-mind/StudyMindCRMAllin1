@@ -132,6 +132,11 @@ export function ThreadPane({
             <ChannelIcon channel={head.channel} size={13} />
           </div>
           <div className="flex items-center gap-1.5 text-[11px] text-neutral-500">
+            {/* The SPECIFIC business number / inbox this is on (Trengo
+                "Channel"), so it's clear which line you're replying from. */}
+            {head.trengoChannelName ? (
+              <span className="font-medium text-neutral-700">{head.trengoChannelName}</span>
+            ) : null}
             <span>{channelLabelFor(head.channel)}</span>
             {head.trengoTicketId !== null ? (
               <span className="font-mono text-neutral-400">#{head.trengoTicketId}</span>

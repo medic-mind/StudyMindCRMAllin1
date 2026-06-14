@@ -41,6 +41,9 @@ export interface CockpitConversation {
   contactName: string | null
   /** Starred by the current user (Personal → Favorites). */
   isFavorite?: boolean
+  /** The specific Trengo channel ("business number") name, e.g. "Support
+   *  Manager". Null until synced. */
+  trengoChannelName?: string | null
 }
 
 export const CHANNEL_LABEL: Record<string, string> = {
