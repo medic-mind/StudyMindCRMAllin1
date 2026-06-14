@@ -1,54 +1,16 @@
-// Class detail: weekly slot, Zoom link + rotation, syllabus (generate or upload
-// a PDF), the computed term schedule, and this class's enrolments.
+// A class is now a "group". This route redirects to the group workspace, which
+// is the single home for its weekly classes, Zoom link, template, settings and
+// students.
 
-import { notFound } from 'next/navigation'
-
-import { PageBody } from '@/components/shell/page-body'
-import { PageHeader } from '@/components/shell/page-header'
-import { getCurrentUser } from '@/lib/auth/server'
-import { createServerCaller } from '@/lib/trpc/server'
-
-import { ClassDetail } from './ClassDetail'
+import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
-const MANAGE = new Set(['ceo', 'senior_manager', 'manager'])
-
-export default async function ClassDetailPage({
+export default async function ClassDetailRedirect({
   params,
 }: {
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const me = await getCurrentUser()
-  const caller = await createServerCaller()
-  let detail
-  try {
-    detail = await caller.webinar.class.get({ id })
-  } catch {
-    notFound()
-  }
-  const enrollments = await caller.webinar.enrollment.list({ classId: id })
-
-  return (
-    <>
-      <PageHeader
-        title={`${detail.subjectLabel} ${detail.levelLabel}`}
-        subtitle={`${detail.cohortName} · ${detail.title}`}
-        breadcrumbs={[
-          { label: 'Webinars', href: '/webinars' },
-          { label: 'Cohorts', href: '/webinars/cohorts' },
-          { label: detail.cohortName, href: `/webinars/cohorts/${detail.cohortId}` },
-          { label: `${detail.subjectLabel} ${detail.levelLabel}`, href: `/webinars/classes/${id}` },
-        ]}
-      />
-      <PageBody>
-        <ClassDetail
-          detail={detail}
-          enrollments={enrollments}
-          canManage={MANAGE.has(me?.role ?? '')}
-        />
-      </PageBody>
-    </>
-  )
+  redirect(`/webinars/groups/${id}`)
 }

@@ -100,6 +100,14 @@ const GROUPS: Group[] = [
         icon: <MailIcon size={16} />,
       },
       {
+        href: '/settings/dd-recovery-templates',
+        title: 'Direct Debit recovery templates',
+        description:
+          'Reminder and legal-escalation copy for chasing a cancelled/underpaid Direct Debit plan. Drafted and sent by a person from a recovery case.',
+        roles: 'Manager+',
+        icon: <MailIcon size={16} />,
+      },
+      {
         href: '/settings/slack-channels',
         title: 'Slack channels',
         description:

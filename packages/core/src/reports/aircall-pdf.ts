@@ -4,7 +4,7 @@
 // breakdown (configured windows + peak vs off-peak), and the top contacts so
 // a manager can file or share the period's call performance.
 
-import { renderPaginatedTextDocumentPdf, type PdfTextBlock } from '../email/pdf/pdf-writer'
+import { renderBrandedReportPdf, type PdfTextBlock } from '../email/pdf/pdf-writer'
 
 export interface AircallPdfKpis {
   total: number
@@ -83,16 +83,7 @@ function kv(label: string, value: string, spacingBefore = 2): PdfTextBlock {
 export function buildAircallReportPdf(input: AircallPdfInput): Buffer {
   const { kpis, peak } = input
   const blocks: PdfTextBlock[] = [
-    { text: 'StudyMind CRM', bold: true, size: 22 },
-    { text: 'Aircall call report', size: 13, spacingBefore: 4 },
-    {
-      text: `${fmtDate(input.period.from)} – ${fmtDate(input.period.to)}  ·  ${input.directionLabel}  ·  ${input.providerLabel}`,
-      size: 11,
-      spacingBefore: 6,
-    },
-    { text: `Generated ${fmtDateTime(input.generatedAt)}`, size: 9, spacingBefore: 2 },
-
-    { text: 'Headline', bold: true, size: 13, spacingBefore: 22 },
+    { text: 'Headline', bold: true, size: 13, spacingBefore: 4 },
     kv('Total calls', String(kpis.total), 8),
     kv('Answered', `${kpis.answered}  (${fmtPct(kpis.answeredRate)})`),
     kv('Voicemails', String(kpis.voicemails)),
@@ -155,5 +146,11 @@ export function buildAircallReportPdf(input: AircallPdfInput): Buffer {
 
   blocks.push({ text: '— StudyMind CRM', size: 10, spacingBefore: 24 })
 
-  return renderPaginatedTextDocumentPdf(blocks)
+  return renderBrandedReportPdf({
+    brandName: 'StudyMind CRM',
+    title: 'Aircall call report',
+    subtitle: `${fmtDate(input.period.from)} – ${fmtDate(input.period.to)}  ·  ${input.directionLabel}  ·  ${input.providerLabel}`,
+    generatedLine: `Generated ${fmtDateTime(input.generatedAt)}`,
+    blocks,
+  })
 }

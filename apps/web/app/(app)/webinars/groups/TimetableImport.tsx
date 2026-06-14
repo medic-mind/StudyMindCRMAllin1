@@ -62,29 +62,58 @@ export function TimetableImport() {
   const [status, setStatus] = useState<'planning' | 'active'>('planning')
   const [classes, setClasses] = useState<PlanClass[]>([])
   const [holidays, setHolidays] = useState<PlanHoliday[]>([])
+  const [reading, setReading] = useState(false)
 
   const preview = trpc.webinar.timetable.importPreview.useMutation({
-    onSuccess: (r) => {
-      setNote(r.note)
-      setHasPlan(true)
-      setCohortName(r.cohort.name)
-      setStartsOn(r.cohort.startsOn ?? '')
-      setEndsOn(r.cohort.endsOn ?? '')
-      setHolidays(r.holidays.map((h) => ({ ...h, keep: true })))
-      setClasses(r.classes.map((c) => ({ ...c, keep: true })))
-      if (r.classes.length === 0) toast.error(r.note)
-    },
     onError: (e) => toast.error(e.message),
   })
+
+  type PreviewResult = Awaited<ReturnType<typeof preview.mutateAsync>>
+
+  /** Merge one file's parsed plan into the running plan (init, then append). */
+  function mergePreview(r: PreviewResult) {
+    setNote(r.note)
+    setHasPlan(true)
+    setCohortName((prev) => prev || r.cohort.name)
+    setStartsOn((prev) => prev || r.cohort.startsOn || '')
+    setEndsOn((prev) => prev || r.cohort.endsOn || '')
+    setClasses((prev) => {
+      const seen = new Set(prev.map((c) => `${c.subjectHandle}|${c.levelHandle}`))
+      const add = r.classes
+        .filter((c) => !seen.has(`${c.subjectHandle}|${c.levelHandle}`))
+        .map((c) => ({ ...c, keep: true }))
+      return [...prev, ...add]
+    })
+    setHolidays((prev) => {
+      const key = (h: { name: string; startsOn: string; endsOn: string }) =>
+        `${h.name.toLowerCase()}|${h.startsOn}|${h.endsOn}`
+      const seen = new Set(prev.map(key))
+      const add = r.holidays.filter((h) => !seen.has(key(h))).map((h) => ({ ...h, keep: true }))
+      return [...prev, ...add]
+    })
+  }
+
+  async function runPreview(input: Parameters<typeof preview.mutateAsync>[0]) {
+    try {
+      const r = await preview.mutateAsync(input)
+      mergePreview(r)
+      return r.classes.length
+    } catch {
+      return 0
+    }
+  }
 
   const apply = trpc.webinar.timetable.commit.useMutation({
     onSuccess: async (r) => {
       toast.success(
         `${r.cohortCreated ? 'Cohort created' : 'Cohort updated'} · ${r.classesCreated} classes · ${r.weeksSet} weekly topics`,
       )
-      await utils.webinar.cohort.list.invalidate()
+      await Promise.all([
+        utils.webinar.cohort.list.invalidate(),
+        utils.webinar.class.list.invalidate(),
+      ])
       reset()
-      router.push(`/webinars/cohorts/${r.cohortId}`)
+      router.push('/webinars/groups')
     },
     onError: (e) => toast.error(e.message),
   })
@@ -100,17 +129,32 @@ export function TimetableImport() {
     setHolidays([])
   }
 
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
+  async function fileToBase64(file: File): Promise<string> {
     const buf = await file.arrayBuffer()
     let binary = ''
     const bytes = new Uint8Array(buf)
     for (let i = 0; i < bytes.length; i += 0x8000) {
       binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
     }
-    preview.mutate({ kind, dataBase64: btoa(binary) })
+    return btoa(binary)
+  }
+
+  /** Read one OR MANY files (each typically one subject) into a single plan. */
+  async function onFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
     e.target.value = ''
+    if (files.length === 0) return
+    setReading(true)
+    let added = 0
+    for (const file of files) {
+      added += await runPreview({ kind, dataBase64: await fileToBase64(file) })
+    }
+    setReading(false)
+    if (files.length > 1) {
+      toast.success(`Read ${files.length} files · ${added} classes found`)
+    } else if (added === 0) {
+      toast.error('No classes found in that file.')
+    }
   }
 
   function submit() {
@@ -155,10 +199,10 @@ export function TimetableImport() {
           <div>
             <h2 className="text-sm font-semibold text-neutral-900">Import a timetable (AI)</h2>
             <p className="mt-1 max-w-2xl text-xs text-neutral-500">
-              Upload your weekly group-class timetable (PDF), or paste it. The app reads it with AI
-              and builds the <strong>academic year, its holidays, and every class</strong> (subject,
-              level, day, time and weekly topics) for you to review. Nothing is created until you
-              confirm — then just fill in the Zoom links.
+              Upload one or more timetables (PDF/CSV) — e.g. a separate file per subject — or paste
+              one. The app builds the <strong>academic year, its holidays, and every group</strong>{' '}
+              (subject, level, day, time and weekly classes) for you to review. Multiple files merge
+              into one plan. Nothing is created until you confirm — then just fill in the Zoom links.
             </p>
           </div>
           {hasPlan ? (
@@ -200,25 +244,32 @@ export function TimetableImport() {
                 />
                 <Button
                   size="sm"
-                  disabled={preview.isPending || text.trim().length === 0}
-                  onClick={() => preview.mutate({ kind: 'text', text })}
+                  disabled={reading || preview.isPending || text.trim().length === 0}
+                  onClick={() => void runPreview({ kind: 'text', text })}
                 >
-                  {preview.isPending ? 'Reading…' : 'Read timetable'}
+                  {reading || preview.isPending ? 'Reading…' : 'Read timetable'}
                 </Button>
               </div>
             ) : (
               <div className="mt-3">
                 <label className="inline-flex">
                   <span className="inline-flex h-9 cursor-pointer items-center rounded-md border border-neutral-200 bg-white px-3 text-sm text-neutral-800 shadow-sm hover:bg-neutral-50">
-                    {preview.isPending ? 'Reading…' : `Choose ${kind.toUpperCase()} file`}
+                    {reading || preview.isPending
+                      ? 'Reading…'
+                      : `Choose ${kind.toUpperCase()} file(s)`}
                   </span>
                   <input
                     type="file"
+                    multiple
                     accept={kind === 'pdf' ? 'application/pdf' : '.csv,text/csv,text/plain'}
                     className="hidden"
-                    onChange={onFile}
+                    onChange={onFiles}
                   />
                 </label>
+                <p className="mt-1.5 text-xs text-neutral-400">
+                  Select several files at once — e.g. one per subject — and they merge into a single
+                  plan you review and create together.
+                </p>
               </div>
             )}
           </>

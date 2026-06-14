@@ -51,6 +51,8 @@ export interface ConversationRow {
   tags: string[]
   replyDeadlineAt: Date | null
   lastMessagePreview?: string | null
+  trengoChannelId?: number | null
+  trengoChannelName?: string | null
 }
 
 interface ConversationCreateInput {
@@ -70,6 +72,8 @@ interface ConversationCreateInput {
   tags: string[]
   replyDeadlineAt: Date | null
   lastMessagePreview?: string | null
+  trengoChannelId?: number | null
+  trengoChannelName?: string | null
 }
 
 interface ConversationUpdateInput {
@@ -87,6 +91,8 @@ interface ConversationUpdateInput {
   tags?: string[]
   replyDeadlineAt?: Date | null
   lastMessagePreview?: string | null
+  trengoChannelId?: number | null
+  trengoChannelName?: string | null
 }
 
 export interface ApplyEventInput {
@@ -106,6 +112,11 @@ export interface ApplyEventInput {
   label?: string | null
   /** Message body (message events) — feeds the list-row preview. */
   preview?: string | null
+  /** The SPECIFIC Trengo channel ("business number" / inbox) id + name, when
+   *  the event/ticket carried it. Backfilled onto the head; name denormalised
+   *  for display. */
+  trengoChannelId?: number | null
+  trengoChannelName?: string | null
 }
 
 export const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -189,6 +200,8 @@ function buildCreateForEvent(input: ApplyEventInput): ConversationCreateInput {
       isInbound && channel === 'whatsapp'
         ? new Date(input.occurredAt.getTime() + WHATSAPP_REPLY_WINDOW_MS)
         : null,
+    trengoChannelId: input.trengoChannelId ?? null,
+    trengoChannelName: input.trengoChannelName ?? null,
   }
 }
 
@@ -201,6 +214,21 @@ function mergeEvent(
   // Always backfill identity fields when we have them and the row didn't.
   if (input.contactId && !existing.contactId) patch.contactId = input.contactId
   if (input.familyId && !existing.familyId) patch.familyId = input.familyId
+  // The specific channel ("business number") — set when we learn it or it
+  // changed (a conversation rarely moves channel, but the name can be filled
+  // in later once the channel mirror is synced).
+  if (
+    input.trengoChannelId != null &&
+    existing.trengoChannelId !== input.trengoChannelId
+  ) {
+    patch.trengoChannelId = input.trengoChannelId
+  }
+  if (
+    input.trengoChannelName &&
+    existing.trengoChannelName !== input.trengoChannelName
+  ) {
+    patch.trengoChannelName = input.trengoChannelName
+  }
   if (
     input.channel &&
     isTrengoChannel(input.channel) &&

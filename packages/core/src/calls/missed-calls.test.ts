@@ -4,7 +4,9 @@ import {
   callNumberFromPayload,
   deriveMissedCalls,
   isAnswered,
+  isVoicemailPayload,
   normalizeCalls,
+  projectCallInteraction,
   summariseMissedCalls,
   type MissedCallReviewRow,
   type RawCall,
@@ -28,6 +30,63 @@ describe('isAnswered', () => {
     expect(isAnswered({ durationSec: 42, isVoicemail: false })).toBe(true)
     expect(isAnswered({ durationSec: 0, isVoicemail: false })).toBe(false)
     expect(isAnswered({ durationSec: 30, isVoicemail: true })).toBe(false)
+  })
+})
+
+describe('isVoicemailPayload', () => {
+  it('detects the voicemail event and a present voicemail url', () => {
+    expect(isVoicemailPayload({ aircallEvent: 'call.voicemail_left' })).toBe(true)
+    expect(isVoicemailPayload({ voicemailUrl: 'https://s3/vm.mp3' })).toBe(true)
+  })
+  it('is false for an ordinary or empty payload', () => {
+    expect(isVoicemailPayload({ aircallEvent: 'call.ended' })).toBe(false)
+    expect(isVoicemailPayload({ voicemailUrl: '' })).toBe(false)
+    expect(isVoicemailPayload(null)).toBe(false)
+    expect(isVoicemailPayload(undefined)).toBe(false)
+  })
+})
+
+describe('projectCallInteraction', () => {
+  const occurredAt = new Date('2026-06-01T10:00:00Z')
+
+  it('reads direction, duration, number and contact out of the payload', () => {
+    const call = projectCallInteraction({
+      id: 'int_1',
+      occurredAt,
+      contactId: 'c_1',
+      payload: { aircallCallId: 99, direction: 'inbound', durationSec: 12, rawDigits: '+447700900001' },
+    })
+    expect(call).toEqual({
+      interactionId: 'int_1',
+      aircallCallId: 99,
+      occurredAt,
+      direction: 'inbound',
+      durationSec: 12,
+      isVoicemail: false,
+      rawDigits: '+447700900001',
+      contactId: 'c_1',
+    })
+  })
+
+  it('falls back to safe defaults on a sparse/garbage payload', () => {
+    const call = projectCallInteraction({ id: 'int_2', occurredAt, contactId: null, payload: {} })
+    expect(call.aircallCallId).toBeNull()
+    expect(call.direction).toBeNull()
+    expect(call.durationSec).toBe(0)
+    expect(call.isVoicemail).toBe(false)
+    expect(call.rawDigits).toBeNull()
+  })
+
+  it('flags a voicemail and uses the toNumber fallback for manual click-to-call', () => {
+    const call = projectCallInteraction({
+      id: 'int_3',
+      occurredAt,
+      contactId: null,
+      payload: { direction: 'outbound', toNumber: '07700900002', voicemailUrl: 'https://s3/vm.mp3' },
+    })
+    expect(call.direction).toBe('outbound')
+    expect(call.isVoicemail).toBe(true)
+    expect(call.rawDigits).toBe('07700900002')
   })
 })
 

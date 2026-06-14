@@ -7,17 +7,27 @@ import type { PrismaClient } from '@prisma/client'
 import { z } from 'zod'
 
 import {
+  assignCase,
+  CaseTransitionError,
+  DD_CASE_STATUSES,
   defaulterDetail,
   dismissUnresolvedStripePayment,
+  getCasesForSubscriptions,
+  getOrCreateCase,
   listActivePlanArrears,
   listDefaulters,
   listPlanShortfalls,
   listUnresolvedStripePayments,
+  recordRecovery,
+  RECOVERY_METHODS,
+  setCaseNotes,
+  setCaseStatus,
   paymentsForFamily,
   paymentSummaryForFamily,
   resolveUnresolvedStripePayment,
 } from '@studymind/core/finance'
 
+import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 import {
   createPaymentLink,
   refundCharge,
@@ -363,6 +373,308 @@ export const financeRouter = router({
         })
         return { items }
       }),
+
+    // Direct Debit recovery cases (ADR 0038, seventh amendment): the agent
+    // workflow over a shortfall — status, owner, notes. Reads + writes are
+    // finance-role (Manager+), matching the rest of the Direct Debit section.
+    // Read-only on money; outbound recovery comms are human-confirmed elsewhere.
+    cases: router({
+      assignableUsers: protectedProcedure.query(async ({ ctx }) => {
+        assertFinanceRole(requireUser(ctx))
+        const users = await ctx.db.user.findMany({
+          where: { isActive: true, deactivatedAt: null },
+          select: { id: true, name: true, email: true },
+          orderBy: [{ name: 'asc' }, { email: 'asc' }],
+        })
+        return users.map((u) => ({ id: u.id, name: u.name ?? u.email }))
+      }),
+
+      forSubscriptions: protectedProcedure
+        .input(z.object({ gcSubscriptionIds: z.array(z.string()).max(500) }))
+        .query(async ({ ctx, input }) => {
+          assertFinanceRole(requireUser(ctx))
+          const cases = await getCasesForSubscriptions(ctx.db, input.gcSubscriptionIds)
+          const ownerIds = Array.from(
+            new Set(
+              [...cases.values()]
+                .map((c) => c.ownerUserId)
+                .filter((id): id is string => id !== null),
+            ),
+          )
+          const owners =
+            ownerIds.length > 0
+              ? await ctx.db.user.findMany({
+                  where: { id: { in: ownerIds } },
+                  select: { id: true, name: true, email: true },
+                })
+              : []
+          const ownerName = new Map(owners.map((o) => [o.id, o.name ?? o.email]))
+          return {
+            cases: [...cases.values()].map((c) => ({
+              gcSubscriptionId: c.gcSubscriptionId,
+              status: c.status,
+              ownerUserId: c.ownerUserId,
+              ownerName: c.ownerUserId ? (ownerName.get(c.ownerUserId) ?? null) : null,
+              notes: c.notes,
+              recoveredMinor: c.recoveredMinor,
+              recoveredAt: c.recoveredAt,
+              recoveryMethod: c.recoveryMethod,
+              recoveryRef: c.recoveryRef,
+            })),
+          }
+        }),
+
+      setStatus: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            status: z.enum(DD_CASE_STATUSES as [string, ...string[]]),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                contactId: z.string().nullish(),
+                familyId: z.string().nullish(),
+                openingShortfallMinor: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          try {
+            const result = await setCaseStatus(ctx.db, {
+              gcSubscriptionId: input.gcSubscriptionId,
+              to: input.status as (typeof DD_CASE_STATUSES)[number],
+              actorId: user.id,
+              links: input.links,
+            })
+            await ctx.audit({
+              action: 'direct_debit.case_status_changed',
+              target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
+              before: { status: result.from },
+              after: { status: input.status },
+            })
+            return { status: result.case.status }
+          } catch (e) {
+            if (e instanceof CaseTransitionError) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: e.message })
+            }
+            throw e
+          }
+        }),
+
+      assign: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            ownerUserId: z.string().nullable(),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                contactId: z.string().nullish(),
+                familyId: z.string().nullish(),
+                openingShortfallMinor: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const updated = await assignCase(ctx.db, {
+            gcSubscriptionId: input.gcSubscriptionId,
+            ownerUserId: input.ownerUserId,
+            actorId: user.id,
+            links: input.links,
+          })
+          await ctx.audit({
+            action: 'direct_debit.case_assigned',
+            target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
+            after: { ownerUserId: updated.ownerUserId },
+          })
+          return { ownerUserId: updated.ownerUserId }
+        }),
+
+      setNotes: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            notes: z.string().max(5000).nullable(),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                contactId: z.string().nullish(),
+                familyId: z.string().nullish(),
+                openingShortfallMinor: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          await setCaseNotes(ctx.db, {
+            gcSubscriptionId: input.gcSubscriptionId,
+            notes: input.notes,
+            actorId: user.id,
+            links: input.links,
+          })
+          await ctx.audit({
+            action: 'direct_debit.case_note_updated',
+            target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
+            after: { hasNotes: Boolean(input.notes) },
+          })
+          return { ok: true }
+        }),
+
+      // Record how a shortfall was recovered (bank transfer via the invoicing
+      // site, Stripe, re-collected DD, or manual) — an agent confirming money
+      // arrived elsewhere. Closes the case as recovered. Records only; never
+      // charges (CLAUDE.md §3). Audited as a money-adjacent write.
+      recordRecovery: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            recoveredMinor: z.number().int().nonnegative(),
+            method: z.enum(RECOVERY_METHODS as [string, ...string[]]),
+            ref: z.string().max(200).nullish(),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                contactId: z.string().nullish(),
+                familyId: z.string().nullish(),
+                openingShortfallMinor: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const updated = await recordRecovery(ctx.db, {
+            gcSubscriptionId: input.gcSubscriptionId,
+            recoveredMinor: input.recoveredMinor,
+            method: input.method as (typeof RECOVERY_METHODS)[number],
+            ref: input.ref ?? null,
+            actorId: user.id,
+            links: input.links,
+          })
+          await ctx.audit({
+            action: 'direct_debit.case_recovered',
+            target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
+            after: {
+              recoveredMinor: updated.recoveredMinor,
+              method: updated.recoveryMethod,
+              ref: updated.recoveryRef,
+            },
+          })
+          return { status: updated.status, recoveredMinor: updated.recoveredMinor }
+        }),
+
+      // Send a human-confirmed recovery email (reminder / legal escalation) from
+      // a case (Phase 3b). The agent has already reviewed/edited the final
+      // subject + body in the dialog — this just sends it via the system mailbox,
+      // logs it on the customer's timeline (so it reflects on the customer page),
+      // and nudges a `new` case to `chasing`. Email only for now. CLAUDE.md §3,
+      // §14 (system Gmail, never a third-party email API).
+      sendRecovery: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            contactId: z.string().min(1),
+            templateId: z.string().nullish(),
+            subject: z.string().trim().min(1).max(300),
+            body: z.string().trim().min(1).max(10_000),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                familyId: z.string().nullish(),
+                openingShortfallMinor: z.number().int().nonnegative().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+
+          const contact = await ctx.db.contact.findFirst({
+            where: { id: input.contactId, deletedAt: null },
+            select: { id: true, email: true },
+          })
+          if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'contact not found' })
+          if (!contact.email) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This contact has no email address — add one before sending.',
+            })
+          }
+
+          const result = await sendSystemEmail({
+            to: contact.email,
+            subject: input.subject,
+            text: input.body,
+          })
+          if (result.status !== 'sent') {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message:
+                result.detail ??
+                (result.status === 'skipped'
+                  ? 'No system mailbox connected — connect Gmail in Settings.'
+                  : 'The email could not be sent.'),
+            })
+          }
+
+          // Reflect on the customer's CRM page.
+          await ctx.db.interaction.create({
+            data: {
+              id: createId(),
+              type: 'email_sent',
+              contactId: contact.id,
+              occurredAt: new Date(),
+              summary: `Direct Debit recovery email: ${input.subject}`.slice(0, 140),
+              payload: {
+                kind: 'dd_recovery',
+                subject: input.subject,
+                body: input.body,
+                to: contact.email,
+                gcSubscriptionId: input.gcSubscriptionId,
+                templateId: input.templateId ?? null,
+                gmailId: result.id,
+                authorId: user.id,
+              },
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+
+          // Nudge a brand-new case into `chasing` once the first message goes out.
+          const current = await getOrCreateCase(ctx.db, {
+            gcSubscriptionId: input.gcSubscriptionId,
+            actorId: user.id,
+            contactId: input.contactId,
+            gcCustomerId: input.links?.gcCustomerId,
+            familyId: input.links?.familyId,
+            openingShortfallMinor: input.links?.openingShortfallMinor,
+          })
+          if (current.status === 'new') {
+            await setCaseStatus(ctx.db, {
+              gcSubscriptionId: input.gcSubscriptionId,
+              to: 'chasing',
+              actorId: user.id,
+            })
+          }
+
+          await ctx.audit({
+            action: 'direct_debit.recovery_sent',
+            target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },
+            after: { channel: 'email', to: contact.email, subject: input.subject },
+          })
+          return { status: 'sent' as const }
+        }),
+    }),
   }),
 
   refund: router({

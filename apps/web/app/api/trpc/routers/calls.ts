@@ -11,10 +11,10 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
-  callNumberFromPayload,
   deriveMissedCalls,
   isAnswered,
   normalizeCalls,
+  projectCallInteraction,
   summariseMissedCalls,
   type MissedCallReviewRow,
   type RawCall,
@@ -42,13 +42,6 @@ function assertCanReview(role: UserRole): void {
       message: 'Only Sales Executive or above can action missed calls',
     })
   }
-}
-
-function isVoicemailPayload(p: Record<string, unknown>): boolean {
-  return (
-    p['aircallEvent'] === 'call.voicemail_left' ||
-    (typeof p['voicemailUrl'] === 'string' && (p['voicemailUrl'] as string).length > 0)
-  )
 }
 
 function hasRecordingPayload(p: Record<string, unknown>): boolean {
@@ -104,27 +97,7 @@ export const callsRouter = router({
           take: 20000,
         })
 
-        const raws: RawCall[] = rows.map((r) => {
-          const p = (r.payload ?? {}) as Record<string, unknown>
-          const aircallCallId = typeof p['aircallCallId'] === 'number' ? (p['aircallCallId'] as number) : null
-          const direction =
-            p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
-          const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-          // Counterparty number: rawDigits (Aircall) OR toNumber (a manually
-          // logged click-to-call). The toNumber fallback is what lets a manual
-          // callback clear a miss by number, not only by a shared contact.
-          const rawDigits = callNumberFromPayload(p)
-          return {
-            interactionId: r.id,
-            aircallCallId,
-            occurredAt: r.occurredAt,
-            direction,
-            durationSec,
-            isVoicemail: isVoicemailPayload(p),
-            rawDigits,
-            contactId: r.contactId,
-          }
-        })
+        const raws: RawCall[] = rows.map(projectCallInteraction)
 
         const calls = normalizeCalls(raws)
 
@@ -339,26 +312,10 @@ export const callsRouter = router({
         const recordingByKey = new Map<string, string>()
         const raws: RawCall[] = rows.map((r) => {
           const p = (r.payload ?? {}) as Record<string, unknown>
-          const aircallCallId =
-            typeof p['aircallCallId'] === 'number' ? (p['aircallCallId'] as number) : null
-          const direction =
-            p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
-          const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-          // Counterparty number: rawDigits (Aircall) OR toNumber (a manually
-          // logged click-to-call), so a manual outbound call shows its number.
-          const rawDigits = callNumberFromPayload(p)
-          const key = aircallCallId != null ? `ac:${aircallCallId}` : `iid:${r.id}`
+          const call = projectCallInteraction(r)
+          const key = call.aircallCallId != null ? `ac:${call.aircallCallId}` : `iid:${r.id}`
           if (hasRecordingPayload(p) && !recordingByKey.has(key)) recordingByKey.set(key, r.id)
-          return {
-            interactionId: r.id,
-            aircallCallId,
-            occurredAt: r.occurredAt,
-            direction,
-            durationSec,
-            isVoicemail: isVoicemailPayload(p),
-            rawDigits,
-            contactId: r.contactId,
-          }
+          return call
         })
 
         const normalized = normalizeCalls(raws)

@@ -277,6 +277,21 @@ export const EVENT_NAMES = [
   // human; the job records the unresolved charge in the first place.
   'finance.unresolved_payment_resolved',
   'finance.unresolved_payment_dismissed',
+  // Direct Debit recovery cases (ADR 0038, seventh amendment): the agent
+  // workflow to recover a cancelled/underpaid plan's shortfall.
+  'direct_debit.case_opened',
+  'direct_debit.case_status_changed',
+  'direct_debit.case_assigned',
+  'direct_debit.case_note_updated',
+  'direct_debit.case_recovered',
+  // Recovery-comms templates (Phase 3): staff-authored reminder / legal copy.
+  'dd_recovery_template.created',
+  'dd_recovery_template.updated',
+  'dd_recovery_template.archived',
+  'dd_recovery_template.restored',
+  // A human-confirmed recovery message (reminder / legal escalation) sent from
+  // a case (Phase 3b). Audited; also logged as an email_sent Interaction.
+  'direct_debit.recovery_sent',
   'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
@@ -441,6 +456,9 @@ export const EVENT_NAMES = [
   // ADR 0020 Phase 6e — assignment from the CRM (drives Trengo assignTicket).
   'trengo.ticket_assign_requested',
   'trengo.team_synced',
+  'trengo.channels_synced',
+  // Staff "Sync from Trengo" — force an immediate status reconcile.
+  'trengo.sync_now_requested',
   // ADR 0020 Phase 6f — label (tag) add/remove from the CRM (drives the
   // Trengo /labels endpoints) and mark-read (CRM-side head state). Internal
   // notes flow through `conversation.note_added` (the unified notes path).
@@ -494,6 +512,7 @@ export const EVENT_NAMES = [
   'webinar.class_created',
   'webinar.class_updated',
   'webinar.class_archived',
+  'webinar.class_deleted',
   'webinar.zoom_link_rotated',
   'webinar.syllabus_set',
   'webinar.syllabus_generated',
@@ -598,6 +617,10 @@ export const INNGEST_EVENT_NAMES = [
   // Concurrency capped on the worker (4) so a burst of attachments doesn't
   // starve the rest of the queue.
   'trengo/download-attachments.requested',
+  // ADR 0020 — staff-triggered immediate status re-sync from the inbox
+  // ("Sync from Trengo"): converges the recent open set now instead of
+  // waiting for the round-robin reconcile cron.
+  'trengo/reconcile-now.requested',
   // Dynamic lead ingestion (ADR 0023): the universal /api/leads endpoint
   // persists a Lead then hands off async classification + pipeline routing.
   'lead/classify.requested',

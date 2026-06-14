@@ -303,6 +303,7 @@ export const inboxRouter = router({
             tags: true,
             lastMessagePreview: true,
             replyDeadlineAt: true,
+            trengoChannelName: true,
             favorites: { where: { userId: user.id }, select: { conversationId: true } },
             contact: {
               select: {
@@ -562,6 +563,7 @@ export const inboxRouter = router({
             tags: head.tags,
             replyDeadlineAt: head.replyDeadlineAt,
             isFavorite: head.favorites.length > 0,
+            trengoChannelName: head.trengoChannelName,
             contactName: head.contact
               ? [head.contact.firstName, head.contact.lastName]
                   .filter((x): x is string => !!x)
@@ -593,11 +595,15 @@ export const inboxRouter = router({
             ])
             .default('active'),
           channel: z.enum(['whatsapp', 'sms', 'email', 'web_chat']).nullish(),
-          /** Trengo label filter — matches Conversation.tags. */
+          /** Trengo label filter — matches Conversation.tags. Single (legacy)
+           *  or multi-select; multi uses OR (has-any) semantics like Trengo. */
           tag: z.string().trim().min(1).max(80).nullish(),
+          tags: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
           /** Trengo "Teams" folder — open conversations assigned to a member
            *  of this team. Overrides the status `filter` when set. */
           teamId: z.string().min(1).nullish(),
+          /** Trengo "Channel" folder — the specific business number / inbox. */
+          trengoChannelId: z.number().int().nullish(),
           cursor: z
             .object({ id: z.string(), lastMessageAt: z.date() })
             .nullish(),
@@ -661,7 +667,10 @@ export const inboxRouter = router({
             break
         }
         if (input.channel) where['channel'] = input.channel
-        if (input.tag) where['tags'] = { has: input.tag }
+        if (input.trengoChannelId != null) where['trengoChannelId'] = input.trengoChannelId
+        // Multi-label (OR) takes precedence over the legacy single `tag`.
+        if (input.tags && input.tags.length > 0) where['tags'] = { hasSome: input.tags }
+        else if (input.tag) where['tags'] = { has: input.tag }
         if (input.cursor) {
           where['OR'] = [
             { lastMessageAt: { lt: input.cursor.lastMessageAt } },
@@ -692,6 +701,7 @@ export const inboxRouter = router({
             tags: true,
             lastMessagePreview: true,
             replyDeadlineAt: true,
+            trengoChannelName: true,
             favorites: { where: { userId: user.id }, select: { conversationId: true } },
             contact: {
               select: {
@@ -746,6 +756,7 @@ export const inboxRouter = router({
           lastMessagePreview: r.lastMessagePreview,
           replyDeadlineAt: r.replyDeadlineAt,
           isFavorite: r.favorites.length > 0,
+          trengoChannelName: r.trengoChannelName,
           contactName: r.contact
             ? [r.contact.firstName, r.contact.lastName]
                 .filter((x): x is string => !!x)
@@ -975,6 +986,79 @@ export const inboxRouter = router({
         color: t.color,
         count: t.members.reduce((sum, m) => sum + (countByUser.get(m.userId) ?? 0), 0),
       }))
+    }),
+
+    // Trengo "Channels" — the workspace's individual named channels / "business
+    // numbers" (Support Manager, Tutor Manager, info@, …) with a count of open
+    // conversations on each. Built from the channel mirror AND the channels
+    // actually in use on conversations, so it works even before a mirror sync.
+    channels: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!ALLOWED_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
+      }
+      const [mirror, convoChannels, grouped] = await Promise.all([
+        ctx.db.trengoChannel.findMany({
+          where: { isActive: true },
+          select: { trengoId: true, name: true, channelType: true },
+        }),
+        ctx.db.conversation.findMany({
+          where: { trengoChannelId: { not: null } },
+          distinct: ['trengoChannelId'],
+          select: { trengoChannelId: true, trengoChannelName: true, channel: true },
+        }),
+        ctx.db.conversation.groupBy({
+          by: ['trengoChannelId'],
+          where: { status: 'open', trengoChannelId: { not: null } },
+          _count: { _all: true },
+        }),
+      ])
+      const countById = new Map(
+        grouped.map((g) => [g.trengoChannelId as number, g._count._all] as const),
+      )
+      const byId = new Map<
+        number,
+        { trengoId: number; name: string | null; channelType: string | null }
+      >()
+      for (const c of convoChannels) {
+        if (c.trengoChannelId != null) {
+          byId.set(c.trengoChannelId, {
+            trengoId: c.trengoChannelId,
+            name: c.trengoChannelName,
+            channelType: c.channel,
+          })
+        }
+      }
+      for (const m of mirror) {
+        const prev = byId.get(m.trengoId)
+        byId.set(m.trengoId, {
+          trengoId: m.trengoId,
+          name: m.name ?? prev?.name ?? null,
+          channelType: m.channelType ?? prev?.channelType ?? null,
+        })
+      }
+      return [...byId.values()]
+        .map((c) => ({ ...c, count: countById.get(c.trengoId) ?? 0 }))
+        .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+    }),
+
+    // "Sync from Trengo" — force an immediate status re-sync of the recent
+    // open conversations so anything closed/spam-boxed in Trengo converges now
+    // instead of waiting for the round-robin reconcile cron. Sales Executive+
+    // (it only READS Trengo + converges our own heads).
+    syncNow: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!ALLOWED_ROLES.has(user.role) || user.role === 'virtual_assistant') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Sales Executive+ only.' })
+      }
+      const { inngest } = await import('@studymind/jobs')
+      await inngest.send({ name: 'trengo/reconcile-now.requested', data: { by: user.id } })
+      await ctx.audit({
+        action: 'trengo.sync_now_requested',
+        target: { type: 'Integration', id: 'trengo' },
+        after: { by: user.id },
+      })
+      return { ok: true as const }
     }),
 
     // ADR 0020 Phase 6i — bulk triage actions on the conversation list.

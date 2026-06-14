@@ -223,8 +223,13 @@ export interface TrengoTicketRow {
 export interface NormalisedTicket {
   id: number
   channel: TrengoChannel | null
-  /** Trengo statuses (OPEN / ASSIGNED / CLOSED / …) folded to our two. */
-  status: 'open' | 'closed'
+  /** The SPECIFIC Trengo channel ("business number") id + name when the row
+   *  carried it. Drives "which line is this on" + the named-channel filter. */
+  trengoChannelId: number | null
+  trengoChannelName: string | null
+  /** Trengo statuses (OPEN / ASSIGNED / CLOSED / SPAM / …) folded to ours.
+   *  `spam` is the Trengo Spam box — imported, not just a CRM-side toggle. */
+  status: 'open' | 'closed' | 'spam'
   /** Trengo user id the ticket is assigned to, however the listing spells it
    *  (assignee/agent/user object or *_id field). Null when unassigned. */
   assigneeId: number | null
@@ -237,6 +242,38 @@ export interface NormalisedTicket {
   labelsKnown: boolean
   contact: { phone: string | null; email: string | null; name: string | null }
   createdAt: Date | null
+}
+
+/** The ticket's SPECIFIC channel ("business number") — id + display name —
+ *  however the row spells it: a `channel` object `{id, name, type}`, a
+ *  `channels[0]` object, or a `channel_id` with a separate name. Null when the
+ *  row carried no channel id. Drives the named-channel column + filter. */
+export function extractTicketChannelMeta(
+  t: Record<string, unknown>,
+): { trengoChannelId: number | null; trengoChannelName: string | null } {
+  const candidates: unknown[] = [t['channel'], Array.isArray(t['channels']) ? (t['channels'] as unknown[])[0] : null]
+  for (const c of candidates) {
+    if (c !== null && typeof c === 'object') {
+      const o = c as Record<string, unknown>
+      const id = coerceTrengoId(o['id'])
+      if (id !== null) {
+        const name =
+          typeof o['name'] === 'string' && o['name'].trim() !== '' ? o['name'].trim() : null
+        return { trengoChannelId: id, trengoChannelName: name }
+      }
+    }
+  }
+  // Fall back to a flat channel_id / inbox_id with no embedded name.
+  const flat = coerceTrengoId(t['channel_id']) ?? coerceTrengoId(t['inbox_id'])
+  return { trengoChannelId: flat, trengoChannelName: null }
+}
+
+/** True when the raw ticket is in Trengo's Spam box. Trengo spells it as a
+ *  `status` of "SPAM" or a boolean `is_spam`/`spam` flag depending on version. */
+export function ticketIsSpam(t: Record<string, unknown>): boolean {
+  if (typeof t['status'] === 'string' && t['status'].toLowerCase() === 'spam') return true
+  if (t['is_spam'] === true || t['spam'] === true) return true
+  return false
 }
 
 /** The ticket's assigned Trengo user, however the listing spells it —
@@ -267,13 +304,18 @@ export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
   const channel =
     normaliseTicketChannel(t.channel) ??
     (Array.isArray(t.channels) ? normaliseTicketChannel(t.channels[0]) : null)
+  const channelMeta = extractTicketChannelMeta(t as Record<string, unknown>)
+  const status: 'open' | 'closed' | 'spam' = ticketIsSpam(t as Record<string, unknown>)
+    ? 'spam'
+    : typeof t.status === 'string' && t.status.toLowerCase() === 'closed'
+      ? 'closed'
+      : 'open'
   return {
     id: t.id,
     channel,
-    status:
-      typeof t.status === 'string' && t.status.toLowerCase() === 'closed'
-        ? 'closed'
-        : 'open',
+    trengoChannelId: channelMeta.trengoChannelId,
+    trengoChannelName: channelMeta.trengoChannelName,
+    status,
     assigneeId: extractTicketAssigneeId(t as Record<string, unknown>),
     subject: typeof t.subject === 'string' && t.subject.trim() !== '' ? t.subject : null,
     labels: extractTicketLabels(t.labels ?? t.tags),
@@ -445,6 +487,19 @@ export const trengoBackfillRequested = inngest.createFunction(
         } catch {
           // ignore — the import proceeds; the manual "Sync Trengo team" button
           // and the userNames map above still cover attribution.
+        }
+      })
+
+      // Mirror the workspace's CHANNELS (named "business numbers") so the
+      // inbox can list them by name and each conversation shows which line it
+      // is on. Best-effort — the import proceeds regardless.
+      await step.run('sync-channels', async () => {
+        try {
+          const { syncTrengoChannels } = await import('./channels')
+          await syncTrengoChannels(db, agentId, jobId)
+        } catch {
+          // ignore — channel ids are still captured per conversation; the
+          // names resolve on the next successful channel sync.
         }
       })
 
@@ -794,6 +849,26 @@ async function processTicket(
       where: { trengoTicketId: ticket.id },
       data: { tags: labels },
     })
+    // The SPECIFIC Trengo channel ("business number") this ticket is on. The
+    // listing may carry the channel name; otherwise resolve it from the
+    // channel mirror so the head shows "Support Manager" not just "whatsapp".
+    if (ticket.trengoChannelId !== null) {
+      let channelName = ticket.trengoChannelName
+      if (!channelName) {
+        const ch = await db.trengoChannel.findUnique({
+          where: { trengoId: ticket.trengoChannelId },
+          select: { name: true },
+        })
+        channelName = ch?.name ?? null
+      }
+      await db.conversation.updateMany({
+        where: { trengoTicketId: ticket.id },
+        data: {
+          trengoChannelId: ticket.trengoChannelId,
+          ...(channelName ? { trengoChannelName: channelName } : {}),
+        },
+      })
+    }
     // Assignee sync — Trengo's current assignee mirrors onto the head,
     // resolved to a CRM user via the TrengoUser mirror (crmUserId) or
     // User.trengoUserId when the agent also logs into the CRM.
@@ -822,11 +897,17 @@ async function processTicket(
         assigneeUserId,
       })
     }
-    // Status sync — BOTH directions. The old code only ever closed, so a
-    // ticket reopened in Trengo stayed closed in the CRM forever ("open/
-    // closed on Trengo don't appear the same here"). A CRM-side snooze is
-    // deliberately preserved (only a closed head reopens).
-    if (ticket.status === 'closed') {
+    // Status sync — ALL THREE directions (open / closed / spam). Trengo is the
+    // source of truth (§4): a ticket closed or spam-boxed in Trengo must show
+    // the same here. A CRM-side snooze is preserved (snooze is a local "open"
+    // variant); only closed/spam heads reopen.
+    if (ticket.status === 'spam') {
+      // Spam isn't an Interaction event — set the head status directly.
+      await db.conversation.updateMany({
+        where: { trengoTicketId: ticket.id, status: { not: 'spam' } },
+        data: { status: 'spam' },
+      })
+    } else if (ticket.status === 'closed') {
       await applyEventToConversation(db, {
         ticketId: ticket.id,
         eventName: 'ticket.closed',
@@ -840,7 +921,9 @@ async function processTicket(
         where: { trengoTicketId: ticket.id },
         select: { status: true },
       })
-      if (head?.status === 'closed') {
+      // Trengo shows it open → reopen a head we have as closed OR spam
+      // (Trengo un-marked it as spam).
+      if (head?.status === 'closed' || head?.status === 'spam') {
         await applyEventToConversation(db, {
           ticketId: ticket.id,
           eventName: 'ticket.reopened',

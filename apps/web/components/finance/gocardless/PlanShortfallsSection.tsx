@@ -17,6 +17,7 @@ import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
 import { formatDate, statusLabel } from './shared'
+import { ShortfallCaseCell } from './ShortfallCaseCell'
 
 /** A compact "chase" action for an Issues row: open a follow-up task against the
  * contact/family, plus a jump to the contact. Shown only when the plan's
@@ -171,6 +172,15 @@ export function PlanShortfallsSection() {
   })
   const rows = useSortedRows(items, sort.key, sort.dir)
 
+  const subIds = items.map((i) => i.gcSubscriptionId)
+  const casesQuery = trpc.finance.directDebit.cases.forSubscriptions.useQuery(
+    { gcSubscriptionIds: subIds },
+    { enabled: subIds.length > 0 },
+  )
+  const usersQuery = trpc.finance.directDebit.cases.assignableUsers.useQuery()
+  const caseBySub = new Map((casesQuery.data?.cases ?? []).map((c) => [c.gcSubscriptionId, c]))
+  const assignableUsers = usersQuery.data ?? []
+
   if (query.isLoading) {
     return <p className="px-1 py-6 text-sm text-neutral-500">Loading cancelled plans…</p>
   }
@@ -180,9 +190,15 @@ export function PlanShortfallsSection() {
   return (
     <section className="space-y-2">
       <div className="flex items-baseline justify-between gap-2 px-1">
-        <h2 className="text-sm font-semibold text-neutral-900">
-          Cancelled &amp; underpaid plans
-        </h2>
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-900">
+            Cancelled &amp; underpaid plans
+          </h2>
+          <p className="text-xs text-neutral-500">
+            Plans cancelled from June 2026 onward only — earlier cancellations are managed
+            separately.
+          </p>
+        </div>
         <div className="flex items-center gap-3">
           {items.length > 0 ? (
             <p className="text-xs text-neutral-500">
@@ -256,6 +272,7 @@ export function PlanShortfallsSection() {
                   align="right"
                 />
                 <Th>Why</Th>
+                <Th className="text-right">Case</Th>
                 <Th className="text-right">Action</Th>
               </Tr>
             </Thead>
@@ -307,6 +324,31 @@ export function PlanShortfallsSection() {
                         </Badge>
                       ))}
                     </div>
+                  </Td>
+                  <Td className="text-right">
+                    <ShortfallCaseCell
+                      links={{
+                        gcSubscriptionId: s.gcSubscriptionId,
+                        gcCustomerId: s.gcCustomerId,
+                        contactId: s.contactId,
+                        familyId: s.familyId,
+                        openingShortfallMinor: s.shortfallMinor,
+                      }}
+                      caseData={caseBySub.get(s.gcSubscriptionId)}
+                      assignableUsers={assignableUsers}
+                      sendContext={{
+                        gcSubscriptionId: s.gcSubscriptionId,
+                        contactId: s.contactId,
+                        gcCustomerId: s.gcCustomerId,
+                        familyId: s.familyId,
+                        customerName: s.customerName,
+                        planName: s.name,
+                        currency: s.currency,
+                        shortfallMinor: s.shortfallMinor,
+                        collectedMinor: s.collectedMinor,
+                        expectedTotalMinor: s.expectedTotalMinor,
+                      }}
+                    />
                   </Td>
                   <Td className="text-right">
                     <RowActions

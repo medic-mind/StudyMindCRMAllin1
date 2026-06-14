@@ -277,3 +277,35 @@ column sorting + filter-honouring CSV export.
   per-plan shortfall for the contact's ended fixed-length plans (reusing
   `classifyPlanShortfall`), and `ContactDirectDebitPanel` renders a
   "£X still due" badge on a plan cancelled/finished early.
+
+## Amendment (2026-06-14, seventh) — prospective tracking + recovery cases
+
+Two changes turn the cancelled/underpaid surface into a working recovery system.
+
+**Prospective only.** `GcSubscription.shortfallIgnored` excludes plans that were
+already cancelled/finished at go-live (June 2026) — handled on another system —
+so the CRM only tracks cancellations from go-live onward. The go-live migration
+snapshots the existing terminal set as ignored; `upsertGcSubscriptionMirror`
+sets the flag at create-time for any plan first seen already terminal (a
+historic import), while a plan first seen active that later cancels stays
+tracked. `listPlanShortfalls` filters `shortfallIgnored = false`; the job's
+resolve-on-recovery then clears stale discrepancies for the removed plans. No
+separate "ignored" view (avoids duplication).
+
+**Recovery cases.** `DirectDebitCase` (one per plan, soft-linked like the GC
+mirror) is the agent workflow over a shortfall: `DirectDebitCaseStatus`
+(`new → chasing → escalated → recovered | written_off`, reopenable), an owner,
+notes, and a recovery record (Phase 2 links the actual invoicing/Stripe
+payment). Pure transition table in `packages/core/src/finance/dd-cases.ts`
+(`canTransition`, unit-tested); tRPC `finance.directDebit.cases.*`
+(forSubscriptions / setStatus / assign / setNotes / assignableUsers, finance
+role, audited `direct_debit.case_*`). The case is created lazily on first
+action. Surfaced as a Case column on the Issues tab and reflected as a status
+badge on the contact + family Direct Debit panels. All outbound recovery comms
+(reminders, legal escalation, Trengo) are human-confirmed drafts — Phase 3.
+
+**Phase 2 — reconciliation recording.** `recordRecovery` (core, tested) closes a case as `recovered` with the amount, method (`bank_transfer` via the invoicing site / `stripe` / `direct_debit` / `manual` / `other`) and an optional reference (invoice id, Stripe payment id). tRPC `finance.directDebit.cases.recordRecovery` (finance role, audited `direct_debit.case_recovered`); UI `RecordRecoveryDialog` on the Issues case cell. Records that money arrived elsewhere — never charges (§3). Auto-clear from invoicing/Stripe webhooks is a follow-up.
+
+**Phase 3a — recovery-comms templates.** `DdRecoveryTemplate` (kind: reminder / legal_escalation / other; channel: email / trengo / sms; subject + `{{token}}` body) is the staff-authored copy used to draft a human-confirmed send from a case. We ship NO copy — bodies start empty; Managers write them (legal wording is theirs). Pure token renderer `renderRecoveryTemplate` (`packages/core/src/finance/dd-comms.ts`, tested). tRPC `ddRecoveryTemplate.*` (list/pickList finance read; create/update/archive/restore Manager+; audited `dd_recovery_template.*`). UI: Settings → Direct Debit recovery templates. Phase 3b wires the dedicated human-confirmed send from a case (drafts from a template, agent reviews + sends, logs to the customer page).
+
+**Phase 3b — human-confirmed send.** `finance.directDebit.cases.sendRecovery` sends a recovery email (reminder / legal escalation) from a case: the agent picks a template (`SendRecoveryDialog`), tokens are filled from the case, they review/edit the subject + body, then send. It goes through the system Gmail mailbox (§14, never a third-party API), logs an `email_sent` Interaction on the contact so it reflects on the customer page, nudges a `new` case to `chasing`, and audits `direct_debit.recovery_sent`. Nothing sends without the agent clicking Send (§3). Email today; Trengo/SMS reuse the same template channels next.

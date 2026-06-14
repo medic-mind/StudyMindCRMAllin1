@@ -1,35 +1,10 @@
-// Cohorts & holidays. Create academic years (2026/2027 and beyond) and manage
-// the holiday breaks during which no class emails are sent.
+// Cohorts have been folded into Groups (each group = a subject + level, with its
+// term dates + holidays managed inside it). This route now redirects to Groups.
 
-import { PageBody } from '@/components/shell/page-body'
-import { PageHeader } from '@/components/shell/page-header'
-import { getCurrentUser } from '@/lib/auth/server'
-import { createServerCaller } from '@/lib/trpc/server'
-
-import { CohortsManager } from './CohortsManager'
+import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
-const MANAGE = new Set(['ceo', 'senior_manager', 'manager'])
-
-export default async function CohortsPage() {
-  const me = await getCurrentUser()
-  const caller = await createServerCaller()
-  const cohorts = await caller.webinar.cohort.list()
-
-  return (
-    <>
-      <PageHeader
-        title="Cohorts"
-        subtitle="An academic year. Open one to manage its classes, holidays, Zoom links, enrolments and emails."
-        breadcrumbs={[
-          { label: 'Webinars', href: '/webinars' },
-          { label: 'Cohorts', href: '/webinars/cohorts' },
-        ]}
-      />
-      <PageBody>
-        <CohortsManager initialCohorts={cohorts} canManage={MANAGE.has(me?.role ?? '')} />
-      </PageBody>
-    </>
-  )
+export default function CohortsIndexRedirect() {
+  redirect('/webinars/groups')
 }
