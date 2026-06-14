@@ -3,8 +3,9 @@
 // The /mail email client (ADR 0021). A Gmail-class layout: an icon folder rail
 // with a Compose pill, a full-width single-line message list with hover row
 // actions, a full-width conversation view, and a docked composer. Single main
-// pane (list XOR conversation) like Gmail. Chrome is neutral; the blue `info`
-// accent + amber stars are a deliberate scoped comms theme (CLAUDE.md §37) so
+// pane (list XOR conversation) like Gmail. Chrome is neutral; the exact Gmail
+// blue `gmail` accent + amber stars are a deliberate scoped comms theme
+// (CLAUDE.md §37, mirroring the Trengo inbox/* exception) so
 // it reads like Gmail rather than the product purple. All actions go through the
 // audited tRPC mutations; the live mailbox is the source of truth. §4, §14, §26.
 
@@ -12,7 +13,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
-import { Card } from '@/components/ui/card'
 import {
   ArchiveIcon,
   CheckIcon,
@@ -188,13 +188,13 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
     setChecked(allChecked ? new Set() : new Set(items.map((i) => i.id)))
 
   return (
-    <Card className="flex h-[calc(100vh-9.5rem)] overflow-hidden bg-white p-0">
+    <div className="flex h-full w-full overflow-hidden bg-white">
       {/* Rail */}
       <aside className="flex w-60 shrink-0 flex-col gap-1 overflow-y-auto border-r border-neutral-200 bg-neutral-50 p-3">
         <button
           type="button"
           onClick={() => setComposing(true)}
-          className="mb-3 inline-flex w-fit items-center gap-3 rounded-2xl bg-info-600 py-3 pl-4 pr-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-info-700"
+          className="mb-3 inline-flex w-fit items-center gap-3 rounded-2xl bg-gmail-600 py-3 pl-4 pr-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gmail-700"
         >
           <PencilIcon size={18} /> Compose
         </button>
@@ -214,11 +214,11 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
                 aria-current={active ? 'true' : undefined}
                 className={`flex items-center gap-3 rounded-full px-4 py-1.5 text-left text-sm transition-colors ${
                   active
-                    ? 'bg-info-100 font-semibold text-info-900'
+                    ? 'bg-gmail-100 font-semibold text-gmail-900'
                     : 'text-neutral-700 hover:bg-neutral-200/60'
                 }`}
               >
-                <Icon size={16} className={active ? 'text-info-700' : 'text-neutral-500'} />
+                <Icon size={16} className={active ? 'text-gmail-700' : 'text-neutral-500'} />
                 {label}
               </button>
             )
@@ -239,7 +239,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
               }}
               className={`truncate rounded-full px-4 py-1.5 text-left text-sm transition-colors ${
                 accountId === null
-                  ? 'bg-info-100 font-medium text-info-900'
+                  ? 'bg-gmail-100 font-medium text-gmail-900'
                   : 'text-neutral-700 hover:bg-neutral-200/60'
               }`}
             >
@@ -257,7 +257,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
                 }}
                 className={`truncate rounded-full px-4 py-1.5 text-left text-sm transition-colors ${
                   accountId === a.id
-                    ? 'bg-info-100 font-medium text-info-900'
+                    ? 'bg-gmail-100 font-medium text-gmail-900'
                     : 'text-neutral-700 hover:bg-neutral-200/60'
                 }`}
               >
@@ -267,7 +267,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
             {accounts.length === 0 ? (
               <a
                 href="/settings/email-accounts"
-                className="rounded-full px-4 py-1.5 text-sm text-info-700 hover:bg-neutral-200/60"
+                className="rounded-full px-4 py-1.5 text-sm text-gmail-700 hover:bg-neutral-200/60"
               >
                 Connect an account…
               </a>
@@ -291,7 +291,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
               onChange={(e) => setRawQuery(e.target.value)}
               placeholder="Search mail"
               aria-label="Search mail"
-              className="h-11 w-full rounded-lg border border-transparent bg-neutral-100 pl-11 pr-3 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-info-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-info-100"
+              className="h-11 w-full rounded-lg border border-transparent bg-neutral-100 pl-11 pr-3 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-gmail-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gmail-100"
             />
           </div>
         </div>
@@ -313,7 +313,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
                 aria-label={allChecked ? 'Deselect all' : 'Select all'}
                 className={`flex h-5 w-5 items-center justify-center rounded border ${
                   allChecked
-                    ? 'border-info-600 bg-info-600 text-white'
+                    ? 'border-gmail-600 bg-gmail-600 text-white'
                     : 'border-neutral-300 bg-white text-transparent hover:border-neutral-400'
                 }`}
               >
@@ -387,7 +387,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
       {composing ? (
         <ComposeDock accounts={accounts} onClose={() => setComposing(false)} />
       ) : null}
-    </Card>
+    </div>
   )
 }
 
@@ -443,7 +443,7 @@ function ThreadRow({
     <li
       onClick={onOpen}
       className={`group flex h-11 cursor-pointer items-center gap-3 border-b border-neutral-100 px-4 transition-shadow ${
-        checked ? 'bg-info-50' : unread ? 'bg-white' : 'bg-neutral-50/40'
+        checked ? 'bg-gmail-50' : unread ? 'bg-white' : 'bg-neutral-50/40'
       } hover:relative hover:z-10 hover:bg-white hover:shadow-md`}
     >
       <button
@@ -455,7 +455,7 @@ function ThreadRow({
         aria-label={checked ? 'Deselect' : 'Select'}
         className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border ${
           checked
-            ? 'border-info-600 bg-info-600 text-white'
+            ? 'border-gmail-600 bg-gmail-600 text-white'
             : 'border-neutral-300 bg-white text-transparent hover:border-neutral-500'
         }`}
       >
@@ -762,7 +762,7 @@ function ConversationView({
                               href={`/api/internal/mail-attachments/${m.id}/${a.index}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-info-300 hover:bg-info-50"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-gmail-300 hover:bg-gmail-50"
                             >
                               <FileTextIcon size={14} />
                               <span className="max-w-[14rem] truncate">{a.filename}</span>
@@ -815,7 +815,7 @@ function ConversationView({
                     type="button"
                     disabled={reply.isPending || !body.trim()}
                     onClick={sendReply}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-info-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-info-700 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-gmail-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-gmail-700 disabled:opacity-50"
                   >
                     <SendIcon size={15} /> {reply.isPending ? 'Sending…' : 'Send'}
                   </button>
@@ -1008,7 +1008,7 @@ function ComposeDock({ accounts, onClose }: { accounts: AccountOption[]; onClose
           type="button"
           disabled={compose.isPending}
           onClick={send}
-          className="inline-flex items-center gap-1.5 rounded-full bg-info-600 px-5 py-2 text-sm font-medium text-white hover:bg-info-700 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full bg-gmail-600 px-5 py-2 text-sm font-medium text-white hover:bg-gmail-700 disabled:opacity-50"
         >
           <SendIcon size={15} /> {compose.isPending ? 'Sending…' : 'Send'}
         </button>

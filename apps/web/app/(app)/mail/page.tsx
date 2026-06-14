@@ -35,22 +35,19 @@ export default async function MailPage() {
     )
   }
 
+  // Full-bleed: cancel the (app) shell's padding and fill the viewport below the
+  // topbar so the mail client feels like Gmail (no product page header / card
+  // chrome around it). The negative margins match the shell's p-4 / sm:p-6.
   return (
-    <>
-      <PageHeader
-        title="Mail"
-        subtitle="Your email, across every connected account — fully synced with Gmail."
+    <div className="-mx-4 -my-4 h-[calc(100dvh-var(--shell-topbar-height,4rem))] sm:-mx-6 sm:-my-6">
+      <MailWorkspace
+        accounts={accounts.map((a) => ({
+          id: a.id,
+          address: a.address,
+          displayName: a.displayName,
+          signatureHtml: a.signatureHtml,
+        }))}
       />
-      <PageBody>
-        <MailWorkspace
-          accounts={accounts.map((a) => ({
-            id: a.id,
-            address: a.address,
-            displayName: a.displayName,
-            signatureHtml: a.signatureHtml,
-          }))}
-        />
-      </PageBody>
-    </>
+    </div>
   )
 }

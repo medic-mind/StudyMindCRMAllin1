@@ -19,6 +19,7 @@ const config: Config = {
         danger: colors.danger,
         info: colors.info,
         trengo: colors.trengo,
+        gmail: colors.gmail,
       },
       fontFamily: {
         sans: [...typography.fontFamily.sans],
