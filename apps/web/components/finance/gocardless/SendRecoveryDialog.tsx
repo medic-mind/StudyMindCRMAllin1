@@ -9,7 +9,10 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 
-import { renderRecoveryTemplate, type RecoveryTemplateVars } from '@studymind/core/finance'
+// Import the pure template helper directly (NOT the finance barrel): the barrel
+// re-exports reconcile.ts which imports node:crypto, which webpack cannot bundle
+// into this client component (breaks `next build`).
+import { renderRecoveryTemplate, type RecoveryTemplateVars } from '@studymind/core/finance/dd-comms'
 
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'

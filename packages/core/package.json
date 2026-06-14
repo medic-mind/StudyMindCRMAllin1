@@ -25,6 +25,7 @@
     "./chat/parse": "./src/chat/parse.ts",
     "./chat/s3": "./src/chat/s3.ts",
     "./finance": "./src/finance/index.ts",
+    "./finance/dd-comms": "./src/finance/dd-comms.ts",
     "./interaction": "./src/interaction/index.ts",
     "./knowledge": "./src/knowledge/index.ts",
     "./lead": "./src/lead/index.ts",
