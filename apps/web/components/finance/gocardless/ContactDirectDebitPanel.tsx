@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
+import { SendRecoveryDialog } from './SendRecoveryDialog'
+
 interface Props {
   contactId: string
   /** ceo / senior_manager / manager — shows the send-setup-link action. */
@@ -249,6 +251,26 @@ export function ContactDirectDebitPanel({ contactId, canManage }: Props) {
                       </Badge>
                     ) : null}
                     {s.name ? <span className="text-xs text-neutral-500">· {s.name}</span> : null}
+                    {canManage &&
+                    typeof s.shortfallMinor === 'number' &&
+                    s.shortfallMinor > 0 &&
+                    (s.caseStatus == null || s.caseStatus !== 'recovered') ? (
+                      <SendRecoveryDialog
+                        context={{
+                          gcSubscriptionId: s.gcSubscriptionId,
+                          contactId,
+                          gcCustomerId: firstCustomer?.gcCustomerId ?? null,
+                          familyId: null,
+                          customerName: firstCustomer?.name ?? null,
+                          planName: s.name ?? null,
+                          currency: s.currency,
+                          shortfallMinor: s.shortfallMinor,
+                          collectedMinor: s.collectedMinor ?? 0,
+                          expectedTotalMinor:
+                            s.expectedTotalMinor ?? s.amountMinor * (s.totalPaymentCount ?? 0),
+                        }}
+                      />
+                    ) : null}
                     {s.nextChargeAt ? (
                       <span className="ml-auto text-xs text-neutral-500">
                         next {formatDate(s.nextChargeAt)}

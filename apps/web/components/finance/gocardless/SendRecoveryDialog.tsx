@@ -1,10 +1,11 @@
 'use client'
 
-// Send a human-confirmed recovery email from a Direct Debit case (ADR 0038,
-// Phase 3b). The agent picks a staff-authored template, the tokens are filled
-// from the case, then they review/edit the subject + body and send. The send
-// goes through the system mailbox and logs onto the customer's timeline.
-// Nothing sends without the agent clicking Send (CLAUDE.md §3).
+// Send a human-confirmed recovery message from a Direct Debit case (ADR 0038,
+// Phase 3b/3c). The agent picks a staff-authored template, the tokens are
+// filled from the case, then they review/edit and send by email or SMS. Email
+// goes via the system mailbox and logs an email_sent Interaction; SMS goes via
+// Trengo (continuing the contact's thread, else starting one). Nothing sends
+// without the agent clicking Send (CLAUDE.md §3).
 
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -31,6 +32,8 @@ export interface SendRecoveryContext {
   expectedTotalMinor: number
 }
 
+type Channel = 'email' | 'sms'
+
 function buildVars(ctx: SendRecoveryContext): RecoveryTemplateVars {
   const full = ctx.customerName ?? ''
   const first = full.split(/\s+/u)[0] ?? ''
@@ -49,19 +52,20 @@ function buildVars(ctx: SendRecoveryContext): RecoveryTemplateVars {
 
 export function SendRecoveryDialog({ context }: { context: SendRecoveryContext }) {
   const [open, setOpen] = useState(false)
+  const [channel, setChannel] = useState<Channel>('email')
   const [templateId, setTemplateId] = useState('')
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
 
-  const templates = trpc.ddRecoveryTemplate.pickList.useQuery(
-    { channel: 'email' },
-    { enabled: open },
-  )
+  // All active templates; filtered to the chosen channel below (SMS also offers
+  // the generic Trengo-channel templates).
+  const templates = trpc.ddRecoveryTemplate.pickList.useQuery(undefined, { enabled: open })
   const utils = trpc.useUtils()
   const send = trpc.finance.directDebit.cases.sendRecovery.useMutation({
     onSuccess: async () => {
       await utils.finance.directDebit.cases.forSubscriptions.invalidate()
-      toast.success('Recovery email sent')
+      await utils.gocardless.contactSummary.invalidate()
+      toast.success(channel === 'email' ? 'Recovery email sent' : 'Recovery SMS sent')
       setOpen(false)
     },
     onError: (e) => toast.error(e.message),
@@ -70,25 +74,41 @@ export function SendRecoveryDialog({ context }: { context: SendRecoveryContext }
   const vars = buildVars(context)
   const noContact = !context.contactId
 
+  const visibleTemplates = (templates.data ?? []).filter((t) =>
+    channel === 'email' ? t.channel === 'email' : t.channel === 'sms' || t.channel === 'trengo',
+  )
+
+  function selectChannel(next: Channel) {
+    setChannel(next)
+    setTemplateId('')
+    setSubject('')
+    setBody('')
+  }
+
   function applyTemplate(id: string) {
     setTemplateId(id)
-    const t = templates.data?.find((x) => x.id === id)
+    const t = visibleTemplates.find((x) => x.id === id)
     if (!t) return
-    setSubject(renderRecoveryTemplate(t.subject ?? '', vars))
+    if (channel === 'email') setSubject(renderRecoveryTemplate(t.subject ?? '', vars))
     setBody(renderRecoveryTemplate(t.body, vars))
   }
 
   function submit() {
     if (!context.contactId) return
-    if (!subject.trim() || !body.trim()) {
-      toast.error('Subject and body are required')
+    if (channel === 'email' && !subject.trim()) {
+      toast.error('Subject is required')
+      return
+    }
+    if (!body.trim()) {
+      toast.error('Message is required')
       return
     }
     send.mutate({
       gcSubscriptionId: context.gcSubscriptionId,
       contactId: context.contactId,
+      channel,
       templateId: templateId || null,
-      subject,
+      subject: channel === 'email' ? subject : undefined,
       body,
       links: {
         gcCustomerId: context.gcCustomerId,
@@ -101,25 +121,39 @@ export function SendRecoveryDialog({ context }: { context: SendRecoveryContext }
   return (
     <>
       <Button type="button" size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Send email
+        Send message
       </Button>
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Send recovery email"
+        title="Send recovery message"
         dismissable={!send.isPending}
       >
         <div className="space-y-3">
           {noContact ? (
             <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              This plan isn&apos;t linked to a CRM contact yet, so there&apos;s no one to email.
+              This plan isn&apos;t linked to a CRM contact yet, so there&apos;s no one to message.
               Link the GoCardless customer first.
             </p>
           ) : (
             <>
+              <div className="inline-flex rounded-md border border-neutral-200 p-0.5 text-sm">
+                {(['email', 'sms'] as Channel[]).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`rounded px-3 py-1 ${
+                      channel === c ? 'bg-neutral-900 text-white' : 'text-neutral-600'
+                    }`}
+                    onClick={() => selectChannel(c)}
+                  >
+                    {c === 'email' ? 'Email' : 'SMS'}
+                  </button>
+                ))}
+              </div>
               <p className="text-xs text-neutral-500">
-                Review and edit before sending — this goes to the customer from the system
-                mailbox and is logged on their timeline.
+                Review and edit before sending — this goes to the customer and is logged on their
+                timeline.
               </p>
               <Field label="Template" htmlFor="recovery-template">
                 <select
@@ -129,27 +163,29 @@ export function SendRecoveryDialog({ context }: { context: SendRecoveryContext }
                   onChange={(e) => applyTemplate(e.target.value)}
                 >
                   <option value="">Choose a template…</option>
-                  {(templates.data ?? []).map((t) => (
+                  {visibleTemplates.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.kind === 'legal_escalation' ? '⚖ ' : ''}
                       {t.name}
                     </option>
                   ))}
                 </select>
-                {templates.data && templates.data.length === 0 ? (
+                {templates.data && visibleTemplates.length === 0 ? (
                   <span className="text-xs text-neutral-500">
-                    No email templates yet — add them in Settings → Direct Debit recovery
-                    templates.
+                    No {channel === 'email' ? 'email' : 'SMS'} templates yet — add them in Settings
+                    → Direct Debit recovery templates.
                   </span>
                 ) : null}
               </Field>
-              <Field label="Subject" htmlFor="recovery-subject">
-                <Input
-                  id="recovery-subject"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                />
-              </Field>
+              {channel === 'email' ? (
+                <Field label="Subject" htmlFor="recovery-subject">
+                  <Input
+                    id="recovery-subject"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                  />
+                </Field>
+              ) : null}
               <Field label="Message" htmlFor="recovery-body">
                 <textarea
                   id="recovery-body"
@@ -170,13 +206,8 @@ export function SendRecoveryDialog({ context }: { context: SendRecoveryContext }
             >
               Cancel
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={submit}
-              disabled={send.isPending || noContact}
-            >
-              {send.isPending ? 'Sending…' : 'Send email'}
+            <Button type="button" size="sm" onClick={submit} disabled={send.isPending || noContact}>
+              {send.isPending ? 'Sending…' : channel === 'email' ? 'Send email' : 'Send SMS'}
             </Button>
           </div>
         </div>
