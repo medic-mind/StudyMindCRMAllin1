@@ -405,6 +405,7 @@ type ThreadItem = {
   isStarred: boolean
   isTrashed: boolean
   preview: string | null
+  labels: string[]
   lastMessageAt: Date
   accountAddress: string | null
   contactName: string | null
@@ -488,6 +489,14 @@ function ThreadRow({
       </span>
 
       <span className="min-w-0 flex-1 truncate text-sm">
+        {item.labels.map((l) => (
+          <span
+            key={l}
+            className="mr-1 inline-block max-w-[10rem] truncate rounded border border-neutral-200 bg-neutral-100 px-1.5 py-px align-middle text-[10px] font-medium text-neutral-600"
+          >
+            {l}
+          </span>
+        ))}
         <span className={unread ? 'font-semibold text-neutral-900' : 'text-neutral-700'}>
           {item.subject ?? '(no subject)'}
         </span>
@@ -711,9 +720,23 @@ function ConversationView({
 
       {/* Subject */}
       <div className="flex items-start gap-2 border-b border-neutral-100 px-6 py-4">
-        <h1 className="min-w-0 flex-1 text-xl font-normal text-neutral-900">
-          {head.subject ?? '(no subject)'}
-        </h1>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-normal text-neutral-900">
+            {head.subject ?? '(no subject)'}
+          </h1>
+          {head.tags.length > 0 ? (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {head.tags.map((l) => (
+                <span
+                  key={l}
+                  className="rounded border border-neutral-200 bg-neutral-100 px-1.5 py-px text-[11px] font-medium text-neutral-600"
+                >
+                  {l}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
         {isEmail ? (
           <button
             type="button"

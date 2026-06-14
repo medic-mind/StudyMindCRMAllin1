@@ -1260,6 +1260,11 @@ model Conversation {
   /// comms centre shows under the contact name (Trengo parity). Display
   /// convenience only; bodies live in Interaction.
   lastMessagePreview String?
+  /// Display name of the most recent INBOUND message's sender (email channel:
+  /// the From header's display name, e.g. "Mohil Shah"). The mail list shows
+  /// this — the actual sender — like Gmail, rather than the matched CRM
+  /// contact's name. Null until an inbound message with a display name lands.
+  lastSenderName String?
   /// WhatsApp 24-hour reply window deadline derived from the most recent
   /// inbound on a whatsapp conversation. Null otherwise.
   replyDeadlineAt  DateTime?
