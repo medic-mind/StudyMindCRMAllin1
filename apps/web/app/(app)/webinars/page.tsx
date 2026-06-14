@@ -4,7 +4,6 @@
 
 import Link from 'next/link'
 
-import { Badge } from '@/components/ui/badge'
 import { Card, CardBody } from '@/components/ui/card'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
@@ -63,28 +62,23 @@ export default async function WebinarsOverviewPage() {
         breadcrumbs={[{ label: 'Webinars', href: '/webinars' }]}
       />
       <PageBody>
-        {o.activeCohort ? (
-          <p className="mb-4 text-sm text-neutral-600">
-            Active cohort:{' '}
-            <Badge tone="info">{o.activeCohort.name}</Badge>
-          </p>
-        ) : (
-          <Card className="mb-4 border-amber-200 bg-amber-50">
-            <CardBody>
-              <p className="text-sm text-amber-800">
-                No active cohort yet. Head to{' '}
-                <Link href="/webinars/cohorts" className="font-medium underline">
-                  Cohorts &amp; holidays
-                </Link>{' '}
-                to create one (e.g. 2026/2027) and mark it active.
-              </p>
-            </CardBody>
-          </Card>
-        )}
+        <Card className="mb-4 border-primary-100 bg-primary-50/40">
+          <CardBody>
+            <p className="text-sm text-neutral-700">
+              Manage everything from{' '}
+              <Link href="/webinars/groups" className="font-medium text-primary-700 underline">
+                Groups
+              </Link>{' '}
+              — each group is a subject + level (e.g. A-Level Biology) with its own weekly classes,
+              Zoom link, template, settings and students. Import a timetable to set one up in
+              seconds.
+            </p>
+          </CardBody>
+        </Card>
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-          <Stat label="Active classes" value={o.classCount} href="/webinars/cohorts" />
-          <Stat label="Sessions this week" value={o.sessionsThisWeek} href="/webinars/cohorts" />
+          <Stat label="Groups" value={o.classCount} href="/webinars/groups" />
+          <Stat label="Classes this week" value={o.sessionsThisWeek} href="/webinars/groups" />
           <Stat label="Active enrolments" value={o.activeEnrollments} href="/webinars/enrollments" />
           <Stat
             label="Awaiting review"
@@ -100,7 +94,7 @@ export default async function WebinarsOverviewPage() {
           <Stat
             label="Zoom links to rotate"
             value={o.zoomRotationDue}
-            href="/webinars/cohorts"
+            href="/webinars/groups"
             tone={o.zoomRotationDue > 0 ? 'danger' : undefined}
           />
           <Stat label="Emails sent (7 days)" value={o.emailsSentLast7Days} />
@@ -111,12 +105,13 @@ export default async function WebinarsOverviewPage() {
             <h2 className="text-sm font-semibold text-neutral-900">How it works</h2>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-neutral-600">
               <li>
-                Create a cohort (academic year) with its holiday breaks, then add a class per
-                subject &amp; level.
+                Create a <strong>group</strong> per subject &amp; level — fastest is to import its
+                timetable (CSV/PDF) on the Groups page, which fills in the weekly classes, term dates
+                and holidays for you.
               </li>
               <li>
-                Set each class&apos;s weekly slot, Zoom link and syllabus (type the weekly topics or
-                upload a PDF).
+                Open the group to set its weekly slot, Zoom link, reminder email and weekly class
+                topics — all on one page.
               </li>
               <li>
                 Press <strong>Detect from Stripe</strong> on Enrolments — the app reads your active

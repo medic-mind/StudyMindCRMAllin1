@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { htmlToPlainText } from '@/lib/html-text'
 import { trpc } from '@/lib/trpc/client'
 
-import type { ClassDetailView as Detail, EnrollmentRow } from '../../types'
+import type { ClassDetailView as Detail, EnrollmentRow } from '../types'
 
 type EnrollmentStatus = 'pending_review' | 'active' | 'paused' | 'expired' | 'cancelled'
 
@@ -30,7 +30,7 @@ const STATUS_TONE: Record<string, 'success' | 'warn' | 'neutral' | 'danger' | 'i
   cancelled: 'neutral',
 }
 
-export function ClassDetail({
+export function GroupWorkspace({
   detail,
   enrollments,
   canManage,
@@ -41,6 +41,7 @@ export function ClassDetail({
 }) {
   return (
     <div className="space-y-5">
+      <GroupSummaryStrip detail={detail} studentCount={enrollments.length} />
       <ThisWeekCard detail={detail} />
       <ZoomCard detail={detail} canManage={canManage} />
       <SyllabusCard detail={detail} canManage={canManage} />
@@ -49,6 +50,60 @@ export function ClassDetail({
       <EnrollmentsCard classId={detail.id} initial={enrollments} canManage={canManage} />
       {canManage ? <BroadcastCard classId={detail.id} /> : null}
     </div>
+  )
+}
+
+const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+function GroupSummaryStrip({ detail, studentCount }: { detail: Detail; studentCount: number }) {
+  const h = Math.floor(detail.startMinute / 60)
+  const m = detail.startMinute % 60
+  const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  const week = detail.currentWeek
+  const weekLabel =
+    week.state === 'in_week' && week.weekNumber
+      ? `Week ${week.weekNumber} of ${week.totalWeeks}`
+      : week.state === 'not_started'
+        ? 'Not started'
+        : week.state === 'ended'
+          ? 'Term ended'
+          : `${week.totalWeeks} weeks`
+  const stats: Array<{ label: string; value: string; tone?: 'good' | 'warn' }> = [
+    { label: 'When', value: `${WEEKDAY_NAMES[detail.dayOfWeek] ?? '—'}s · ${time}` },
+    { label: 'Students', value: String(studentCount) },
+    { label: 'This week', value: weekLabel },
+    {
+      label: 'Zoom',
+      value: detail.zoomLink ? 'Set' : 'Needed',
+      tone: detail.zoomLink ? 'good' : 'warn',
+    },
+  ]
+  return (
+    <Card>
+      <CardBody className="!py-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {stats.map((s) => (
+            <div key={s.label}>
+              <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-400">
+                {s.label}
+              </div>
+              <div
+                className={
+                  'mt-0.5 text-sm font-semibold ' +
+                  (s.tone === 'good'
+                    ? 'text-emerald-700'
+                    : s.tone === 'warn'
+                      ? 'text-amber-700'
+                      : 'text-neutral-900')
+                }
+              >
+                {s.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardBody>
+    </Card>
   )
 }
 
@@ -366,15 +421,25 @@ function SyllabusCard({ detail, canManage }: { detail: Detail; canManage: boolea
       <CardBody>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold text-neutral-900">Syllabus &amp; schedule</h2>
+            <h2 className="text-sm font-semibold text-neutral-900">Weekly classes</h2>
             <p className="mt-1 text-xs text-neutral-500">
-              {detail.sessionCount} teaching weeks (holidays excluded). Type the weekly topics, or
-              upload a ready-made PDF.
+              {detail.sessionCount} weekly classes this term (holidays excluded). Type the topic for
+              each, or upload a ready-made PDF.
             </p>
           </div>
-          {detail.hasUploadedPdf ? (
-            <Badge tone="info">PDF: {detail.uploadedPdfFileName}</Badge>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {detail.hasUploadedPdf ? (
+              <Badge tone="info">PDF: {detail.uploadedPdfFileName}</Badge>
+            ) : null}
+            <a
+              href={`/webinars/groups/${detail.id}/schedule.pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center rounded-md border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              Preview schedule PDF
+            </a>
+          </div>
         </div>
 
         {canManage ? (
@@ -457,13 +522,10 @@ function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolea
   return (
     <Card>
       <CardBody>
-        <h2 className="mb-1 text-sm font-semibold text-neutral-900">Class settings</h2>
+        <h2 className="mb-1 text-sm font-semibold text-neutral-900">Group settings</h2>
         <p className="mb-3 text-xs text-neutral-500">
-          The reminder email template and send days/times are set per cohort (on the{' '}
-          <Link href={`/webinars/cohorts/${detail.cohortId}`} className="text-primary-700 hover:underline">
-            cohort page
-          </Link>
-          ).
+          The slot, day, Zoom rotation and status. The reminder email and term dates are further
+          down this page.
         </p>
         <form
           className="space-y-3"
@@ -522,73 +584,119 @@ function EnrollmentsCard({
     onSuccess: () => void utils.webinar.enrollment.list.invalidate({ classId }),
     onError: (e) => toast.error(e.message),
   })
+  const [filter, setFilter] = useState<'all' | EnrollmentStatus>('all')
   const rows = list.data ?? []
+
+  const counts: Record<string, number> = {}
+  for (const r of rows) counts[r.status] = (counts[r.status] ?? 0) + 1
+  const visible = filter === 'all' ? rows : rows.filter((r) => r.status === filter)
+
+  const FILTERS: Array<{ key: 'all' | EnrollmentStatus; label: string }> = [
+    { key: 'all', label: `All ${rows.length}` },
+    { key: 'active', label: `Active ${counts['active'] ?? 0}` },
+    { key: 'pending_review', label: `Pending ${counts['pending_review'] ?? 0}` },
+    { key: 'paused', label: `Paused ${counts['paused'] ?? 0}` },
+    { key: 'expired', label: `Expired ${counts['expired'] ?? 0}` },
+  ]
+
   return (
     <Card>
       <CardBody>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-neutral-900">Mailing list ({rows.length})</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-neutral-900">
+            Students <span className="font-normal text-neutral-400">({rows.length})</span>
+          </h2>
+          <span className="text-xs text-neutral-500">
+            {counts['active'] ?? 0} active
+            {counts['pending_review'] ? ` · ${counts['pending_review']} to review` : ''}
+          </span>
         </div>
-        {canManage ? (
-          <AddToList
-            classId={classId}
-            onAdded={() => void utils.webinar.enrollment.list.invalidate({ classId })}
-          />
-        ) : null}
-        {rows.length === 0 ? (
-          <p className="text-sm text-neutral-500">
-            No one on the list yet. Add someone above, or use <strong>Detect from Stripe</strong> on
-            the Enrolments page.
-          </p>
-        ) : (
-          <div className="space-y-1.5">
-            {rows.map((e) => (
-              <div
-                key={e.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded bg-neutral-50 px-3 py-2 text-sm"
+
+        {rows.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                className={
+                  'rounded-full px-2.5 py-0.5 text-xs ' +
+                  (filter === f.key
+                    ? 'bg-primary-600 font-medium text-white'
+                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200')
+                }
               >
-                <div>
-                  <span className="font-medium text-neutral-800">{e.contactName}</span>{' '}
-                  <span className="text-neutral-500">{e.contactEmail}</span>
-                  {e.billingInterval ? (
-                    <Badge tone="neutral" className="ml-2">
-                      {e.billingInterval === 'year' ? 'yearly' : 'monthly'}
+                {f.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {canManage ? (
+          <div className="mt-3">
+            <AddToList
+              classId={classId}
+              onAdded={() => void utils.webinar.enrollment.list.invalidate({ classId })}
+            />
+          </div>
+        ) : null}
+
+        {rows.length === 0 ? (
+          <p className="mt-3 text-sm text-neutral-500">
+            No students yet. Add someone above, or use <strong>Detect from Stripe</strong> on the
+            Enrolments page to pull in active subscribers automatically.
+          </p>
+        ) : visible.length === 0 ? (
+          <p className="mt-3 text-sm text-neutral-500">No {filter.replace('_', ' ')} students.</p>
+        ) : (
+          <div className="mt-3 divide-y divide-neutral-100">
+            {visible.map((e) => (
+              <div key={e.id} className="flex flex-wrap items-center gap-3 py-2">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-50 text-xs font-semibold text-primary-700">
+                  {studentInitials(e.contactName)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/contacts/${e.contactId}`}
+                      className="truncate text-sm font-medium text-neutral-900 hover:text-primary-700 hover:underline"
+                    >
+                      {e.contactName}
+                    </Link>
+                    <Badge tone={STATUS_TONE[e.status] ?? 'neutral'}>
+                      {e.status.replace('_', ' ')}
                     </Badge>
-                  ) : null}
-                  {e.expiresAt ? (
-                    <span className="ml-2 text-xs text-neutral-400">
-                      access to {new Date(e.expiresAt).toLocaleDateString('en-GB')}
-                    </span>
-                  ) : null}
-                  {e.matchReason ? (
-                    <span className="ml-2 text-xs text-neutral-400">{e.matchReason}</span>
-                  ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-2 text-xs text-neutral-500">
+                    {e.contactEmail ? <span className="truncate">{e.contactEmail}</span> : null}
+                    {e.billingInterval ? (
+                      <span>· {e.billingInterval === 'year' ? 'yearly' : 'monthly'}</span>
+                    ) : null}
+                    {e.expiresAt ? (
+                      <span>· until {new Date(e.expiresAt).toLocaleDateString('en-GB')}</span>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge tone={STATUS_TONE[e.status] ?? 'neutral'}>{e.status}</Badge>
-                  {canManage ? (
-                    <>
-                      <Select
-                        value={e.status}
-                        onChange={(ev) =>
-                          setStatus.mutate({
-                            id: e.id,
-                            status: ev.target.value as EnrollmentStatus,
-                          })
-                        }
-                      >
-                        <option value="active">Active</option>
-                        <option value="pending_review">Pending review</option>
-                        <option value="paused">Paused</option>
-                        <option value="expired">Expired</option>
-                        <option value="cancelled">Cancelled</option>
-                      </Select>
-                      <Button variant="ghost" size="xs" onClick={() => remove.mutate({ id: e.id })}>
-                        Remove
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
+                {canManage ? (
+                  <div className="flex items-center gap-1.5">
+                    <Select
+                      className="h-8 text-xs"
+                      value={e.status}
+                      onChange={(ev) =>
+                        setStatus.mutate({ id: e.id, status: ev.target.value as EnrollmentStatus })
+                      }
+                    >
+                      <option value="active">Active</option>
+                      <option value="pending_review">Pending review</option>
+                      <option value="paused">Paused</option>
+                      <option value="expired">Expired</option>
+                      <option value="cancelled">Cancelled</option>
+                    </Select>
+                    <Button variant="ghost" size="xs" onClick={() => remove.mutate({ id: e.id })}>
+                      Remove
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -596,6 +704,13 @@ function EnrollmentsCard({
       </CardBody>
     </Card>
   )
+}
+
+/** Up-to-two-letter initials for a student avatar. */
+function studentInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  return (parts[0]![0]! + (parts[1]?.[0] ?? '')).toUpperCase()
 }
 
 interface DetectedHoliday {

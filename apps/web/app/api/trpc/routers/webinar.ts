@@ -18,6 +18,7 @@ import {
   formatSessionDateShort,
   formatSessionTime,
   levelLabel,
+  parseTabularTimetable,
   renderTemplate,
   sessionStartInstant,
   subjectLabel,
@@ -52,6 +53,7 @@ import { client as zoomClient } from '@studymind/integration-zoom'
 import { detectEnrollmentsFromStripe } from '@/lib/webinar/enrollment-service'
 import { importToText, parseScheduleFallback, type ImportKind } from '@/lib/webinar/import-helpers'
 import { sendRecordingsForClassId } from '@/lib/webinar/recordings-service'
+import { sendTestReminderForClass } from '@/lib/webinar/test-reminder'
 
 import { webinarLevelRouter, webinarSubjectRouter } from './webinar-catalogue'
 
@@ -238,6 +240,8 @@ const cohortRouter = router({
       z.object({
         id: z.string(),
         notes: z.string().trim().max(1000).nullish(),
+        startsOn: dateSchema.optional(),
+        endsOn: dateSchema.optional(),
         emailSubjectTemplate: z.string().trim().max(300).optional(),
         emailBodyTemplate: z.string().trim().max(8000).optional(),
         emailBodyHtml: z.string().trim().max(20_000).optional(),
@@ -251,15 +255,22 @@ const cohortRouter = router({
       assertCanManage(user.role)
       const before = await ctx.db.webinarCohort.findUnique({
         where: { id: input.id },
-        select: { id: true },
+        select: { id: true, startsOn: true, endsOn: true },
       })
       if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      const startsOn = input.startsOn ?? before.startsOn
+      const endsOn = input.endsOn ?? before.endsOn
+      if (endsOn.getTime() <= startsOn.getTime()) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'End date must be after start date.' })
+      }
       const sendDays =
         input.sendDaysOfWeek !== undefined ? [...new Set(input.sendDaysOfWeek)].sort() : undefined
       await ctx.db.webinarCohort.update({
         where: { id: input.id },
         data: {
           ...(input.notes !== undefined ? { notes: input.notes } : {}),
+          ...(input.startsOn !== undefined ? { startsOn: input.startsOn } : {}),
+          ...(input.endsOn !== undefined ? { endsOn: input.endsOn } : {}),
           ...(input.emailSubjectTemplate !== undefined
             ? { emailSubjectTemplate: input.emailSubjectTemplate }
             : {}),
@@ -479,6 +490,7 @@ const classRouter = router({
       sendHourLocal: cl.sendHourLocal,
       emailSubjectTemplate: cl.emailSubjectTemplate,
       emailBodyTemplate: cl.emailBodyTemplate,
+      emailBodyHtml: cl.emailBodyHtml,
       active: cl.active,
       hasUploadedPdf: (cl.syllabusPdfByteSize ?? 0) > 0,
       uploadedPdfFileName: cl.syllabusPdfFileName,
@@ -600,6 +612,7 @@ const classRouter = router({
         zoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
         emailSubjectTemplate: z.string().trim().max(300).nullish(),
         emailBodyTemplate: z.string().trim().max(8000).nullish(),
+        emailBodyHtml: z.string().trim().max(40_000).nullish(),
         active: z.boolean().optional(),
       }),
     )
@@ -740,6 +753,26 @@ const classRouter = router({
       return { id: input.id, joinUrl: meeting.join_url }
     }),
 
+  /** Send a real reminder (rendered email + the schedule PDF) to the acting
+   *  user, so staff preview exactly what students receive. */
+  sendTestReminder: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      if (!user.email) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Your account has no email address.' })
+      }
+      const res = await sendTestReminderForClass(ctx.db, input.id, user.email, ctx.requestId)
+      if (res.status === 'error') {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: res.detail || 'Could not send the test email.',
+        })
+      }
+      return { status: res.status, to: user.email }
+    }),
+
   /** Manually email this class's latest Zoom recording to the active list now. */
   sendRecordingNow: protectedProcedure
     .input(z.object({ id: z.string() }))
@@ -863,6 +896,39 @@ const classRouter = router({
         action: 'webinar.class_archived',
         target: { type: 'WebinarClass', id: input.id },
         before,
+      })
+      return { id: input.id }
+    }),
+
+  /**
+   * Permanently delete a group (class) and everything under it — its weekly
+   * schedule, its mailing list and its dispatch log all cascade. The Zoom
+   * meeting (if app-generated) is deleted too. Irreversible; Manager+ only.
+   * Distinct from `archive` (soft, keeps the row).
+   */
+  delete: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      const cls = await ctx.db.webinarClass.findUnique({
+        where: { id: input.id },
+        select: { id: true, subject: true, level: true, title: true, zoomMeetingId: true },
+      })
+      if (!cls) throw new TRPCError({ code: 'NOT_FOUND' })
+      if (cls.zoomMeetingId && zoomClient.isConfigured()) {
+        try {
+          await zoomClient.deleteMeeting(cls.zoomMeetingId)
+        } catch {
+          // Best effort — deleting the group proceeds regardless.
+        }
+      }
+      // Enrolments, dispatches and syllabus weeks all FK-cascade on delete.
+      await ctx.db.webinarClass.delete({ where: { id: input.id } })
+      await ctx.audit({
+        action: 'webinar.class_deleted',
+        target: { type: 'WebinarClass', id: input.id },
+        before: { subject: cls.subject, level: cls.level, title: cls.title },
       })
       return { id: input.id }
     }),
@@ -1184,6 +1250,24 @@ const timetableRouter = router({
         }),
       ])
 
+      // 1. Deterministic FIRST (rules-first, §3/§18): a structured CSV /
+      //    spreadsheet export ("one row per week") parses perfectly with no AI,
+      //    so the importer works even when no AI provider is configured.
+      const tabular = parseTabularTimetable(text)
+      if (tabular) {
+        const plan = buildTimetablePlan(tabular, { subjects, levels })
+        if (plan.classes.length > 0) {
+          const n = plan.classes.length
+          return {
+            ...plan,
+            note: `Read ${n} class${n === 1 ? '' : 'es'} directly from the spreadsheet columns — no AI needed. Review and create.`,
+            source: 'table' as const,
+          }
+        }
+      }
+
+      // 2. AI structurer for unstructured input (a prose paste, an odd PDF).
+      let aiError: string | null = null
       try {
         const prompt = buildTimetableImportPrompt({
           text,
@@ -1201,20 +1285,26 @@ const timetableRouter = router({
           ctx: { requestId: ctx.requestId, source: 'webinar.timetable_import' },
         })
         const plan = buildTimetablePlan(out, { subjects, levels })
-        return {
-          ...plan,
-          note: out.note || (plan.classes.length > 0 ? 'Parsed with AI.' : 'No classes found.'),
-          source: 'ai' as const,
+        if (plan.classes.length > 0 || plan.holidays.length > 0) {
+          return {
+            ...plan,
+            note: out.note || 'Parsed with AI. Review and create.',
+            source: 'ai' as const,
+          }
         }
-      } catch {
-        // Degrade cleanly when AI is unavailable / over budget (§18 guardrail):
-        // there is no deterministic parser for a full timetable, so we ask the
-        // operator to create the cohort by hand and use the per-class importer.
-        return {
-          ...emptyPlan,
-          note: 'AI could not structure that timetable right now. Create the cohort manually, then import each class schedule from its page.',
-          source: 'fallback' as const,
-        }
+        aiError = 'The AI read the text but found no classes in it.'
+      } catch (err) {
+        // Surface the REAL reason (bad key, model not found, budget) so the
+        // operator can fix it — silently degrading is what made this look broken.
+        aiError = err instanceof Error ? err.message : 'AI request failed.'
+      }
+
+      return {
+        ...emptyPlan,
+        note: aiError
+          ? `Couldn't read this as a spreadsheet table, and the AI step failed: ${aiError}`
+          : 'Could not find any classes in that input. Upload the spreadsheet (CSV) export, or paste the timetable.',
+        source: 'fallback' as const,
       }
     }),
 

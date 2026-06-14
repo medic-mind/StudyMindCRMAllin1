@@ -166,7 +166,10 @@ export async function listPlanShortfalls(
   db: DbClient,
 ): Promise<PlanShortfallWithCustomer[]> {
   const subscriptions = await db.gcSubscription.findMany({
-    where: { deletedAt: null, status: { in: [...TERMINAL_PLAN_STATES] } },
+    // `shortfallIgnored` plans are historic (cancelled before go-live, June
+    // 2026) and handled on another system — excluded so the CRM only tracks
+    // cancellations from go-live onward (ADR 0038, seventh amendment).
+    where: { deletedAt: null, status: { in: [...TERMINAL_PLAN_STATES] }, shortfallIgnored: false },
     select: {
       gcSubscriptionId: true,
       name: true,

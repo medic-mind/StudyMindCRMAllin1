@@ -277,6 +277,13 @@ export const EVENT_NAMES = [
   // human; the job records the unresolved charge in the first place.
   'finance.unresolved_payment_resolved',
   'finance.unresolved_payment_dismissed',
+  // Direct Debit recovery cases (ADR 0038, seventh amendment): the agent
+  // workflow to recover a cancelled/underpaid plan's shortfall.
+  'direct_debit.case_opened',
+  'direct_debit.case_status_changed',
+  'direct_debit.case_assigned',
+  'direct_debit.case_note_updated',
+  'direct_debit.case_recovered',
   'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
@@ -302,6 +309,7 @@ export const EVENT_NAMES = [
   'gocardless.mandate.cancel_requested',
   'gocardless.customer.linked',
   'gocardless.customer.unlinked',
+  'gocardless.customers.relinked',
   'gocardless.setup_link.created',
   'gocardless.setup_link.emailed',
   'gocardless.setup_link.reminder_sent',
@@ -384,6 +392,8 @@ export const EVENT_NAMES = [
   'gmail.oauth_scope_mismatch',
   'gmail.oauth_invalid_state',
   'gmail.oauth_needs_reconnect',
+  'gmail.oauth_profile_failed',
+  'gmail.oauth_error',
 
   // Communications Hub — multi-account mail (ADR 0021). MailAccount lifecycle
   // (personal + shared team inboxes) and shared-inbox membership. Reuses the
@@ -494,6 +504,7 @@ export const EVENT_NAMES = [
   'webinar.class_created',
   'webinar.class_updated',
   'webinar.class_archived',
+  'webinar.class_deleted',
   'webinar.zoom_link_rotated',
   'webinar.syllabus_set',
   'webinar.syllabus_generated',

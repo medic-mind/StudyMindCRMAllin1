@@ -13,7 +13,11 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { flag } from '@studymind/core/flags'
-import { applyMailToConversation } from '@studymind/core/mail'
+import {
+  applyMailFlagsToConversation,
+  applyMailToConversation,
+  prepareEmailHtml,
+} from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -25,9 +29,11 @@ import {
   parseAddresses,
   type GmailMessage,
 } from './client'
+import { primaryAccountByContact } from './business-account-link'
 import { isGoogleVoiceSender } from './google-voice'
 import { handleGoogleVoiceMessage } from './google-voice-handler'
 import { putAttachment } from './s3'
+import { deriveThreadFlags, DELETED_THREAD_FLAGS } from './thread-flags'
 
 interface HistoryChangedData {
   eventId: string
@@ -66,6 +72,7 @@ export const gmailHistoryChanged = inngest.createFunction(
       result = await step.run('list-history', async () => {
         const client = await createClientForAgent({
           agentId: mailbox.agentId,
+          address: emailAddress,
           purpose: 'gmail.sync',
           requestId: eventId,
         })
@@ -101,7 +108,24 @@ export const gmailHistoryChanged = inngest.createFunction(
         processMessage({
           agentId: mailbox.agentId,
           mailboxId: mailbox.id,
+          address: emailAddress,
           messageId: added.messageId,
+          requestId: eventId,
+        }),
+      )
+    }
+
+    // Inbound two-way sync (ADR 0021 Phase 5): threads whose Gmail flags
+    // changed (read / star / archive / trash) without a new message. Re-read
+    // each thread's current label state and mirror it onto the head, so a
+    // change made in the Gmail UI shows in the CRM. Idempotent + convergent —
+    // re-running yields the same head, and our own outbound echoes are no-ops.
+    for (const threadId of result.changedThreadIds) {
+      await step.run(`flags-${threadId}`, async () =>
+        mirrorThreadFlags({
+          agentId: mailbox.agentId,
+          address: emailAddress,
+          threadId,
           requestId: eventId,
         }),
       )
@@ -115,15 +139,53 @@ export const gmailHistoryChanged = inngest.createFunction(
     )
 
     await step.run('mark-processed', async () => markProcessed(providerEventRowId))
-    return { ok: true, processed: result.added.length, historyId: result.newHistoryId }
+    return {
+      ok: true,
+      processed: result.added.length,
+      flagsMirrored: result.changedThreadIds.length,
+      historyId: result.newHistoryId,
+    }
   },
 )
+
+interface MirrorThreadFlagsInput {
+  agentId: string
+  /** The mailbox to act as (its own token — multi-account). */
+  address: string
+  threadId: string
+  requestId: string
+}
+
+/**
+ * Re-read a thread's current Gmail label state and mirror it onto the
+ * Conversation head (ADR 0021 Phase 5 — inbound half of two-way sync). A null
+ * head (message never synced) is a no-op; a 404 from Gmail (thread permanently
+ * deleted) marks the head trashed rather than hard-deleting it (§3).
+ */
+async function mirrorThreadFlags(input: MirrorThreadFlagsInput): Promise<void> {
+  const client = await createClientForAgent({
+    agentId: input.agentId,
+    address: input.address,
+    purpose: 'gmail.sync',
+    requestId: input.requestId,
+  })
+  const state = await client.getThreadState(input.threadId)
+  const flags = state ? deriveThreadFlags(state.labelIds) : DELETED_THREAD_FLAGS
+  await applyMailFlagsToConversation(db, {
+    provider: 'email',
+    externalThreadId: input.threadId,
+    flags,
+    syncedAt: new Date(),
+  })
+}
 
 interface ProcessMessageInput {
   agentId: string
   /** GmailMailbox.id the sync is running for — used to resolve the MailAccount
    *  this thread belongs to (ADR 0021 Phase 3b). */
   mailboxId: string
+  /** The mailbox address to act as (its own token — multi-account). */
+  address: string
   messageId: string
   requestId: string
 }
@@ -137,6 +199,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   if (existing) return
 
   const client = await createClientForAgent({
+    address: input.address,
     agentId: input.agentId,
     purpose: 'gmail.sync',
     requestId: input.requestId,
@@ -193,6 +256,12 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
     where: { email: { in: allAddrs }, deletedAt: null },
     select: { id: true, email: true },
   })
+  // Resolve the B2B school/account each matched contact belongs to, so the
+  // email also lands on the account's Activity timeline (parity with notes /
+  // tasks, which stamp Interaction.businessAccountId).
+  const accountByContact = await primaryAccountByContact(
+    matchedContacts.map((c) => c.id),
+  )
 
   // Stream attachments to S3 first; we reference them by key in payload.
   const attachmentRefs: Array<{
@@ -221,6 +290,9 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   const occurredAt = new Date(message.internalDate || Date.now())
   const eventName = direction === 'sent' ? 'email.sent' : 'email.received'
   const dbType = direction === 'sent' ? 'email_sent' : 'email_received'
+  // Sanitised + size-capped HTML body for the reading pane's sandboxed iframe
+  // (ADR 0041). Null falls back to the plaintext `body` already captured.
+  const bodyHtml = prepareEmailHtml(message.htmlBody)
 
   // Persist one Interaction per matched Contact so each timeline shows the
   // full thread (CLAUDE.md §14). When no contact matches, we still record
@@ -243,6 +315,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           cc: ccAddrs,
           bcc: bccAddrs,
           subject,
+          bodyHtml,
           attachments: attachmentRefs,
         },
       },
@@ -263,6 +336,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
         id: createId(),
         type: dbType,
         contactId: contact.id,
+        businessAccountId: accountByContact.get(contact.id) ?? null,
         occurredAt,
         summary: subject.slice(0, 280),
         payload: {
@@ -276,6 +350,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           bcc: bccAddrs,
           matchedVia: contact.email,
           subject,
+          bodyHtml,
           attachments: attachmentRefs,
         },
       },
@@ -349,6 +424,7 @@ export const gmailRefreshWatch = inngest.createFunction(
         try {
           const client = await createClientForAgent({
             agentId: mb.agentId,
+            address: mb.address,
             purpose: 'gmail.refresh-watch',
           })
           const result = await client.setupWatch({

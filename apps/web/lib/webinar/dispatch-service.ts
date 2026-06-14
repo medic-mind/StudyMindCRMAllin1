@@ -72,6 +72,7 @@ export async function dispatchDueWebinarEmails(
       timezone: true,
       emailSubjectTemplate: true,
       emailBodyTemplate: true,
+      emailBodyHtml: true,
       cohort: {
         select: {
           name: true,
@@ -110,12 +111,13 @@ export async function dispatchDueWebinarEmails(
     const topic = schedule.topics.get(session.weekNumber) ?? 'This week’s topic'
 
     const pdf = await classAttachment(db, cls.id, schedule)
-    // Template resolution: cohort → class override → built-in default.
+    // Template resolution: the group's OWN template wins, then the year's
+    // shared default, then the built-in. So each group edits its own email.
     const subjectTemplate =
-      cls.cohort.emailSubjectTemplate || cls.emailSubjectTemplate || DEFAULT_EMAIL_SUBJECT_TEMPLATE
+      cls.emailSubjectTemplate || cls.cohort.emailSubjectTemplate || DEFAULT_EMAIL_SUBJECT_TEMPLATE
     const bodyTemplate =
-      cls.cohort.emailBodyTemplate || cls.emailBodyTemplate || DEFAULT_EMAIL_BODY_TEMPLATE
-    const htmlTemplate = cls.cohort.emailBodyHtml || null
+      cls.emailBodyTemplate || cls.cohort.emailBodyTemplate || DEFAULT_EMAIL_BODY_TEMPLATE
+    const htmlTemplate = cls.emailBodyHtml || cls.cohort.emailBodyHtml || null
     const fromName = cls.cohort.fromName || 'The StudyMind team'
 
     const enrollments = await db.webinarEnrollment.findMany({

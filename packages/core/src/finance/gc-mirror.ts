@@ -15,6 +15,8 @@
 import { createId } from '@paralleldrive/cuid2'
 import type { Prisma, PrismaClient } from '@prisma/client'
 
+import { phoneKey } from '../contact/duplicates'
+
 type DbClient = PrismaClient | Prisma.TransactionClient
 
 // Local mirrors of the Prisma enums so this module stays decoupled from the
@@ -27,6 +29,13 @@ export type GcSubscriptionStateValue =
   | 'cancelled'
   | 'paused'
   | 'unknown'
+
+/** Subscription states that mean the plan has stopped collecting. A plan first
+ *  mirrored in one of these is a historic record (excluded from shortfalls). */
+const TERMINAL_SUBSCRIPTION_STATES = new Set<GcSubscriptionStateValue>([
+  'cancelled',
+  'finished',
+])
 
 export type GcPaymentStateValue =
   | 'pending_customer_approval'
@@ -82,6 +91,26 @@ export function pickUnambiguousContact(
 }
 
 /**
+ * Resolve a set of matched contacts to candidates (each with its first family),
+ * then pick the unambiguous one (a single match) — else null (§41.1).
+ */
+async function resolveUnambiguousContact(
+  db: DbClient,
+  contacts: Array<{ id: string }>,
+): Promise<ContactMatchCandidate | null> {
+  const candidates: ContactMatchCandidate[] = []
+  for (const contact of contacts) {
+    const member = await db.familyMember.findFirst({
+      where: { contactId: contact.id, family: { deletedAt: null } },
+      select: { familyId: true },
+      orderBy: { createdAt: 'asc' },
+    })
+    candidates.push({ id: contact.id, familyId: member?.familyId ?? null })
+  }
+  return pickUnambiguousContact(candidates)
+}
+
+/**
  * Find the contact (and its first family, if any) matching an email address.
  * Case-insensitive exact match on Contact.email, soft-deleted rows excluded.
  */
@@ -96,16 +125,47 @@ export async function findContactForGcEmail(
     select: { id: true },
     take: 3,
   })
-  const candidates: ContactMatchCandidate[] = []
-  for (const contact of contacts) {
-    const member = await db.familyMember.findFirst({
-      where: { contactId: contact.id, family: { deletedAt: null } },
-      select: { familyId: true },
-      orderBy: { createdAt: 'asc' },
-    })
-    candidates.push({ id: contact.id, familyId: member?.familyId ?? null })
+  return resolveUnambiguousContact(db, contacts)
+}
+
+/**
+ * Find the contact matching a phone, format-insensitively. Matches on the
+ * last-9-digit suffix (the canonical `phoneKey`, ADR 0023/§41.1) so
+ * "+447700900123", "07700900123" and "447700900123" all converge. Unambiguous
+ * only — a shared family landline (>1 match) returns null (§41.1).
+ */
+export async function findContactForGcPhone(
+  db: DbClient,
+  phone: string,
+): Promise<ContactMatchCandidate | null> {
+  const key = phoneKey(phone)
+  if (!key) return null
+  const contacts = await db.contact.findMany({
+    where: { phoneE164: { endsWith: key }, deletedAt: null },
+    select: { id: true },
+    take: 3,
+  })
+  return resolveUnambiguousContact(db, contacts)
+}
+
+/**
+ * Resolve the CRM contact for a GoCardless customer: try the unambiguous email
+ * match first (the original behaviour), then fall back to an unambiguous phone
+ * match. Never auto-merges — a single match only (§3, §41.1).
+ */
+export async function findContactForGcCustomer(
+  db: DbClient,
+  input: { email?: string | null; phone?: string | null },
+): Promise<ContactMatchCandidate | null> {
+  if (input.email) {
+    const byEmail = await findContactForGcEmail(db, input.email)
+    if (byEmail) return byEmail
   }
-  return pickUnambiguousContact(candidates)
+  if (input.phone) {
+    const byPhone = await findContactForGcPhone(db, input.phone)
+    if (byPhone) return byPhone
+  }
+  return null
 }
 
 // -----------------------------------------------------------------------------
@@ -118,8 +178,9 @@ export interface UpsertGcCustomerInput {
   givenName?: string | null
   familyName?: string | null
   companyName?: string | null
+  phone?: string | null
   gcCreatedAt?: Date | null
-  /** Try the unambiguous email auto-match when the row has no link yet. */
+  /** Try the unambiguous email/phone auto-match when the row has no link yet. */
   autoMatch?: boolean
 }
 
@@ -145,6 +206,7 @@ export async function upsertGcCustomerMirror(
     givenName: input.givenName ?? null,
     familyName: input.familyName ?? null,
     companyName: input.companyName ?? null,
+    phone: input.phone ?? null,
     gcCreatedAt: input.gcCreatedAt ?? null,
   }
 
@@ -152,7 +214,7 @@ export async function upsertGcCustomerMirror(
     // Never overwrite an existing CRM link from a sync (CLAUDE.md §3).
     await db.gcCustomer.update({ where: { id: existing.id }, data: details })
 
-    if (existing.contactId || !input.autoMatch || !input.email) {
+    if (existing.contactId || !input.autoMatch || !(input.email || input.phone)) {
       return {
         id: existing.id,
         contactId: existing.contactId,
@@ -160,7 +222,10 @@ export async function upsertGcCustomerMirror(
         autoLinked: false,
       }
     }
-    const match = await findContactForGcEmail(db, input.email)
+    const match = await findContactForGcCustomer(db, {
+      email: input.email,
+      phone: input.phone,
+    })
     if (!match) {
       return {
         id: existing.id,
@@ -182,7 +247,9 @@ export async function upsertGcCustomerMirror(
   }
 
   const match =
-    input.autoMatch && input.email ? await findContactForGcEmail(db, input.email) : null
+    input.autoMatch && (input.email || input.phone)
+      ? await findContactForGcCustomer(db, { email: input.email, phone: input.phone })
+      : null
 
   const row = await db.gcCustomer.create({
     data: {
@@ -321,9 +388,21 @@ export async function upsertGcSubscriptionMirror(
     ...(input.gcCustomerId !== undefined ? { gcCustomerId: input.gcCustomerId } : {}),
   }
 
+  // A plan first seen ALREADY terminal is a historic import — exclude it from
+  // the cancelled/underpaid shortfall surfaces (ADR 0038, seventh amendment).
+  // A plan first seen active that later cancels keeps shortfallIgnored=false
+  // (we never touch it on update), so it is tracked. The update path never
+  // changes shortfallIgnored, so a live cancellation stays visible.
+  const firstSeenTerminal = TERMINAL_SUBSCRIPTION_STATES.has(input.status)
+
   const row = await db.gcSubscription.upsert({
     where: { gcSubscriptionId: input.gcSubscriptionId },
-    create: { id: createId(), gcSubscriptionId: input.gcSubscriptionId, ...data },
+    create: {
+      id: createId(),
+      gcSubscriptionId: input.gcSubscriptionId,
+      ...data,
+      shortfallIgnored: firstSeenTerminal,
+    },
     update: data,
     select: { id: true },
   })
@@ -491,32 +570,38 @@ export interface BackfillLinkResult {
 }
 
 /**
- * Re-attempt the unambiguous email auto-link for GoCardless customers that are
- * still unlinked. The import-time auto-match only fires when the matching CRM
- * contact already exists; a customer synced *before* its contact was created
- * stays orphaned forever, so its mandates/plans/payments never reach the
- * contact's Direct Debit panel. Running this after a contact import (or on a
+ * Re-attempt the unambiguous email/phone auto-link for GoCardless customers
+ * that are still unlinked. The import-time auto-match only fires when the
+ * matching CRM contact already exists; a customer synced *before* its contact
+ * was created stays orphaned forever, so its mandates/plans/payments never reach
+ * the contact's Direct Debit panel. Running this after a contact import (or on a
  * schedule) closes that window.
  *
- * Unambiguous matches only — two contacts sharing an email is a human decision
- * (CLAUDE.md §3/§41.1), never an auto-merge. Linking propagates the Family to
- * the customer's orphaned mandates via `linkGcCustomer`, which is what lets the
- * reconciliation/defaulter pipeline pick them up.
+ * Unambiguous matches only — two contacts sharing an email/phone is a human
+ * decision (CLAUDE.md §3/§41.1), never an auto-merge. Linking propagates the
+ * Family to the customer's orphaned mandates via `linkGcCustomer`, which is what
+ * lets the reconciliation/defaulter pipeline pick them up.
  */
 export async function linkUnlinkedGcCustomers(
   db: DbClient,
   opts: { limit?: number } = {},
 ): Promise<BackfillLinkResult> {
   const candidates = await db.gcCustomer.findMany({
-    where: { contactId: null, deletedAt: null, email: { not: null } },
-    select: { gcCustomerId: true, email: true },
+    where: {
+      contactId: null,
+      deletedAt: null,
+      OR: [{ email: { not: null } }, { phone: { not: null } }],
+    },
+    select: { gcCustomerId: true, email: true, phone: true },
     take: opts.limit ?? 500,
   })
 
   let linked = 0
   for (const candidate of candidates) {
-    if (!candidate.email) continue
-    const match = await findContactForGcEmail(db, candidate.email)
+    const match = await findContactForGcCustomer(db, {
+      email: candidate.email,
+      phone: candidate.phone,
+    })
     if (!match) continue
     const res = await linkGcCustomer(db, {
       gcCustomerId: candidate.gcCustomerId,

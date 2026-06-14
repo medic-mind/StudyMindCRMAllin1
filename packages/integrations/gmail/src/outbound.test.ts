@@ -187,6 +187,45 @@ describe('buildRawReply', () => {
     expect(decoded).toContain(b64)
   })
 
+  it('emits multipart/alternative (text + html) when given an html body', () => {
+    const { raw, headers } = buildRawReply({
+      subject: 'Welcome',
+      toAddresses: ['parent@example.com'],
+      body: 'Hello there.',
+      html: '<p>Hello <b>there</b>.</p>',
+      literalSubject: true,
+      boundarySeed: 'altseed',
+    })
+    expect(headers['Content-Type']).toMatch(/^multipart\/alternative; boundary="/)
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8')
+    expect(decoded).toMatch(/Content-Type: text\/plain; charset=UTF-8\r\n/)
+    expect(decoded).toMatch(/Hello there\./)
+    expect(decoded).toMatch(/Content-Type: text\/html; charset=UTF-8\r\n/)
+    expect(decoded).toMatch(/<p>Hello <b>there<\/b>\.<\/p>/)
+    expect(decoded).toMatch(/\r\n--==SMCRM_altseed==--\r\n$/)
+  })
+
+  it('nests multipart/alternative inside multipart/mixed when html + attachments', () => {
+    const { raw, headers } = buildRawReply({
+      subject: 'x',
+      toAddresses: ['a@b.com'],
+      body: 'plain',
+      html: '<p>rich</p>',
+      attachments: [
+        { filename: 'f.pdf', contentType: 'application/pdf', data: Buffer.from('PDF') },
+      ],
+      boundarySeed: 'mix',
+    })
+    expect(headers['Content-Type']).toMatch(/^multipart\/mixed; boundary="==SMCRM_mix=="/)
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8')
+    // The alternative block is nested under the mixed boundary with its own.
+    expect(decoded).toMatch(/Content-Type: multipart\/alternative; boundary="==SMCRM_mixalt=="/)
+    expect(decoded).toMatch(/Content-Type: text\/html; charset=UTF-8/)
+    expect(decoded).toMatch(/<p>rich<\/p>/)
+    expect(decoded).toMatch(/Content-Disposition: attachment; filename="f\.pdf"/)
+    expect(decoded).toMatch(/\r\n--==SMCRM_mix==--\r\n$/)
+  })
+
   it('escapes CR/LF/quote in attachment filenames so headers cannot be injected', () => {
     const { raw } = buildRawReply({
       subject: 'x',

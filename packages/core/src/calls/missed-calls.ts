@@ -98,6 +98,52 @@ export function callNumberFromPayload(payload: unknown): string | null {
   return null
 }
 
+/**
+ * Whether a raw `call` Interaction payload represents a voicemail. Aircall
+ * fires a dedicated `call.voicemail_left` event, and a `voicemailUrl` lands on
+ * the payload once the recording is fetched. Either signal marks the call a
+ * voicemail. Lives here (not in the tRPC layer) so the missed-calls projection
+ * has ONE implementation, shared by the workspace and the dashboard (§3).
+ */
+export function isVoicemailPayload(payload: unknown): boolean {
+  const p = (payload ?? {}) as Record<string, unknown>
+  return (
+    p['aircallEvent'] === 'call.voicemail_left' ||
+    (typeof p['voicemailUrl'] === 'string' && (p['voicemailUrl'] as string).length > 0)
+  )
+}
+
+/**
+ * Project one raw `call` Interaction row into the {@link RawCall} shape the
+ * dedupe + missed-state logic reasons about. The single source of truth for
+ * reading a call's direction / duration / voicemail / counterparty number out
+ * of the polymorphic `Interaction.payload`, shared by the missed-calls
+ * workspace (`calls` router) and the home dashboard so the two never drift (§3).
+ */
+export function projectCallInteraction(row: {
+  id: string
+  occurredAt: Date
+  contactId: string | null
+  payload: unknown
+}): RawCall {
+  const p = (row.payload ?? {}) as Record<string, unknown>
+  const aircallCallId =
+    typeof p['aircallCallId'] === 'number' ? (p['aircallCallId'] as number) : null
+  const direction =
+    p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
+  const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
+  return {
+    interactionId: row.id,
+    aircallCallId,
+    occurredAt: row.occurredAt,
+    direction,
+    durationSec,
+    isVoicemail: isVoicemailPayload(p),
+    rawDigits: callNumberFromPayload(p),
+    contactId: row.contactId,
+  }
+}
+
 /** Collapse per-event call rows into one row per call (dedupe on Aircall id):
  * earliest time, longest duration, voicemail if any event was a voicemail,
  * first known direction / number / contact. */

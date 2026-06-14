@@ -233,3 +233,75 @@ also estimates, from a plan's cadence + start date, how many instalments an
 behind (`finance.directDebit.listActivePlanArrears`, audited; a third Issues
 section). This is a conservative proxy — GoCardless owns the real charge
 calendar — so it only surfaces a plan for a human to check, never charges.
+
+These plan-level signals are also raised **proactively** by the nightly
+`finance/flag-dd-defaulters` job (`flagPlanIssues`): for any plan whose
+GoCardless customer is linked to a Family it upserts a
+`direct_debit_plan_shortfall` or `direct_debit_plan_arrears`
+ReconciliationDiscrepancy (idempotent on `(familyId, category, contextHash)`)
+and the worker boundary posts a combined `#crm-finops` summary — so finance is
+told, not just shown. The Direct Debits **Overview** carries matching headline
+tiles (count + total due, linking to Issues), and both Issues tables support
+column sorting + filter-honouring CSV export.
+
+### Follow-up (2026-06-13) — phone linking, self-healing, actionable issues
+
+- **Phone as a second link key.** `GcCustomer.phone` mirrors GoCardless
+  `phone_number`. `findContactForGcCustomer` tries the unambiguous email match
+  first, then an unambiguous E.164 phone match (`findContactForGcPhone`), used
+  by both the import auto-match and the `linkUnlinkedGcCustomers` backfill — so
+  a DD customer with no/non-matching email still reaches its CRM contact. Still
+  unambiguous-only; a shared landline (>1 match) never auto-links (§3/§41.1).
+- **Self-healing discrepancies.** `flagPlanIssues` resolves any open
+  `direct_debit_plan_shortfall`/`direct_debit_plan_arrears` discrepancy whose
+  plan no longer appears in the current issue set (e.g. an arrears plan caught
+  up), so the Issues queue reflects reality without manual cleanup (golden
+  rule #4).
+- **Actionable Issues rows.** Both plan-issue tables carry a "Chase" action
+  (opens a follow-up Task against the linked contact/family) for linked plans.
+
+### Follow-up (2026-06-13, second) — robust linking, full self-heal, panel badges
+
+- **Format-insensitive phone linking.** `findContactForGcPhone` now matches on
+  the last-9-digit `phoneKey` (`endsWith`) — the same key the lead funnel and
+  missed-calls workspace use — so "+447700900123", "07700900123" and
+  "447700900123" converge. Still unambiguous-only (§41.1).
+- **Recurring relink cron.** `gocardless/relink-customers` (every 6h) runs
+  `linkUnlinkedGcCustomers` so a contact created *after* its DD customer was
+  imported gets linked automatically, not only at import time. Audited
+  (`gocardless.customers.relinked`) only when it links something.
+- **Defaulter self-heal.** `flagDefaulters` now resolves open
+  `direct_debit_default` discrepancies for families no longer in the defaulter
+  set, matching the plan-issue self-heal (golden rule #4).
+- **Contact-panel shortfall badge.** `gocardless.contactSummary` computes the
+  per-plan shortfall for the contact's ended fixed-length plans (reusing
+  `classifyPlanShortfall`), and `ContactDirectDebitPanel` renders a
+  "£X still due" badge on a plan cancelled/finished early.
+
+## Amendment (2026-06-14, seventh) — prospective tracking + recovery cases
+
+Two changes turn the cancelled/underpaid surface into a working recovery system.
+
+**Prospective only.** `GcSubscription.shortfallIgnored` excludes plans that were
+already cancelled/finished at go-live (June 2026) — handled on another system —
+so the CRM only tracks cancellations from go-live onward. The go-live migration
+snapshots the existing terminal set as ignored; `upsertGcSubscriptionMirror`
+sets the flag at create-time for any plan first seen already terminal (a
+historic import), while a plan first seen active that later cancels stays
+tracked. `listPlanShortfalls` filters `shortfallIgnored = false`; the job's
+resolve-on-recovery then clears stale discrepancies for the removed plans. No
+separate "ignored" view (avoids duplication).
+
+**Recovery cases.** `DirectDebitCase` (one per plan, soft-linked like the GC
+mirror) is the agent workflow over a shortfall: `DirectDebitCaseStatus`
+(`new → chasing → escalated → recovered | written_off`, reopenable), an owner,
+notes, and a recovery record (Phase 2 links the actual invoicing/Stripe
+payment). Pure transition table in `packages/core/src/finance/dd-cases.ts`
+(`canTransition`, unit-tested); tRPC `finance.directDebit.cases.*`
+(forSubscriptions / setStatus / assign / setNotes / assignableUsers, finance
+role, audited `direct_debit.case_*`). The case is created lazily on first
+action. Surfaced as a Case column on the Issues tab and reflected as a status
+badge on the contact + family Direct Debit panels. All outbound recovery comms
+(reminders, legal escalation, Trengo) are human-confirmed drafts — Phase 3.
+
+**Phase 2 — reconciliation recording.** `recordRecovery` (core, tested) closes a case as `recovered` with the amount, method (`bank_transfer` via the invoicing site / `stripe` / `direct_debit` / `manual` / `other`) and an optional reference (invoice id, Stripe payment id). tRPC `finance.directDebit.cases.recordRecovery` (finance role, audited `direct_debit.case_recovered`); UI `RecordRecoveryDialog` on the Issues case cell. Records that money arrived elsewhere — never charges (§3). Auto-clear from invoicing/Stripe webhooks is a follow-up.

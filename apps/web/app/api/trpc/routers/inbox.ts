@@ -288,6 +288,7 @@ export const inboxRouter = router({
             id: true,
             provider: true,
             externalThreadId: true,
+            mailAccountId: true,
             trengoTicketId: true,
             contactId: true,
             familyId: true,
@@ -414,6 +415,14 @@ export const inboxRouter = router({
               : typeof payload['subject'] === 'string'
                 ? (payload['subject'] as string)
                 : null
+          // ADR 0041 — sanitised email HTML (when synced). The /mail reading
+          // pane renders it in a locked sandboxed iframe so the message looks
+          // exactly as in Gmail; null falls back to the plaintext `body`.
+          const bodyHtml =
+            typeof payload['bodyHtml'] === 'string' &&
+            (payload['bodyHtml'] as string).length > 0
+              ? (payload['bodyHtml'] as string)
+              : null
           // ADR 0020 Phase 6d — attachments are written by the download
           // worker as payload.attachments[]; surface enough for the UI to
           // render chips + link to the internal stream route.
@@ -507,6 +516,7 @@ export const inboxRouter = router({
             occurredAt: r.occurredAt,
             direction,
             body: body ?? r.summary,
+            bodyHtml,
             authorId: r.createdById,
             senderName,
             sendStatus,
@@ -536,6 +546,7 @@ export const inboxRouter = router({
           head: {
             id: head.id,
             provider: head.provider,
+            mailAccountId: head.mailAccountId,
             trengoTicketId: head.trengoTicketId,
             contactId: head.contactId,
             familyId: head.familyId,

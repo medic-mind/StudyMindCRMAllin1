@@ -10,6 +10,7 @@ import { MailIcon } from '@/components/ui/icon'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { DisconnectGmailButton } from './disconnect-button'
+import { GmailImportButton } from './GmailImportButton'
 
 const BREADCRUMBS = [
   { label: 'Settings', href: '/settings' },
@@ -26,6 +27,36 @@ interface PageProps {
 function fmt(date: Date | null | undefined): string {
   if (!date) return '—'
   return new Date(date).toUTCString()
+}
+
+// Friendly, actionable copy for the OAuth error codes the connect flow can
+// redirect back with (CLAUDE.md §4 — say what failed and what to do now).
+function connectErrorMessage(code: string): string {
+  if (code === 'gmail_api_disabled') {
+    return 'Gmail is connected, but the Gmail API is switched off in your Google Cloud project. Enable the Gmail API for the same project as your OAuth client, wait a few minutes for it to propagate, then connect again.'
+  }
+  if (code === 'connect_failed') {
+    return 'Sign-in succeeded but the server hit an error finishing the connection. This is usually a missing server setting (the encryption key, AUTH_SECRET, or the app URL). The exact cause was recorded in the audit log — check the server logs, then try again.'
+  }
+  if (code.startsWith('profile_lookup_failed')) {
+    return "Google approved the sign-in but rejected the first Gmail request. This is usually the Gmail API not being enabled yet (give it a few minutes after enabling), or the account not being a test user on the OAuth consent screen."
+  }
+  if (code === 'oauth_not_configured') {
+    return 'Gmail OAuth is not configured on the server. Set GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / NEXT_PUBLIC_APP_URL and redeploy.'
+  }
+  if (code === 'scope_mismatch') {
+    return 'Some Gmail permissions were not granted. When Google asks, tick all the requested boxes and continue.'
+  }
+  if (code === 'no_refresh_token') {
+    return 'Google did not return a refresh token. Remove this app at myaccount.google.com → Security → Third-party access, then connect again.'
+  }
+  if (code === 'token_exchange_failed' || code === 'oauth_not_configured') {
+    return 'We could not exchange the sign-in code. Check the OAuth client secret and that the redirect URI matches exactly.'
+  }
+  if (code === 'invalid_state' || code === 'invalid_request') {
+    return 'The sign-in link expired or was reused. Start the connection again from this page.'
+  }
+  return 'We could not connect that mailbox. Try again; if it persists, contact support.'
 }
 
 export default async function MailboxSettingsPage({ searchParams }: PageProps) {
@@ -50,8 +81,10 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
         <div className="max-w-3xl space-y-5">
           {errorParam ? (
             <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900">
-              We couldn&apos;t connect that mailbox: <code>{errorParam}</code>. Try
-              again; if the problem persists, contact support.
+              <p>{connectErrorMessage(errorParam)}</p>
+              <p className="mt-1 text-xs text-red-700/80">
+                Reference: <code>{errorParam}</code>
+              </p>
             </div>
           ) : null}
           {connectedParam ? (
@@ -75,13 +108,16 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
               <h2 className="text-sm font-semibold text-neutral-900">
                 Connected accounts ({mailboxes.length})
               </h2>
-              <a
-                href="/api/oauth/gmail/connect"
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700"
-              >
-                <MailIcon size={14} />
-                {mailboxes.length === 0 ? 'Connect Gmail' : 'Connect another'}
-              </a>
+              <div className="flex flex-wrap items-center gap-3">
+                {mailboxes.length > 0 ? <GmailImportButton /> : null}
+                <a
+                  href="/api/oauth/gmail/connect"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700"
+                >
+                  <MailIcon size={14} />
+                  {mailboxes.length === 0 ? 'Connect Gmail' : 'Connect another'}
+                </a>
+              </div>
             </div>
 
             {mailboxes.length === 0 ? (
@@ -134,10 +170,10 @@ export default async function MailboxSettingsPage({ searchParams }: PageProps) {
 
           {mailboxes.length > 1 ? (
             <p className="text-xs text-neutral-500">
-              Multiple accounts are listed for visibility. Today only the
-              default mailbox holds an active refresh token (re-connecting any
-              account replaces it). Full multi-account token storage is
-              tracked for the next iteration.
+              Each connected account syncs independently with its own token. If a
+              mailbox was connected before this was enabled, reconnect it once so
+              it stores its own token. The default mailbox drives outbound for
+              Trengo + board call summaries.
             </p>
           ) : null}
         </div>

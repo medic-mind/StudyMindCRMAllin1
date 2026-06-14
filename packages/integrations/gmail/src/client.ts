@@ -37,6 +37,9 @@ export interface GmailMessage {
   headers: GmailHeader[]
   /** Best-effort plain text body (gmail.utils unwraps base64url multiparts). */
   body: string
+  /** Best-effort text/html body, when the message carries one. Rendered in the
+   *  reading pane's sandboxed iframe so mail looks identical to Gmail. */
+  htmlBody: string | null
   attachments: GmailAttachmentMeta[]
 }
 
@@ -46,10 +49,25 @@ export interface GmailHistoryAddedMessage {
 }
 
 export interface GmailHistoryResult {
-  /** History entries with messagesAdded only — sufficient for our sync. */
+  /** New messages on the mailbox (messagesAdded). */
   added: GmailHistoryAddedMessage[]
+  /**
+   * Thread ids whose labels changed or whose messages were removed
+   * (labelsAdded / labelsRemoved / messagesDeleted) WITHOUT a new message.
+   * These drive `mirrorThreadFlags` — the inbound side of two-way sync (ADR
+   * 0021 Phase 5). Threads that also appear in `added` are excluded; the
+   * message-processing path already converges their flags.
+   */
+  changedThreadIds: string[]
   /** Use as the next startHistoryId. */
   newHistoryId: string
+}
+
+/** Aggregated current Gmail label state for a thread (ADR 0021 Phase 5). */
+export interface GmailThreadState {
+  threadId: string
+  /** Union of every message's labelIds — e.g. INBOX, UNREAD, STARRED, TRASH. */
+  labelIds: string[]
 }
 
 export interface GmailWatchResult {
@@ -62,10 +80,25 @@ export interface GmailLabelRef {
   name: string
 }
 
+/** A Gmail "send-as" identity and its signature (users.settings.sendAs). */
+export interface GmailSendAs {
+  email: string
+  displayName: string | null
+  /** Signature HTML as Gmail stores it (may be empty string). */
+  signatureHtml: string | null
+  isPrimary: boolean
+  isDefault: boolean
+}
+
 export interface GmailClient {
   readonly agentId: string
   getMessage(messageId: string): Promise<GmailMessage>
   listHistorySince(startHistoryId: string): Promise<GmailHistoryResult>
+  /**
+   * Current aggregated label state for a thread, or null if Gmail no longer
+   * has it (permanently deleted). Used by the inbound flag mirror.
+   */
+  getThreadState(threadId: string): Promise<GmailThreadState | null>
   sendMessage(input: { raw: string }): Promise<GmailMessageRef>
   setupWatch(input: { topicName: string }): Promise<GmailWatchResult>
   stopWatch(): Promise<void>
@@ -80,10 +113,19 @@ export interface GmailClient {
   trashThread(threadId: string): Promise<void>
   untrashThread(threadId: string): Promise<void>
   listLabels(): Promise<GmailLabelRef[]>
+  /**
+   * The account's send-as identities and signatures. Readable with the
+   * gmail.readonly / gmail.modify scopes we already request — no extra consent.
+   */
+  listSendAs(): Promise<GmailSendAs[]>
 }
 
 export interface CreateGmailClientOptions {
   agentId: string
+  /** Specific connected mailbox to act as. When set, its OWN refresh token is
+   *  used (per-mailbox multi-account); falls back to the agent's default token
+   *  if that mailbox has none yet. */
+  address?: string
   /** Override decrypted refresh token (tests). */
   refreshToken?: string
   /** Audit/correlation context for the decryption call. */
@@ -101,8 +143,24 @@ export async function createClientForAgent(
   }
 
   let refreshToken = opts.refreshToken
+  // Per-mailbox token first (multi-account): each connected mailbox syncs with
+  // its OWN token instead of sharing the single User pointer.
+  if (!refreshToken && opts.address) {
+    const mailbox = await db.gmailMailbox.findUnique({
+      where: { address: opts.address },
+      select: { refreshTokenCipherId: true },
+    })
+    if (mailbox?.refreshTokenCipherId) {
+      refreshToken = await decryptFieldById(db, {
+        encryptedFieldId: mailbox.refreshTokenCipherId,
+        actorId: opts.agentId,
+        purpose: opts.purpose ?? 'gmail.sync',
+        ...(opts.requestId ? { requestId: opts.requestId } : {}),
+      })
+    }
+  }
   if (!refreshToken) {
-    // ADR 0012: prefer the EncryptedField pointer on User.
+    // ADR 0012: prefer the EncryptedField pointer on User (default mailbox).
     const user = await db.user.findUnique({
       where: { id: opts.agentId },
       select: { gmailRefreshTokenCipherId: true },
@@ -147,9 +205,15 @@ export async function createClientForAgent(
     }
   }
 
+  // A refresh token only works with the SAME OAuth client that minted it.
+  // The connect/callback route (apps/web/.../oauth/gmail) uses
+  // GOOGLE_OAUTH_CLIENT_ID/SECRET, so prefer those here and fall back to the
+  // legacy GOOGLE_CLIENT_ID/SECRET names for older deployments. Reading a
+  // different client id than the one used at connect time silently breaks the
+  // refresh (`invalid_client`) — this keeps the two paths in lockstep.
   const oauth2 = new google.auth.OAuth2(
-    process.env['GOOGLE_CLIENT_ID'],
-    process.env['GOOGLE_CLIENT_SECRET'],
+    process.env['GOOGLE_OAUTH_CLIENT_ID'] ?? process.env['GOOGLE_CLIENT_ID'],
+    process.env['GOOGLE_OAUTH_CLIENT_SECRET'] ?? process.env['GOOGLE_CLIENT_SECRET'],
   )
   oauth2.setCredentials({ refresh_token: refreshToken })
   const gmail = google.gmail({ version: 'v1', auth: oauth2 })
@@ -171,22 +235,64 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
       return normaliseMessage(res.data)
     },
     async listHistorySince(startHistoryId) {
-      const res = await gmail.users.history.list({
-        userId: 'me',
-        startHistoryId,
-        historyTypes: ['messageAdded'],
-      })
+      // Pull every history type, not just messageAdded: labelsAdded /
+      // labelsRemoved / messagesDeleted are how Gmail tells us a thread was
+      // read / starred / archived / trashed in the Gmail UI — the inbound half
+      // of two-way sync (ADR 0021 Phase 5).
       const added: GmailHistoryAddedMessage[] = []
-      for (const h of res.data.history ?? []) {
-        for (const m of h.messagesAdded ?? []) {
-          if (m.message?.id && m.message.threadId) {
-            added.push({ messageId: m.message.id, threadId: m.message.threadId })
+      const addedThreadIds = new Set<string>()
+      const changed = new Set<string>()
+      let newHistoryId = startHistoryId
+      let pageToken: string | undefined
+      do {
+        const res = await gmail.users.history.list({
+          userId: 'me',
+          startHistoryId,
+          historyTypes: [
+            'messageAdded',
+            'labelAdded',
+            'labelRemoved',
+            'messageDeleted',
+          ],
+          ...(pageToken ? { pageToken } : {}),
+        })
+        for (const h of res.data.history ?? []) {
+          for (const m of h.messagesAdded ?? []) {
+            if (m.message?.id && m.message.threadId) {
+              added.push({ messageId: m.message.id, threadId: m.message.threadId })
+              addedThreadIds.add(m.message.threadId)
+            }
+          }
+          for (const l of [...(h.labelsAdded ?? []), ...(h.labelsRemoved ?? [])]) {
+            if (l.message?.threadId) changed.add(l.message.threadId)
+          }
+          for (const m of h.messagesDeleted ?? []) {
+            if (m.message?.threadId) changed.add(m.message.threadId)
           }
         }
-      }
-      return {
-        added,
-        newHistoryId: res.data.historyId ?? startHistoryId,
+        newHistoryId = res.data.historyId ?? newHistoryId
+        pageToken = res.data.nextPageToken ?? undefined
+      } while (pageToken)
+      // A thread with a brand-new message converges its flags via the message
+      // path, so don't double-process it here.
+      const changedThreadIds = [...changed].filter((t) => !addedThreadIds.has(t))
+      return { added, changedThreadIds, newHistoryId }
+    },
+    async getThreadState(threadId) {
+      try {
+        const res = await gmail.users.threads.get({
+          userId: 'me',
+          id: threadId,
+          format: 'minimal',
+        })
+        const labelIds = new Set<string>()
+        for (const m of res.data.messages ?? []) {
+          for (const l of m.labelIds ?? []) labelIds.add(l)
+        }
+        return { threadId, labelIds: [...labelIds] }
+      } catch (err) {
+        if (isNotFoundError(err)) return null
+        throw err
       }
     },
     async sendMessage(input) {
@@ -240,6 +346,16 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
         .filter((l): l is { id: string; name: string } => !!l.id && !!l.name)
         .map((l) => ({ id: l.id, name: l.name }))
     },
+    async listSendAs() {
+      const res = await gmail.users.settings.sendAs.list({ userId: 'me' })
+      return (res.data.sendAs ?? []).map((s) => ({
+        email: (s.sendAsEmail ?? '').toLowerCase(),
+        displayName: s.displayName || null,
+        signatureHtml: s.signature ?? null,
+        isPrimary: !!s.isPrimary,
+        isDefault: !!s.isDefault,
+      }))
+    },
   }
 }
 
@@ -254,6 +370,7 @@ export function normaliseMessage(raw: gmail_v1.Schema$Message): GmailMessage {
   }))
   const attachments: GmailAttachmentMeta[] = []
   let body = ''
+  let htmlBody = ''
 
   function visit(part: gmail_v1.Schema$MessagePart | undefined): void {
     if (!part) return
@@ -269,12 +386,18 @@ export function normaliseMessage(raw: gmail_v1.Schema$Message): GmailMessage {
     if (part.mimeType === 'text/plain' && part.body?.data && !body) {
       body = Buffer.from(part.body.data, 'base64url').toString('utf8')
     }
+    if (part.mimeType === 'text/html' && part.body?.data && !htmlBody) {
+      htmlBody = Buffer.from(part.body.data, 'base64url').toString('utf8')
+    }
     for (const child of part.parts ?? []) visit(child)
   }
 
   visit(raw.payload ?? undefined)
-  if (!body && raw.payload?.body?.data) {
+  if (!body && raw.payload?.body?.data && raw.payload.mimeType !== 'text/html') {
     body = Buffer.from(raw.payload.body.data, 'base64url').toString('utf8')
+  }
+  if (!htmlBody && raw.payload?.mimeType === 'text/html' && raw.payload.body?.data) {
+    htmlBody = Buffer.from(raw.payload.body.data, 'base64url').toString('utf8')
   }
 
   return {
@@ -283,6 +406,7 @@ export function normaliseMessage(raw: gmail_v1.Schema$Message): GmailMessage {
     internalDate: Number(raw.internalDate ?? 0),
     headers,
     body,
+    htmlBody: htmlBody || null,
     attachments,
   }
 }
@@ -311,6 +435,9 @@ function getPubSubTopic(): string {
 export interface SetupWatchForUserOptions {
   /** Address discovered during the OAuth handshake. */
   address: string
+  /** Per-mailbox refresh token (EncryptedField.id) to persist + watch with, so
+   *  this mailbox syncs with its OWN token (multi-account). */
+  refreshTokenCipherId?: string
   /** Override the gmail SDK constructor (tests). */
   factory?: () => gmail_v1.Gmail
 }
@@ -318,19 +445,16 @@ export interface SetupWatchForUserOptions {
 /**
  * Start (or restart) the Pub/Sub watch for a user's mailbox and persist the
  * resulting historyId/expiry. Idempotent — re-calling refreshes the watch.
+ *
+ * The per-mailbox token is stored on the row FIRST so the watch (and every
+ * later sync) acts as THIS mailbox via `createClientForAgent({ address })`,
+ * rather than the single shared User token.
  */
 export async function setupWatchForUser(
   userId: string,
   opts: SetupWatchForUserOptions,
 ): Promise<GmailWatchResult> {
-  const factory = opts.factory
-  const client = await createClientForAgent(
-    factory
-      ? { agentId: userId, factory }
-      : { agentId: userId, purpose: 'gmail.oauth_connect' },
-  )
   const topicName = getPubSubTopic()
-  const result = await client.setupWatch({ topicName })
   // Multi-mailbox: agent may already have N mailboxes. Key on address (which
   // is globally unique to a Google account). The first mailbox an agent
   // connects becomes their default; subsequent ones land as additional.
@@ -338,6 +462,8 @@ export async function setupWatchForUser(
     where: { agentId: userId, deletedAt: null },
     select: { id: true },
   })
+  // Persist the row (with this mailbox's own token) before watching, so the
+  // watch client below resolves the per-mailbox token by address.
   await db.gmailMailbox.upsert({
     where: { address: opts.address },
     create: {
@@ -345,15 +471,31 @@ export async function setupWatchForUser(
       agentId: userId,
       address: opts.address,
       topicName,
-      historyId: result.historyId,
-      watchExpiresAt: new Date(result.expirationMs),
       isDefault: !existingForAgent,
+      ...(opts.refreshTokenCipherId
+        ? { refreshTokenCipherId: opts.refreshTokenCipherId }
+        : {}),
     },
     update: {
       topicName,
+      deletedAt: null,
+      ...(opts.refreshTokenCipherId
+        ? { refreshTokenCipherId: opts.refreshTokenCipherId }
+        : {}),
+    },
+  })
+
+  const client = await createClientForAgent(
+    opts.factory
+      ? { agentId: userId, factory: opts.factory }
+      : { agentId: userId, address: opts.address, purpose: 'gmail.oauth_connect' },
+  )
+  const result = await client.setupWatch({ topicName })
+  await db.gmailMailbox.update({
+    where: { address: opts.address },
+    data: {
       historyId: result.historyId,
       watchExpiresAt: new Date(result.expirationMs),
-      deletedAt: null,
     },
   })
   return result
@@ -413,6 +555,21 @@ export function isInvalidGrantError(err: unknown): boolean {
   if (data?.error === 'invalid_grant') return true
   if (typeof msg === 'string' && msg.toLowerCase().includes('invalid_grant')) return true
   if (code === 400 && msg.toLowerCase().includes('invalid_grant')) return true
+  return false
+}
+
+/**
+ * True if the googleapis error is a 404 — the resource (thread/message) no
+ * longer exists on Gmail (permanently deleted). Detection is best-effort
+ * across googleapis versions, mirroring `isInvalidGrantError`.
+ */
+export function isNotFoundError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as Record<string, unknown>
+  const code = (e['code'] ?? e['status']) as string | number | undefined
+  if (code === 404 || code === '404') return true
+  const response = e['response'] as { status?: number } | undefined
+  if (response?.status === 404) return true
   return false
 }
 

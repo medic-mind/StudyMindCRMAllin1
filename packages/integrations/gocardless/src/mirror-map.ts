@@ -35,6 +35,7 @@ export function customerMirrorInput(
     givenName: resource.given_name ?? null,
     familyName: resource.family_name ?? null,
     companyName: resource.company_name ?? null,
+    phone: resource.phone_number ?? null,
     gcCreatedAt: parseDate(resource.created_at),
     autoMatch: opts.autoMatch,
   }

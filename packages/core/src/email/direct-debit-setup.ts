@@ -7,40 +7,27 @@
 // These go to parents — no jargon, no alarm; the Direct Debit Guarantee is
 // stated plainly because that's what a careful company does.
 
+import { emailButton, renderEmailLayout } from './layout'
 import { escapeHtml, type RenderedEmail } from './templates'
 
-const COLOR_HEADER = '#0b4f8a'
-const COLOR_TEXT = '#1f2933'
 const COLOR_MUTED = '#52606d'
-const COLOR_BORDER = '#e4e7eb'
-const FONT_STACK =
-  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+
+const DD_FOOTER =
+  'Your payments are protected by the Direct Debit Guarantee and collected by GoCardless on behalf of StudyMind. If you were not expecting this email, please reply and let us know.'
 
 /** Customer-facing shell — brand header reads "StudyMind", not the CRM. */
-function customerLayout(opts: { heading: string; bodyHtml: string }): string {
-  return `<!DOCTYPE html>
-<html lang="en-GB">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f7fa;">
-  <div style="max-width:560px;margin:0 auto;padding:24px 12px;font-family:${FONT_STACK};color:${COLOR_TEXT};">
-    <div style="background:${COLOR_HEADER};border-radius:10px 10px 0 0;padding:20px 28px;">
-      <div style="color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.2px;">StudyMind</div>
-    </div>
-    <div style="background:#ffffff;border:1px solid ${COLOR_BORDER};border-top:0;border-radius:0 0 10px 10px;padding:28px;">
-      <h1 style="margin:0 0 16px;font-size:19px;line-height:1.3;color:${COLOR_TEXT};">${escapeHtml(opts.heading)}</h1>
-      ${opts.bodyHtml}
-    </div>
-    <p style="margin:16px 4px 0;font-size:12px;color:${COLOR_MUTED};line-height:1.5;">
-      Your payments are protected by the Direct Debit Guarantee and collected by GoCardless on
-      behalf of StudyMind. If you were not expecting this email, please reply and let us know.
-    </p>
-  </div>
-</body>
-</html>`
-}
-
-function button(href: string, label: string): string {
-  return `<a href="${escapeHtml(href)}" style="display:inline-block;background:${COLOR_HEADER};color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:11px 20px;border-radius:8px;">${escapeHtml(label)}</a>`
+function customerLayout(opts: {
+  heading: string
+  bodyHtml: string
+  preheader?: string
+}): string {
+  return renderEmailLayout({
+    brandName: 'StudyMind',
+    heading: opts.heading,
+    bodyHtml: opts.bodyHtml,
+    ...(opts.preheader ? { preheader: opts.preheader } : {}),
+    footerNote: DD_FOOTER,
+  })
 }
 
 export interface DirectDebitSetupEmailInput {
@@ -71,7 +58,7 @@ export function buildDirectDebitSetupEmail(
       You will always receive notice by email before any payment is collected, and you can
       cancel at any time through your bank.
     </p>
-    <p style="margin:0 0 8px;">${button(input.setupUrl, 'Set up my Direct Debit')}</p>
+    <p style="margin:0 0 8px;">${emailButton(input.setupUrl, 'Set up my Direct Debit')}</p>
     <p style="margin:14px 0 0;font-size:13px;color:${COLOR_MUTED};word-break:break-all;">
       Or paste this link into your browser: ${escapeHtml(input.setupUrl)}
     </p>
@@ -99,7 +86,11 @@ export function buildDirectDebitSetupEmail(
 
   return {
     subject,
-    html: customerLayout({ heading: 'Set up your Direct Debit', bodyHtml }),
+    html: customerLayout({
+      heading: 'Set up your Direct Debit',
+      bodyHtml,
+      preheader: 'Two minutes on a secure GoCardless page to get started.',
+    }),
     text,
   }
 }
@@ -123,7 +114,7 @@ export function buildDirectDebitReminderEmail(
       Just a gentle reminder that your Direct Debit${escapeHtml(planSuffix)} has not been set up yet.
       It takes about two minutes on a secure GoCardless page.
     </p>
-    <p style="margin:0 0 8px;">${button(input.setupUrl, 'Set up my Direct Debit')}</p>
+    <p style="margin:0 0 8px;">${emailButton(input.setupUrl, 'Set up my Direct Debit')}</p>
     <p style="margin:14px 0 0;font-size:13px;color:${COLOR_MUTED};word-break:break-all;">
       Or paste this link into your browser: ${escapeHtml(input.setupUrl)}
     </p>
@@ -148,7 +139,11 @@ export function buildDirectDebitReminderEmail(
 
   return {
     subject,
-    html: customerLayout({ heading: 'Your Direct Debit is not set up yet', bodyHtml }),
+    html: customerLayout({
+      heading: 'Your Direct Debit is not set up yet',
+      bodyHtml,
+      preheader: 'A gentle reminder — it only takes two minutes.',
+    }),
     text,
   }
 }

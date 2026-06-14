@@ -8,7 +8,9 @@ export * from './sync-gocardless'
 // Complete GoCardless provider mirror (ADR 0038). MandateStateValue is
 // deliberately not re-exported here — sync-gocardless already owns that name.
 export {
+  findContactForGcCustomer,
   findContactForGcEmail,
+  findContactForGcPhone,
   linkGcCustomer,
   linkUnlinkedGcCustomers,
   pickUnambiguousContact,
@@ -105,6 +107,25 @@ export {
   monthlyRunRateMinor,
   type PlanCadence,
 } from './dd-insights'
+// Direct Debit recovery cases (ADR 0038) — the agent workflow to recover a
+// cancelled/underpaid plan's shortfall.
+export {
+  assignCase,
+  canTransition,
+  CaseTransitionError,
+  DD_CASE_STATUSES,
+  getCasesForSubscriptions,
+  getOrCreateCase,
+  isClosedStatus,
+  recordRecovery,
+  RECOVERY_METHODS,
+  setCaseNotes,
+  setCaseStatus,
+  type DirectDebitCaseRow,
+  type DirectDebitCaseStatusValue,
+  type RecoveryMethodValue,
+  type UpsertCaseInput,
+} from './dd-cases'
 // Direct Debit plan shortfalls (ADR 0038) — cancelled-part-way / underpaid plans
 // and active plans behind their collection schedule.
 export {

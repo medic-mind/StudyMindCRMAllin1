@@ -221,7 +221,21 @@ enum ReconciliationCategory {
   // Raised by the nightly finance/flag-dd-defaulters job (forward-only enum
   // add per CLAUDE.md §19).
   direct_debit_default
+  // ADR 0038 (sixth amendment): a fixed-length plan cancelled/finished early
+  // leaving contracted instalments uncollected, and an active plan that has
+  // fallen behind its expected collection schedule. Raised by the same job.
+  direct_debit_plan_shortfall
+  direct_debit_plan_arrears
   other
+}
+
+/// Direct Debit recovery case workflow (ADR 0038, seventh amendment).
+enum DirectDebitCaseStatus {
+  new
+  chasing
+  escalated
+  recovered
+  written_off
 }
 
 enum TaskStatus {
@@ -549,7 +563,6 @@ model Contact {
   /// surfaced for human confirmation; we never silent-merge (CLAUDE.md §3).
   fieldSuggestions   ContactFieldSuggestion[]
   safeguardingFlags  SafeguardingFlag[]
-  encryptedFields    EncryptedField[]
   cards              Card[]
   linksFrom          ContactLink[]            @relation("ContactLinkFrom")
   linksTo            ContactLink[]            @relation("ContactLinkTo")
@@ -1252,6 +1265,17 @@ model Conversation {
   /// denormalised here for display without a join. Null until first synced.
   trengoChannelId   Int?
   trengoChannelName String?
+  /// ADR 0021 Phase 5 — Gmail flag mirror (two-way sync). Maintained by BOTH
+  /// the CRM outbound actions (`mail.thread.*`) and the inbound history sync
+  /// (`mirrorThreadFlags`), so a star/archive/trash/read change made in Gmail
+  /// flows back into the CRM and vice-versa. `isArchived`/read state still live
+  /// on `status`/`unreadCount`; these two capture what those columns can't.
+  isStarred        Boolean            @default(false)
+  /// True when the Gmail thread is in TRASH. Distinct from `status='archived'`
+  /// (no INBOX label) so the mail client can show separate Archive / Trash.
+  isTrashed        Boolean            @default(false)
+  /// Last time `mirrorThreadFlags` re-read this thread's Gmail label state.
+  flagsSyncedAt    DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1272,6 +1296,8 @@ model Conversation {
   @@index([provider, channel])
   @@index([lastSyncCheckAt])
   @@index([trengoChannelId, status])
+  @@index([provider, isStarred])
+  @@index([provider, isTrashed])
 }
 
 enum ConversationStatus {
@@ -1449,7 +1475,14 @@ model SafeguardingFlag {
 }
 
 model EncryptedField {
-  id            String @id
+  id String @id
+  /// Polymorphic OWNER id, despite the legacy column name. Holds a Contact id
+  /// (safeguarding fields), a User id (Gmail / Trengo OAuth tokens — ADR 0012,
+  /// §11), or a TrengoToken id — see `EncryptFieldInput.ownerType`. It is
+  /// therefore NOT a foreign key to Contact: enforcing one made the Gmail /
+  /// Trengo token flows (ownerId = User id) violate it and 500 on connect. The
+  /// full owner identity is bound into the AAD, so a row can never be decrypted
+  /// under the wrong owner despite the missing DB-level FK.
   contactId     String
   column        String
   ciphertext    Bytes
@@ -1462,8 +1495,6 @@ model EncryptedField {
   updatedAt   DateTime @updatedAt
   createdById String?
   updatedById String?
-
-  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   @@unique([contactId, column])
 }
@@ -1798,6 +1829,10 @@ model GcCustomer {
   givenName    String?
   familyName   String?
   companyName  String?
+  /// E.164 phone the customer gave GoCardless. Used as a second contact-match
+  /// key after email (ADR 0038, sixth amendment) so a DD customer with no email
+  /// (or a non-matching one) still links to its CRM contact.
+  phone        String?
   /// CRM links. Set by unambiguous email auto-match at import or by manual
   /// linking in the Direct Debit workspace. familyId follows the contact's
   /// family when one exists (finance stays Family-keyed, CLAUDE.md §6.1).
@@ -1815,6 +1850,7 @@ model GcCustomer {
   family  Family?  @relation(fields: [familyId], references: [id], onDelete: SetNull)
 
   @@index([email])
+  @@index([phone])
   @@index([contactId])
   @@index([familyId])
 }
@@ -1848,6 +1884,12 @@ model GcSubscription {
   /// total contracted value (`count × amountMinor`) and, when a plan is
   /// cancelled/finished early, the collection shortfall (ADR 0038, §6.3).
   totalPaymentCount Int?
+  /// When true, this plan is excluded from the cancelled/underpaid shortfall
+  /// surfaces (ADR 0038, seventh amendment). Set at create-time for any plan
+  /// first seen already terminal (a historic import) and by the go-live
+  /// migration that snapshotted the existing cancelled/finished set — so the
+  /// CRM only tracks plans that cancel from go-live (June 2026) onward.
+  shortfallIgnored Boolean @default(false)
   metadata         Json?
   gcCreatedAt      DateTime?
 
@@ -1860,6 +1902,44 @@ model GcSubscription {
   @@index([status])
   @@index([gcCustomerId])
   @@index([gcMandateId])
+}
+
+/// Direct Debit recovery case (ADR 0038, seventh amendment). One per plan that
+/// has cancelled/finished underpaid from go-live onward — the workflow an agent
+/// drives to recover the shortfall: status, owner, and how it was recovered.
+/// Soft links to the GoCardless mirror + Contact/Family/User (JS-joined, no DB
+/// FKs — same pattern as the GC mirror) so it never trips on import ordering.
+model DirectDebitCase {
+  id               String                @id
+  gcSubscriptionId String                @unique
+  gcCustomerId     String?
+  contactId        String?
+  familyId         String?
+  status           DirectDebitCaseStatus @default(new)
+  ownerUserId      String?
+  /// Shortfall (pence) captured when the case was opened — a stable record even
+  /// as later collections change the live figure.
+  openingShortfallMinor Int               @default(0)
+  /// Recovery. Phase 2 links the actual invoicing/Stripe payment; Phase 1 keeps
+  /// the agent's manual record.
+  recoveredMinor   Int                   @default(0)
+  recoveredAt      DateTime?
+  /// bank_transfer | stripe | direct_debit | manual | other (normalised text).
+  recoveryMethod   String?
+  /// Invoice id (b2b.studymind.co.uk), Stripe payment id, or a free reference.
+  recoveryRef      String?
+  notes            String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([status])
+  @@index([ownerUserId])
+  @@index([contactId])
+  @@index([familyId])
 }
 
 /// Complete mirror of a GoCardless payment (ADR 0038). Wider population than
@@ -3154,6 +3234,11 @@ model GmailMailbox {
   historyId      String?
   watchExpiresAt DateTime?
   topicName      String?
+  /// Per-mailbox OAuth refresh token (EncryptedField.id), so EACH connected
+  /// mailbox syncs with its OWN token rather than sharing the single
+  /// User.gmailRefreshTokenCipherId (which the previous connect overwrote — only
+  /// one mailbox could sync). Null for rows connected before this column.
+  refreshTokenCipherId String?
   /// One mailbox per agent is the default outbound + drives Trengo/board
   /// senders. Only one row per agentId can be true at a time (app-level).
   isDefault      Boolean   @default(false)
@@ -3388,6 +3473,12 @@ model MailAccount {
   lastSyncedAt   DateTime?
   /// Bridge to the legacy per-agent Gmail row (provider=gmail only). 1:1.
   gmailMailboxId String? @unique
+  /// ADR 0021 — the account's own email signature, copied verbatim from the
+  /// provider (Gmail `users.settings.sendAs` for this address). HTML; appended
+  /// to compose/reply so outgoing mail matches what the agent sends from Gmail.
+  /// Null until first synced. `signatureSyncedAt` records the last copy.
+  signatureHtml     String?
+  signatureSyncedAt DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -4035,6 +4126,9 @@ model WebinarClass {
   /// Per-class overrides; fall back to WebinarSettings when null.
   emailSubjectTemplate String?
   emailBodyTemplate    String?
+  /// Optional rich-HTML reminder body authored in the group's chip editor. When
+  /// set it is sent as the HTML part (with emailBodyTemplate as the text part).
+  emailBodyHtml        String?
 
   active Boolean @default(true)
 

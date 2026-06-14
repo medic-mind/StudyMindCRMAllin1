@@ -31,18 +31,57 @@ interface TokenResponse {
   id_token?: string
 }
 
+// Build user-facing redirects against the PUBLIC app URL, not `req.url`. Behind
+// a proxy (Railway) `req.url` is the internal bind (e.g. http://0.0.0.0:8080),
+// which is unreachable from the browser — so a successful connect would land on
+// a broken URL. Fall back to the request origin only when the env is unset.
+function appBaseUrl(req: Request): string {
+  const fromEnv = process.env['NEXT_PUBLIC_APP_URL']?.trim()
+  if (fromEnv) {
+    try {
+      // Must be an absolute http(s) URL — a bare host like "crm.studymind.co.uk"
+      // makes `new URL(path, base)` throw, which would 500 the callback.
+      const u = new URL(fromEnv)
+      if (u.protocol === 'http:' || u.protocol === 'https:') return `${u.protocol}//${u.host}`
+    } catch {
+      // fall through to the request origin
+    }
+  }
+  return new URL(req.url).origin
+}
+
 function redirectWithError(req: Request, error: string): Response {
-  const url = new URL('/settings/mailbox', req.url)
+  const url = new URL('/settings/mailbox', appBaseUrl(req))
   url.searchParams.set('error', error)
   return NextResponse.redirect(url, 302)
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const me = await getCurrentUser()
-  if (!me) {
-    return NextResponse.redirect(new URL('/sign-in', req.url), 302)
+  let me: Awaited<ReturnType<typeof getCurrentUser>> = null
+  try {
+    me = await getCurrentUser()
+    if (!me) {
+      return NextResponse.redirect(new URL('/sign-in', appBaseUrl(req)), 302)
+    }
+    return await runCallback(req, me)
+  } catch (err) {
+    // The connect flow must never return a raw 500 (golden rule: no silent
+    // failure, but also no scary dead-end). Capture the real cause in the audit
+    // log and bounce back to Settings → Mailbox with a friendly message.
+    await writeAuditLogEntry(db, {
+      actorId: me?.id ?? null,
+      action: 'gmail.oauth_error',
+      target: { type: 'User', id: me?.id ?? 'unknown' },
+      after: { message: err instanceof Error ? err.message : String(err) },
+    }).catch(() => undefined)
+    return redirectWithError(req, 'connect_failed')
   }
+}
 
+async function runCallback(
+  req: Request,
+  me: NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>,
+): Promise<Response> {
   const inUrl = new URL(req.url)
   const code = inUrl.searchParams.get('code')
   const state = inUrl.searchParams.get('state')
@@ -136,7 +175,24 @@ export async function GET(req: Request): Promise<Response> {
     { headers: { authorization: `Bearer ${tokens.access_token}` } },
   )
   if (!profileRes.ok) {
-    return redirectWithError(req, 'profile_lookup_failed')
+    // Surface the most common, actionable cause distinctly: the Gmail API not
+    // being enabled in the OAuth client's Google Cloud project (403
+    // SERVICE_DISABLED / accessNotConfigured). Everything else stays a generic
+    // profile failure with the status appended so support can diagnose.
+    const detail = await profileRes.text().catch(() => '')
+    const apiDisabled =
+      profileRes.status === 403 &&
+      /SERVICE_DISABLED|accessNotConfigured|has not been used in project|is disabled/i.test(detail)
+    await writeAuditLogEntry(db, {
+      actorId: me.id,
+      action: 'gmail.oauth_profile_failed',
+      target: { type: 'User', id: me.id },
+      after: { status: profileRes.status, apiDisabled },
+    })
+    return redirectWithError(
+      req,
+      apiDisabled ? 'gmail_api_disabled' : `profile_lookup_failed_${profileRes.status}`,
+    )
   }
   const profile = (await profileRes.json()) as { emailAddress?: string }
   const address = profile.emailAddress
@@ -144,10 +200,13 @@ export async function GET(req: Request): Promise<Response> {
     return redirectWithError(req, 'profile_lookup_failed')
   }
 
-  // Encrypt + persist the refresh token.
+  // Encrypt + persist the refresh token PER MAILBOX, keyed on the address, so
+  // every connected account keeps its own token (multi-account). Also mirror it
+  // onto User.gmailRefreshTokenCipherId so default-mailbox callers + system send
+  // keep working — the most-recently-connected mailbox becomes the user default.
   const cipher = await encryptField(db, {
     ownerType: 'User',
-    ownerId: me.id,
+    ownerId: `${me.id}:${address}`,
     fieldName: 'gmail.refresh_token',
     plaintext: tokens.refresh_token,
     ctx: { actorId: me.id, purpose: 'gmail.oauth_connect' },
@@ -165,7 +224,7 @@ export async function GET(req: Request): Promise<Response> {
   // can prompt; the user keeps the encrypted token so retry is cheap.
   let watchOk = true
   try {
-    await setupWatchForUser(me.id, { address })
+    await setupWatchForUser(me.id, { address, refreshTokenCipherId: cipher.id })
   } catch {
     watchOk = false
     await db.user.update({
@@ -198,7 +257,7 @@ export async function GET(req: Request): Promise<Response> {
     }
   }
 
-  const redir = new URL('/settings/mailbox', req.url)
+  const redir = new URL('/settings/mailbox', appBaseUrl(req))
   redir.searchParams.set('connected', '1')
   if (!watchOk) redir.searchParams.set('warning', 'watch_setup_failed')
   return NextResponse.redirect(redir, 302)

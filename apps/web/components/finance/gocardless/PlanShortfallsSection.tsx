@@ -7,18 +7,107 @@
 // on the working tabs (CLAUDE.md §3).
 
 import Link from 'next/link'
+import { useMemo, useState } from 'react'
 
+import { NewTaskDialog } from '@/app/(app)/tasks/NewTaskDialog'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { CsvExportButton } from '@/components/ui/csv-export-button'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
 import { formatDate, statusLabel } from './shared'
+import { ShortfallCaseCell } from './ShortfallCaseCell'
+
+/** A compact "chase" action for an Issues row: open a follow-up task against the
+ * contact/family, plus a jump to the contact. Shown only when the plan's
+ * customer is linked (otherwise there is nobody to action). */
+function RowActions({
+  contactId,
+  familyId,
+  customerName,
+}: {
+  contactId: string | null
+  familyId: string | null
+  customerName: string | null
+}) {
+  if (!contactId && !familyId) {
+    return <span className="text-xs text-neutral-400">link customer</span>
+  }
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <NewTaskDialog
+        contactId={contactId ?? undefined}
+        familyId={familyId ?? undefined}
+        contactName={customerName ?? undefined}
+        triggerLabel="Chase"
+        triggerVariant="secondary"
+        triggerSize="xs"
+      />
+    </div>
+  )
+}
 
 function describeCadence(intervalUnit: string, interval: number): string {
   const unit =
     intervalUnit === 'weekly' ? 'week' : intervalUnit === 'yearly' ? 'year' : 'month'
   return interval > 1 ? `every ${interval} ${unit}s` : unit + 'ly'
+}
+
+type SortDir = 'asc' | 'desc'
+
+/** Sort a copy of `items` by the chosen numeric/string key + direction. */
+function useSortedRows<T>(
+  items: T[],
+  key: keyof T,
+  dir: SortDir,
+): T[] {
+  return useMemo(() => {
+    const sorted = [...items]
+    sorted.sort((a, b) => {
+      const av = a[key]
+      const bv = b[key]
+      let cmp = 0
+      if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv
+      else cmp = String(av ?? '').localeCompare(String(bv ?? ''))
+      return dir === 'asc' ? cmp : -cmp
+    })
+    return sorted
+  }, [items, key, dir])
+}
+
+/** A clickable sort header cell. */
+function SortTh<T>({
+  label,
+  field,
+  sort,
+  setSort,
+  align = 'left',
+}: {
+  label: string
+  field: keyof T
+  sort: { key: keyof T; dir: SortDir }
+  setSort: (s: { key: keyof T; dir: SortDir }) => void
+  align?: 'left' | 'right' | 'center'
+}) {
+  const active = sort.key === field
+  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : ''
+  return (
+    <Th className={alignCls}>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 hover:text-neutral-900"
+        onClick={() =>
+          setSort({ key: field, dir: active && sort.dir === 'desc' ? 'asc' : 'desc' })
+        }
+      >
+        {label}
+        <span aria-hidden className="text-[10px] text-neutral-400">
+          {active ? (sort.dir === 'desc' ? '▼' : '▲') : '↕'}
+        </span>
+      </button>
+    </Th>
+  )
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -77,6 +166,20 @@ function CustomerCell({
 export function PlanShortfallsSection() {
   const query = trpc.finance.directDebit.listPlanShortfalls.useQuery({})
   const items = (query.data?.items ?? []) as Shortfall[]
+  const [sort, setSort] = useState<{ key: keyof Shortfall; dir: SortDir }>({
+    key: 'shortfallMinor',
+    dir: 'desc',
+  })
+  const rows = useSortedRows(items, sort.key, sort.dir)
+
+  const subIds = items.map((i) => i.gcSubscriptionId)
+  const casesQuery = trpc.finance.directDebit.cases.forSubscriptions.useQuery(
+    { gcSubscriptionIds: subIds },
+    { enabled: subIds.length > 0 },
+  )
+  const usersQuery = trpc.finance.directDebit.cases.assignableUsers.useQuery()
+  const caseBySub = new Map((casesQuery.data?.cases ?? []).map((c) => [c.gcSubscriptionId, c]))
+  const assignableUsers = usersQuery.data ?? []
 
   if (query.isLoading) {
     return <p className="px-1 py-6 text-sm text-neutral-500">Loading cancelled plans…</p>
@@ -86,19 +189,46 @@ export function PlanShortfallsSection() {
 
   return (
     <section className="space-y-2">
-      <div className="flex items-baseline justify-between px-1">
-        <h2 className="text-sm font-semibold text-neutral-900">
-          Cancelled &amp; underpaid plans
-        </h2>
-        {items.length > 0 ? (
+      <div className="flex items-baseline justify-between gap-2 px-1">
+        <div>
+          <h2 className="text-sm font-semibold text-neutral-900">
+            Cancelled &amp; underpaid plans
+          </h2>
           <p className="text-xs text-neutral-500">
-            {items.length} plan{items.length === 1 ? '' : 's'} ·{' '}
-            <span className="font-mono font-semibold tabular-nums text-red-700">
-              {formatMoneyMinor(totalShortfall)}
-            </span>{' '}
-            still due
+            Plans cancelled from June 2026 onward only — earlier cancellations are managed
+            separately.
           </p>
-        ) : null}
+        </div>
+        <div className="flex items-center gap-3">
+          {items.length > 0 ? (
+            <p className="text-xs text-neutral-500">
+              {items.length} plan{items.length === 1 ? '' : 's'} ·{' '}
+              <span className="font-mono font-semibold tabular-nums text-red-700">
+                {formatMoneyMinor(totalShortfall)}
+              </span>{' '}
+              still due
+            </p>
+          ) : null}
+          {items.length > 0 ? (
+            <CsvExportButton
+              getRows={() => rows}
+              fileNameBase="dd-cancelled-underpaid-plans"
+              columns={[
+                { header: 'Customer', value: (r: Shortfall) => r.customerName ?? '' },
+                { header: 'GoCardless customer', value: (r: Shortfall) => r.gcCustomerId ?? '' },
+                { header: 'Plan', value: (r: Shortfall) => r.name ?? '' },
+                { header: 'Status', value: (r: Shortfall) => r.status },
+                { header: 'Instalment (£)', value: (r: Shortfall) => r.amountMinor / 100 },
+                { header: 'Collected count', value: (r: Shortfall) => r.collectedCount },
+                { header: 'Contracted count', value: (r: Shortfall) => r.totalPaymentCount },
+                { header: 'Total due (£)', value: (r: Shortfall) => r.expectedTotalMinor / 100 },
+                { header: 'Collected (£)', value: (r: Shortfall) => r.collectedMinor / 100 },
+                { header: 'Shortfall (£)', value: (r: Shortfall) => r.shortfallMinor / 100 },
+                { header: 'Cancelled part-way', value: (r: Shortfall) => r.cancelledPartway },
+              ]}
+            />
+          ) : null}
+        </div>
       </div>
 
       {items.length === 0 ? (
@@ -111,18 +241,43 @@ export function PlanShortfallsSection() {
           <Table>
             <Thead>
               <Tr>
-                <Th>Customer</Th>
+                <SortTh<Shortfall>
+                  label="Customer"
+                  field="customerName"
+                  sort={sort}
+                  setSort={setSort}
+                />
                 <Th>Plan</Th>
-                <Th className="text-right">Instalment</Th>
+                <SortTh<Shortfall>
+                  label="Instalment"
+                  field="amountMinor"
+                  sort={sort}
+                  setSort={setSort}
+                  align="right"
+                />
                 <Th className="text-center">Collected</Th>
-                <Th className="text-right">Total due</Th>
+                <SortTh<Shortfall>
+                  label="Total due"
+                  field="expectedTotalMinor"
+                  sort={sort}
+                  setSort={setSort}
+                  align="right"
+                />
                 <Th className="text-right">Collected</Th>
-                <Th className="text-right">Shortfall</Th>
+                <SortTh<Shortfall>
+                  label="Shortfall"
+                  field="shortfallMinor"
+                  sort={sort}
+                  setSort={setSort}
+                  align="right"
+                />
                 <Th>Why</Th>
+                <Th className="text-right">Case</Th>
+                <Th className="text-right">Action</Th>
               </Tr>
             </Thead>
             <Tbody>
-              {items.map((s) => (
+              {rows.map((s) => (
                 <Tr key={s.gcSubscriptionId}>
                   <Td>
                     <CustomerCell s={s} />
@@ -170,6 +325,26 @@ export function PlanShortfallsSection() {
                       ))}
                     </div>
                   </Td>
+                  <Td className="text-right">
+                    <ShortfallCaseCell
+                      links={{
+                        gcSubscriptionId: s.gcSubscriptionId,
+                        gcCustomerId: s.gcCustomerId,
+                        contactId: s.contactId,
+                        familyId: s.familyId,
+                        openingShortfallMinor: s.shortfallMinor,
+                      }}
+                      caseData={caseBySub.get(s.gcSubscriptionId)}
+                      assignableUsers={assignableUsers}
+                    />
+                  </Td>
+                  <Td className="text-right">
+                    <RowActions
+                      contactId={s.contactId}
+                      familyId={s.familyId}
+                      customerName={s.customerName}
+                    />
+                  </Td>
                 </Tr>
               ))}
             </Tbody>
@@ -203,6 +378,11 @@ interface Arrears {
 export function ActivePlanArrearsSection() {
   const query = trpc.finance.directDebit.listActivePlanArrears.useQuery({})
   const items = (query.data?.items ?? []) as Arrears[]
+  const [sort, setSort] = useState<{ key: keyof Arrears; dir: SortDir }>({
+    key: 'estimatedArrearsMinor',
+    dir: 'desc',
+  })
+  const rows = useSortedRows(items, sort.key, sort.dir)
 
   if (query.isLoading) {
     return <p className="px-1 py-6 text-sm text-neutral-500">Loading active plans…</p>
@@ -212,19 +392,40 @@ export function ActivePlanArrearsSection() {
 
   return (
     <section className="space-y-2">
-      <div className="flex items-baseline justify-between px-1">
+      <div className="flex items-baseline justify-between gap-2 px-1">
         <h2 className="text-sm font-semibold text-neutral-900">
           Active plans behind schedule
         </h2>
-        {items.length > 0 ? (
-          <p className="text-xs text-neutral-500">
-            {items.length} plan{items.length === 1 ? '' : 's'} ·{' '}
-            <span className="font-mono font-semibold tabular-nums text-amber-700">
-              {formatMoneyMinor(totalArrears)}
-            </span>{' '}
-            est. arrears
-          </p>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {items.length > 0 ? (
+            <p className="text-xs text-neutral-500">
+              {items.length} plan{items.length === 1 ? '' : 's'} ·{' '}
+              <span className="font-mono font-semibold tabular-nums text-amber-700">
+                {formatMoneyMinor(totalArrears)}
+              </span>{' '}
+              est. arrears
+            </p>
+          ) : null}
+          {items.length > 0 ? (
+            <CsvExportButton
+              getRows={() => rows}
+              fileNameBase="dd-plans-behind-schedule"
+              columns={[
+                { header: 'Customer', value: (r: Arrears) => r.customerName ?? '' },
+                { header: 'GoCardless customer', value: (r: Arrears) => r.gcCustomerId ?? '' },
+                { header: 'Plan', value: (r: Arrears) => r.name ?? '' },
+                { header: 'Instalment (£)', value: (r: Arrears) => r.amountMinor / 100 },
+                { header: 'Collected count', value: (r: Arrears) => r.collectedCount },
+                { header: 'Expected by now', value: (r: Arrears) => r.expectedByNow },
+                { header: 'Behind', value: (r: Arrears) => r.missedCount },
+                {
+                  header: 'Est. arrears (£)',
+                  value: (r: Arrears) => r.estimatedArrearsMinor / 100,
+                },
+              ]}
+            />
+          ) : null}
+        </div>
       </div>
 
       {items.length === 0 ? (
@@ -240,17 +441,41 @@ export function ActivePlanArrearsSection() {
           <Table>
             <Thead>
               <Tr>
-                <Th>Customer</Th>
+                <SortTh<Arrears>
+                  label="Customer"
+                  field="customerName"
+                  sort={sort}
+                  setSort={setSort}
+                />
                 <Th>Plan</Th>
-                <Th className="text-right">Instalment</Th>
+                <SortTh<Arrears>
+                  label="Instalment"
+                  field="amountMinor"
+                  sort={sort}
+                  setSort={setSort}
+                  align="right"
+                />
                 <Th className="text-center">Collected vs due</Th>
-                <Th className="text-center">Behind</Th>
-                <Th className="text-right">Est. arrears</Th>
+                <SortTh<Arrears>
+                  label="Behind"
+                  field="missedCount"
+                  sort={sort}
+                  setSort={setSort}
+                  align="center"
+                />
+                <SortTh<Arrears>
+                  label="Est. arrears"
+                  field="estimatedArrearsMinor"
+                  sort={sort}
+                  setSort={setSort}
+                  align="right"
+                />
                 <Th>Next charge</Th>
+                <Th className="text-right">Action</Th>
               </Tr>
             </Thead>
             <Tbody>
-              {items.map((s) => (
+              {rows.map((s) => (
                 <Tr key={s.gcSubscriptionId}>
                   <Td>
                     <CustomerCell s={s} />
@@ -283,6 +508,13 @@ export function ActivePlanArrearsSection() {
                     {formatMoneyMinor(s.estimatedArrearsMinor, s.currency)}
                   </Td>
                   <Td className="text-xs text-neutral-500">{formatDate(s.nextChargeAt)}</Td>
+                  <Td className="text-right">
+                    <RowActions
+                      contactId={s.contactId}
+                      familyId={s.familyId}
+                      customerName={s.customerName}
+                    />
+                  </Td>
                 </Tr>
               ))}
             </Tbody>

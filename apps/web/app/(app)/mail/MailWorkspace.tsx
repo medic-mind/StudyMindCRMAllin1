@@ -36,9 +36,19 @@ interface AccountOption {
   id: string
   address: string
   displayName: string | null
+  signatureHtml: string | null
 }
 
-type Folder = 'all' | 'unread'
+// The agent's Gmail signature, copied verbatim, rendered as the plaintext the
+// composer sends today (HTML send arrives with the rich composer). Appended
+// below the cursor like Gmail. Empty when the account has no signature.
+function signatureText(account: AccountOption | undefined): string {
+  const html = account?.signatureHtml
+  if (!html) return ''
+  return displayMessageBody(html)?.trim() ?? ''
+}
+
+type Folder = 'all' | 'unread' | 'starred' | 'archived' | 'trash'
 
 export function MailWorkspace({
   accounts,
@@ -263,6 +273,7 @@ export function MailWorkspace({
         {selectedId ? (
           <ReadingPane
             conversationId={selectedId}
+            accounts={accounts}
             onClose={() => setSelectedId(null)}
             onChanged={invalidateList}
           />
@@ -362,6 +373,13 @@ function Rail({
       <nav aria-label="Folders" className="flex flex-col gap-0.5">
         <RailItem label="All mail" active={folder === 'all'} onClick={() => onFolder('all')} />
         <RailItem label="Unread" active={folder === 'unread'} onClick={() => onFolder('unread')} />
+        <RailItem label="Starred" active={folder === 'starred'} onClick={() => onFolder('starred')} />
+        <RailItem
+          label="Archived"
+          active={folder === 'archived'}
+          onClick={() => onFolder('archived')}
+        />
+        <RailItem label="Trash" active={folder === 'trash'} onClick={() => onFolder('trash')} />
       </nav>
 
       <div>
@@ -435,6 +453,9 @@ type ThreadItem = {
   subject: string | null
   unreadCount: number
   status: string
+  isStarred: boolean
+  isTrashed: boolean
+  preview: string | null
   lastMessageAt: Date
   accountAddress: string | null
   contactName: string | null
@@ -485,12 +506,21 @@ function ThreadRow({
       <Avatar name={who} size={30} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span
-            className={`truncate text-sm ${
-              unread ? 'font-semibold text-neutral-900' : 'font-medium text-neutral-700'
-            }`}
-          >
-            {who}
+          <span className="flex min-w-0 items-center gap-1">
+            {item.isStarred ? (
+              <StarIcon
+                size={12}
+                aria-label="Starred"
+                className="shrink-0 fill-amber-400 text-amber-400"
+              />
+            ) : null}
+            <span
+              className={`truncate text-sm ${
+                unread ? 'font-semibold text-neutral-900' : 'font-medium text-neutral-700'
+              }`}
+            >
+              {who}
+            </span>
           </span>
           <time
             className="shrink-0 text-[11px] tabular-nums text-neutral-400"
@@ -506,9 +536,14 @@ function ThreadRow({
         >
           {item.subject ?? '(no subject)'}
         </div>
+        {item.preview ? (
+          <div className="truncate text-[12px] text-neutral-400">{item.preview}</div>
+        ) : null}
         <div className="flex items-center gap-1.5 text-[11px] text-neutral-400">
           {item.accountAddress ? <span className="truncate">{item.accountAddress}</span> : null}
-          {item.status === 'archived' ? (
+          {item.isTrashed ? (
+            <span className="rounded bg-red-50 px-1 text-red-500">Trash</span>
+          ) : item.status === 'archived' ? (
             <span className="rounded bg-neutral-100 px-1 text-neutral-500">Archived</span>
           ) : null}
           {item.unreadCount > 1 ? (
@@ -645,10 +680,12 @@ function IconBtn({
 
 function ReadingPane({
   conversationId,
+  accounts,
   onClose,
   onChanged,
 }: {
   conversationId: string
+  accounts: AccountOption[]
   onClose: () => void
   onChanged: () => void
 }) {
@@ -665,6 +702,11 @@ function ReadingPane({
 
   const head = convo.data?.head
   const messages = useMemo(() => convo.data?.messages ?? [], [convo.data])
+
+  // The account's Gmail signature is appended server-side on send (text + HTML);
+  // surface it as a read-only preview by the composer rather than prefilling it.
+  const replyAccount = accounts.find((a) => a.id === head?.mailAccountId)
+  const replySigPreview = signatureText(replyAccount)
 
   // Mark read on open (like Gmail). Once per conversation per mount.
   useEffect(() => {
@@ -811,9 +853,13 @@ function ReadingPane({
                     {formatRelativeTime(m.occurredAt, now)}
                   </time>
                 </div>
-                <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
-                  {displayMessageBody(m.body) ?? '(no content)'}
-                </p>
+                {m.bodyHtml ? (
+                  <EmailHtmlBody html={m.bodyHtml} text={displayMessageBody(m.body) ?? ''} />
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
+                    {displayMessageBody(m.body) ?? '(no content)'}
+                  </p>
+                )}
                 {m.mailAttachments.length > 0 ? (
                   <ul className="mt-2 flex flex-wrap gap-1.5">
                     {m.mailAttachments.map((a) => (
@@ -853,13 +899,71 @@ function ReadingPane({
             placeholder="Reply… (sends from this mailbox and syncs to Gmail)   ( r )"
             aria-label="Reply"
           />
-          <div className="mt-2 flex justify-end">
+          <div className="mt-2 flex items-center justify-between gap-3">
+            {replySigPreview ? (
+              <span className="truncate text-[11px] text-neutral-400" title={replySigPreview}>
+                Signature appended: {replySigPreview}
+              </span>
+            ) : (
+              <span />
+            )}
             <Button type="button" size="sm" disabled={reply.isPending || !body.trim()} onClick={sendReply}>
               <SendIcon size={15} /> {reply.isPending ? 'Sending…' : 'Send reply'}
             </Button>
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Email HTML body — rendered exactly like Gmail. ADR 0041.
+//
+// Security: the message HTML is shown in a LOCKED, opaque-origin sandboxed
+// iframe — `sandbox` WITHOUT `allow-scripts` (no JS can ever run) and WITHOUT
+// `allow-same-origin` (the frame is a unique origin: it can't read our cookies/
+// DOM, and it does NOT inherit our strict CSP, so the email's inline styles
+// render — which is what makes it look identical to Gmail). The HTML was also
+// sanitised server-side (packages/core/src/mail/html-email.ts) as defence in
+// depth. `allow-popups` + `<base target="_blank">` lets links open in a new tab.
+// -----------------------------------------------------------------------------
+
+function EmailHtmlBody({ html, text }: { html: string; text: string }) {
+  const [showHtml, setShowHtml] = useState(true)
+  const srcDoc = useMemo(
+    () =>
+      `<!doctype html><html><head><base target="_blank">` +
+      `<meta name="color-scheme" content="light">` +
+      `<style>html,body{margin:0;padding:0;background:#fff;` +
+      `font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;` +
+      `color:#1f2933;font-size:14px;line-height:1.5;word-break:break-word}` +
+      `img{max-width:100%;height:auto}a{color:#2563eb}` +
+      `table{max-width:100%}</style></head><body>${html}</body></html>`,
+    [html],
+  )
+  return (
+    <div>
+      {showHtml ? (
+        <iframe
+          title="Email message"
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          srcDoc={srcDoc}
+          className="w-full rounded-md border border-neutral-100 bg-white"
+          style={{ height: 420 }}
+        />
+      ) : (
+        <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
+          {text || '(no content)'}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={() => setShowHtml((v) => !v)}
+        className="mt-1 text-[11px] font-medium text-neutral-400 hover:text-neutral-600"
+      >
+        {showHtml ? 'View plain text' : 'View formatted'}
+      </button>
     </div>
   )
 }
@@ -879,8 +983,16 @@ function ComposeModal({
   const compose = trpc.mail.compose.useMutation()
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
   const [to, setTo] = useState('')
+  const [cc, setCc] = useState('')
+  const [showCc, setShowCc] = useState(false)
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
+
+  // The account's Gmail signature is appended server-side to both the text and
+  // HTML parts (so it renders with its real formatting). Show it as a read-only
+  // preview here so the agent sees what will be added without it cluttering the
+  // editable body. Swaps with the From account.
+  const sigPreview = signatureText(accounts.find((a) => a.id === accountId))
 
   async function send() {
     const recipients = to
@@ -891,10 +1003,15 @@ function ComposeModal({
       toast.error('Add a recipient, subject and message.')
       return
     }
+    const ccList = cc
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
     try {
       await compose.mutateAsync({
         mailAccountId: accountId,
         to: recipients,
+        ...(ccList.length > 0 ? { cc: ccList } : {}),
         subject: subject.trim(),
         body: body.trim(),
       })
@@ -942,7 +1059,21 @@ function ComposeModal({
               </option>
             ))}
           </select>
-          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To: name@example.com, …" aria-label="To" />
+          <div className="relative">
+            <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To: name@example.com, …" aria-label="To" />
+            {!showCc ? (
+              <button
+                type="button"
+                onClick={() => setShowCc(true)}
+                className="absolute right-2 top-1.5 text-xs font-medium text-neutral-400 hover:text-neutral-600"
+              >
+                Cc
+              </button>
+            ) : null}
+          </div>
+          {showCc ? (
+            <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc: name@example.com, …" aria-label="Cc" />
+          ) : null}
           <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" aria-label="Subject" />
           <Textarea
             value={body}
@@ -951,6 +1082,14 @@ function ComposeModal({
             placeholder="Write your message…"
             aria-label="Message"
           />
+          {sigPreview ? (
+            <div className="rounded-md border border-dashed border-neutral-200 bg-neutral-50/60 px-2.5 py-1.5 text-xs text-neutral-500">
+              <span className="text-neutral-400">Signature appended:</span>
+              <span className="ml-1 whitespace-pre-wrap break-words text-neutral-600">
+                {sigPreview}
+              </span>
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-neutral-200 px-4 py-2.5">
           <Button type="button" size="sm" variant="ghost" onClick={onClose}>
