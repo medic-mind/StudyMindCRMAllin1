@@ -65,6 +65,7 @@ import { mailRouter } from './routers/mail'
 import { mailAccountRouter } from './routers/mailAccount'
 import { notificationsRouter } from './routers/notifications'
 import { oauthRouter } from './routers/oauth'
+import { ddRecoveryTemplateRouter } from './routers/ddRecoveryTemplate'
 import { pipelineRouter } from './routers/pipeline'
 import { quickReplyRouter } from './routers/quickReply'
 import { reportsRouter } from './routers/reports'
@@ -115,6 +116,7 @@ export const appRouter = router({
   oauth: oauthRouter,
   pipeline: pipelineRouter,
   quickReply: quickReplyRouter,
+  ddRecoveryTemplate: ddRecoveryTemplateRouter,
   reports: reportsRouter,
   search: searchRouter,
   slackChannel: slackChannelRouter,

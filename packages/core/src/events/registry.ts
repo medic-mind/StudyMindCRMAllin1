@@ -284,6 +284,11 @@ export const EVENT_NAMES = [
   'direct_debit.case_assigned',
   'direct_debit.case_note_updated',
   'direct_debit.case_recovered',
+  // Recovery-comms templates (Phase 3): staff-authored reminder / legal copy.
+  'dd_recovery_template.created',
+  'dd_recovery_template.updated',
+  'dd_recovery_template.archived',
+  'dd_recovery_template.restored',
   'stripe.payment_unresolved',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
