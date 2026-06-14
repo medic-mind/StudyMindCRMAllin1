@@ -136,6 +136,24 @@ export const colors = {
     900: '#084b3d',
     950: '#022c24',
   },
+  // Gmail-parity accent (Google blue) — a DELIBERATE, scoped exception to the
+  // "primary is the brand" rule (§4), approved for the `/mail` email client so
+  // it reads like Gmail (CLAUDE.md §37). Used only inside
+  // `apps/web/app/(app)/mail/*`; the rest of the product stays on `primary`.
+  // Centred on Gmail's #1a73e8.
+  gmail: {
+    50: '#e8f0fe',
+    100: '#d2e3fc',
+    200: '#aecbfa',
+    300: '#8ab4f8',
+    400: '#4285f4',
+    500: '#1a73e8',
+    600: '#1967d2',
+    700: '#185abc',
+    800: '#174ea6',
+    900: '#0d3c78',
+    950: '#0a2a54',
+  },
 } as const
 
 export type ColorTokens = typeof colors
