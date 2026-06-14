@@ -31,9 +31,11 @@ import { inngest } from '@studymind/jobs'
 import { primaryAccountByContact } from './business-account-link'
 import {
   createClientForAgent,
+  customLabelNames,
   getHeader,
   isInvalidGrantError,
   parseAddresses,
+  parseFromName,
   type GmailMessage,
 } from './client'
 import { putAttachment } from './s3'
@@ -92,6 +94,17 @@ export const gmailBackfillRequested = inngest.createFunction(
 
       for (const mb of mailboxes) {
         const agentAddr = mb.address.toLowerCase()
+        // The mailbox's label id→name map (custom Gmail labels on the head).
+        const labelMap = await step.run(`labels-${mb.id}`, async () => {
+          const client = await createClientForAgent({
+            agentId,
+            address: mb.address,
+            purpose: 'gmail.backfill',
+            requestId: jobId,
+          })
+          const labels = await client.listLabels()
+          return Object.fromEntries(labels.map((l) => [l.id, l.name]))
+        })
         let pageToken: string | undefined
         do {
           const { ids, nextPageToken } = await step.run(
@@ -109,6 +122,7 @@ export const gmailBackfillRequested = inngest.createFunction(
                   agentAddr,
                   messageId,
                   requestId: jobId,
+                  labelMap,
                 }),
               )
               processed += 1
@@ -224,6 +238,8 @@ interface ProcessInput {
   messageId: string
   agentAddr: string
   requestId: string
+  /** Gmail label id→name map for surfacing custom labels on the head. */
+  labelMap: Record<string, string>
 }
 
 async function processBackfillMessage(
@@ -257,6 +273,8 @@ async function processBackfillMessage(
   const bccAddrs = parseAddresses(bccHeader)
 
   const direction = fromAddrs.includes(input.agentAddr) ? 'sent' : 'received'
+  const senderName = direction === 'received' ? parseFromName(fromHeader) : null
+  const labels = customLabelNames(message.labelIds, new Map(Object.entries(input.labelMap)))
   const allAddrs = Array.from(
     new Set([...fromAddrs, ...toAddrs, ...ccAddrs, ...bccAddrs]),
   ).filter((a) => a !== input.agentAddr)
@@ -310,6 +328,7 @@ async function processBackfillMessage(
     cc: ccAddrs,
     bcc: bccAddrs,
     subject,
+    senderName,
     bodyHtml,
     attachments: attachmentRefs,
   }
@@ -360,6 +379,8 @@ async function processBackfillMessage(
     contactId: matchedContacts[0]?.id ?? null,
     familyId: null,
     subject: subject || null,
+    senderName,
+    labels,
   })
 
   return { matched: matchedContacts.length }

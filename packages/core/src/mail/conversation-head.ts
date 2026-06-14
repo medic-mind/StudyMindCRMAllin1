@@ -43,6 +43,8 @@ export interface MailConversationRow {
   isStarred: boolean
   isTrashed: boolean
   flagsSyncedAt: Date | null
+  lastSenderName: string | null
+  tags: string[]
 }
 
 interface MailConversationCreateInput {
@@ -63,6 +65,7 @@ interface MailConversationCreateInput {
   unreadCount: number
   subject: string | null
   tags: string[]
+  lastSenderName: string | null
   replyDeadlineAt: null
 }
 
@@ -79,6 +82,8 @@ interface MailConversationUpdateInput {
   isStarred?: boolean
   isTrashed?: boolean
   flagsSyncedAt?: Date
+  lastSenderName?: string | null
+  tags?: string[]
 }
 
 export interface ApplyMailInput {
@@ -93,6 +98,11 @@ export interface ApplyMailInput {
   contactId: string | null
   familyId: string | null
   subject: string | null
+  /** Display name of this message's sender (From header). Used for the list. */
+  senderName?: string | null
+  /** Custom Gmail label names on the thread (drives the label chips). When
+   *  provided, SETS the head tags to this exact set (Gmail is the source). */
+  labels?: string[] | undefined
 }
 
 /**
@@ -134,7 +144,8 @@ export async function applyMailToConversation(
         lastOutboundAt: isInbound ? null : input.occurredAt,
         unreadCount: isInbound ? 1 : 0,
         subject: input.subject,
-        tags: [],
+        tags: input.labels ?? [],
+        lastSenderName: isInbound ? (input.senderName ?? null) : null,
         replyDeadlineAt: null,
       },
     })
@@ -259,6 +270,11 @@ function mergeMailEvent(
     if (advancesInbound) patch.lastInboundAt = occurredAt
     const stale = existing.lastOutboundAt && occurredAt <= existing.lastOutboundAt
     if (advancesInbound && !stale) patch.unreadCount = existing.unreadCount + 1
+    // Keep the list showing the latest inbound sender's real name (Gmail-like),
+    // not a matched CRM contact.
+    if (advancesInbound && input.senderName && input.senderName !== existing.lastSenderName) {
+      patch.lastSenderName = input.senderName
+    }
   } else {
     if (!existing.lastOutboundAt || occurredAt > existing.lastOutboundAt) {
       patch.lastOutboundAt = occurredAt
@@ -266,5 +282,17 @@ function mergeMailEvent(
     if (existing.unreadCount > 0) patch.unreadCount = 0
   }
 
+  // Gmail labels are authoritative — set the head tags to the current set when
+  // provided (only when it actually changed, to avoid churn).
+  if (input.labels && !sameStringSet(input.labels, existing.tags)) {
+    patch.tags = input.labels
+  }
+
   return patch
+}
+
+function sameStringSet(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false
+  const set = new Set(b)
+  return a.every((x) => set.has(x))
 }

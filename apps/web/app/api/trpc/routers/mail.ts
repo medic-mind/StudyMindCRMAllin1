@@ -248,6 +248,8 @@ export const mailRouter = router({
             isStarred: true,
             isTrashed: true,
             lastMessagePreview: true,
+            lastSenderName: true,
+            tags: true,
             lastMessageAt: true,
             mailAccountId: true,
             contact: {
@@ -259,25 +261,31 @@ export const mailRouter = router({
 
         const hasMore = rows.length > input.limit
         const sliced = hasMore ? rows.slice(0, input.limit) : rows
-        const items = sliced.map((r) => ({
-          id: r.id,
-          contactId: r.contactId,
-          subject: r.subject,
-          unreadCount: r.unreadCount,
-          status: r.status,
-          isStarred: r.isStarred,
-          isTrashed: r.isTrashed,
-          preview: r.lastMessagePreview,
-          lastMessageAt: r.lastMessageAt,
-          accountAddress: r.mailAccount?.address ?? null,
-          contactName: r.contact
+        const items = sliced.map((r) => {
+          const contactName = r.contact
             ? [r.contact.firstName, r.contact.lastName]
                 .filter((x): x is string => !!x)
                 .join(' ') ||
               r.contact.email ||
               null
-            : null,
-        }))
+            : null
+          return {
+            id: r.id,
+            contactId: r.contactId,
+            subject: r.subject,
+            unreadCount: r.unreadCount,
+            status: r.status,
+            isStarred: r.isStarred,
+            isTrashed: r.isTrashed,
+            preview: r.lastMessagePreview,
+            labels: r.tags,
+            lastMessageAt: r.lastMessageAt,
+            accountAddress: r.mailAccount?.address ?? null,
+            // Gmail shows the actual sender; the matched CRM contact is the
+            // fallback (and the email address as a last resort).
+            contactName: r.lastSenderName ?? contactName,
+          }
+        })
         const last = sliced[sliced.length - 1]
         const nextCursor =
           hasMore && last

@@ -35,6 +35,9 @@ export interface GmailMessage {
   threadId: string
   internalDate: number
   headers: GmailHeader[]
+  /** Gmail label ids on the message (system + custom). Custom labels (mapped to
+   *  names via listLabels) are surfaced on the Conversation head. */
+  labelIds: string[]
   /** Best-effort plain text body (gmail.utils unwraps base64url multiparts). */
   body: string
   /** Best-effort text/html body, when the message carries one. Rendered in the
@@ -405,6 +408,7 @@ export function normaliseMessage(raw: gmail_v1.Schema$Message): GmailMessage {
     threadId: raw.threadId ?? '',
     internalDate: Number(raw.internalDate ?? 0),
     headers,
+    labelIds: raw.labelIds ?? [],
     body,
     htmlBody: htmlBody || null,
     attachments,
@@ -584,4 +588,52 @@ export function parseAddresses(value: string | null): string[] {
       return addr.trim().toLowerCase()
     })
     .filter((s) => s.length > 0 && s.includes('@'))
+}
+
+/**
+ * Display name from a single From-style header, e.g. `Mohil Shah <m@x.com>` →
+ * "Mohil Shah", `"Doe, John" <j@x>` → "Doe, John". Returns null for a bare
+ * address (no display name) so the caller can fall back to the address. This is
+ * the name Gmail shows in the list — without it the UI wrongly falls back to a
+ * matched CRM contact's name for every message.
+ */
+export function parseFromName(value: string | null): string | null {
+  if (!value) return null
+  const first = value.trim()
+  const m = first.match(/^(?:"([^"]*)"|([^<]*))<[^>]+>\s*$/)
+  if (m) {
+    const name = (m[1] ?? m[2] ?? '').trim().replace(/^['"]|['"]$/g, '').trim()
+    return name.length > 0 ? name : null
+  }
+  return null
+}
+
+/** Gmail system label ids that are not user-facing "labels". */
+const GMAIL_SYSTEM_LABELS = new Set([
+  'INBOX',
+  'SENT',
+  'DRAFT',
+  'TRASH',
+  'SPAM',
+  'UNREAD',
+  'STARRED',
+  'IMPORTANT',
+  'CHAT',
+])
+
+/**
+ * Map a message's label ids to its CUSTOM Gmail label NAMES (drops system
+ * labels + Gmail's `CATEGORY_*` tabs), using an id→name map from listLabels.
+ */
+export function customLabelNames(
+  labelIds: readonly string[],
+  idToName: ReadonlyMap<string, string>,
+): string[] {
+  const out: string[] = []
+  for (const id of labelIds) {
+    if (GMAIL_SYSTEM_LABELS.has(id) || id.startsWith('CATEGORY_')) continue
+    const name = idToName.get(id)
+    if (name) out.push(name)
+  }
+  return out
 }

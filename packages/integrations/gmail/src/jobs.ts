@@ -23,10 +23,12 @@ import { inngest } from '@studymind/jobs'
 
 import {
   createClientForAgent,
+  customLabelNames,
   isInvalidGrantError,
   markNeedsReconnect,
   getHeader,
   parseAddresses,
+  parseFromName,
   type GmailMessage,
 } from './client'
 import { primaryAccountByContact } from './business-account-link'
@@ -101,6 +103,22 @@ export const gmailHistoryChanged = inngest.createFunction(
       throw err
     }
 
+    // Fetch the account's label id→name map once so new messages can carry
+    // their custom Gmail labels onto the head (drives the label chips).
+    const labelMap =
+      result.added.length === 0
+        ? {}
+        : await step.run('load-labels', async () => {
+            const client = await createClientForAgent({
+              agentId: mailbox.agentId,
+              address: emailAddress,
+              purpose: 'gmail.sync',
+              requestId: eventId,
+            })
+            const labels = await client.listLabels()
+            return Object.fromEntries(labels.map((l) => [l.id, l.name]))
+          })
+
     for (const added of result.added) {
       // Per-message step lets a single bad message land in DLQ rather than
       // poisoning the whole history sync.
@@ -111,6 +129,7 @@ export const gmailHistoryChanged = inngest.createFunction(
           address: emailAddress,
           messageId: added.messageId,
           requestId: eventId,
+          labelMap,
         }),
       )
     }
@@ -188,6 +207,8 @@ interface ProcessMessageInput {
   address: string
   messageId: string
   requestId: string
+  /** Gmail label id→name map for surfacing custom labels on the head. */
+  labelMap: Record<string, string>
 }
 
 async function processMessage(input: ProcessMessageInput): Promise<void> {
@@ -247,6 +268,11 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   const direction = agentAddrs.some((a) => fromAddrs.includes(a))
     ? 'sent'
     : 'received'
+
+  // The real sender's display name (Gmail-style list), and the thread's custom
+  // labels (mapped from id→name). These drive the list + label chips.
+  const senderName = direction === 'received' ? parseFromName(fromHeader) : null
+  const labels = customLabelNames(message.labelIds, new Map(Object.entries(input.labelMap)))
 
   // Match Contacts by every address (many-to-many — §14).
   const allAddrs = Array.from(
@@ -315,6 +341,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           cc: ccAddrs,
           bcc: bccAddrs,
           subject,
+          senderName,
           bodyHtml,
           attachments: attachmentRefs,
         },
@@ -350,6 +377,7 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           bcc: bccAddrs,
           matchedVia: contact.email,
           subject,
+          senderName,
           bodyHtml,
           attachments: attachmentRefs,
         },
@@ -387,6 +415,8 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
     contactId: matchedContacts[0]?.id ?? null,
     familyId: null,
     subject: subject || null,
+    senderName,
+    labels,
   })
 }
 
