@@ -107,7 +107,8 @@ function buildNav(role: Role): NavItem[] {
       label: 'Webinars',
       children: [
         { href: '/webinars', label: 'Overview' },
-        { href: '/webinars/cohorts', label: 'Cohorts' },
+        { href: '/webinars/groups', label: 'Groups' },
+        { href: '/webinars/subjects', label: 'Subjects & levels' },
         { href: '/webinars/enrollments', label: 'Enrolments' },
         { href: '/webinars/settings', label: 'Settings' },
       ],

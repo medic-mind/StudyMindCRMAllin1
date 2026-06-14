@@ -106,7 +106,7 @@ export function TimetableImport() {
   const apply = trpc.webinar.timetable.commit.useMutation({
     onSuccess: async (r) => {
       toast.success(
-        `${r.cohortCreated ? 'Cohort created' : 'Cohort updated'} · ${r.classesCreated} classes · ${r.weeksSet} weekly topics`,
+        `${r.classesCreated} group${r.classesCreated === 1 ? '' : 's'} created · ${r.weeksSet} weekly classes set`,
       )
       await Promise.all([
         utils.webinar.cohort.list.invalidate(),
