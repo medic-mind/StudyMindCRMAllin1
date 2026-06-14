@@ -238,6 +238,22 @@ enum DirectDebitCaseStatus {
   written_off
 }
 
+/// Recovery-comms template kind (ADR 0038, Phase 3). Bodies are authored by
+/// staff (we ship no copy — especially legal). `reminder` is a chase message;
+/// `legal_escalation` is the final-notice / legal step.
+enum DdRecoveryTemplateKind {
+  reminder
+  legal_escalation
+  other
+}
+
+/// Channel a recovery-comms template is sent through (ADR 0038, Phase 3).
+enum DdRecoveryChannel {
+  email
+  trengo
+  sms
+}
+
 enum TaskStatus {
   open
   in_progress
@@ -1940,6 +1956,35 @@ model DirectDebitCase {
   @@index([ownerUserId])
   @@index([contactId])
   @@index([familyId])
+}
+
+/// Direct Debit recovery-comms template (ADR 0038, Phase 3). A staff-authored
+/// reminder / legal-escalation message used to draft a human-confirmed send
+/// from a recovery case. We ship NO copy — bodies start empty and are written
+/// by a Manager (legal wording is theirs). Bodies + subject support {{tokens}}
+/// (first_name, full_name, customer_name, plan_name, amount_due, …).
+model DdRecoveryTemplate {
+  id        String                 @id
+  name      String
+  kind      DdRecoveryTemplateKind @default(reminder)
+  channel   DdRecoveryChannel      @default(email)
+  /// Email subject (email channel). Supports {{tokens}}.
+  subject   String?
+  /// Message body with {{tokens}}. Starts empty — staff write the copy.
+  body      String                 @default("")
+  /// Step ordering within a kind (reminder 1, 2, … then escalation).
+  sortOrder Int                    @default(0)
+  archivedAt DateTime?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([kind])
+  @@index([channel])
+  @@index([archivedAt])
 }
 
 /// Complete mirror of a GoCardless payment (ADR 0038). Wider population than

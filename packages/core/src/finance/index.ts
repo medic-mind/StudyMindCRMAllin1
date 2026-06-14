@@ -126,6 +126,12 @@ export {
   type RecoveryMethodValue,
   type UpsertCaseInput,
 } from './dd-cases'
+// Direct Debit recovery-comms templates (ADR 0038, Phase 3) — pure rendering.
+export {
+  renderRecoveryTemplate,
+  RECOVERY_TEMPLATE_TOKENS,
+  type RecoveryTemplateVars,
+} from './dd-comms'
 // Direct Debit plan shortfalls (ADR 0038) — cancelled-part-way / underpaid plans
 // and active plans behind their collection schedule.
 export {
