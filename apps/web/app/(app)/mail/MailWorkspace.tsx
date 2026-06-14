@@ -1,34 +1,37 @@
 'use client'
 
-// The /mail email client (ADR 0021 Phase 4 polish). A three-pane workspace —
-// account/folder rail · thread list (search + multi-select + bulk actions) ·
-// reading pane (inline thread, actions, reply) — that reads like a real mail
-// client while staying fully synced with Gmail. All actions go through the
-// audited tRPC mutations; the live mailbox is the source of truth.
-// CLAUDE.md §4 (tokens, density), §14, §26.
+// The /mail email client (ADR 0021). A Gmail-class layout: an icon folder rail
+// with a Compose pill, a full-width single-line message list with hover row
+// actions, a full-width conversation view, and a docked composer. Single main
+// pane (list XOR conversation) like Gmail. Chrome is neutral; the blue `info`
+// accent + amber stars are a deliberate scoped comms theme (CLAUDE.md §37) so
+// it reads like Gmail rather than the product purple. All actions go through the
+// audited tRPC mutations; the live mailbox is the source of truth. §4, §14, §26.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
   ArchiveIcon,
   CheckIcon,
+  ChevronLeftIcon,
   FileTextIcon,
+  ForwardIcon,
+  InboxIcon,
   MailIcon,
-  PlusIcon,
+  PencilIcon,
+  RepeatIcon,
+  ReplyIcon,
   SearchIcon,
   SendIcon,
   StarIcon,
   Trash2Icon,
   XIcon,
 } from '@/components/ui/icon'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { displayMessageBody } from '@/lib/format/html-text'
-import { formatRelativeTime } from '@/lib/format/relative-time'
 import { useConversationStream } from '@/lib/hooks/use-conversation-stream'
 import { trpc } from '@/lib/trpc/client'
 
@@ -39,32 +42,45 @@ interface AccountOption {
   signatureHtml: string | null
 }
 
-// The agent's Gmail signature, copied verbatim, rendered as the plaintext the
-// composer sends today (HTML send arrives with the rich composer). Appended
-// below the cursor like Gmail. Empty when the account has no signature.
 function signatureText(account: AccountOption | undefined): string {
   const html = account?.signatureHtml
   if (!html) return ''
   return displayMessageBody(html)?.trim() ?? ''
 }
 
+// Gmail-style date: today → time, this year → "12 Jun", older → "12/06/24".
+function gmailDate(d: Date, now: Date): string {
+  const sameDay = d.toDateString() === now.toDateString()
+  if (sameDay) {
+    return d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' })
+  }
+  if (d.getFullYear() === now.getFullYear()) {
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  }
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
 type Folder = 'all' | 'unread' | 'starred' | 'archived' | 'trash'
 
-export function MailWorkspace({
-  accounts,
-}: {
-  accounts: AccountOption[]
-}) {
+const FOLDERS: ReadonlyArray<{ key: Folder; label: string; Icon: typeof InboxIcon }> = [
+  { key: 'all', label: 'Inbox', Icon: InboxIcon },
+  { key: 'unread', label: 'Unread', Icon: MailIcon },
+  { key: 'starred', label: 'Starred', Icon: StarIcon },
+  { key: 'archived', label: 'Archived', Icon: ArchiveIcon },
+  { key: 'trash', label: 'Trash', Icon: Trash2Icon },
+]
+
+export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   const utils = trpc.useUtils()
-  useConversationStream() // live updates: new mail / actions refresh the list
+  useConversationStream()
   const [accountId, setAccountId] = useState<string | null>(null)
   const [folder, setFolder] = useState<Folder>('all')
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [composing, setComposing] = useState(false)
 
-  // Debounce the search box so typing is smooth.
   useEffect(() => {
     const t = setTimeout(() => setQuery(rawQuery.trim()), 250)
     return () => clearTimeout(t)
@@ -76,27 +92,20 @@ export function MailWorkspace({
     q: query || null,
     limit: 50,
   })
+  const items = useMemo(() => threads.data?.items ?? [], [threads.data])
 
-  const [composing, setComposing] = useState(false)
-  const [showHelp, setShowHelp] = useState(false)
   const kbArchive = trpc.mail.thread.setArchived.useMutation()
   const kbRead = trpc.mail.thread.setRead.useMutation()
   const kbStar = trpc.mail.thread.setStarred.useMutation()
   const kbTrash = trpc.mail.thread.setTrashed.useMutation()
 
-  const items = useMemo(() => threads.data?.items ?? [], [threads.data])
-
   const invalidateList = useCallback(() => {
     void utils.mail.threads.list.invalidate()
   }, [utils])
-
   const refreshOpen = useCallback(() => {
     invalidateList()
-    if (selectedId) {
-      void utils.inbox.conversations.get.invalidate({ conversationId: selectedId })
-    }
+    if (selectedId) void utils.inbox.conversations.get.invalidate({ conversationId: selectedId })
   }, [invalidateList, utils, selectedId])
-
   const kbdAction = useCallback(
     (p: Promise<unknown>, label: string) => {
       p.then(() => {
@@ -107,7 +116,6 @@ export function MailWorkspace({
     [refreshOpen],
   )
 
-  // Keyboard shortcuts (Superhuman-style). Inert while typing in a field.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -165,286 +173,227 @@ export function MailWorkspace({
         case 'c':
           setComposing(true)
           break
-        case '?':
-          setShowHelp((s) => !s)
-          break
         case 'Escape':
           if (composing) setComposing(false)
-          else if (showHelp) setShowHelp(false)
           else setSelectedId(null)
           break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [items, selectedId, composing, showHelp, kbdAction, kbArchive, kbRead, kbStar, kbTrash])
+  }, [items, selectedId, composing, kbdAction, kbArchive, kbRead, kbStar, kbTrash])
+
+  const allChecked = items.length > 0 && checked.size === items.length
+  const toggleAll = () =>
+    setChecked(allChecked ? new Set() : new Set(items.map((i) => i.id)))
 
   return (
-    <Card className="flex h-[calc(100vh-9.5rem)] overflow-hidden">
-      <Rail
-        accounts={accounts}
-        accountId={accountId}
-        folder={folder}
-        onCompose={() => setComposing(true)}
-        onAccount={(id) => {
-          setAccountId(id)
-          setSelectedId(null)
-          setChecked(new Set())
-        }}
-        onFolder={(f) => {
-          setFolder(f)
-          setChecked(new Set())
-        }}
-      />
+    <Card className="flex h-[calc(100vh-9.5rem)] overflow-hidden bg-white p-0">
+      {/* Rail */}
+      <aside className="flex w-60 shrink-0 flex-col gap-1 overflow-y-auto border-r border-neutral-200 bg-neutral-50 p-3">
+        <button
+          type="button"
+          onClick={() => setComposing(true)}
+          className="mb-3 inline-flex w-fit items-center gap-3 rounded-2xl bg-info-600 py-3 pl-4 pr-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-info-700"
+        >
+          <PencilIcon size={18} /> Compose
+        </button>
 
-      {/* Thread list — full-width on mobile (master-detail with the reading
-          pane); fixed-width column on lg+. */}
-      <div
-        className={`${selectedId ? 'hidden lg:flex' : 'flex'} w-full shrink-0 flex-col border-r border-neutral-200 lg:w-[22rem]`}
-      >
-        <div className="border-b border-neutral-200 p-2">
-          <div className="relative">
+        <nav aria-label="Folders" className="flex flex-col gap-0.5">
+          {FOLDERS.map(({ key, label, Icon }) => {
+            const active = folder === key
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setFolder(key)
+                  setSelectedId(null)
+                  setChecked(new Set())
+                }}
+                aria-current={active ? 'true' : undefined}
+                className={`flex items-center gap-3 rounded-full px-4 py-1.5 text-left text-sm transition-colors ${
+                  active
+                    ? 'bg-info-100 font-semibold text-info-900'
+                    : 'text-neutral-700 hover:bg-neutral-200/60'
+                }`}
+              >
+                <Icon size={16} className={active ? 'text-info-700' : 'text-neutral-500'} />
+                {label}
+              </button>
+            )
+          })}
+        </nav>
+
+        <div className="mt-4">
+          <h2 className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+            Accounts
+          </h2>
+          <nav aria-label="Accounts" className="flex flex-col gap-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setAccountId(null)
+                setSelectedId(null)
+                setChecked(new Set())
+              }}
+              className={`truncate rounded-full px-4 py-1.5 text-left text-sm transition-colors ${
+                accountId === null
+                  ? 'bg-info-100 font-medium text-info-900'
+                  : 'text-neutral-700 hover:bg-neutral-200/60'
+              }`}
+            >
+              All accounts
+            </button>
+            {accounts.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                title={a.address}
+                onClick={() => {
+                  setAccountId(a.id)
+                  setSelectedId(null)
+                  setChecked(new Set())
+                }}
+                className={`truncate rounded-full px-4 py-1.5 text-left text-sm transition-colors ${
+                  accountId === a.id
+                    ? 'bg-info-100 font-medium text-info-900'
+                    : 'text-neutral-700 hover:bg-neutral-200/60'
+                }`}
+              >
+                {a.displayName ?? a.address}
+              </button>
+            ))}
+            {accounts.length === 0 ? (
+              <a
+                href="/settings/email-accounts"
+                className="rounded-full px-4 py-1.5 text-sm text-info-700 hover:bg-neutral-200/60"
+              >
+                Connect an account…
+              </a>
+            ) : null}
+          </nav>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Search bar */}
+        <div className="border-b border-neutral-200 px-4 py-2.5">
+          <div className="relative mx-auto max-w-3xl">
             <SearchIcon
-              size={15}
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400"
+              size={18}
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-500"
             />
-            <Input
+            <input
               id="mail-search"
               value={rawQuery}
               onChange={(e) => setRawQuery(e.target.value)}
-              placeholder="Search mail…   ( / )"
+              placeholder="Search mail"
               aria-label="Search mail"
-              className="h-9 pl-8"
+              className="h-11 w-full rounded-lg border border-transparent bg-neutral-100 pl-11 pr-3 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-info-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-info-100"
             />
           </div>
         </div>
 
-        {checked.size > 0 ? (
-          <BulkBar
-            ids={Array.from(checked)}
-            onDone={() => {
-              setChecked(new Set())
-              invalidateList()
-            }}
-            onClear={() => setChecked(new Set())}
-          />
-        ) : null}
-
-        <div className="flex-1 overflow-y-auto">
-          {threads.isLoading ? (
-            <ListSkeleton />
-          ) : items.length === 0 ? (
-            <div className="p-8 text-center text-sm text-neutral-500">
-              {query
-                ? `No mail matches “${query}”.`
-                : folder === 'unread'
-                  ? 'No unread email.'
-                  : 'No email here yet.'}
-            </div>
-          ) : (
-            <ul className="divide-y divide-neutral-100">
-              {items.map((m) => (
-                <ThreadRow
-                  key={m.id}
-                  item={m}
-                  active={selectedId === m.id}
-                  checked={checked.has(m.id)}
-                  now={new Date()}
-                  onOpen={() => setSelectedId(m.id)}
-                  onToggle={() =>
-                    setChecked((cur) => {
-                      const next = new Set(cur)
-                      if (next.has(m.id)) next.delete(m.id)
-                      else next.add(m.id)
-                      return next
-                    })
-                  }
-                />
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-
-      {/* Reading pane — hidden on mobile until a thread is opened. */}
-      <div
-        className={`${selectedId ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 flex-col overflow-hidden bg-neutral-50/40`}
-      >
         {selectedId ? (
-          <ReadingPane
+          <ConversationView
             conversationId={selectedId}
             accounts={accounts}
-            onClose={() => setSelectedId(null)}
+            onBack={() => setSelectedId(null)}
             onChanged={invalidateList}
           />
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center text-center text-neutral-400">
-            <MailIcon size={40} className="text-neutral-200" />
-            <p className="mt-3 text-sm">Select a conversation to read it.</p>
-            <p className="mt-1 text-xs text-neutral-300">
-              Press <Kbd>?</Kbd> for keyboard shortcuts
-            </p>
-          </div>
+          <>
+            {/* Toolbar */}
+            <div className="flex items-center gap-1 border-b border-neutral-200 px-4 py-1.5">
+              <button
+                type="button"
+                onClick={toggleAll}
+                aria-label={allChecked ? 'Deselect all' : 'Select all'}
+                className={`flex h-5 w-5 items-center justify-center rounded border ${
+                  allChecked
+                    ? 'border-info-600 bg-info-600 text-white'
+                    : 'border-neutral-300 bg-white text-transparent hover:border-neutral-400'
+                }`}
+              >
+                <CheckIcon size={13} />
+              </button>
+              {checked.size > 0 ? (
+                <BulkBar
+                  ids={Array.from(checked)}
+                  onDone={() => {
+                    setChecked(new Set())
+                    invalidateList()
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => invalidateList()}
+                  aria-label="Refresh"
+                  className="ml-1 rounded-full p-1.5 text-neutral-500 hover:bg-neutral-100"
+                >
+                  <RepeatIcon size={16} />
+                </button>
+              )}
+              <span className="ml-auto text-xs text-neutral-500">
+                {items.length > 0 ? `${items.length} conversation${items.length === 1 ? '' : 's'}` : null}
+              </span>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto">
+              {threads.isLoading ? (
+                <ListSkeleton />
+              ) : items.length === 0 ? (
+                <div className="flex flex-col items-center justify-center px-8 py-20 text-center">
+                  <InboxIcon size={40} className="text-neutral-200" />
+                  <p className="mt-3 text-sm text-neutral-500">
+                    {query
+                      ? `No mail matches “${query}”.`
+                      : folder === 'unread'
+                        ? 'No unread email.'
+                        : 'No email here yet.'}
+                  </p>
+                </div>
+              ) : (
+                <ul>
+                  {items.map((m) => (
+                    <ThreadRow
+                      key={m.id}
+                      item={m}
+                      checked={checked.has(m.id)}
+                      now={new Date()}
+                      onOpen={() => setSelectedId(m.id)}
+                      onToggle={() =>
+                        setChecked((cur) => {
+                          const next = new Set(cur)
+                          if (next.has(m.id)) next.delete(m.id)
+                          else next.add(m.id)
+                          return next
+                        })
+                      }
+                      onChanged={invalidateList}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
         )}
       </div>
 
       {composing ? (
-        <ComposeModal accounts={accounts} onClose={() => setComposing(false)} />
+        <ComposeDock accounts={accounts} onClose={() => setComposing(false)} />
       ) : null}
-      {showHelp ? <ShortcutsHelp onClose={() => setShowHelp(false)} /> : null}
     </Card>
   )
 }
 
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded border border-neutral-300 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] text-neutral-600">
-      {children}
-    </kbd>
-  )
-}
-
-function ShortcutsHelp({ onClose }: { onClose: () => void }) {
-  const rows: Array<[string, string]> = [
-    ['j / k', 'Next / previous conversation'],
-    ['e', 'Archive'],
-    ['s', 'Star'],
-    ['u', 'Mark unread'],
-    ['#', 'Move to Trash'],
-    ['r', 'Reply'],
-    ['c', 'Compose'],
-    ['/', 'Search'],
-    ['Esc', 'Close'],
-    ['?', 'Toggle this help'],
-  ]
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Keyboard shortcuts"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-sm rounded-xl bg-white p-5 shadow-card-hover"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="mb-3 text-sm font-semibold text-neutral-900">Keyboard shortcuts</h2>
-        <dl className="space-y-1.5">
-          {rows.map(([key, desc]) => (
-            <div key={key} className="flex items-center justify-between gap-4 text-sm">
-              <dt className="text-neutral-600">{desc}</dt>
-              <dd>
-                <Kbd>{key}</Kbd>
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-    </div>
-  )
-}
-
 // -----------------------------------------------------------------------------
-// Rail
-// -----------------------------------------------------------------------------
-
-function Rail({
-  accounts,
-  accountId,
-  folder,
-  onCompose,
-  onAccount,
-  onFolder,
-}: {
-  accounts: AccountOption[]
-  accountId: string | null
-  folder: Folder
-  onCompose: () => void
-  onAccount: (id: string | null) => void
-  onFolder: (f: Folder) => void
-}) {
-  return (
-    <aside className="flex w-52 shrink-0 flex-col gap-4 overflow-y-auto border-r border-neutral-200 bg-neutral-50/60 p-3">
-      <Button type="button" size="sm" className="w-full" onClick={onCompose}>
-        <PlusIcon size={15} /> Compose
-      </Button>
-
-      <nav aria-label="Folders" className="flex flex-col gap-0.5">
-        <RailItem label="All mail" active={folder === 'all'} onClick={() => onFolder('all')} />
-        <RailItem label="Unread" active={folder === 'unread'} onClick={() => onFolder('unread')} />
-        <RailItem label="Starred" active={folder === 'starred'} onClick={() => onFolder('starred')} />
-        <RailItem
-          label="Archived"
-          active={folder === 'archived'}
-          onClick={() => onFolder('archived')}
-        />
-        <RailItem label="Trash" active={folder === 'trash'} onClick={() => onFolder('trash')} />
-      </nav>
-
-      <div>
-        <h2 className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-          Accounts
-        </h2>
-        <nav aria-label="Accounts" className="flex flex-col gap-0.5">
-          <RailItem
-            label="All accounts"
-            active={accountId === null}
-            onClick={() => onAccount(null)}
-          />
-          {accounts.map((a) => (
-            <RailItem
-              key={a.id}
-              label={a.displayName ?? a.address}
-              title={a.address}
-              active={accountId === a.id}
-              onClick={() => onAccount(a.id)}
-            />
-          ))}
-          {accounts.length === 0 ? (
-            <a
-              href="/settings/email-accounts"
-              className="rounded-md px-2.5 py-1.5 text-xs text-primary-700 hover:bg-neutral-100"
-            >
-              Connect an account…
-            </a>
-          ) : null}
-        </nav>
-      </div>
-    </aside>
-  )
-}
-
-function RailItem({
-  label,
-  title,
-  active,
-  onClick,
-}: {
-  label: string
-  title?: string
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      aria-current={active ? 'true' : undefined}
-      className={
-        active
-          ? 'truncate rounded-md bg-primary-100 px-2.5 py-1.5 text-left text-sm font-medium text-primary-800'
-          : 'truncate rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-700 transition-colors hover:bg-neutral-100'
-      }
-    >
-      {label}
-    </button>
-  )
-}
-
-// -----------------------------------------------------------------------------
-// Thread list row
+// Thread list row — Gmail single line: checkbox · star · sender · subject —
+// snippet · date (replaced by row actions on hover).
 // -----------------------------------------------------------------------------
 
 type ThreadItem = {
@@ -463,31 +412,40 @@ type ThreadItem = {
 
 function ThreadRow({
   item,
-  active,
   checked,
   now,
   onOpen,
   onToggle,
+  onChanged,
 }: {
   item: ThreadItem
-  active: boolean
   checked: boolean
   now: Date
   onOpen: () => void
   onToggle: () => void
+  onChanged: () => void
 }) {
+  const setStarred = trpc.mail.thread.setStarred.useMutation()
+  const setArchived = trpc.mail.thread.setArchived.useMutation()
+  const setRead = trpc.mail.thread.setRead.useMutation()
+  const setTrashed = trpc.mail.thread.setTrashed.useMutation()
   const unread = item.unreadCount > 0
   const who = item.contactName ?? (item.contactId ? 'Contact' : 'Unmatched sender')
+
+  const act = (p: Promise<unknown>, label: string) => {
+    p.then(() => {
+      toast.success(label)
+      onChanged()
+    }).catch((e) => toast.error(e instanceof Error ? e.message : 'Action failed'))
+  }
+
   return (
     <li
-      className={`group relative flex cursor-pointer items-start gap-2.5 px-3 py-2.5 transition-colors ${
-        active ? 'bg-primary-50' : checked ? 'bg-primary-50/40' : 'hover:bg-neutral-50'
-      }`}
       onClick={onOpen}
+      className={`group flex h-11 cursor-pointer items-center gap-3 border-b border-neutral-100 px-4 transition-shadow ${
+        checked ? 'bg-info-50' : unread ? 'bg-white' : 'bg-neutral-50/40'
+      } hover:relative hover:z-10 hover:bg-white hover:shadow-md`}
     >
-      {unread ? (
-        <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary-500" />
-      ) : null}
       <button
         type="button"
         onClick={(e) => {
@@ -495,78 +453,118 @@ function ThreadRow({
           onToggle()
         }}
         aria-label={checked ? 'Deselect' : 'Select'}
-        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+        className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border ${
           checked
-            ? 'border-primary-600 bg-primary-600 text-white'
-            : 'border-neutral-300 bg-white text-transparent group-hover:border-neutral-400'
+            ? 'border-info-600 bg-info-600 text-white'
+            : 'border-neutral-300 bg-white text-transparent hover:border-neutral-500'
         }`}
       >
-        <CheckIcon size={11} />
+        <CheckIcon size={12} />
       </button>
-      <Avatar name={who} size={30} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1">
-            {item.isStarred ? (
-              <StarIcon
-                size={12}
-                aria-label="Starred"
-                className="shrink-0 fill-amber-400 text-amber-400"
-              />
-            ) : null}
-            <span
-              className={`truncate text-sm ${
-                unread ? 'font-semibold text-neutral-900' : 'font-medium text-neutral-700'
-              }`}
-            >
-              {who}
-            </span>
-          </span>
-          <time
-            className="shrink-0 text-[11px] tabular-nums text-neutral-400"
-            dateTime={item.lastMessageAt.toISOString()}
-          >
-            {formatRelativeTime(item.lastMessageAt, now)}
-          </time>
-        </div>
-        <div
-          className={`truncate text-[13px] ${
-            unread ? 'font-medium text-neutral-800' : 'text-neutral-600'
-          }`}
-        >
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          act(setStarred.mutateAsync({ conversationId: item.id, starred: !item.isStarred }), item.isStarred ? 'Unstarred' : 'Starred')
+        }}
+        aria-label={item.isStarred ? 'Unstar' : 'Star'}
+        className="shrink-0"
+      >
+        <StarIcon
+          size={17}
+          className={item.isStarred ? 'fill-secondary-400 text-secondary-400' : 'text-neutral-300 hover:text-neutral-500'}
+        />
+      </button>
+
+      <Avatar name={who} size={24} />
+
+      <span
+        className={`w-40 shrink-0 truncate text-sm ${
+          unread ? 'font-semibold text-neutral-900' : 'text-neutral-600'
+        }`}
+      >
+        {who}
+      </span>
+
+      <span className="min-w-0 flex-1 truncate text-sm">
+        <span className={unread ? 'font-semibold text-neutral-900' : 'text-neutral-700'}>
           {item.subject ?? '(no subject)'}
-        </div>
-        {item.preview ? (
-          <div className="truncate text-[12px] text-neutral-400">{item.preview}</div>
-        ) : null}
-        <div className="flex items-center gap-1.5 text-[11px] text-neutral-400">
-          {item.accountAddress ? <span className="truncate">{item.accountAddress}</span> : null}
-          {item.isTrashed ? (
-            <span className="rounded bg-red-50 px-1 text-red-500">Trash</span>
-          ) : item.status === 'archived' ? (
-            <span className="rounded bg-neutral-100 px-1 text-neutral-500">Archived</span>
-          ) : null}
-          {item.unreadCount > 1 ? (
-            <span className="rounded-full bg-primary-100 px-1.5 font-medium text-primary-700">
-              {item.unreadCount}
-            </span>
-          ) : null}
-        </div>
+        </span>
+        {item.preview ? <span className="text-neutral-500"> — {item.preview}</span> : null}
+      </span>
+
+      {item.isTrashed ? (
+        <span className="shrink-0 rounded bg-danger-50 px-1.5 text-[11px] text-danger-600">Trash</span>
+      ) : item.status === 'archived' ? (
+        <span className="shrink-0 rounded bg-neutral-100 px-1.5 text-[11px] text-neutral-500">Archived</span>
+      ) : null}
+
+      {/* Date (default) → row actions (hover) */}
+      <time
+        className="w-16 shrink-0 text-right text-xs tabular-nums text-neutral-500 group-hover:hidden"
+        dateTime={item.lastMessageAt.toISOString()}
+      >
+        {gmailDate(item.lastMessageAt, now)}
+      </time>
+      <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+        <RowAction
+          label="Archive"
+          onClick={() => act(setArchived.mutateAsync({ conversationId: item.id, archived: true }), 'Archived')}
+        >
+          <ArchiveIcon size={16} />
+        </RowAction>
+        <RowAction
+          label="Trash"
+          onClick={() => act(setTrashed.mutateAsync({ conversationId: item.id, trashed: true }), 'Moved to Trash')}
+        >
+          <Trash2Icon size={16} />
+        </RowAction>
+        <RowAction
+          label={unread ? 'Mark read' : 'Mark unread'}
+          onClick={() => act(setRead.mutateAsync({ conversationId: item.id, read: unread }), unread ? 'Marked read' : 'Marked unread')}
+        >
+          <MailIcon size={16} />
+        </RowAction>
       </div>
     </li>
   )
 }
 
+function RowAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      className="rounded-full p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+    >
+      {children}
+    </button>
+  )
+}
+
 function ListSkeleton() {
   return (
-    <ul className="divide-y divide-neutral-100">
-      {Array.from({ length: 6 }).map((_, i) => (
-        <li key={i} className="flex items-start gap-2.5 px-3 py-3">
-          <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-neutral-100" />
-          <div className="flex-1 space-y-1.5">
-            <div className="h-3 w-1/2 animate-pulse rounded bg-neutral-100" />
-            <div className="h-3 w-3/4 animate-pulse rounded bg-neutral-100" />
-          </div>
+    <ul>
+      {Array.from({ length: 10 }).map((_, i) => (
+        <li key={i} className="flex h-11 items-center gap-3 border-b border-neutral-100 px-4">
+          <div className="h-4 w-4 shrink-0 animate-pulse rounded bg-neutral-100" />
+          <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-neutral-100" />
+          <div className="h-3 w-32 animate-pulse rounded bg-neutral-100" />
+          <div className="h-3 flex-1 animate-pulse rounded bg-neutral-100" />
         </li>
       ))}
     </ul>
@@ -574,27 +572,16 @@ function ListSkeleton() {
 }
 
 // -----------------------------------------------------------------------------
-// Bulk action bar
+// Bulk actions (shown inline in the toolbar when rows are selected)
 // -----------------------------------------------------------------------------
 
-function BulkBar({
-  ids,
-  onDone,
-  onClear,
-}: {
-  ids: string[]
-  onDone: () => void
-  onClear: () => void
-}) {
+function BulkBar({ ids, onDone }: { ids: string[]; onDone: () => void }) {
   const setArchived = trpc.mail.thread.setArchived.useMutation()
   const setRead = trpc.mail.thread.setRead.useMutation()
   const setTrashed = trpc.mail.thread.setTrashed.useMutation()
   const [busy, setBusy] = useState(false)
 
-  async function run(
-    label: string,
-    fn: (conversationId: string) => Promise<unknown>,
-  ) {
+  async function run(label: string, fn: (id: string) => Promise<unknown>) {
     setBusy(true)
     try {
       await Promise.all(ids.map((id) => fn(id)))
@@ -608,85 +595,34 @@ function BulkBar({
   }
 
   return (
-    <div className="flex items-center gap-1 border-b border-neutral-200 bg-primary-50/60 px-2 py-1.5">
-      <span className="px-1 text-xs font-medium text-primary-800">{ids.length} selected</span>
-      <div className="ml-auto flex items-center gap-0.5">
-        <IconBtn
-          label="Mark read"
-          disabled={busy}
-          onClick={() => run('Marked read', (id) => setRead.mutateAsync({ conversationId: id, read: true }))}
-        >
-          <CheckIcon size={15} />
-        </IconBtn>
-        <IconBtn
-          label="Archive"
-          disabled={busy}
-          onClick={() =>
-            run('Archived', (id) => setArchived.mutateAsync({ conversationId: id, archived: true }))
-          }
-        >
-          <ArchiveIcon size={15} />
-        </IconBtn>
-        <IconBtn
-          label="Trash"
-          disabled={busy}
-          onClick={() =>
-            run('Trashed', (id) => setTrashed.mutateAsync({ conversationId: id, trashed: true }))
-          }
-        >
-          <Trash2Icon size={15} />
-        </IconBtn>
-        <button
-          type="button"
-          onClick={onClear}
-          className="ml-1 rounded p-1 text-neutral-500 hover:bg-white"
-          aria-label="Clear selection"
-        >
-          <XIcon size={14} />
-        </button>
-      </div>
+    <div className="ml-1 flex items-center gap-0.5">
+      <span className="px-1 text-xs font-medium text-neutral-600">{ids.length} selected</span>
+      <RowAction label="Mark read" onClick={() => !busy && run('Marked read', (id) => setRead.mutateAsync({ conversationId: id, read: true }))}>
+        <MailIcon size={16} />
+      </RowAction>
+      <RowAction label="Archive" onClick={() => !busy && run('Archived', (id) => setArchived.mutateAsync({ conversationId: id, archived: true }))}>
+        <ArchiveIcon size={16} />
+      </RowAction>
+      <RowAction label="Trash" onClick={() => !busy && run('Trashed', (id) => setTrashed.mutateAsync({ conversationId: id, trashed: true }))}>
+        <Trash2Icon size={16} />
+      </RowAction>
     </div>
   )
 }
 
-function IconBtn({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string
-  disabled?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="rounded-md p-1.5 text-neutral-600 transition-colors hover:bg-white hover:text-neutral-900 disabled:opacity-50"
-    >
-      {children}
-    </button>
-  )
-}
-
 // -----------------------------------------------------------------------------
-// Reading pane
+// Conversation view — full width, Gmail style.
 // -----------------------------------------------------------------------------
 
-function ReadingPane({
+function ConversationView({
   conversationId,
   accounts,
-  onClose,
+  onBack,
   onChanged,
 }: {
   conversationId: string
   accounts: AccountOption[]
-  onClose: () => void
+  onBack: () => void
   onChanged: () => void
 }) {
   const utils = trpc.useUtils()
@@ -697,18 +633,14 @@ function ReadingPane({
   const setTrashed = trpc.mail.thread.setTrashed.useMutation()
   const reply = trpc.mail.thread.reply.useMutation()
   const [body, setBody] = useState('')
-  const [confirmTrash, setConfirmTrash] = useState(false)
+  const [replying, setReplying] = useState(false)
   const markedRef = useRef<Set<string>>(new Set())
 
   const head = convo.data?.head
   const messages = useMemo(() => convo.data?.messages ?? [], [convo.data])
-
-  // The account's Gmail signature is appended server-side on send (text + HTML);
-  // surface it as a read-only preview by the composer rather than prefilling it.
   const replyAccount = accounts.find((a) => a.id === head?.mailAccountId)
   const replySigPreview = signatureText(replyAccount)
 
-  // Mark read on open (like Gmail). Once per conversation per mount.
   useEffect(() => {
     if (!head || head.unreadCount <= 0 || markedRef.current.has(head.id)) return
     markedRef.current.add(head.id)
@@ -718,12 +650,13 @@ function ReadingPane({
       .catch(() => {})
   }, [head?.id, head?.unreadCount, setRead, onChanged])
 
-  async function act(label: string, p: Promise<unknown>) {
+  async function act(label: string, p: Promise<unknown>, close = false) {
     try {
       await p
       toast.success(label)
       await utils.inbox.conversations.get.invalidate({ conversationId })
       onChanged()
+      if (close) onBack()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not complete that')
     }
@@ -735,6 +668,7 @@ function ReadingPane({
     try {
       await reply.mutateAsync({ conversationId, body: trimmed })
       setBody('')
+      setReplying(false)
       toast.success('Reply sent')
       await utils.inbox.conversations.get.invalidate({ conversationId })
       onChanged()
@@ -744,173 +678,174 @@ function ReadingPane({
   }
 
   if (convo.isLoading) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-sm text-neutral-400">
-        Loading…
-      </div>
-    )
+    return <div className="flex flex-1 items-center justify-center text-sm text-neutral-400">Loading…</div>
   }
   if (!head) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-sm text-neutral-400">
-        Conversation not found.
-      </div>
-    )
+    return <div className="flex flex-1 items-center justify-center text-sm text-neutral-400">Conversation not found.</div>
   }
-
   const now = new Date()
   const isEmail = head.provider === 'email'
+  const starred = head.isStarred ?? false
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Header + actions */}
-      <header className="flex items-start gap-2 border-b border-neutral-200 bg-white px-4 py-3">
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="mt-0.5 rounded-md p-1 text-neutral-400 hover:bg-neutral-100 lg:hidden"
-        >
-          <XIcon size={16} />
-        </button>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-semibold text-neutral-900">
-            {head.subject ?? '(no subject)'}
-          </h1>
-          <p className="truncate text-xs text-neutral-500">
-            {head.contactName ?? 'Unmatched sender'}
-          </p>
-        </div>
+      {/* Toolbar */}
+      <div className="flex items-center gap-1 border-b border-neutral-200 px-3 py-1.5">
+        <RowAction label="Back" onClick={onBack}>
+          <ChevronLeftIcon size={18} />
+        </RowAction>
         {isEmail ? (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <IconBtn
-              label="Mark unread"
-              onClick={() =>
-                act('Marked unread', setRead.mutateAsync({ conversationId, read: false }))
-              }
-            >
-              <MailIcon size={15} />
-            </IconBtn>
-            <IconBtn label="Star" onClick={() => act('Starred', setStarred.mutateAsync({ conversationId, starred: true }))}>
-              <StarIcon size={15} />
-            </IconBtn>
-            <IconBtn
-              label="Archive"
-              onClick={() =>
-                act('Archived', setArchived.mutateAsync({ conversationId, archived: true }))
-              }
-            >
-              <ArchiveIcon size={15} />
-            </IconBtn>
-            {confirmTrash ? (
-              <span className="flex items-center gap-1 rounded-md bg-danger-50 px-1.5 py-0.5">
-                <span className="text-[11px] text-danger-700">Trash?</span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    act('Moved to Trash', setTrashed.mutateAsync({ conversationId, trashed: true }))
-                  }
-                  className="text-[11px] font-semibold text-danger-700 hover:underline"
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmTrash(false)}
-                  className="text-[11px] text-neutral-500 hover:underline"
-                >
-                  No
-                </button>
-              </span>
-            ) : (
-              <IconBtn label="Trash" onClick={() => setConfirmTrash(true)}>
-                <Trash2Icon size={15} />
-              </IconBtn>
-            )}
-          </div>
+          <>
+            <RowAction label="Archive" onClick={() => act('Archived', setArchived.mutateAsync({ conversationId, archived: true }), true)}>
+              <ArchiveIcon size={17} />
+            </RowAction>
+            <RowAction label="Trash" onClick={() => act('Moved to Trash', setTrashed.mutateAsync({ conversationId, trashed: true }), true)}>
+              <Trash2Icon size={17} />
+            </RowAction>
+            <RowAction label="Mark unread" onClick={() => act('Marked unread', setRead.mutateAsync({ conversationId, read: false }), true)}>
+              <MailIcon size={17} />
+            </RowAction>
+          </>
         ) : null}
-      </header>
+      </div>
+
+      {/* Subject */}
+      <div className="flex items-start gap-2 border-b border-neutral-100 px-6 py-4">
+        <h1 className="min-w-0 flex-1 text-xl font-normal text-neutral-900">
+          {head.subject ?? '(no subject)'}
+        </h1>
+        {isEmail ? (
+          <button
+            type="button"
+            onClick={() => act(starred ? 'Unstarred' : 'Starred', setStarred.mutateAsync({ conversationId, starred: !starred }))}
+            aria-label={starred ? 'Unstar' : 'Star'}
+            className="mt-1 shrink-0"
+          >
+            <StarIcon size={18} className={starred ? 'fill-secondary-400 text-secondary-400' : 'text-neutral-300 hover:text-neutral-500'} />
+          </button>
+        ) : null}
+      </div>
 
       {/* Messages */}
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto px-6 py-4">
         {messages.length === 0 ? (
           <p className="text-center text-sm text-neutral-400">No messages in this thread yet.</p>
         ) : (
-          messages.map((m) => {
-            const outbound = m.direction === 'outbound'
-            return (
-              <article
-                key={m.id}
-                className={`max-w-[42rem] rounded-xl border p-3 shadow-sm ${
-                  outbound
-                    ? 'ml-auto border-primary-100 bg-primary-50'
-                    : 'mr-auto border-neutral-200 bg-white'
-                }`}
-              >
-                <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-neutral-400">
-                  <span>{outbound ? (m.senderName ?? 'You') : (m.senderName ?? head.contactName ?? 'Contact')}</span>
-                  <time dateTime={m.occurredAt.toISOString()}>
-                    {formatRelativeTime(m.occurredAt, now)}
-                  </time>
-                </div>
-                {m.bodyHtml ? (
-                  <EmailHtmlBody html={m.bodyHtml} text={displayMessageBody(m.body) ?? ''} />
-                ) : (
-                  <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
-                    {displayMessageBody(m.body) ?? '(no content)'}
-                  </p>
-                )}
-                {m.mailAttachments.length > 0 ? (
-                  <ul className="mt-2 flex flex-wrap gap-1.5">
-                    {m.mailAttachments.map((a) => (
-                      <li key={a.index}>
-                        <a
-                          href={`/api/internal/mail-attachments/${m.id}/${a.index}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs text-neutral-700 hover:border-primary-300 hover:text-primary-700"
-                        >
-                          <FileTextIcon size={13} />
-                          <span className="max-w-[14rem] truncate">{a.filename}</span>
-                          {a.sizeBytes ? (
-                            <span className="text-neutral-400">
-                              {Math.max(1, Math.round(a.sizeBytes / 1024))} KB
-                            </span>
-                          ) : null}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </article>
-            )
-          })
+          <div className="space-y-5">
+            {messages.map((m) => {
+              const outbound = m.direction === 'outbound'
+              const sender = outbound ? (m.senderName ?? 'You') : (m.senderName ?? head.contactName ?? 'Contact')
+              return (
+                <article key={m.id} className="flex gap-3">
+                  <Avatar name={sender} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate text-sm font-semibold text-neutral-900">{sender}</span>
+                      <time className="shrink-0 text-xs text-neutral-400" dateTime={m.occurredAt.toISOString()}>
+                        {gmailDate(m.occurredAt, now)}
+                      </time>
+                    </div>
+                    <div className="mt-2">
+                      {m.bodyHtml ? (
+                        <EmailHtmlBody html={m.bodyHtml} text={displayMessageBody(m.body) ?? ''} />
+                      ) : (
+                        <p className="whitespace-pre-wrap break-words text-sm text-neutral-800">
+                          {displayMessageBody(m.body) ?? '(no content)'}
+                        </p>
+                      )}
+                    </div>
+                    {m.mailAttachments.length > 0 ? (
+                      <ul className="mt-3 flex flex-wrap gap-2">
+                        {m.mailAttachments.map((a) => (
+                          <li key={a.index}>
+                            <a
+                              href={`/api/internal/mail-attachments/${m.id}/${a.index}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-info-300 hover:bg-info-50"
+                            >
+                              <FileTextIcon size={14} />
+                              <span className="max-w-[14rem] truncate">{a.filename}</span>
+                              {a.sizeBytes ? (
+                                <span className="text-neutral-400">{Math.max(1, Math.round(a.sizeBytes / 1024))} KB</span>
+                              ) : null}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </article>
+              )
+            })}
+          </div>
         )}
       </div>
 
       {/* Reply */}
       {isEmail ? (
-        <div className="border-t border-neutral-200 bg-white p-3">
-          <Textarea
-            id="mail-reply"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={3}
-            placeholder="Reply… (sends from this mailbox and syncs to Gmail)   ( r )"
-            aria-label="Reply"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            {replySigPreview ? (
-              <span className="truncate text-[11px] text-neutral-400" title={replySigPreview}>
-                Signature appended: {replySigPreview}
-              </span>
-            ) : (
-              <span />
-            )}
-            <Button type="button" size="sm" disabled={reply.isPending || !body.trim()} onClick={sendReply}>
-              <SendIcon size={15} /> {reply.isPending ? 'Sending…' : 'Send reply'}
-            </Button>
-          </div>
+        <div className="border-t border-neutral-200 bg-white px-6 py-3">
+          {replying ? (
+            <div className="rounded-xl border border-neutral-200 shadow-sm">
+              <Textarea
+                id="mail-reply"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                rows={4}
+                placeholder="Reply…"
+                aria-label="Reply"
+                className="rounded-xl border-0 focus:ring-0"
+              />
+              <div className="flex items-center justify-between gap-3 border-t border-neutral-100 px-3 py-2">
+                <span className="truncate text-[11px] text-neutral-400" title={replySigPreview}>
+                  {replySigPreview ? `Signature: ${replySigPreview}` : ''}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplying(false)
+                      setBody('')
+                    }}
+                    className="rounded-md px-2 py-1 text-sm text-neutral-500 hover:bg-neutral-100"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reply.isPending || !body.trim()}
+                    onClick={sendReply}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-info-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-info-700 disabled:opacity-50"
+                  >
+                    <SendIcon size={15} /> {reply.isPending ? 'Sending…' : 'Send'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setReplying(true)
+                  setTimeout(() => document.getElementById('mail-reply')?.focus(), 0)
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-neutral-300 px-4 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+              >
+                <ReplyIcon size={15} /> Reply
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setReplying(true)
+                  setTimeout(() => document.getElementById('mail-reply')?.focus(), 0)
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-neutral-300 px-4 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+              >
+                <ForwardIcon size={15} /> Forward
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
     </div>
@@ -918,15 +853,10 @@ function ReadingPane({
 }
 
 // -----------------------------------------------------------------------------
-// Email HTML body — rendered exactly like Gmail. ADR 0041.
-//
-// Security: the message HTML is shown in a LOCKED, opaque-origin sandboxed
-// iframe — `sandbox` WITHOUT `allow-scripts` (no JS can ever run) and WITHOUT
-// `allow-same-origin` (the frame is a unique origin: it can't read our cookies/
-// DOM, and it does NOT inherit our strict CSP, so the email's inline styles
-// render — which is what makes it look identical to Gmail). The HTML was also
-// sanitised server-side (packages/core/src/mail/html-email.ts) as defence in
-// depth. `allow-popups` + `<base target="_blank">` lets links open in a new tab.
+// Email HTML body — rendered like Gmail in a LOCKED sandboxed iframe. ADR 0041.
+// `sandbox` WITHOUT allow-scripts (no JS) and WITHOUT allow-same-origin (unique
+// origin: can't read our cookies/DOM, doesn't inherit our strict CSP, so the
+// email's inline styles render). Sanitised server-side as defence in depth.
 // -----------------------------------------------------------------------------
 
 function EmailHtmlBody({ html, text }: { html: string; text: string }) {
@@ -949,13 +879,11 @@ function EmailHtmlBody({ html, text }: { html: string; text: string }) {
           title="Email message"
           sandbox="allow-popups allow-popups-to-escape-sandbox"
           srcDoc={srcDoc}
-          className="w-full rounded-md border border-neutral-100 bg-white"
-          style={{ height: 420 }}
+          className="w-full bg-white"
+          style={{ height: 460, border: 0 }}
         />
       ) : (
-        <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">
-          {text || '(no content)'}
-        </p>
+        <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">{text || '(no content)'}</p>
       )}
       <button
         type="button"
@@ -969,16 +897,10 @@ function EmailHtmlBody({ html, text }: { html: string; text: string }) {
 }
 
 // -----------------------------------------------------------------------------
-// Compose modal
+// Compose — docked bottom-right (Gmail "New Message" window).
 // -----------------------------------------------------------------------------
 
-function ComposeModal({
-  accounts,
-  onClose,
-}: {
-  accounts: AccountOption[]
-  onClose: () => void
-}) {
+function ComposeDock({ accounts, onClose }: { accounts: AccountOption[]; onClose: () => void }) {
   const utils = trpc.useUtils()
   const compose = trpc.mail.compose.useMutation()
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
@@ -987,26 +909,15 @@ function ComposeModal({
   const [showCc, setShowCc] = useState(false)
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
-
-  // The account's Gmail signature is appended server-side to both the text and
-  // HTML parts (so it renders with its real formatting). Show it as a read-only
-  // preview here so the agent sees what will be added without it cluttering the
-  // editable body. Swaps with the From account.
   const sigPreview = signatureText(accounts.find((a) => a.id === accountId))
 
   async function send() {
-    const recipients = to
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter(Boolean)
+    const recipients = to.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
     if (recipients.length === 0 || !subject.trim() || !body.trim() || !accountId) {
       toast.error('Add a recipient, subject and message.')
       return
     }
-    const ccList = cc
-      .split(/[,;]/)
-      .map((s) => s.trim())
-      .filter(Boolean)
+    const ccList = cc.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
     try {
       await compose.mutateAsync({
         mailAccountId: accountId,
@@ -1024,81 +935,83 @@ function ComposeModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="New email"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-xl overflow-hidden rounded-xl bg-white shadow-card-hover"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-neutral-200 px-4 py-2.5">
-          <h2 className="text-sm font-semibold text-neutral-900">New email</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100"
-          >
-            <XIcon size={16} />
-          </button>
-        </div>
-        <div className="space-y-2 p-4">
-          <select
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            aria-label="From"
-            className="w-full rounded-md border border-neutral-200 px-2.5 py-1.5 text-sm focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-200"
-          >
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.displayName ? `${a.displayName} <${a.address}>` : a.address}
-              </option>
-            ))}
-          </select>
-          <div className="relative">
-            <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To: name@example.com, …" aria-label="To" />
-            {!showCc ? (
-              <button
-                type="button"
-                onClick={() => setShowCc(true)}
-                className="absolute right-2 top-1.5 text-xs font-medium text-neutral-400 hover:text-neutral-600"
-              >
-                Cc
-              </button>
-            ) : null}
-          </div>
-          {showCc ? (
-            <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc: name@example.com, …" aria-label="Cc" />
-          ) : null}
-          <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" aria-label="Subject" />
-          <Textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={8}
-            placeholder="Write your message…"
-            aria-label="Message"
+    <div className="fixed bottom-0 right-6 z-50 flex w-[min(32rem,calc(100vw-2rem))] flex-col rounded-t-lg bg-white shadow-2xl ring-1 ring-neutral-200">
+      <div className="flex items-center justify-between rounded-t-lg bg-neutral-800 px-4 py-2 text-sm font-medium text-white">
+        New message
+        <button type="button" onClick={onClose} aria-label="Close" className="rounded p-0.5 hover:bg-white/10">
+          <XIcon size={16} />
+        </button>
+      </div>
+      <div className="flex flex-col">
+        <select
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+          aria-label="From"
+          className="border-b border-neutral-100 px-4 py-2 text-sm text-neutral-700 focus:outline-none"
+        >
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.displayName ? `${a.displayName} <${a.address}>` : a.address}
+            </option>
+          ))}
+        </select>
+        <div className="relative border-b border-neutral-100">
+          <input
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            placeholder="To"
+            aria-label="To"
+            className="w-full px-4 py-2 text-sm placeholder:text-neutral-400 focus:outline-none"
           />
-          {sigPreview ? (
-            <div className="rounded-md border border-dashed border-neutral-200 bg-neutral-50/60 px-2.5 py-1.5 text-xs text-neutral-500">
-              <span className="text-neutral-400">Signature appended:</span>
-              <span className="ml-1 whitespace-pre-wrap break-words text-neutral-600">
-                {sigPreview}
-              </span>
-            </div>
+          {!showCc ? (
+            <button
+              type="button"
+              onClick={() => setShowCc(true)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-neutral-400 hover:text-neutral-600"
+            >
+              Cc
+            </button>
           ) : null}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-neutral-200 px-4 py-2.5">
-          <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="button" size="sm" disabled={compose.isPending} onClick={send}>
-            <SendIcon size={15} /> {compose.isPending ? 'Sending…' : 'Send'}
-          </Button>
-        </div>
+        {showCc ? (
+          <input
+            value={cc}
+            onChange={(e) => setCc(e.target.value)}
+            placeholder="Cc"
+            aria-label="Cc"
+            className="border-b border-neutral-100 px-4 py-2 text-sm placeholder:text-neutral-400 focus:outline-none"
+          />
+        ) : null}
+        <input
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder="Subject"
+          aria-label="Subject"
+          className="border-b border-neutral-100 px-4 py-2 text-sm font-medium placeholder:text-neutral-400 focus:outline-none"
+        />
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={10}
+          placeholder="Write your message…"
+          aria-label="Message"
+          className="resize-none px-4 py-3 text-sm placeholder:text-neutral-400 focus:outline-none"
+        />
+        {sigPreview ? (
+          <p className="truncate px-4 pb-1 text-[11px] text-neutral-400" title={sigPreview}>
+            Signature appended: {sigPreview}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          disabled={compose.isPending}
+          onClick={send}
+          className="inline-flex items-center gap-1.5 rounded-full bg-info-600 px-5 py-2 text-sm font-medium text-white hover:bg-info-700 disabled:opacity-50"
+        >
+          <SendIcon size={15} /> {compose.isPending ? 'Sending…' : 'Send'}
+        </button>
       </div>
     </div>
   )
