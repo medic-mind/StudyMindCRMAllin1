@@ -38,3 +38,21 @@ export async function resolveSlackNames(input: {
   }
   return { senderName, channelName }
 }
+
+/**
+ * Best-effort text of a thread's root message, so a reply that names no customer
+ * inherits the customer from the message it replies to (ADR 0034 amendment). A
+ * missing token / scope / API error returns null and matching falls back to the
+ * reply text alone — fetching the parent must never block ingestion.
+ */
+export async function resolveThreadParentText(input: {
+  channelId: string
+  threadTs: string
+}): Promise<string | null> {
+  try {
+    const client = createClient()
+    return await client.getThreadParentText(input.channelId, input.threadTs).catch(() => null)
+  } catch {
+    return null
+  }
+}

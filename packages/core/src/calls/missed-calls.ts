@@ -200,8 +200,14 @@ export function deriveMissedCalls(
   const outboundByNumber = new Map<string, number[]>()
   const outboundByContact = new Map<string, number[]>()
   for (const c of calls) {
-    const resolves =
-      c.direction === 'outbound' || (c.direction === 'inbound' && isAnswered(c))
+    // A later call clears a miss when it closes the loop: an OUTBOUND attempt
+    // (any outcome — we rang them), OR any ANSWERED call (we actually connected
+    // on that number, whatever its direction). Keying the answered case off
+    // `isAnswered` alone — not `inbound && isAnswered` — means a callback whose
+    // leg reached us without a clean `direction` (a re-synced/duplicated event,
+    // a manually-logged click-to-call) still resolves the miss, so the state
+    // never flickers back to "outstanding" once a real callback exists.
+    const resolves = c.direction === 'outbound' || isAnswered(c)
     if (!resolves) continue
     const key = phoneMatchKey(c.rawDigits)
     if (key) {
@@ -209,7 +215,10 @@ export function deriveMissedCalls(
       arr.push(c.occurredAt.getTime())
       outboundByNumber.set(key, arr)
     }
-    if (c.direction === 'outbound' && c.contactId) {
+    // Any resolving call linked to a CRM contact also clears that contact's
+    // misses (the agent rang them back on another number, or they got through
+    // on a different line) — not just outbound ones.
+    if (c.contactId) {
       const arr = outboundByContact.get(c.contactId) ?? []
       arr.push(c.occurredAt.getTime())
       outboundByContact.set(c.contactId, arr)
@@ -230,7 +239,7 @@ export function deriveMissedCalls(
       ].sort((a, b) => a - b)
       const after = candidateTimes.find((t) => t > c.occurredAt.getTime())
       if (after != null) calledBackAt = new Date(after)
-      const review = c.aircallCallId ? reviewsByAircallId.get(c.aircallCallId) ?? null : null
+      const review = c.aircallCallId ? (reviewsByAircallId.get(c.aircallCallId) ?? null) : null
 
       let state: MissedCallState
       if (review?.status === 'dismissed') state = 'dismissed'

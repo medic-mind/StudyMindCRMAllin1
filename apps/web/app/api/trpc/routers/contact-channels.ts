@@ -13,6 +13,7 @@ import { z } from 'zod'
 
 import {
   callsForContact,
+  callSummariesForContact,
   channelSummaryForContact,
   emailThreadsForContact,
   notesForContact,
@@ -27,9 +28,7 @@ import { protectedProcedure, router } from '@/lib/trpc/builders'
 
 const ChannelListInput = z.object({
   contactId: z.string().min(1),
-  cursor: z
-    .object({ id: z.string(), occurredAt: z.date() })
-    .nullish(),
+  cursor: z.object({ id: z.string(), occurredAt: z.date() }).nullish(),
   limit: z.number().min(1).max(100).default(25),
 })
 
@@ -41,45 +40,46 @@ const SearchInput = z.object({
 })
 
 export const contactChannelsRouter = router({
-  emailThreads: protectedProcedure
-    .input(ChannelListInput)
-    .query(({ ctx, input }) =>
-      emailThreadsForContact(ctx.db, {
-        contactId: input.contactId,
-        limit: input.limit,
-        cursor: input.cursor ?? null,
-      }),
-    ),
+  emailThreads: protectedProcedure.input(ChannelListInput).query(({ ctx, input }) =>
+    emailThreadsForContact(ctx.db, {
+      contactId: input.contactId,
+      limit: input.limit,
+      cursor: input.cursor ?? null,
+    }),
+  ),
 
-  calls: protectedProcedure
-    .input(ChannelListInput)
-    .query(({ ctx, input }) =>
-      callsForContact(ctx.db, {
-        contactId: input.contactId,
-        limit: input.limit,
-        cursor: input.cursor ?? null,
-      }),
-    ),
+  calls: protectedProcedure.input(ChannelListInput).query(({ ctx, input }) =>
+    callsForContact(ctx.db, {
+      contactId: input.contactId,
+      limit: input.limit,
+      cursor: input.cursor ?? null,
+    }),
+  ),
 
-  slackMentions: protectedProcedure
-    .input(ChannelListInput)
-    .query(({ ctx, input }) =>
-      slackMentionsForContact(ctx.db, {
-        contactId: input.contactId,
-        limit: input.limit,
-        cursor: input.cursor ?? null,
-      }),
-    ),
+  slackMentions: protectedProcedure.input(ChannelListInput).query(({ ctx, input }) =>
+    slackMentionsForContact(ctx.db, {
+      contactId: input.contactId,
+      limit: input.limit,
+      cursor: input.cursor ?? null,
+    }),
+  ),
 
-  trengoConversations: protectedProcedure
-    .input(ChannelListInput)
-    .query(({ ctx, input }) =>
-      trengoConversationsForContact(ctx.db, {
-        contactId: input.contactId,
-        limit: input.limit,
-        cursor: input.cursor ?? null,
-      }),
-    ),
+  // ADR 0039 amendment — call summaries compiled from the site AND Slack.
+  callSummaries: protectedProcedure.input(ChannelListInput).query(({ ctx, input }) =>
+    callSummariesForContact(ctx.db, {
+      contactId: input.contactId,
+      limit: input.limit,
+      cursor: input.cursor ?? null,
+    }),
+  ),
+
+  trengoConversations: protectedProcedure.input(ChannelListInput).query(({ ctx, input }) =>
+    trengoConversationsForContact(ctx.db, {
+      contactId: input.contactId,
+      limit: input.limit,
+      cursor: input.cursor ?? null,
+    }),
+  ),
 
   // ADR 0020 Phase 6b — aggregate the contact's Trengo conversation tags
   // into a single, frequency-ordered list. Read-only; no mutation surface
@@ -93,21 +93,17 @@ export const contactChannelsRouter = router({
     .input(ContactOnlyInput)
     .query(({ ctx, input }) => tasksForContact(ctx.db, input)),
 
-  notes: protectedProcedure
-    .input(ChannelListInput)
-    .query(({ ctx, input }) =>
-      notesForContact(ctx.db, {
-        contactId: input.contactId,
-        limit: input.limit,
-        cursor: input.cursor ?? null,
-      }),
-    ),
+  notes: protectedProcedure.input(ChannelListInput).query(({ ctx, input }) =>
+    notesForContact(ctx.db, {
+      contactId: input.contactId,
+      limit: input.limit,
+      cursor: input.cursor ?? null,
+    }),
+  ),
 
   search: protectedProcedure
     .input(SearchInput)
-    .query(({ ctx, input }) =>
-      searchAcrossChannels(ctx.db, input.contactId, input.q),
-    ),
+    .query(({ ctx, input }) => searchAcrossChannels(ctx.db, input.contactId, input.q)),
 
   summary: protectedProcedure
     .input(ContactOnlyInput)

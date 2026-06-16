@@ -225,9 +225,7 @@ export async function emailThreadsForContact(
   return {
     items: sliced,
     nextCursor:
-      hasMore && last_message
-        ? { id: last_message.id, occurredAt: last_message.occurredAt }
-        : null,
+      hasMore && last_message ? { id: last_message.id, occurredAt: last_message.occurredAt } : null,
   }
 }
 
@@ -362,7 +360,10 @@ export async function callsForContact(
       existing.direction = dir
     }
     if (outcomeRank(outcome) > outcomeRank(existing.outcome)) existing.outcome = outcome
-    if (durationSec != null && (existing.durationSec == null || durationSec > existing.durationSec)) {
+    if (
+      durationSec != null &&
+      (existing.durationSec == null || durationSec > existing.durationSec)
+    ) {
       existing.durationSec = durationSec
     }
     if (rowHasRecording && !existing.hasRecording) {
@@ -440,6 +441,96 @@ export async function slackMentionsForContact(
       suggestedNextAction: asString(p['suggestedNextAction']),
       permalink: asString(p['permalink']) ?? asString(p['slackPermalink']),
       confidence: asNumber(p['confidence']),
+    }
+  })
+  return { items, nextCursor: nc }
+}
+
+// -----------------------------------------------------------------------------
+// Call summaries — compiled from BOTH the site (call_summary) and Slack
+// (slack_summary). A call summary recorded in the CRM wizard and one posted by
+// a human in a watched Slack channel are the SAME thing to the team, so this
+// surfaces them together, newest-first, each tagged with its source. (The CRM's
+// own #callsummaries bot posts are skipped at ingestion — ADR 0039 — so they
+// never double up here as a slack_summary.)
+// -----------------------------------------------------------------------------
+
+export interface CallSummaryEntry {
+  id: string
+  occurredAt: Date
+  /** Where it was recorded: the CRM wizard ('site') or a Slack channel ('slack'). */
+  source: 'site' | 'slack'
+  summary: string | null
+  /** Call outcome — site summaries only. */
+  outcome: string | null
+  /** Who recorded it: the CRM user (site) or the Slack sender (slack). */
+  authorName: string | null
+  /** Slack only: channel, AI category, and a permalink back to the message. */
+  channelName: string | null
+  category: string | null
+  permalink: string | null
+}
+
+export async function callSummariesForContact(
+  db: PrismaClient,
+  input: ChannelListInput,
+): Promise<Paginated<CallSummaryEntry>> {
+  const limit = clampLimit(input.limit)
+  const rows = await db.interaction.findMany({
+    where: {
+      contactId: input.contactId,
+      deletedAt: null,
+      type: { in: ['call_summary', 'slack_summary'] },
+      ...cursorWhere(input.cursor),
+    },
+    orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    select: {
+      id: true,
+      occurredAt: true,
+      type: true,
+      summary: true,
+      payload: true,
+      createdById: true,
+    },
+  })
+  const { sliced, nextCursor: nc } = nextCursor(rows, limit)
+
+  // Resolve the CRM authors of site summaries in one batch.
+  const authorIds = [...new Set(sliced.map((r) => r.createdById).filter((x): x is string => !!x))]
+  const authors = authorIds.length
+    ? await db.user.findMany({
+        where: { id: { in: authorIds } },
+        select: { id: true, name: true, email: true },
+      })
+    : []
+  const authorMap = new Map(authors.map((a) => [a.id, a.name ?? a.email]))
+
+  const items: CallSummaryEntry[] = sliced.map((r) => {
+    const p = asObject(r.payload)
+    if (r.type === 'call_summary') {
+      return {
+        id: r.id,
+        occurredAt: r.occurredAt,
+        source: 'site',
+        summary: asString(p['body']) ?? r.summary,
+        outcome: asString(p['outcome']),
+        authorName: r.createdById ? (authorMap.get(r.createdById) ?? null) : null,
+        channelName: null,
+        category: null,
+        permalink: null,
+      }
+    }
+    return {
+      id: r.id,
+      occurredAt: r.occurredAt,
+      source: 'slack',
+      summary: asString(p['messageText']) ?? r.summary,
+      outcome: null,
+      authorName: asString(p['senderName']),
+      channelName: asString(p['channelName']),
+      category: asString(p['category']),
+      permalink: asString(p['permalink']) ?? asString(p['slackPermalink']),
     }
   })
   return { items, nextCursor: nc }
@@ -547,11 +638,7 @@ export async function trengoConversationsForContact(
         c.messages.push({
           id: r.id,
           direction:
-            it === 'message.inbound'
-              ? 'inbound'
-              : it === 'message.outbound'
-                ? 'outbound'
-                : null,
+            it === 'message.inbound' ? 'inbound' : it === 'message.outbound' ? 'outbound' : null,
           body: asString(p['body']) ?? r.summary,
           occurredAt: r.occurredAt,
           senderName: asString(p['senderName']),
@@ -604,8 +691,7 @@ export async function trengoConversationsForContact(
   const lastRow = rows[rows.length - 1]
   return {
     items: sliced,
-    nextCursor:
-      hasMore && lastRow ? { id: lastRow.id, occurredAt: lastRow.occurredAt } : null,
+    nextCursor: hasMore && lastRow ? { id: lastRow.id, occurredAt: lastRow.occurredAt } : null,
   }
 }
 
@@ -639,9 +725,7 @@ export async function trengoTagsForContact(
   }
   return Array.from(counts.entries())
     .map(([name, conversationCount]) => ({ name, conversationCount }))
-    .sort((a, b) =>
-      b.conversationCount - a.conversationCount || a.name.localeCompare(b.name),
-    )
+    .sort((a, b) => b.conversationCount - a.conversationCount || a.name.localeCompare(b.name))
 }
 
 // -----------------------------------------------------------------------------
@@ -740,6 +824,7 @@ export interface ChannelSummary {
   emails: { threadCount: number; unreadCount: number; latestAt: Date | null }
   calls: { recentCount: number; missedCount: number; latestAt: Date | null }
   slack: { mentionCount: number; latestAt: Date | null }
+  callSummaries: { count: number; latestAt: Date | null }
   trengo: { conversationCount: number; latestAt: Date | null }
   tasks: { openCount: number }
   notes: { count: number; latestAt: Date | null }
@@ -751,7 +836,7 @@ export async function channelSummaryForContact(
 ): Promise<ChannelSummary> {
   // We deliberately do a small set of cheap aggregates rather than one big
   // group-by, so each can use the partial index added in the chunk-1 migration.
-  const [emails, calls, slack, trengoMsgs, tasksOpen, notes] = await Promise.all([
+  const [emails, calls, slack, callSummaries, trengoMsgs, tasksOpen, notes] = await Promise.all([
     db.interaction.findMany({
       where: {
         contactId,
@@ -770,6 +855,11 @@ export async function channelSummaryForContact(
     }),
     db.interaction.aggregate({
       where: { contactId, deletedAt: null, type: 'slack_summary' },
+      _count: { id: true },
+      _max: { occurredAt: true },
+    }),
+    db.interaction.aggregate({
+      where: { contactId, deletedAt: null, type: { in: ['call_summary', 'slack_summary'] } },
       _count: { id: true },
       _max: { occurredAt: true },
     }),
@@ -817,8 +907,7 @@ export async function channelSummaryForContact(
   for (const r of trengoMsgs) {
     const p = asObject(r.payload)
     const tid =
-      asString(p['ticketId']) ??
-      (typeof p['ticketId'] === 'number' ? String(p['ticketId']) : null)
+      asString(p['ticketId']) ?? (typeof p['ticketId'] === 'number' ? String(p['ticketId']) : null)
     if (tid) trengoConvs.add(tid)
     if (!trengoLatest || r.occurredAt > trengoLatest) trengoLatest = r.occurredAt
   }
@@ -837,6 +926,10 @@ export async function channelSummaryForContact(
     slack: {
       mentionCount: slack._count.id,
       latestAt: slack._max.occurredAt,
+    },
+    callSummaries: {
+      count: callSummaries._count.id,
+      latestAt: callSummaries._max.occurredAt,
     },
     trengo: {
       conversationCount: trengoConvs.size,
@@ -872,9 +965,7 @@ export async function searchAcrossChannels(
     where: {
       contactId,
       deletedAt: null,
-      OR: [
-        { summary: { contains: trimmed, mode: 'insensitive' } },
-      ],
+      OR: [{ summary: { contains: trimmed, mode: 'insensitive' } }],
     },
     orderBy: { occurredAt: 'desc' },
     take: 60,

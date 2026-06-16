@@ -94,7 +94,10 @@ export const callsRouter = router({
           where: { type: 'call', occurredAt: { gte: from, lte: now }, deletedAt: null },
           select: { id: true, occurredAt: true, contactId: true, payload: true },
           orderBy: { occurredAt: 'desc' },
-          take: 20000,
+          // Newest-first + a generous cap: a callback must never be shed before
+          // the miss it resolves, which is what made busy windows flip a
+          // called-back row back to "outstanding".
+          take: 50000,
         })
 
         const raws: RawCall[] = rows.map(projectCallInteraction)
@@ -159,11 +162,20 @@ export const callsRouter = router({
         const page = filtered.slice(0, input.limit)
 
         // Resolve contact display fields for the page.
-        const contactIds = [...new Set(page.map((c) => c.contactId).filter((x): x is string => !!x))]
+        const contactIds = [
+          ...new Set(page.map((c) => c.contactId).filter((x): x is string => !!x)),
+        ]
         const contacts = contactIds.length
           ? await ctx.db.contact.findMany({
               where: { id: { in: contactIds } },
-              select: { id: true, firstName: true, lastName: true, email: true, phoneE164: true, kind: true },
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneE164: true,
+                kind: true,
+              },
             })
           : []
         const contactMap = new Map(contacts.map((c) => [c.id, c]))
@@ -253,9 +265,7 @@ export const callsRouter = router({
     syncNow: auditedProcedure.mutation(async ({ ctx }) => {
       const user = requireUser(ctx)
       assertCanReview(user.role)
-      const configured = Boolean(
-        process.env['AIRCALL_API_ID'] && process.env['AIRCALL_API_TOKEN'],
-      )
+      const configured = Boolean(process.env['AIRCALL_API_ID'] && process.env['AIRCALL_API_TOKEN'])
       if (configured) {
         const { inngest } = await import('@studymind/jobs')
         await inngest.send({ name: 'aircall/sync-now.requested', data: {} })

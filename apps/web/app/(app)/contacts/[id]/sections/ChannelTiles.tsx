@@ -82,9 +82,7 @@ export function ChannelTiles({ summary }: { summary: ChannelSummary }): JSX.Elem
         icon={<MailIcon size={14} />}
         primary={`${summary.emails.threadCount}`}
         secondary={
-          summary.emails.unreadCount > 0
-            ? `${summary.emails.unreadCount} unread`
-            : 'all read'
+          summary.emails.unreadCount > 0 ? `${summary.emails.unreadCount} unread` : 'all read'
         }
       />
       <Tile
@@ -94,10 +92,16 @@ export function ChannelTiles({ summary }: { summary: ChannelSummary }): JSX.Elem
         icon={<PhoneIcon size={14} />}
         primary={`${summary.calls.recentCount}`}
         secondary={
-          summary.calls.missedCount > 0
-            ? `${summary.calls.missedCount} missed`
-            : 'no missed'
+          summary.calls.missedCount > 0 ? `${summary.calls.missedCount} missed` : 'no missed'
         }
+      />
+      <Tile
+        href="#section-call-summaries"
+        label="Call summaries"
+        tone={summary.callSummaries.count > 0 ? 'accent' : 'neutral'}
+        icon={<MessageSquareIcon size={14} />}
+        primary={`${summary.callSummaries.count}`}
+        secondary={summary.callSummaries.count === 1 ? 'summary' : 'summaries'}
       />
       <Tile
         href="#section-slack"

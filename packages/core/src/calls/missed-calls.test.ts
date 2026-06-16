@@ -54,7 +54,12 @@ describe('projectCallInteraction', () => {
       id: 'int_1',
       occurredAt,
       contactId: 'c_1',
-      payload: { aircallCallId: 99, direction: 'inbound', durationSec: 12, rawDigits: '+447700900001' },
+      payload: {
+        aircallCallId: 99,
+        direction: 'inbound',
+        durationSec: 12,
+        rawDigits: '+447700900001',
+      },
     })
     expect(call).toEqual({
       interactionId: 'int_1',
@@ -82,7 +87,11 @@ describe('projectCallInteraction', () => {
       id: 'int_3',
       occurredAt,
       contactId: null,
-      payload: { direction: 'outbound', toNumber: '07700900002', voicemailUrl: 'https://s3/vm.mp3' },
+      payload: {
+        direction: 'outbound',
+        toNumber: '07700900002',
+        voicemailUrl: 'https://s3/vm.mp3',
+      },
     })
     expect(call.direction).toBe('outbound')
     expect(call.isVoicemail).toBe(true)
@@ -101,9 +110,9 @@ describe('callNumberFromPayload', () => {
     // The contact-page Call button / Google Voice callback stores the dialled
     // number at toNumber, never rawDigits — this fallback is what lets such a
     // callback clear a miss by number.
-    expect(callNumberFromPayload({ event: 'call.manually_logged', toNumber: '+447700900001' })).toBe(
-      '+447700900001',
-    )
+    expect(
+      callNumberFromPayload({ event: 'call.manually_logged', toNumber: '+447700900001' }),
+    ).toBe('+447700900001')
   })
 
   it('ignores blank values and returns null when neither is present', () => {
@@ -159,13 +168,49 @@ describe('deriveMissedCalls', () => {
 
   it('auto-resolves once a later outbound call to the same number exists', () => {
     const calls = normalizeCalls([
-      raw({ aircallCallId: 1, direction: 'inbound', durationSec: 0, occurredAt: new Date('2026-06-01T09:00:00Z'), rawDigits: '+447700900111' }),
-      raw({ aircallCallId: 2, direction: 'outbound', durationSec: 0, occurredAt: new Date('2026-06-01T11:00:00Z'), rawDigits: '+447700900111' }),
+      raw({
+        aircallCallId: 1,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900111',
+      }),
+      raw({
+        aircallCallId: 2,
+        direction: 'outbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T11:00:00Z'),
+        rawDigits: '+447700900111',
+      }),
     ])
     const out = deriveMissedCalls(calls, noReviews)
     expect(out).toHaveLength(1)
     expect(out[0]?.state).toBe('called_back')
     expect(out[0]?.calledBackAt?.toISOString()).toBe('2026-06-01T11:00:00.000Z')
+  })
+
+  it('resolves a miss from a later ANSWERED callback that has no clean direction', () => {
+    // Hardening: a re-synced/duplicated or manually-logged callback can land
+    // without a `direction`. As long as it CONNECTED (answered) to the same
+    // number after the miss, the miss must clear and stay cleared — never
+    // flicker back to outstanding.
+    const calls = normalizeCalls([
+      raw({
+        aircallCallId: 1,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900111',
+      }),
+      raw({
+        aircallCallId: 2,
+        direction: null,
+        durationSec: 42,
+        occurredAt: new Date('2026-06-01T11:00:00Z'),
+        rawDigits: '07700 900111',
+      }),
+    ])
+    expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('called_back')
   })
 
   it('resolves via the linked contact when the callback went to a DIFFERENT number', () => {
@@ -246,8 +291,19 @@ describe('deriveMissedCalls', () => {
 
   it('does not resolve from an outbound call BEFORE the miss', () => {
     const calls = normalizeCalls([
-      raw({ aircallCallId: 1, direction: 'outbound', occurredAt: new Date('2026-06-01T08:00:00Z'), rawDigits: '+447700900222' }),
-      raw({ aircallCallId: 2, direction: 'inbound', durationSec: 0, occurredAt: new Date('2026-06-01T09:00:00Z'), rawDigits: '+447700900222' }),
+      raw({
+        aircallCallId: 1,
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T08:00:00Z'),
+        rawDigits: '+447700900222',
+      }),
+      raw({
+        aircallCallId: 2,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900222',
+      }),
     ])
     expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('outstanding')
   })
@@ -341,8 +397,19 @@ describe('deriveMissedCalls', () => {
 
   it('does not cross-resolve between different numbers', () => {
     const calls = normalizeCalls([
-      raw({ aircallCallId: 1, direction: 'inbound', durationSec: 0, occurredAt: new Date('2026-06-01T09:00:00Z'), rawDigits: '+447700900333' }),
-      raw({ aircallCallId: 2, direction: 'outbound', occurredAt: new Date('2026-06-01T11:00:00Z'), rawDigits: '+447700900999' }),
+      raw({
+        aircallCallId: 1,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900333',
+      }),
+      raw({
+        aircallCallId: 2,
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T11:00:00Z'),
+        rawDigits: '+447700900999',
+      }),
     ])
     expect(deriveMissedCalls(calls, noReviews)[0]?.state).toBe('outstanding')
   })
@@ -350,15 +417,29 @@ describe('deriveMissedCalls', () => {
   it('honours a manual actioned override', () => {
     const calls = normalizeCalls([raw({ aircallCallId: 7, durationSec: 0 })])
     const reviews = new Map<string, MissedCallReviewRow>([
-      ['7', { status: 'actioned', note: 'texted them', reviewedAt: new Date(), reviewedById: 'u1' }],
+      [
+        '7',
+        { status: 'actioned', note: 'texted them', reviewedAt: new Date(), reviewedById: 'u1' },
+      ],
     ])
     expect(deriveMissedCalls(calls, reviews)[0]?.state).toBe('actioned')
   })
 
   it('keeps a dismissed (spam) call dismissed even if a later outbound exists', () => {
     const calls = normalizeCalls([
-      raw({ aircallCallId: 8, direction: 'inbound', durationSec: 0, occurredAt: new Date('2026-06-01T09:00:00Z'), rawDigits: '+447700900444' }),
-      raw({ aircallCallId: 9, direction: 'outbound', occurredAt: new Date('2026-06-01T12:00:00Z'), rawDigits: '+447700900444' }),
+      raw({
+        aircallCallId: 8,
+        direction: 'inbound',
+        durationSec: 0,
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+        rawDigits: '+447700900444',
+      }),
+      raw({
+        aircallCallId: 9,
+        direction: 'outbound',
+        occurredAt: new Date('2026-06-01T12:00:00Z'),
+        rawDigits: '+447700900444',
+      }),
     ])
     const reviews = new Map<string, MissedCallReviewRow>([
       ['8', { status: 'dismissed', note: null, reviewedAt: new Date(), reviewedById: 'u1' }],
@@ -369,8 +450,19 @@ describe('deriveMissedCalls', () => {
   it('summarises counts by state', () => {
     const calls = normalizeCalls([
       raw({ aircallCallId: 1, direction: 'inbound', durationSec: 0, rawDigits: '+447700900001' }),
-      raw({ aircallCallId: 2, direction: 'inbound', durationSec: 0, rawDigits: '+447700900002', occurredAt: new Date('2026-06-01T09:00:00Z') }),
-      raw({ aircallCallId: 3, direction: 'outbound', rawDigits: '+447700900002', occurredAt: new Date('2026-06-01T10:00:00Z') }),
+      raw({
+        aircallCallId: 2,
+        direction: 'inbound',
+        durationSec: 0,
+        rawDigits: '+447700900002',
+        occurredAt: new Date('2026-06-01T09:00:00Z'),
+      }),
+      raw({
+        aircallCallId: 3,
+        direction: 'outbound',
+        rawDigits: '+447700900002',
+        occurredAt: new Date('2026-06-01T10:00:00Z'),
+      }),
     ])
     const summary = summariseMissedCalls(deriveMissedCalls(calls, noReviews))
     expect(summary.total).toBe(2)
