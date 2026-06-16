@@ -1204,6 +1204,80 @@ export const contactRouter = router({
         }
       }),
 
+    // ADR 0039 amendment: every call summary is announced to `#callsummaries`,
+    // no exceptions. The wizard calls this on BOTH completion paths (self-send
+    // and VA hand-off) so the post is compulsory rather than a per-user choice.
+    // The `disposition` makes it awfully clear whether the customer has already
+    // been contacted or whether the VA team still needs to act. Best-effort: a
+    // Slack failure never loses the CRM record (which is already saved).
+    announceToSlack: protectedProcedure
+      .input(
+        z.object({
+          contactId: z.string(),
+          summaryInteractionId: z.string().optional(),
+          disposition: z.enum(['sent_to_customer', 'va_handoff', 'logged']),
+          body: z.string().trim().min(1).max(8000),
+          outcome: z.enum(['answered', 'voicemail', 'no_answer']).optional(),
+          /** Channels the customer summary actually went out on. */
+          sentChannels: z.array(z.string().trim().min(1)).max(8).optional(),
+          followUps: z
+            .array(
+              z.object({
+                title: z.string().trim().min(1).max(300),
+                dueAt: z.union([z.string(), z.date()]).nullish(),
+                assignee: z.string().trim().max(120).nullish(),
+              }),
+            )
+            .max(10)
+            .optional(),
+          handoffAssignee: z.string().trim().max(120).optional(),
+          /** Optional per-send channel override; defaults to the call_summary route. */
+          slackChannelId: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        const [contact, author] = await Promise.all([
+          ctx.db.contact.findFirst({
+            where: { id: input.contactId, deletedAt: null },
+            select: { firstName: true, lastName: true },
+          }),
+          ctx.db.user.findUnique({ where: { id: user.id }, select: { name: true } }),
+        ])
+        if (!contact) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+        }
+        const contactName =
+          [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim() || 'this contact'
+        const authorName = author?.name?.trim() || user.email
+
+        const senders = buildCallSummarySenders({ agentId: user.id, requestId: ctx.requestId })
+        const slack: ChannelResult = senders.slack
+          ? await senders.slack({
+              body: input.body,
+              contactName,
+              contactId: input.contactId,
+              slackChannelId: input.slackChannelId,
+              outcome: input.outcome ?? null,
+              disposition: input.disposition,
+              ...(input.sentChannels ? { sentChannels: input.sentChannels } : {}),
+              ...(input.followUps
+                ? {
+                    followUps: input.followUps.map((f) => ({
+                      title: f.title,
+                      dueAt: f.dueAt ?? null,
+                      assignee: f.assignee ?? null,
+                    })),
+                  }
+                : {}),
+              ...(input.handoffAssignee ? { handoffAssignee: input.handoffAssignee } : {}),
+              authorName,
+            })
+          : { status: 'skipped', detail: 'Slack sender not configured' }
+
+        return { slack }
+      }),
+
     // Draft a call summary from a recent Aircall transcript using GPT-4o-mini.
     // Returns the draft text; the agent reviews + edits before saving via
     // .add. If no call with a transcript is available, returns null so the UI

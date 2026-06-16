@@ -41,6 +41,14 @@ type Outcome = 'answered' | 'voicemail' | 'no_answer'
 type SendPath = 'self' | 'va'
 type Step = 'who' | 'email' | 'text' | 'internal' | 'va'
 
+/** Friendly label for a sent channel, for the Slack "already sent (…)" banner. */
+const CHANNEL_LABEL: Record<string, string> = {
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+  sms: 'SMS',
+  trengo: 'Message',
+}
+
 /** Split a comma/semicolon/space-separated address list into trimmed emails. */
 function splitEmails(raw: string): string[] {
   return raw
@@ -49,11 +57,7 @@ function splitEmails(raw: string): string[] {
     .filter((s) => s.length > 0)
 }
 
-type AttachmentKind =
-  | 'contactDocument'
-  | 'uploadedInvoice'
-  | 'callSummaryTemplatePdf'
-  | 'infoPack'
+type AttachmentKind = 'contactDocument' | 'uploadedInvoice' | 'callSummaryTemplatePdf' | 'infoPack'
 
 interface AttachmentChoice {
   kind: AttachmentKind
@@ -104,7 +108,12 @@ function describeChannelResults(
   return parts.join(' · ')
 }
 
-export function CallSummaryWizard({ mode, contactId, cardId, contactName }: CallSummaryWizardProps) {
+export function CallSummaryWizard({
+  mode,
+  contactId,
+  cardId,
+  contactName,
+}: CallSummaryWizardProps) {
   const router = useRouter()
 
   // ── Wizard position + shared facts ────────────────────────────────
@@ -144,7 +153,6 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
 
   // ── VA hand-off path ──────────────────────────────────────────────
   const [vaBody, setVaBody] = useState('')
-  const [vaSlackChannelId, setVaSlackChannelId] = useState('')
   const [vaTaskTarget, setVaTaskTarget] = useState('')
   const [vaDueAt, setVaDueAt] = useState('')
   const [draftingVa, setDraftingVa] = useState(false)
@@ -152,9 +160,10 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
   // ── Step 3: internal note ─────────────────────────────────────────
   const [summaryId, setSummaryId] = useState<string | null>(null)
   const [sentSomething, setSentSomething] = useState(false)
+  // The channels the customer summary actually went out on — drives the
+  // "already sent (Email, WhatsApp)" Slack banner.
+  const [sentChannels, setSentChannels] = useState<string[]>([])
   const [internalNote, setInternalNote] = useState('')
-  const [postToSlack, setPostToSlack] = useState(false)
-  const [slackChannelId, setSlackChannelId] = useState('')
   const [createTask, setCreateTask] = useState(false)
   const [taskTitle, setTaskTitle] = useState('')
   const [taskAssigneeId, setTaskAssigneeId] = useState('')
@@ -170,6 +179,8 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
   const sendContact = trpc.contact.callSummary.send.useMutation()
   const sendCard = trpc.card.callSummary.send.useMutation()
   const logInternal = trpc.contact.callSummary.logInternal.useMutation()
+  // ADR 0039 amendment: every summary is announced to #callsummaries.
+  const announceToSlack = trpc.contact.callSummary.announceToSlack.useMutation()
   const taskCreate = trpc.task.create.useMutation()
   const utils = trpc.useUtils()
 
@@ -182,14 +193,6 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     retry: false,
   })
   const quickReplies = quickRepliesQuery.data ?? []
-
-  const slackChannelsQuery = trpc.slackChannel.pickList.useQuery()
-  const slackChannels = slackChannelsQuery.data ?? []
-  const defaultSlackChannelId = useMemo(
-    () => slackChannels.find((c) => c.isDefault)?.channelId ?? slackChannels[0]?.channelId ?? '',
-    [slackChannels],
-  )
-  const effectiveSlackChannelId = slackChannelId || defaultSlackChannelId
 
   const vaQuery = trpc.task.assignableUsers.useQuery({})
   const assignableUsers = vaQuery.data ?? []
@@ -422,6 +425,55 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     }
   }
 
+  // Resolve a `team:<id>` / `user:<id>` target to a human label for the Slack
+  // "assigned to" line and the follow-up bullet.
+  function assigneeLabel(target: string): string | null {
+    if (!target) return null
+    if (target.startsWith('team:')) {
+      const id = target.slice('team:'.length)
+      const t = teams.find((x) => x.id === id)
+      return t ? `${t.name} (team)` : 'Team'
+    }
+    const id = target.replace(/^user:/, '')
+    const u = assignableUsers.find((x) => x.id === id)
+    return u ? (u.name ?? u.email) : null
+  }
+
+  // COMPULSORY post to #callsummaries (ADR 0039 amendment). Best-effort: a
+  // Slack failure surfaces a toast but never blocks — the CRM record is saved.
+  async function announceCallSummary(args: {
+    summaryInteractionId?: string | null
+    disposition: 'sent_to_customer' | 'va_handoff' | 'logged'
+    body: string
+    sentChannels?: string[]
+    followUps?: Array<{ title: string; dueAt?: string | null; assignee?: string | null }>
+    handoffAssignee?: string | null
+  }) {
+    try {
+      const res = await announceToSlack.mutateAsync({
+        contactId,
+        summaryInteractionId: args.summaryInteractionId ?? summaryId ?? undefined,
+        disposition: args.disposition,
+        body: args.body.slice(0, 8000),
+        outcome,
+        ...(args.sentChannels && args.sentChannels.length > 0
+          ? { sentChannels: args.sentChannels }
+          : {}),
+        ...(args.followUps && args.followUps.length > 0 ? { followUps: args.followUps } : {}),
+        ...(args.handoffAssignee ? { handoffAssignee: args.handoffAssignee } : {}),
+      })
+      if (res.slack?.status === 'sent') toast('Posted to #callsummaries ✓')
+      else if (res.slack?.status === 'skipped')
+        toast.warning(
+          `Not posted to Slack — ${res.slack.detail ?? 'no channel configured'}. Ask an admin to set the call-summaries channel in Settings → Slack channels.`,
+        )
+      else if (res.slack?.status === 'failed')
+        toast.error(`Slack post failed${res.slack.detail ? ` (${res.slack.detail})` : ''}`)
+    } catch (e) {
+      toast.error(e instanceof Error ? `Slack: ${e.message}` : 'Could not post to Slack')
+    }
+  }
+
   function resetAll() {
     setStep('who')
     setSendPath(null)
@@ -445,14 +497,12 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     setTextBody('')
     setTrengoChannelId('')
     setVaBody('')
-    setVaSlackChannelId('')
     setVaTaskTarget('')
     setVaDueAt('')
     setSummaryId(null)
     setSentSomething(false)
+    setSentChannels([])
     setInternalNote('')
-    setPostToSlack(false)
-    setSlackChannelId('')
     setCreateTask(false)
     setTaskTitle('')
     setTaskAssigneeId('')
@@ -465,9 +515,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     setStep(path === 'self' ? 'email' : 'va')
   }
 
-  // VA hand-off: record the summary, post it to Slack in the VA-team format,
-  // and open a task for the VA team to action it on the CRM. No customer
-  // message is sent on this path.
+  // VA hand-off: record the summary, open a task for the VA team to action it
+  // on the CRM, and post it to #callsummaries making it AWFULLY CLEAR the VA
+  // team must send it and clear it. No customer message is sent on this path.
   async function submitVaHandoff() {
     if (!vaBody.trim()) {
       toast.error('Write the call summary first.')
@@ -489,22 +539,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           : await addContact.mutateAsync({ contactId, body, outcome })
       setSummaryId(created.id)
 
-      // Post to Slack in the VA-team format (outcome — name — phone — email +
-      // pending tasks).
-      const effectiveVaSlack = vaSlackChannelId || defaultSlackChannelId
-      const res = await logInternal.mutateAsync({
-        contactId,
-        note: vaBody.trim(),
-        postToSlack: true,
-        slackChannelId: effectiveVaSlack || undefined,
-        outcome,
-      })
-      if (res.slack?.status === 'sent') toast('Posted to Slack ✓')
-      else if (res.slack)
-        toast(`Slack ${res.slack.status}${res.slack.detail ? ` (${res.slack.detail})` : ''}`)
-
-      // Open the VA-team task to clear the summary on the CRM.
+      // Open the VA-team task to send + clear the summary on the CRM.
       const isTeam = effectiveTarget.startsWith('team:')
+      const assignee = assigneeLabel(effectiveTarget)
       await taskCreate.mutateAsync({
         title: `Send call summary: ${contactName}`,
         description: `${vaBody.trim()}\n\n— Please send this to the customer and clear the call summary on the CRM.`,
@@ -513,6 +550,18 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
         teamId: isTeam ? effectiveTarget.slice('team:'.length) : undefined,
         dueAt: vaDueAt ? new Date(vaDueAt) : undefined,
       })
+
+      // COMPULSORY: post to #callsummaries — awfully clear it needs VA action.
+      await announceCallSummary({
+        summaryInteractionId: created.id,
+        disposition: 'va_handoff',
+        body: vaBody.trim(),
+        handoffAssignee: assignee,
+        followUps: [
+          { title: `Send call summary: ${contactName}`, dueAt: vaDueAt || null, assignee },
+        ],
+      })
+
       toast.success('Handed to the VA team — task created')
       resetAll()
       router.refresh()
@@ -562,7 +611,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     if (sendText && usingWaTemplate && waTemplate) {
       const missing = missingWaParams(waTemplate.params, waParams)
       if (missing.length > 0) {
-        toast.error(`Fill in the blank${missing.length > 1 ? 's' : ''} in the message first (${missing.join(', ')}).`)
+        toast.error(
+          `Fill in the blank${missing.length > 1 ? 's' : ''} in the message first (${missing.join(', ')}).`,
+        )
         return
       }
     }
@@ -603,16 +654,12 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           summaryInteractionId: created.id,
           channels,
           channelBodies,
-          ...(sendEmailChannel && emailSubject.trim()
-            ? { emailSubject: emailSubject.trim() }
-            : {}),
+          ...(sendEmailChannel && emailSubject.trim() ? { emailSubject: emailSubject.trim() } : {}),
           ...(toList.length > 0 ? { emailTo: toList } : {}),
           ...(ccList.length > 0 ? { emailCc: ccList } : {}),
           ...(bccList.length > 0 ? { emailBcc: bccList } : {}),
           ...(sendEmailChannel && emailFrom ? { emailFromAddress: emailFrom } : {}),
-          ...(sendText && trengoChannelId
-            ? { trengoChannelId: Number(trengoChannelId) }
-            : {}),
+          ...(sendText && trengoChannelId ? { trengoChannelId: Number(trengoChannelId) } : {}),
           ...(usingWaTemplate && waTemplate
             ? {
                 whatsappTemplate: {
@@ -642,11 +689,19 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           mode === 'card' && cardId
             ? await sendCard.mutateAsync(payload)
             : await sendContact.mutateAsync(payload)
-        const described = describeChannelResults(
-          (results ?? {}) as Partial<Record<string, { status: string; detail?: string }>>,
-        )
+        const resultMap = (results ?? {}) as Partial<
+          Record<string, { status: string; detail?: string }>
+        >
+        const described = describeChannelResults(resultMap)
         toast(described || 'Summary saved')
         setSentSomething(true)
+        // Capture the channels that actually reached the customer for the
+        // compulsory Slack "already sent (…)" banner.
+        setSentChannels(
+          Object.entries(resultMap)
+            .filter(([, r]) => r?.status === 'sent')
+            .map(([k]) => CHANNEL_LABEL[k] ?? k),
+        )
       }
 
       // Prefill the internal note with what went to the customer so the agent
@@ -662,7 +717,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     }
   }
 
-  // Step 3 — log the internal note, optionally post to Slack + open a VA task.
+  // Step 3 — log the internal note, open any follow-up task, then COMPULSORILY
+  // announce the summary to #callsummaries (the Slack post is no longer
+  // optional — ADR 0039 amendment).
   async function submitInternal() {
     if (!internalNote.trim()) {
       toast.error('Add an internal note first.')
@@ -674,22 +731,17 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
     }
     setBusy(true)
     try {
-      const res = await logInternal.mutateAsync({
+      await logInternal.mutateAsync({
         contactId,
         note: internalNote,
-        postToSlack,
-        slackChannelId:
-          postToSlack && effectiveSlackChannelId ? effectiveSlackChannelId : undefined,
-        // Drives the Slack VA-team headline ("Call completed — name — phone
-        // — email" + "Pending tasks for VA team").
+        // Slack is handled by the compulsory announce below — never here.
+        postToSlack: false,
         outcome,
       })
       toast.success('Internal note saved')
-      if (postToSlack && res.slack) {
-        if (res.slack.status === 'sent') toast('Slack ✓')
-        else toast(`Slack ${res.slack.status}${res.slack.detail ? ` (${res.slack.detail})` : ''}`)
-      }
 
+      const followUps: Array<{ title: string; dueAt?: string | null; assignee?: string | null }> =
+        []
       if (createTask && taskAssigneeId) {
         try {
           const isTeam = taskAssigneeId.startsWith('team:')
@@ -701,11 +753,25 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
             teamId: isTeam ? taskAssigneeId.slice('team:'.length) : undefined,
             dueAt: taskDueAt ? new Date(taskDueAt) : undefined,
           })
+          followUps.push({
+            title: taskTitle.trim() || `Follow up: ${contactName}`,
+            dueAt: taskDueAt || null,
+            assignee: assigneeLabel(taskAssigneeId),
+          })
           toast.success('Task created')
         } catch (e) {
           toast.error(e instanceof Error ? e.message : 'Could not create task')
         }
       }
+
+      // COMPULSORY: post to #callsummaries. If the customer was already sent the
+      // summary, the note makes that unmistakable; otherwise it's logged.
+      await announceCallSummary({
+        disposition: sentChannels.length > 0 ? 'sent_to_customer' : 'logged',
+        body: internalNote.trim(),
+        sentChannels,
+        followUps,
+      })
 
       resetAll()
       router.refresh()
@@ -760,8 +826,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
             Step 1 — Who&apos;s sending this call summary?
           </p>
           <p className="mt-0.5 text-sm text-neutral-800">
-            Send it to {contactName} yourself now, or hand it to a VA to send and clear on
-            the CRM.
+            Send it to {contactName} yourself now, or hand it to a VA to send and clear on the CRM.
+            Either way it&apos;s posted to your{' '}
+            <span className="font-semibold">#callsummaries</span> Slack channel.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
@@ -773,8 +840,7 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                 ✍️ I&apos;ll send it now
               </span>
               <span className="mt-0.5 block text-xs text-neutral-600">
-                Email (full Gmail) and/or WhatsApp / SMS via Trengo, then log an internal
-                note.
+                Email (full Gmail) and/or WhatsApp / SMS via Trengo, then log an internal note.
               </span>
             </button>
             <button
@@ -782,12 +848,10 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
               onClick={() => choosePath('va')}
               className="rounded-lg border border-amber-300 bg-white p-3 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
             >
-              <span className="block text-sm font-semibold text-amber-900">
-                🤝 Hand it to a VA
-              </span>
+              <span className="block text-sm font-semibold text-amber-900">🤝 Hand it to a VA</span>
               <span className="mt-0.5 block text-xs text-neutral-600">
-                Post the summary to Slack and open a task for the VA team to send it and
-                clear it on the CRM.
+                Post the summary to #callsummaries — flagged for VA action — and open a task for the
+                VA team to send it and clear it on the CRM.
               </span>
             </button>
           </div>
@@ -802,8 +866,10 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                 Step 2 — Hand to a VA
               </p>
               <p className="mt-0.5 text-sm text-neutral-800">
-                Write the call summary. It posts to Slack and opens a task for the VA team
-                to send it and clear it on the CRM.
+                Write the call summary. It is posted to your{' '}
+                <span className="font-semibold">#callsummaries</span> Slack channel — clearly
+                flagged for the VA team to action — and opens a task to send it and clear it on the
+                CRM.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -842,30 +908,6 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           />
 
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
-                Slack channel
-              </label>
-              {slackChannels.length > 0 ? (
-                <Select
-                  className="mt-1"
-                  value={vaSlackChannelId || defaultSlackChannelId}
-                  onChange={(e) => setVaSlackChannelId(e.target.value)}
-                  aria-label="Slack channel"
-                >
-                  {slackChannels.map((c) => (
-                    <option key={c.id} value={c.channelId}>
-                      {c.label}
-                      {c.isDefault ? ' (default)' : ''}
-                    </option>
-                  ))}
-                </Select>
-              ) : (
-                <p className="mt-1 text-[11px] text-amber-900/70">
-                  No channels configured — posts to the fallback channel.
-                </p>
-              )}
-            </div>
             <div>
               <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
                 Task for
@@ -909,7 +951,12 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button type="button" variant="secondary" onClick={() => setStep('who')} disabled={busy}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setStep('who')}
+              disabled={busy}
+            >
               ← Back
             </Button>
             <Button
@@ -917,7 +964,7 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
               onClick={submitVaHandoff}
               disabled={busy || !vaBody.trim() || !(vaTaskTarget || vaTeam)}
             >
-              {busy ? 'Handing off…' : 'Post to Slack & create VA task →'}
+              {busy ? 'Handing off…' : 'Post to #callsummaries & open VA task →'}
             </Button>
           </div>
         </div>
@@ -1119,8 +1166,8 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                   placeholder="Following up on our call"
                 />
                 <p className="mt-1 text-[10px] text-neutral-500">
-                  Setting a From or To address sends a fresh email instead of replying on
-                  the latest thread.
+                  Setting a From or To address sends a fresh email instead of replying on the latest
+                  thread.
                 </p>
               </div>
 
@@ -1137,8 +1184,8 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                   Attach documents ({pickedAttachments.length + uploadedFiles.length})
                 </p>
                 <p className="mt-0.5 text-[10px] text-primary-900/60">
-                  Info packs &amp; brochures come from the shared library (Settings →
-                  Documents). Everything here rides the email.
+                  Info packs &amp; brochures come from the shared library (Settings → Documents).
+                  Everything here rides the email.
                 </p>
 
                 <div className="mt-1.5">
@@ -1222,7 +1269,12 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button type="button" variant="secondary" onClick={() => setStep('who')} disabled={busy}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setStep('who')}
+              disabled={busy}
+            >
               ← Back
             </Button>
             <Button
@@ -1288,8 +1340,8 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                     ))}
                   </Select>
                   <p className="mt-1 text-[10px] text-neutral-500">
-                    Only applies when starting a new conversation; an existing thread keeps
-                    its line.
+                    Only applies when starting a new conversation; an existing thread keeps its
+                    line.
                   </p>
                 </div>
               ) : null}
@@ -1324,9 +1376,9 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                   {waMode === 'template' ? (
                     <div className="space-y-2">
                       <p className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-                        Your approved Trengo templates already include the info-pack links —
-                        no PDF attachments here, that would duplicate them. Templates send
-                        even outside the 24-hour WhatsApp window.
+                        Your approved Trengo templates already include the info-pack links — no PDF
+                        attachments here, that would duplicate them. Templates send even outside the
+                        24-hour WhatsApp window.
                       </p>
                       {waTemplatesQuery.isLoading ? (
                         <p className="text-xs text-neutral-500">Loading templates from Trengo…</p>
@@ -1336,8 +1388,8 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                         </p>
                       ) : waTemplates.length === 0 ? (
                         <p className="text-xs text-neutral-600">
-                          No approved WhatsApp templates in your Trengo workspace yet — use
-                          free text instead.
+                          No approved WhatsApp templates in your Trengo workspace yet — use free
+                          text instead.
                         </p>
                       ) : (
                         <>
@@ -1391,8 +1443,8 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                   ) : (
                     <div className="space-y-1.5">
                       <p className="text-[11px] text-neutral-500">
-                        Free text continues their WhatsApp thread (or starts one). Outside
-                        the 24-hour window WhatsApp may reject it — use a template then.
+                        Free text continues their WhatsApp thread (or starts one). Outside the
+                        24-hour window WhatsApp may reject it — use a template then.
                       </p>
                       {quickReplies.length > 0 ? (
                         <select
@@ -1450,8 +1502,7 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                     placeholder={`What to text ${contactName}…`}
                   />
                   <p className="text-[11px] text-neutral-500">
-                    Sent via Trengo — continues their SMS thread, or starts one to their
-                    number.
+                    Sent via Trengo — continues their SMS thread, or starts one to their number.
                   </p>
                 </div>
               )}
@@ -1459,7 +1510,12 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
           ) : null}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button type="button" variant="secondary" onClick={() => setStep('email')} disabled={busy}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setStep('email')}
+              disabled={busy}
+            >
               ← Back
             </Button>
             <Button type="button" onClick={sendNow} disabled={busy || textWanted === null}>
@@ -1471,8 +1527,8 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
             </Button>
           </div>
           <p className="mt-2 text-[11px] text-neutral-500">
-            Each channel is best-effort and independent — one failing channel never aborts
-            the others. Next you&apos;ll add an internal note for the team.
+            Each channel is best-effort and independent — one failing channel never aborts the
+            others. Next you&apos;ll add an internal note for the team.
           </p>
         </div>
       ) : null}
@@ -1500,8 +1556,7 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
               </p>
             </div>
             <p className="mt-0.5 text-xs text-amber-900/70">
-              Not seen by the customer. What happened, and what the team / VA needs to do
-              next.
+              Not seen by the customer. What happened, and what the team / VA needs to do next.
             </p>
 
             <button
@@ -1522,39 +1577,25 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
               placeholder="What happened on the call, plus next steps / instructions for the VA team…"
             />
 
-            <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-neutral-300 text-amber-600 focus:ring-amber-500"
-                checked={postToSlack}
-                onChange={(e) => setPostToSlack(e.target.checked)}
-              />
-              Post this note to Slack
-            </label>
-
-            {postToSlack ? (
-              slackChannels.length > 0 ? (
-                <div className="ml-6 mt-1.5 max-w-sm">
-                  <Select
-                    value={effectiveSlackChannelId}
-                    onChange={(e) => setSlackChannelId(e.target.value)}
-                    aria-label="Slack channel"
-                  >
-                    {slackChannels.map((c) => (
-                      <option key={c.id} value={c.channelId}>
-                        {c.label}
-                        {c.isDefault ? ' (default)' : ''}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              ) : (
-                <p className="ml-6 mt-1 text-[11px] text-amber-900/70">
-                  No channels configured — posts to the fallback channel. Add channels at
-                  Settings → Slack channels.
-                </p>
-              )
-            ) : null}
+            <div className="mt-3 flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2">
+              <span aria-hidden className="text-emerald-700">
+                #
+              </span>
+              <p className="text-xs text-emerald-900">
+                This call summary is posted to your{' '}
+                <span className="font-semibold">#callsummaries</span> Slack channel automatically.{' '}
+                {sentChannels.length > 0 ? (
+                  <>
+                    It will be clearly flagged as{' '}
+                    <span className="font-semibold">already sent to the customer</span> (
+                    {sentChannels.join(', ')}).
+                  </>
+                ) : (
+                  <>It will be logged for the team (no customer message was sent).</>
+                )}{' '}
+                Any follow-up task you add below is included in the Slack note.
+              </p>
+            </div>
 
             <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
               <input
@@ -1610,7 +1651,11 @@ export function CallSummaryWizard({ mode, contactId, cardId, contactName }: Call
                   <label className="block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
                     Due (optional)
                   </label>
-                  <Input type="date" value={taskDueAt} onChange={(e) => setTaskDueAt(e.target.value)} />
+                  <Input
+                    type="date"
+                    value={taskDueAt}
+                    onChange={(e) => setTaskDueAt(e.target.value)}
+                  />
                 </div>
               </div>
             ) : null}
@@ -1720,8 +1765,8 @@ function WaTemplateComposer({
       </div>
 
       <p className="mt-1.5 text-[10px] text-emerald-900/60">
-        The wording is fixed by the approved template — only the highlighted blanks are
-        yours to fill. It sends exactly as shown.
+        The wording is fixed by the approved template — only the highlighted blanks are yours to
+        fill. It sends exactly as shown.
       </p>
     </div>
   )

@@ -8,9 +8,9 @@
 export const SLACK_TOPICS = [
   {
     key: 'call_summary',
-    label: 'Call summaries (internal)',
+    label: 'Call summaries',
     description:
-      'The "Internal — Slack" post when an agent sends a call summary for the VA team. The per-send channel picker overrides this default.',
+      'Where EVERY call summary recorded in the CRM is posted (your #callsummaries channel) — self-send and VA hand-off alike (ADR 0039). The post is flagged as already sent to the customer, or as needing VA action.',
   },
   {
     key: 'google_voice',

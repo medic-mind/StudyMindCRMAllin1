@@ -20,6 +20,10 @@ export interface SlackMessageEvent {
   ts: string
   thread_ts?: string
   subtype?: string
+  /** Present when the message was posted by a bot/app — including the CRM's own
+   *  call-summary announcements. We never ingest these (see message-filter). */
+  bot_id?: string
+  app_id?: string
 }
 
 /** Outer Events API envelope. */

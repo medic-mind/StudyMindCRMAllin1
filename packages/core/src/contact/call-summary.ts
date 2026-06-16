@@ -52,6 +52,20 @@ export interface CallSummarySenders {
      *  VA-team format (outcome — name — phone — email + pending tasks). */
     outcome?: 'answered' | 'voicemail' | 'no_answer' | null
     variant?: 'summary' | 'internal_note'
+    /** ADR 0039 amendment: the rich, status-led `#callsummaries` layout. */
+    disposition?: 'sent_to_customer' | 'va_handoff' | 'logged'
+    /** Channels the customer summary was actually sent on (sent_to_customer). */
+    sentChannels?: ReadonlyArray<string>
+    /** Follow-up tasks raised alongside the summary. */
+    followUps?: ReadonlyArray<{
+      title: string
+      dueAt?: Date | string | null
+      assignee?: string | null
+    }>
+    /** Who a va_handoff is assigned to (person or team name). */
+    handoffAssignee?: string | null
+    /** Staff member who logged the summary (rendered as a footer). */
+    authorName?: string | null
   }) => Promise<ChannelResult>
   trengo?: (args: {
     body: string
@@ -253,7 +267,13 @@ export async function sendContactCallSummary(
   db: Db,
   input: {
     summaryInteractionId: string
-    channels: { slack?: boolean; trengo?: boolean; whatsapp?: boolean; sms?: boolean; email?: boolean }
+    channels: {
+      slack?: boolean
+      trengo?: boolean
+      whatsapp?: boolean
+      sms?: boolean
+      email?: boolean
+    }
     slackChannelId?: string
     /** Optional pre-resolved attachments, delivered with every customer
      *  channel that supports them (WhatsApp / SMS / Trengo / email). The
