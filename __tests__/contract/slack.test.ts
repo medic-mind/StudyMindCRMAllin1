@@ -167,9 +167,7 @@ describe('POST /api/webhooks/slack — message.channels', () => {
     const { raw } = loadFixture('message.channels.json')
     const altered = raw.replace('C0WATCHED01', 'C0NOTWATCHED')
     const ts = '1715260010'
-    const res = await ROUTE.POST(
-      buildRequest(altered, sign(altered, Number(ts)), ts),
-    )
+    const res = await ROUTE.POST(buildRequest(altered, sign(altered, Number(ts)), ts))
     expect(res.status).toBe(200)
     expect(providerEventCreate).not.toHaveBeenCalled()
     expect(inngestSend).not.toHaveBeenCalled()
@@ -231,7 +229,7 @@ describe('GET /api/webhooks/slack — configuration self-check', () => {
 import { SLACK_MATCH_THRESHOLD } from '../../packages/integrations/slack/src/jobs'
 
 describe('Slack job — confidence threshold', () => {
-  it('matches the §12 threshold of 0.7', () => {
-    expect(SLACK_MATCH_THRESHOLD).toBe(0.7)
+  it('matches the §12 threshold of 0.5 (the matcher’s unambiguous rule is the real gate)', () => {
+    expect(SLACK_MATCH_THRESHOLD).toBe(0.5)
   })
 })

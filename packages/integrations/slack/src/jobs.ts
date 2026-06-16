@@ -38,8 +38,12 @@ interface EventReceivedData {
   type: string
 }
 
-/** §12: only matches above this confidence become first-class Interactions. */
-export const SLACK_MATCH_THRESHOLD = 0.7
+/** §12: the AI must be at least this confident in its extraction before we try
+ *  to match it live. The real safety is the matcher's unambiguous-only rule
+ *  (§3), so we keep this modest — anything that still parks is retried for free
+ *  by the `slack/relink-unassigned` job, which auto-links it once it resolves to
+ *  exactly one contact. */
+export const SLACK_MATCH_THRESHOLD = 0.5
 
 export const slackEventReceived = inngest.createFunction(
   {
@@ -399,9 +403,12 @@ export const aiDriftTriageReminder = inngest.createFunction(
 
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as SLACK_BACKFILL_FUNCTIONS } from './backfill'
+// ADR 0034 amendment: recurring auto-relink of parked mentions.
+import { slackRelinkUnassigned } from './relink'
 
 export const FUNCTIONS = [
   slackEventReceived,
   aiDriftTriageReminder,
+  slackRelinkUnassigned,
   ...SLACK_BACKFILL_FUNCTIONS,
 ] as const

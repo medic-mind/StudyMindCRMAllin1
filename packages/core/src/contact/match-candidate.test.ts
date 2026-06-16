@@ -16,6 +16,18 @@ interface Row {
   deletedAt: Date | null
 }
 
+type Cond = { firstName?: { equals: string }; lastName?: { equals: string } }
+
+function matchesNameCond(r: Row, cond: Cond): boolean {
+  if (cond.firstName && (r.firstName ?? '').toLowerCase() !== cond.firstName.equals.toLowerCase()) {
+    return false
+  }
+  if (cond.lastName && (r.lastName ?? '').toLowerCase() !== cond.lastName.equals.toLowerCase()) {
+    return false
+  }
+  return Boolean(cond.firstName || cond.lastName)
+}
+
 function fakeDb(rows: Row[]): MatchDb {
   return {
     contact: {
@@ -28,9 +40,12 @@ function fakeDb(rows: Row[]): MatchDb {
           if (phone?.in && !phone.in.includes(r.phoneE164 ?? '')) return false
           if (phone?.endsWith && !(r.phoneE164 ?? '').endsWith(phone.endsWith)) return false
           const first = where['firstName'] as { equals: string } | undefined
-          if (first && (r.firstName ?? '').toLowerCase() !== first.equals.toLowerCase()) return false
+          if (first && (r.firstName ?? '').toLowerCase() !== first.equals.toLowerCase())
+            return false
           const last = where['lastName'] as { equals: string } | undefined
           if (last && (r.lastName ?? '').toLowerCase() !== last.equals.toLowerCase()) return false
+          const or = where['OR'] as Cond[] | undefined
+          if (or && !or.some((c) => matchesNameCond(r, c))) return false
           return true
         })
         return matches.slice(0, take).map((r) => ({ id: r.id }))
@@ -89,9 +104,22 @@ describe('matchContactByCandidate', () => {
     const r = await matchContactByCandidate(fakeDb([jane, otherJane]), { name: 'Jane Smith' })
     expect(r).toMatchObject({ contactId: null, reason: 'ambiguous' })
   })
-  it('never auto-attaches a single-token name', async () => {
+  it('auto-attaches an unambiguous single-token first name', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), { name: 'Jane' })
-    expect(r).toMatchObject({ contactId: null, reason: 'no_match' })
+    expect(r).toMatchObject({ contactId: 'c1', via: 'name', reason: 'matched' })
+  })
+  it('auto-attaches an unambiguous single-token surname', async () => {
+    const r = await matchContactByCandidate(fakeDb([jane]), { name: 'Smith' })
+    expect(r).toMatchObject({ contactId: 'c1', via: 'name', reason: 'matched' })
+  })
+  it('parks an ambiguous single-token name (two Janes)', async () => {
+    const r = await matchContactByCandidate(fakeDb([jane, otherJane]), { name: 'Jane' })
+    expect(r).toMatchObject({ contactId: null, reason: 'ambiguous' })
+  })
+  it('matches a full name held in a single column', async () => {
+    const fullInFirst: Row = { ...jane, id: 'c9', firstName: 'Jane Smith', lastName: null }
+    const r = await matchContactByCandidate(fakeDb([fullInFirst]), { name: 'Jane Smith' })
+    expect(r).toMatchObject({ contactId: 'c9', via: 'name', reason: 'matched' })
   })
   it('reports no_candidate when nothing was provided', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), {})

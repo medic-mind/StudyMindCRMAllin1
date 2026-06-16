@@ -35,6 +35,14 @@ async function handleGet(): Promise<Response> {
     endpoint: 'slack-events',
     signingSecretConfigured: Boolean(process.env['SLACK_SIGNING_SECRET']),
     botTokenConfigured: Boolean(process.env['SLACK_BOT_TOKEN']),
+    // Name-only mentions need the AI extractor; if this is false, those messages
+    // can only auto-link when they carry an email/phone. (The relink job still
+    // retries them for free once a match becomes unambiguous.)
+    aiConfigured: Boolean(
+      process.env['GEMINI_API_KEY'] ??
+      process.env['GOOGLE_API_KEY'] ??
+      process.env['OPENAI_API_KEY'],
+    ),
     channelMode:
       watched.length > 0
         ? `allowlist (${watched.length} channels)`
