@@ -4,9 +4,11 @@
 // resolver. Deterministic and FREE — no AI spend.
 //
 // Strength order: email → phone (E.164-normalised variants, then unique
-// 9-digit national suffix) → unambiguous full name. A candidate that matches
-// MORE than one contact never resolves (§3 never auto-merge, §41.1 — the
-// caller surfaces the candidates for a human to pick).
+// 9-digit national suffix) → name. The name pass matches an unambiguous
+// first+last, AND an unambiguous single token / surname / whole-name-in-one-
+// column (so "spoke to Aanya" resolves). A candidate that matches MORE than one
+// contact never resolves (§3 never auto-merge, §41.1 — the caller surfaces the
+// candidates for a human to pick).
 
 export interface MatchCandidate {
   /** Full name (first + last) the message/agent referenced. */
@@ -147,6 +149,20 @@ export async function matchContactByCandidate(
       if (hit.id) return { contactId: hit.id, via: 'name', reason: 'matched' }
       if (hit.ambiguous) sawAmbiguity = true
     }
+    // Single-token ("spoke to Aanya"), a unique surname ("the Patels"), or a
+    // full name stored in ONE column — auto-link only when EXACTLY one contact
+    // carries it as a first OR last name (unambiguous; §3 never guess between
+    // two same-named people, the caller's tray takes the ambiguous ones). This
+    // is what lets the common first-name-only Slack mention resolve at all.
+    const single = await uniqueOrNull(db, {
+      deletedAt: null,
+      OR: [
+        { firstName: { equals: name, mode: 'insensitive' } },
+        { lastName: { equals: name, mode: 'insensitive' } },
+      ],
+    })
+    if (single.id) return { contactId: single.id, via: 'name', reason: 'matched' }
+    if (single.ambiguous) sawAmbiguity = true
   }
 
   return { contactId: null, via: null, reason: sawAmbiguity ? 'ambiguous' : 'no_match' }

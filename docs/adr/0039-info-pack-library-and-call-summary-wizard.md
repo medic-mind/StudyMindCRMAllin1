@@ -76,3 +76,63 @@ remain best-effort and independent.
   the internal note (step 3) is the record for no-contact calls.
 - Forward-only schema addition (`20260616120000_add_info_pack_documents`),
   no changes to existing tables.
+
+---
+
+## Amendment (2026-06-16): every call summary is announced to Slack, with a clear disposition
+
+**Problem.** The team works in two places: some staff log call summaries in the
+CRM, others post them in Slack. The two were not equivalent — a CRM summary only
+reached Slack if the agent ticked an optional "Post to Slack" box (and the
+self-send path never offered it at all), and a Slack post only reached the CRM if
+the ingestion happened to match a contact. The result: call summaries scattered,
+and the Slack `#callsummaries` channel an unreliable mirror of CRM activity.
+
+**Decision.** Whichever surface staff use, the outcome is the same: the summary
+is on the customer's CRM record **and** in the `#callsummaries` Slack channel.
+
+1. **CRM → Slack is now compulsory.** Every call summary recorded through the
+   wizard (contact page, board card, or the `/call-summaries` workspace; self-send
+   **or** VA hand-off) is announced to Slack automatically at the end of the flow.
+   The optional checkbox is gone. A new contact procedure
+   `contact.callSummary.announceToSlack` is the single, explicit post; the wizard
+   calls it on both completion paths so "compulsory" is structural, not a per-user
+   choice. The post is best-effort — if no Slack channel is configured it returns
+   `skipped` with guidance and the CRM record is still saved (we never lose the
+   summary to a Slack failure).
+
+2. **The post carries an unambiguous disposition** (pure builder
+   `buildCallSummarySlackBlocks`, `packages/core/src/slack/blocks.ts`):
+   - `sent_to_customer` — _"✅ The sales team has already sent this call summary
+     to the customer (Email, WhatsApp). No need to send it again."_ Lists the
+     channels it actually went out on, and any follow-up task still outstanding.
+   - `va_handoff` — _"🚨 VA team — action required. Send this summary to the
+     customer, then mark it cleared on the CRM."_ Names the assignee and the task.
+   - `logged` — recorded for the team, no customer message was sent.
+     The legacy `variant: 'summary' | 'internal_note'` branches are retained for
+     back-compat (and the existing tests); the richer layout activates whenever a
+     `disposition` is supplied.
+
+3. **Routing.** The announce resolves the channel through the existing ADR 0033
+   topic router (`resolveTopicChannelId(db, 'call_summary')`) so operators point
+   `#callsummaries` once in Settings → Slack channels → "Where notifications go";
+   an explicit per-send channel still overrides.
+
+4. **No echo / no duplicate (ties to ADR 0034).** Because the CRM now posts into a
+   watched channel, the Slack ingestion must not re-ingest its own bot post as a
+   duplicate `slack_summary` (it would even match — the contact's name/phone/email
+   ride the headline). The ingestion now skips any message carrying a `bot_id` /
+   `app_id` via the pure `isIngestableSlackMessage`
+   (`packages/integrations/slack/src/message-filter.ts`). Only human-authored
+   posts are ingested; the CRM's own announcements are already on the timeline as a
+   `call_summary` Interaction. Staff posting by hand in `#callsummaries` continues
+   to link to the contact through the unchanged §12 matcher (email → phone →
+   unambiguous name; everything else parks in `/inbox/slack-mentions`).
+
+**Consequences.**
+
+- One source of truth for "what was said on this call" regardless of where it was
+  typed; `#callsummaries` becomes a faithful, real-time mirror of CRM call
+  activity.
+- No schema change. New procedure + pure builder additions only; the bot-skip is a
+  guard extension on the ingestion job.

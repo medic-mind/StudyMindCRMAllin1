@@ -12,6 +12,7 @@ import {
   buildCallSummarySlackBlocks,
   buildCallSummarySlackText,
   parseActionButtons,
+  resolveTopicChannelId,
 } from '@studymind/core/slack'
 import { db } from '@/lib/db'
 
@@ -45,12 +46,10 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
     attachments?: ReadonlyArray<{ filename: string; contentType: string; data: Buffer }>,
     trengoChannelId?: number,
   ): Promise<ChannelResult> {
-    const { resolveActiveTrengoConversation } = await import(
-      '@studymind/integration-trengo/conversations'
-    )
-    const { sendMessage, startConversation } = await import(
-      '@studymind/integration-trengo/outbound'
-    )
+    const { resolveActiveTrengoConversation } =
+      await import('@studymind/integration-trengo/conversations')
+    const { sendMessage, startConversation } =
+      await import('@studymind/integration-trengo/outbound')
     // Trengo media is uploaded then attached by id (sendMessage/startConversation
     // do the upload). A readonly array can't be passed straight through.
     const atts = attachments && attachments.length > 0 ? [...attachments] : undefined
@@ -107,31 +106,46 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       slackChannelId,
       outcome,
       variant,
+      disposition,
+      sentChannels,
+      followUps,
+      handoffAssignee,
+      authorName,
     }): Promise<ChannelResult> {
-      // Resolve the target channel + its deep-link action buttons. Order:
-      // (1) the channel the agent picked (slackChannelId), (2) the configured
-      // default SlackChannelOption, (3) the legacy env channel as a fallback so
-      // deploys without any configured options keep working (CLAUDE.md §12).
-      const option = slackChannelId
-        ? await db.slackChannelOption.findFirst({
-            where: { channelId: slackChannelId, archivedAt: null },
-            select: { channelId: true, actionButtons: true },
-          })
-        : await db.slackChannelOption.findFirst({
-            where: { isDefault: true, archivedAt: null },
-            select: { channelId: true, actionButtons: true },
-          })
+      // Resolve the target channel + its deep-link action buttons. An explicit
+      // per-send pick wins; otherwise call summaries route to the operator-
+      // configured `#callsummaries` channel via the ADR 0033 topic router
+      // (route → default option → SLACK_ALERTS_CHANNEL_ID), so the destination
+      // is controlled from Settings → Slack channels and never hardcoded.
+      let channelId: string | null
+      let option: { actionButtons: unknown } | null
+      if (slackChannelId) {
+        option = await db.slackChannelOption.findFirst({
+          where: { channelId: slackChannelId, archivedAt: null },
+          select: { actionButtons: true },
+        })
+        channelId = slackChannelId
+      } else {
+        channelId = await resolveTopicChannelId(db, 'call_summary')
+        option = channelId
+          ? await db.slackChannelOption.findFirst({
+              where: { channelId, archivedAt: null },
+              select: { actionButtons: true },
+            })
+          : null
+      }
 
-      const channelId =
-        option?.channelId ?? slackChannelId ?? process.env['SLACK_ALERTS_CHANNEL_ID']
       if (!channelId) {
-        return { status: 'skipped', detail: 'No Slack channel configured' }
+        return {
+          status: 'skipped',
+          detail: 'No Slack channel configured for call summaries (Settings → Slack channels)',
+        }
       }
 
       const contactUrl = `${appUrl()}/contacts/${contactId}`
       const buttons = parseActionButtons(option?.actionButtons)
-      // Phone + email ride the headline so the VA team can act without
-      // opening the CRM (the internal-note layout).
+      // Phone + email ride the headline so the team can act without opening the
+      // CRM.
       const contactRow = await db.contact.findFirst({
         where: { id: contactId, deletedAt: null },
         select: { phoneE164: true, email: true },
@@ -144,7 +158,11 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
         contactPhone: contactRow?.phoneE164 ?? null,
         contactEmail: contactRow?.email ?? null,
         outcome: outcome ?? null,
-        variant: variant ?? ('summary' as const),
+        ...(disposition ? { disposition } : { variant: variant ?? ('summary' as const) }),
+        ...(sentChannels ? { sentChannels } : {}),
+        ...(followUps ? { followUps } : {}),
+        ...(handoffAssignee ? { handoffAssignee } : {}),
+        ...(authorName ? { authorName } : {}),
       }
       const blocks = buildCallSummarySlackBlocks(enriched)
 
@@ -163,9 +181,8 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       // Resolve the contact's most recent Trengo conversation (ticket +
       // channel). Shared with the inbox / contact reply path so the lookup
       // lives in one place (packages/integrations/trengo/src/conversations.ts).
-      const { resolveActiveTrengoConversation } = await import(
-        '@studymind/integration-trengo/conversations'
-      )
+      const { resolveActiveTrengoConversation } =
+        await import('@studymind/integration-trengo/conversations')
       const conv = await resolveActiveTrengoConversation(db, contactId)
       if (!conv) {
         return { status: 'skipped', detail: 'No Trengo conversation for this contact' }
@@ -180,8 +197,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           channel: conv.channel,
           body,
           requestId,
-          attachments:
-            attachments && attachments.length > 0 ? [...attachments] : undefined,
+          attachments: attachments && attachments.length > 0 ? [...attachments] : undefined,
         })
         return { status: 'sent', ref: String(result.trengoMessageId) }
       } catch (err) {
@@ -193,7 +209,13 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       }
     },
 
-    async whatsapp({ body, contactId, attachments, trengoTemplate, trengoChannelId }): Promise<ChannelResult> {
+    async whatsapp({
+      body,
+      contactId,
+      attachments,
+      trengoTemplate,
+      trengoChannelId,
+    }): Promise<ChannelResult> {
       // An approved Trengo WhatsApp template goes out via the template
       // session (/wa_sessions) — the same thing the Trengo composer does, so
       // it works outside the 24-hour window. Free text keeps the thread path.
@@ -207,9 +229,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           if (!phone || !phone.startsWith('+')) {
             return { status: 'skipped', detail: 'Contact has no E.164 phone number' }
           }
-          const { sendWhatsAppTemplate } = await import(
-            '@studymind/integration-trengo/outbound'
-          )
+          const { sendWhatsAppTemplate } = await import('@studymind/integration-trengo/outbound')
           const r = await sendWhatsAppTemplate({
             contactId,
             agentId,
@@ -260,8 +280,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
       // Recipient: the agent's explicit To override wins; else the contact's
       // stored address (full-Gmail compose lets you mail someone before their
       // email is on file).
-      const toAddresses =
-        to && to.length > 0 ? [...to] : contact?.email ? [contact.email] : []
+      const toAddresses = to && to.length > 0 ? [...to] : contact?.email ? [contact.email] : []
       if (toAddresses.length === 0) {
         return { status: 'skipped', detail: 'No recipient email address' }
       }
@@ -331,7 +350,7 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
           subjectOverride?.trim() ||
           (typeof payload['subject'] === 'string'
             ? (payload['subject'] as string)
-            : recent?.summary ?? 'Call summary')
+            : (recent?.summary ?? 'Call summary'))
         const originalMessageId =
           typeof payload['messageId'] === 'string' ? (payload['messageId'] as string) : undefined
 

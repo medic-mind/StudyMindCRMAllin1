@@ -26,6 +26,7 @@ import { inngest } from '@studymind/jobs'
 
 import { matchContactByCandidate } from './match'
 import { extractContactSignals, slackTextToPlain } from './extract'
+import { isIngestableSlackMessage } from './message-filter'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 import { buildSlackPermalink } from './permalink'
@@ -37,8 +38,12 @@ interface EventReceivedData {
   type: string
 }
 
-/** §12: only matches above this confidence become first-class Interactions. */
-export const SLACK_MATCH_THRESHOLD = 0.7
+/** §12: the AI must be at least this confident in its extraction before we try
+ *  to match it live. The real safety is the matcher's unambiguous-only rule
+ *  (§3), so we keep this modest — anything that still parks is retried for free
+ *  by the `slack/relink-unassigned` job, which auto-links it once it resolves to
+ *  exactly one contact. */
+export const SLACK_MATCH_THRESHOLD = 0.5
 
 export const slackEventReceived = inngest.createFunction(
   {
@@ -62,17 +67,22 @@ export const slackEventReceived = inngest.createFunction(
     const envelope = providerEvent.raw as unknown as SlackEventEnvelope
     const message = envelope.event
 
-    // Only message.channels with a text body — bots, joins, and edits are
-    // ignored at this layer (they may be re-enabled per channel later).
-    if (message.type !== 'message' || !message.text || message.subtype) {
-      logger.info({ eventId, subtype: message.subtype }, 'slack event not a usable message')
+    // Only human-authored message.channels with text are ingested. Joins,
+    // edits, and crucially any BOT/APP post (incl. the CRM's own compulsory
+    // call-summary announcements, ADR 0039) are skipped here so we never
+    // re-ingest our own post as a duplicate slack_summary (§3).
+    if (!isIngestableSlackMessage(message)) {
+      logger.info(
+        { eventId, subtype: message.subtype, botId: message.bot_id },
+        'slack event not an ingestable human message',
+      )
       await step.run('mark-processed', async () => {
         await db.providerEvent.update({
           where: { id: providerEventRowId },
           data: { processedAt: new Date() },
         })
       })
-      return { skipped: true, reason: 'not_a_message' }
+      return { skipped: true, reason: 'not_ingestable' }
     }
 
     // Free pre-filter (§32): acks, reactions, emoji and bare links never
@@ -393,9 +403,12 @@ export const aiDriftTriageReminder = inngest.createFunction(
 
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as SLACK_BACKFILL_FUNCTIONS } from './backfill'
+// ADR 0034 amendment: recurring auto-relink of parked mentions.
+import { slackRelinkUnassigned } from './relink'
 
 export const FUNCTIONS = [
   slackEventReceived,
   aiDriftTriageReminder,
+  slackRelinkUnassigned,
   ...SLACK_BACKFILL_FUNCTIONS,
 ] as const
