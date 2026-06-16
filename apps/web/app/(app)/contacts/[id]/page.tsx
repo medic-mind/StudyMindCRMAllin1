@@ -42,6 +42,7 @@ import { CallButton } from './CallButton'
 import { EditContactButton } from './EditContactButton'
 import { Timeline } from './Timeline'
 import { CallsSection } from './sections/CallsSection'
+import { CallSummariesFeed } from './sections/CallSummariesFeed'
 import { CallSummarySection } from './sections/CallSummarySection'
 import { BookingSection } from './sections/BookingSection'
 import { ChannelTiles } from './sections/ChannelTiles'
@@ -145,6 +146,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     emailThreads,
     calls,
     slackMentions,
+    callSummaryFeed,
     trengo,
     trengoTags,
     tasks,
@@ -157,6 +159,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     caller.contact.channels.emailThreads({ contactId: id, limit: 25 }),
     caller.contact.channels.calls({ contactId: id, limit: 25 }),
     caller.contact.channels.slackMentions({ contactId: id, limit: 25 }),
+    caller.contact.channels.callSummaries({ contactId: id, limit: 25 }),
     caller.contact.channels.trengoConversations({ contactId: id, limit: 25 }),
     caller.contact.channels.trengoTags({ contactId: id }),
     caller.contact.channels.tasks({ contactId: id }),
@@ -178,7 +181,8 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     ['section-enquiries', 'Enquiries'],
     ['section-email', 'Email'],
     ['section-calls', 'Calls'],
-    ['section-call-summary', 'Call summary'],
+    ['section-call-summaries', 'Call summaries'],
+    ['section-call-summary', 'Record summary'],
     ['section-forward', 'Forward'],
     ['section-slack', 'Slack'],
     ['section-trengo', 'Trengo'],
@@ -373,6 +377,14 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
 
           <SectionCard id="section-calls" title="Calls" icon={<PhoneIcon size={16} />}>
             <CallsSection calls={calls.items} />
+          </SectionCard>
+
+          <SectionCard
+            id="section-call-summaries"
+            title="Call summaries"
+            icon={<MessageSquareIcon size={16} />}
+          >
+            <CallSummariesFeed summaries={callSummaryFeed.items} />
           </SectionCard>
 
           <SectionCard

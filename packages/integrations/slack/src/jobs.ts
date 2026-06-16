@@ -28,7 +28,7 @@ import { matchContactByCandidate } from './match'
 import { extractContactSignals, slackTextToPlain } from './extract'
 import { isIngestableSlackMessage } from './message-filter'
 import { isSkippableSlackNoise } from './noise'
-import { resolveSlackNames } from './names'
+import { resolveSlackNames, resolveThreadParentText } from './names'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
 
@@ -111,19 +111,38 @@ export const slackEventReceived = inngest.createFunction(
     const channelName = resolved.channelName
     const permalink = buildSlackPermalink(message.channel, message.ts, message.thread_ts ?? null)
 
+    // A threaded REPLY frequently names no customer of its own ("£40 premium
+    // hour paid 15/06") because the thread ROOT already did ("Sampada Neupane
+    // +447588744609"). Pull the root once so the reply inherits its customer —
+    // both for the free email/phone match and as context for the AI. Best-effort
+    // (ADR 0034 amendment); a missing token/scope just falls back to the reply.
+    const threadTs =
+      message.thread_ts && message.thread_ts !== message.ts ? message.thread_ts : null
+    const threadParentText = threadTs
+      ? await step.run('resolve-thread-parent', async () =>
+          resolveThreadParentText({ channelId: message.channel, threadTs }),
+        )
+      : null
+
     // 1. Deterministic pre-match — cheapest route FIRST (§32; AI is the last
     //    resort). The team's call-log format carries the customer's phone or
     //    email verbatim, so a regex + the shared matcher resolves most
     //    mentions for free — and keeps the archive working when the AI
-    //    provider is down, unconfigured, or over budget.
+    //    provider is down, unconfigured, or over budget. The thread root is
+    //    checked too, so a reply inherits the customer named upthread.
     const plainText = slackTextToPlain(message.text)
     const signals = extractContactSignals(message.text)
-    if (signals.email || signals.phone) {
+    const parentSignals = threadParentText
+      ? extractContactSignals(threadParentText)
+      : { email: null, phone: null }
+    const matchEmail = signals.email ?? parentSignals.email
+    const matchPhone = signals.phone ?? parentSignals.phone
+    if (matchEmail || matchPhone) {
       const rulesMatch = await step.run('match-contact-rules', async () =>
         matchContactByCandidate(db, {
           name: null,
-          email: signals.email,
-          phone: signals.phone,
+          email: matchEmail,
+          phone: matchPhone,
         }),
       )
       if (rulesMatch.contactId) {
@@ -186,10 +205,15 @@ export const slackEventReceived = inngest.createFunction(
     //    budget, provider down) must never dead-letter the mention into
     //    nothing — it parks in the triage tray instead.
     const safeText = sanitiseUserContent(message.text)
+    // Give the AI the thread root as context so a reply ("paid £40…") resolves
+    // to the customer named upthread, not "no identifier found".
+    const aiText = threadParentText
+      ? `[Earlier in this thread] ${sanitiseUserContent(threadParentText)}\n\n[This message] ${safeText}`
+      : safeText
     const prompt = buildSlackSummaryPrompt({
       channelName,
       authorDisplayName: senderName,
-      text: safeText,
+      text: aiText,
     })
     let parsed: SlackSummary
     try {

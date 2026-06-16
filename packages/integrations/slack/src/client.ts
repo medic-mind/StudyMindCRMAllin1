@@ -69,6 +69,12 @@ export interface SlackClient {
   getUserDisplayName(userId: string): Promise<string | null>
   /** Resolve a channel id (C…) to its #name via `conversations.info`. */
   getChannelName(channelId: string): Promise<string | null>
+  /** The text of a thread's ROOT message (`conversations.replies`, first
+   *  message). Lets a threaded reply that names no customer of its own inherit
+   *  the customer from the message it replies to. Needs the `channels:history`
+   *  bot scope (already required for the message events); a failure returns
+   *  null so matching falls back to the reply alone. */
+  getThreadParentText(channelId: string, threadTs: string): Promise<string | null>
 }
 
 export interface CreateSlackClientOptions {
@@ -188,6 +194,16 @@ export function createClient(opts: CreateSlackClientOptions = {}): SlackClient {
       })
       const name = res.channel?.name ?? null
       return name && name.trim() ? name.trim() : null
+    },
+    async getThreadParentText(channelId, threadTs) {
+      const res = await get<{ messages?: Array<{ text?: string }> }>('/conversations.replies', {
+        channel: channelId,
+        ts: threadTs,
+        limit: '1',
+        inclusive: 'true',
+      })
+      const text = res.messages?.[0]?.text ?? null
+      return text && text.trim() ? text : null
     },
   }
 }
