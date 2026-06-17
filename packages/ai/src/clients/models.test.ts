@@ -6,13 +6,17 @@ import { resolveModel, resolveProvider, resolveTranscriptionModel, tierOf } from
 const KEYS = [
   'AI_PROVIDER',
   'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
   'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
   'GEMINI_MODEL_MINI',
   'GEMINI_MODEL_STANDARD',
   'GEMINI_MODEL_TRANSCRIBE',
   'OPENAI_MODEL_MINI',
   'OPENAI_MODEL_STANDARD',
   'OPENAI_MODEL_TRANSCRIBE',
+  'ANTHROPIC_MODEL_MINI',
+  'ANTHROPIC_MODEL_STANDARD',
 ] as const
 
 let saved: Record<string, string | undefined>
@@ -57,8 +61,46 @@ describe('resolveProvider', () => {
     expect(resolveProvider()).toBe('openai')
   })
 
+  it('selects Anthropic when only ANTHROPIC_API_KEY is present', () => {
+    process.env['ANTHROPIC_API_KEY'] = 'a'
+    expect(resolveProvider()).toBe('anthropic')
+  })
+
+  it('honours an explicit AI_PROVIDER=anthropic override', () => {
+    process.env['GEMINI_API_KEY'] = 'g'
+    process.env['AI_PROVIDER'] = 'anthropic'
+    expect(resolveProvider()).toBe('anthropic')
+  })
+
   it('defaults to OpenAI when nothing is configured', () => {
     expect(resolveProvider()).toBe('openai')
+  })
+})
+
+describe('resolveModel — Anthropic (Claude) tiers', () => {
+  beforeEach(() => {
+    process.env['AI_PROVIDER'] = 'anthropic'
+  })
+
+  it('maps tiers to Claude Haiku (mini) and Sonnet (standard) by default', () => {
+    expect(resolveModel('mini')).toEqual({
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
+    })
+    expect(resolveModel('standard')).toEqual({ provider: 'anthropic', model: 'claude-sonnet-4-6' })
+  })
+
+  it('honours per-tier model overrides', () => {
+    process.env['ANTHROPIC_MODEL_STANDARD'] = 'claude-opus-4-8'
+    expect(resolveModel('standard').model).toBe('claude-opus-4-8')
+  })
+
+  it('falls back to a transcription-capable provider (Claude has no audio)', () => {
+    // Only a Claude key → transcription routes to OpenAI Whisper.
+    expect(resolveTranscriptionModel()).toEqual({ provider: 'openai', model: 'whisper-1' })
+    // With a Gemini key present, prefer Gemini multimodal.
+    process.env['GEMINI_API_KEY'] = 'g'
+    expect(resolveTranscriptionModel()).toEqual({ provider: 'gemini', model: 'gemini-2.5-flash' })
   })
 })
 
