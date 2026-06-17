@@ -35,11 +35,7 @@ function NotConnected() {
   )
 }
 
-export default async function CampsPage({
-  searchParams,
-}: {
-  searchParams?: { year?: string }
-}) {
+export default async function CampsPage({ searchParams }: { searchParams?: { year?: string } }) {
   const year =
     searchParams?.year && /^\d{4}$/.test(searchParams.year)
       ? parseInt(searchParams.year, 10)
@@ -56,6 +52,14 @@ export default async function CampsPage({
         subtitle="Live view of which camps are running and how full they are. Read-only — bookings are managed in the Summer Camp app."
       />
       <PageBody>
+        <div className="mb-4">
+          <a
+            href="/camps/instalments"
+            className="inline-flex items-center gap-1 rounded-md border border-primary-300 bg-white px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-primary-50"
+          >
+            Instalments tracker →
+          </a>
+        </div>
         {!res.connected || !res.feed ? (
           <NotConnected />
         ) : (
@@ -66,9 +70,19 @@ export default async function CampsPage({
   )
 }
 
-type Feed = NonNullable<Awaited<ReturnType<Awaited<ReturnType<typeof createServerCaller>>['summerCamp']['camps']>>['feed']>
+type Feed = NonNullable<
+  Awaited<ReturnType<Awaited<ReturnType<typeof createServerCaller>>['summerCamp']['camps']>>['feed']
+>
 
-function CampsContent({ feed, year, canBackfill }: { feed: Feed; year: number; canBackfill: boolean }) {
+function CampsContent({
+  feed,
+  year,
+  canBackfill,
+}: {
+  feed: Feed
+  year: number
+  canBackfill: boolean
+}) {
   return (
     <div className="flex flex-col gap-8">
       {/* Year switcher (URL state) + admin backfill */}
@@ -88,7 +102,8 @@ function CampsContent({ feed, year, canBackfill }: { feed: Feed; year: number; c
           </a>
         ))}
         <span className="ml-auto text-neutral-500">
-          {feed.totals.grand} booking{feed.totals.grand === 1 ? '' : 's'} across {feed.camps.length} camp
+          {feed.totals.grand} booking{feed.totals.grand === 1 ? '' : 's'} across {feed.camps.length}{' '}
+          camp
           {feed.camps.length === 1 ? '' : 's'}
         </span>
         {canBackfill ? <BackfillButton /> : null}

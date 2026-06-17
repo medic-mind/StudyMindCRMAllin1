@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./branding": "./src/branding/index.ts",
     "./calls": "./src/calls/index.ts",
+    "./camp": "./src/camp/index.ts",
     "./contact": "./src/contact/index.ts",
     "./contact/documents": "./src/contact/documents.ts",
     "./contact/call-summary": "./src/contact/call-summary.ts",

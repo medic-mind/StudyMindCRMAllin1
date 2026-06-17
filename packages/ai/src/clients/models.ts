@@ -45,12 +45,11 @@ const DEFAULTS = {
 export function resolveProvider(): AiProvider {
   const explicit = process.env['AI_PROVIDER']?.trim().toLowerCase()
   if (explicit === 'openai' || explicit === 'gemini' || explicit === 'anthropic') return explicit
-  // Auto-select by which key is present, so dropping a key into the environment
-  // flips the provider with no code change. Gemini stays the documented default
-  // when its key is set; otherwise a Claude key (the common case here) wins over
-  // the OpenAI fallback.
+  // Auto-select stays Gemini-first (the documented default), then OpenAI.
+  // Anthropic (Claude) is available but OPT-IN ONLY via AI_PROVIDER=anthropic —
+  // it never auto-activates, so a stray ANTHROPIC_API_KEY can't silently switch
+  // the site off Gemini.
   if (process.env['GEMINI_API_KEY']) return 'gemini'
-  if (process.env['ANTHROPIC_API_KEY']) return 'anthropic'
   return 'openai'
 }
 

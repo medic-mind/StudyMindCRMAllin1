@@ -61,9 +61,9 @@ describe('resolveProvider', () => {
     expect(resolveProvider()).toBe('openai')
   })
 
-  it('selects Anthropic when only ANTHROPIC_API_KEY is present', () => {
+  it('does NOT auto-select Anthropic — Claude is opt-in only via AI_PROVIDER', () => {
     process.env['ANTHROPIC_API_KEY'] = 'a'
-    expect(resolveProvider()).toBe('anthropic')
+    expect(resolveProvider()).toBe('openai')
   })
 
   it('honours an explicit AI_PROVIDER=anthropic override', () => {

@@ -4459,3 +4459,49 @@ model KnowledgeOverride {
   createdById String?
   updatedById String?
 }
+
+/// Summer Camp booking with instalment / deposit tracking (CLAUDE.md §15
+/// sibling). Imported from the camp booking CSV today; the live camp sync can
+/// populate it later. Money is integer pence (§19); the remaining balance is
+/// DERIVED (totalDue − depositPaid), never stored (§41.2).
+model SummerCampBooking {
+  id          String  @id
+  /// Stable key for idempotent re-import (student email|name + subject + weeks).
+  dedupeKey   String  @unique
+  source      String  @default("csv_import") // csv_import | camp_app
+  /// The CSV "Int" row number — advisory only (not unique across re-imports).
+  externalRef String?
+
+  bookingType String? // B2C | Agent | B2B
+  paymentType String? // Installment | Initial Deposit | Bank Deposit | Stripe | Free | Bursary | …
+  subject     String?
+
+  studentName   String?
+  studentEmail  String?
+  studentPhone  String?
+  guardianName  String?
+  guardianEmail String?
+  guardianPhone String?
+
+  totalDueMinor        Int @default(0) // "Amount Paid (£)" = total amount DUE
+  depositPaidMinor     Int @default(0) // amount actually received so far
+  accomFeeMinor        Int @default(0)
+  researchProgramMinor Int @default(0)
+
+  weeks         String?
+  noOfDays      Int?
+  status        String? // Confirmed | Cancelled | …
+  agent         String?
+  dateOfPayment DateTime?
+  notes         String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([paymentType])
+  @@index([status])
+  @@index([deletedAt])
+}
