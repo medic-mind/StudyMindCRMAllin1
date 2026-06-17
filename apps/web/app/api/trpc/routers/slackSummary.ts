@@ -63,9 +63,26 @@ export const slackSummaryRouter = router({
       return ctx.db.unassignedSummary.count({ where: { resolvedAt: null } })
     }),
 
+    /**
+     * Why mentions might be stuck here. The single biggest cause of "confidence
+     * 0% — no identifier found" is no AI provider key: name-only mentions can't
+     * be extracted, so only ones carrying an email/phone (or a phone/email in
+     * their thread root) auto-link. Surfacing this lets an admin fix the real
+     * gap instead of triaging by hand forever.
+     */
+    diagnostics: protectedProcedure.query(() => ({
+      aiConfigured: Boolean(
+        process.env['GEMINI_API_KEY'] ??
+        process.env['GOOGLE_API_KEY'] ??
+        process.env['OPENAI_API_KEY'],
+      ),
+    })),
+
     /** Latest open parked mentions for the triage tray. */
     list: protectedProcedure
-      .input(z.object({ limit: z.number().int().min(1).max(100).default(50) }).default({ limit: 50 }))
+      .input(
+        z.object({ limit: z.number().int().min(1).max(100).default(50) }).default({ limit: 50 }),
+      )
       .query(async ({ ctx, input }) => {
         const rows = await ctx.db.unassignedSummary.findMany({
           where: { resolvedAt: null },
@@ -98,7 +115,11 @@ export const slackSummaryRouter = router({
         const row = await ctx.db.unassignedSummary.findFirst({
           where: { id: input.id, resolvedAt: null },
         })
-        if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Mention not found or already triaged' })
+        if (!row)
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: 'Mention not found or already triaged',
+          })
 
         const contact = await ctx.db.contact.findFirst({
           where: { id: input.contactId, deletedAt: null },
