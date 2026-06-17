@@ -18,8 +18,11 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { extractIdentifiersFromText, matchContactByCandidate } from './match'
+import { extractContactSignals } from './extract'
+import { matchContactByCandidate } from './match'
+import { resolveThreadParentText } from './names'
 import { buildSlackPermalink } from './permalink'
+import type { SlackEventEnvelope } from './types'
 
 /** The slice of an `UnassignedSummary.parsed` blob the relink needs. */
 export interface ParsedCandidate {
@@ -57,6 +60,33 @@ export function candidateFromParsed(parsed: unknown): ParsedCandidate {
  *  a few ticks rather than in one long transaction. */
 export const RELINK_BATCH = 200
 
+/** Cap on thread-parent Slack API fetches per tick (conversations.replies is
+ *  rate-limited). The rest of the backlog is retried on the next tick. */
+export const RELINK_THREAD_FETCHES = 40
+
+/**
+ * A parked reply often names no customer of its own because its thread ROOT did
+ * ("Sampada Neupane +447588744609"). The live ingestion now reads the parent,
+ * but rows parked BEFORE that need it on retry. We recover the message's
+ * `thread_ts` from the archived Slack ProviderEvent (no extra column), then
+ * fetch the root's text. Best-effort: returns null on any miss so matching
+ * falls back to the reply alone.
+ */
+async function threadParentTextForRow(row: {
+  slackTs: string
+  channelId: string
+}): Promise<string | null> {
+  const ev = await db.providerEvent.findFirst({
+    where: { provider: 'slack', raw: { path: ['event', 'ts'], equals: row.slackTs } },
+    select: { raw: true },
+  })
+  if (!ev) return null
+  const envelope = ev.raw as unknown as SlackEventEnvelope
+  const threadTs = envelope.event?.thread_ts
+  if (!threadTs || threadTs === row.slackTs) return null
+  return resolveThreadParentText({ channelId: row.channelId, threadTs })
+}
+
 export const slackRelinkUnassigned = inngest.createFunction(
   {
     id: 'slack/relink-unassigned',
@@ -84,20 +114,46 @@ export const slackRelinkUnassigned = inngest.createFunction(
       })
 
       let linked = 0
+      let threadBudget = RELINK_THREAD_FETCHES
       for (const row of rows) {
         const cand = candidateFromParsed(row.parsed)
         // Merge the stored AI candidate with a fresh deterministic scan of the
         // original message (catches an email/phone the first pass missed, and
-        // costs nothing).
-        const fromText = extractIdentifiersFromText(row.messageText ?? '')
+        // costs nothing). extractContactSignals understands Slack's <tel:>/
+        // <mailto:> markup as well as plain text.
+        const fromText = extractContactSignals(row.messageText ?? '')
         const candidate = {
           name: cand.name,
           email: cand.email ?? fromText.email,
           phone: cand.phone ?? fromText.phone,
         }
-        if (!candidate.name && !candidate.email && !candidate.phone) continue
 
-        const match = await matchContactByCandidate(db, candidate)
+        let match =
+          candidate.name || candidate.email || candidate.phone
+            ? await matchContactByCandidate(db, candidate)
+            : { contactId: null as string | null, via: null, reason: 'no_candidate' as const }
+
+        // Thread-aware retry: a reply that named no customer inherits its thread
+        // root's email/phone. Bounded per tick (Slack rate limits).
+        if (!match.contactId && threadBudget > 0) {
+          threadBudget -= 1
+          const parentText = await threadParentTextForRow(row)
+          if (parentText) {
+            const parentSig = extractContactSignals(parentText)
+            const withParent = {
+              name: candidate.name,
+              email: candidate.email ?? parentSig.email,
+              phone: candidate.phone ?? parentSig.phone,
+            }
+            if (
+              (withParent.email && withParent.email !== candidate.email) ||
+              (withParent.phone && withParent.phone !== candidate.phone)
+            ) {
+              match = await matchContactByCandidate(db, withParent)
+            }
+          }
+        }
+
         if (!match.contactId) continue
         const contactId = match.contactId
 

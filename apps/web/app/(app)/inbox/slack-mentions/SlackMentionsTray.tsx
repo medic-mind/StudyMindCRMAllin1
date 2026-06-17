@@ -23,7 +23,11 @@ const SENTIMENT_TONE: Record<string, 'success' | 'neutral' | 'danger'> = {
 export function SlackMentionsTray() {
   const utils = trpc.useUtils()
   const listQuery = trpc.slackSummary.unassigned.list.useQuery({ limit: 50 })
+  const diagnostics = trpc.slackSummary.unassigned.diagnostics.useQuery(undefined, {
+    staleTime: 5 * 60_000,
+  })
   const items = listQuery.data ?? []
+  const aiOff = diagnostics.data?.aiConfigured === false
 
   async function refresh() {
     await Promise.all([
@@ -32,23 +36,36 @@ export function SlackMentionsTray() {
     ])
   }
 
+  const banner = aiOff ? (
+    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+      <span className="font-semibold">AI extractor isn&apos;t configured.</span> Mentions that name
+      a customer only by name (no email/phone, and none in the thread above) can&apos;t be
+      auto-matched — they&apos;ll keep landing here. Set <code>GEMINI_API_KEY</code> in the
+      environment to enable name matching. Mentions carrying a phone/email still link automatically.
+    </div>
+  ) : null
+
   if (listQuery.isLoading) {
     return <p className="text-sm text-neutral-500">Loading…</p>
   }
   if (items.length === 0) {
     return (
-      <Card className="px-10 py-14 text-center">
-        <p className="text-sm font-medium text-neutral-800">Nothing to triage.</p>
-        <p className="mt-1 text-xs text-neutral-500">
-          Slack mentions that confidently match a customer attach automatically. Anything the
-          AI couldn&apos;t place lands here.
-        </p>
-      </Card>
+      <div className="space-y-3">
+        {banner}
+        <Card className="px-10 py-14 text-center">
+          <p className="text-sm font-medium text-neutral-800">Nothing to triage.</p>
+          <p className="mt-1 text-xs text-neutral-500">
+            Slack mentions that confidently match a customer attach automatically. Anything the AI
+            couldn&apos;t place lands here.
+          </p>
+        </Card>
+      </div>
     )
   }
 
   return (
     <ul className="space-y-3">
+      {aiOff ? <li>{banner}</li> : null}
       {items.map((m) => (
         <li key={m.id}>
           <MentionCard mention={m} onDone={refresh} />

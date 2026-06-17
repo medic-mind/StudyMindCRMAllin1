@@ -60,7 +60,9 @@ interface SlackHistoryResponse {
   response_metadata?: { next_cursor?: string }
 }
 
-const MATCH_THRESHOLD = 0.7
+// Matches the live ingestion gate (ADR 0034 amendment) — the matcher's
+// unambiguous rule is the real safety, not the AI's self-confidence.
+const MATCH_THRESHOLD = 0.5
 
 export const slackBackfillRequested = inngest.createFunction(
   {
@@ -108,7 +110,10 @@ export const slackBackfillRequested = inngest.createFunction(
               // whole channel import. Skip it and keep going.
               processed += 1
               skipped += 1
-              logger.warn({ jobId, channelId, ts: m.ts, err }, 'slack backfill: skipped a message that failed to import')
+              logger.warn(
+                { jobId, channelId, ts: m.ts, err },
+                'slack backfill: skipped a message that failed to import',
+              )
             }
           }
           await step.run(`progress-${channelId}-${pageNum}`, async () =>
@@ -176,9 +181,7 @@ interface ProcessSlackInput {
   requestId: string
 }
 
-async function processSlackMessage(
-  input: ProcessSlackInput,
-): Promise<{ matched: boolean }> {
+async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched: boolean }> {
   const { message, channelId } = input
   if (message.type !== 'message' || !message.text || message.subtype) {
     return { matched: false }
