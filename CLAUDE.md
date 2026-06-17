@@ -68,7 +68,7 @@ Parents, students, tutors do **not** log in. They use the booking site, Trengo, 
 | Encryption (field level) | AWS KMS envelope encryption | Safeguarding notes, EHCP extracts |
 | Email transactional | Gmail API (Google OAuth) | Outbound system email (account welcome, password reset, forwarding) sent from the configured system mailbox via `packages/integrations/gmail/src/system-send.ts`. **No third-party email API — never use Resend.** |
 | Observability | Sentry (errors), Axiom (logs), OpenTelemetry traces | Required from day one |
-| AI | Google Gemini (default) — 2.5 Flash for most, Pro override for drafts; OpenAI (gpt-4o / gpt-4o-mini / Whisper) as switchable fallback. ADR 0028 | One provider seam in `packages/ai`; flip via `AI_PROVIDER` / `GEMINI_API_KEY`, no call-site changes |
+| AI | Google Gemini (default) — 2.5 Flash for most, Pro override for drafts; OpenAI (gpt-4o / gpt-4o-mini / Whisper) **and Anthropic Claude** (Haiku/Sonnet, fetch-based, no SDK dep) as switchable providers. ADR 0028 | One provider seam in `packages/ai` (`generate` in `clients/provider.ts`); auto-selects by which key is set (Gemini → Anthropic → OpenAI) or pin via `AI_PROVIDER=gemini\|openai\|anthropic` / `ANTHROPIC_API_KEY`, no call-site changes. Claude has no audio transcription → the Aircall fallback transcribe routes to Gemini/OpenAI. |
 | Hosting | Railway (services: web, worker, postgres; Redis via Railway plugin) | Single platform for the whole stack |
 | Cache and rate limit | Redis on Railway (Upstash compatible) | Inngest queue, rate limit windows, response cache |
 

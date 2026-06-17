@@ -9,7 +9,7 @@
 // so you can promote the quality tier to Pro without touching code. Set
 // AI_PROVIDER explicitly to pin a provider (e.g. AI_PROVIDER=openai to revert).
 
-export type AiProvider = 'gemini' | 'openai'
+export type AiProvider = 'gemini' | 'openai' | 'anthropic'
 
 /**
  * Two quality tiers used across the app. Call sites still pass the legacy
@@ -30,6 +30,10 @@ const DEFAULTS = {
   openaiMini: 'gpt-4o-mini',
   openaiStandard: 'gpt-4o',
   openaiTranscribe: 'whisper-1',
+  // Anthropic (Claude). Env-overridable so a key with different model access can
+  // adjust without code (ANTHROPIC_MODEL_MINI / ANTHROPIC_MODEL_STANDARD).
+  anthropicMini: 'claude-haiku-4-5-20251001',
+  anthropicStandard: 'claude-sonnet-4-6',
 } as const
 
 /**
@@ -40,8 +44,13 @@ const DEFAULTS = {
  */
 export function resolveProvider(): AiProvider {
   const explicit = process.env['AI_PROVIDER']?.trim().toLowerCase()
-  if (explicit === 'openai' || explicit === 'gemini') return explicit
+  if (explicit === 'openai' || explicit === 'gemini' || explicit === 'anthropic') return explicit
+  // Auto-select by which key is present, so dropping a key into the environment
+  // flips the provider with no code change. Gemini stays the documented default
+  // when its key is set; otherwise a Claude key (the common case here) wins over
+  // the OpenAI fallback.
   if (process.env['GEMINI_API_KEY']) return 'gemini'
+  if (process.env['ANTHROPIC_API_KEY']) return 'anthropic'
   return 'openai'
 }
 
@@ -67,6 +76,15 @@ export function resolveModel(tier: ModelTier): ResolvedModel {
           : envModel('GEMINI_MODEL_MINI', DEFAULTS.geminiMini),
     }
   }
+  if (provider === 'anthropic') {
+    return {
+      provider,
+      model:
+        tier === 'standard'
+          ? envModel('ANTHROPIC_MODEL_STANDARD', DEFAULTS.anthropicStandard)
+          : envModel('ANTHROPIC_MODEL_MINI', DEFAULTS.anthropicMini),
+    }
+  }
   return {
     provider,
     model:
@@ -76,11 +94,28 @@ export function resolveModel(tier: ModelTier): ResolvedModel {
   }
 }
 
-/** Resolve the transcription model under the active provider. */
+/**
+ * Resolve the transcription model. Claude has no audio transcription, so when
+ * Anthropic is the active provider we fall back to a transcription-capable one:
+ * Gemini if its key is present, else OpenAI Whisper. (Aircall AI Assist is the
+ * primary transcript source; this is only the fallback path — CLAUDE.md §10.)
+ */
 export function resolveTranscriptionModel(): ResolvedModel {
   const provider = resolveProvider()
   if (provider === 'gemini') {
     return { provider, model: envModel('GEMINI_MODEL_TRANSCRIBE', DEFAULTS.geminiTranscribe) }
+  }
+  if (provider === 'anthropic') {
+    if (process.env['GEMINI_API_KEY'] ?? process.env['GOOGLE_API_KEY']) {
+      return {
+        provider: 'gemini',
+        model: envModel('GEMINI_MODEL_TRANSCRIBE', DEFAULTS.geminiTranscribe),
+      }
+    }
+    return {
+      provider: 'openai',
+      model: envModel('OPENAI_MODEL_TRANSCRIBE', DEFAULTS.openaiTranscribe),
+    }
   }
   return { provider, model: envModel('OPENAI_MODEL_TRANSCRIBE', DEFAULTS.openaiTranscribe) }
 }

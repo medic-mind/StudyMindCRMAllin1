@@ -36,6 +36,9 @@ export const SAFE_FETCH_ALLOWLIST: readonly string[] = [
   'storage.googleapis.com',
   // OpenAI
   'api.openai.com',
+  // Anthropic (Claude) — AI provider seam (ADR 0028). Used by the fetch-based
+  // Claude client in packages/ai when AI_PROVIDER=anthropic / ANTHROPIC_API_KEY.
+  'api.anthropic.com',
   // AWS endpoints (KMS, S3 in eu-west-2)
   '*.amazonaws.com',
   // CloudFront — Aircall serves call-recording media from its CDN; the URL

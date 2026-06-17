@@ -41,7 +41,8 @@ async function handleGet(): Promise<Response> {
     aiConfigured: Boolean(
       process.env['GEMINI_API_KEY'] ??
       process.env['GOOGLE_API_KEY'] ??
-      process.env['OPENAI_API_KEY'],
+      process.env['OPENAI_API_KEY'] ??
+      process.env['ANTHROPIC_API_KEY'],
     ),
     channelMode:
       watched.length > 0

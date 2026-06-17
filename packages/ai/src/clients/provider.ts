@@ -13,6 +13,7 @@
 // dialect differs from JSON Schema) — the Zod parse is the real contract, so
 // this stays portable across providers.
 
+import { anthropicGenerate } from './anthropic'
 import { getGemini } from './gemini'
 import { type ModelTier, resolveModel } from './models'
 import { getOpenAI } from './openai'
@@ -35,13 +36,31 @@ export interface GenerateResult {
   outputTokens: number
   /** Concrete model id actually used (for logging + cost). */
   model: string
-  provider: 'gemini' | 'openai'
+  provider: 'gemini' | 'openai' | 'anthropic'
 }
 
 export async function generate(input: GenerateInput): Promise<GenerateResult> {
   const { provider, model } = resolveModel(input.tier)
   if (provider === 'gemini') return generateGemini(model, input)
+  if (provider === 'anthropic') return generateAnthropic(model, input)
   return generateOpenAI(model, input)
+}
+
+async function generateAnthropic(model: string, input: GenerateInput): Promise<GenerateResult> {
+  const result = await anthropicGenerate({
+    model,
+    system: input.system,
+    user: input.user,
+    temperature: input.temperature,
+    ...(input.json ? { json: input.json } : {}),
+  })
+  return {
+    text: result.text,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    model,
+    provider: 'anthropic',
+  }
 }
 
 async function generateOpenAI(model: string, input: GenerateInput): Promise<GenerateResult> {
