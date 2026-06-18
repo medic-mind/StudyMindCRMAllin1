@@ -30,7 +30,7 @@ import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE } from './client'
 import { getWatchedChannels } from './config'
-import { matchContactByCandidate } from './match'
+import { resolveSlackLinkTarget, targetForeignKey } from './link-target'
 import { extractContactSignals, slackTextToPlain } from './extract'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
@@ -215,18 +215,18 @@ async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched:
   // when no AI provider is configured at all.
   const signals = extractContactSignals(message.text)
   if (signals.email || signals.phone) {
-    const rulesMatch = await matchContactByCandidate(db, {
+    const rulesTarget = await resolveSlackLinkTarget({
       name: null,
       email: signals.email,
       phone: signals.phone,
     })
-    if (rulesMatch.contactId) {
+    if (rulesTarget) {
       const occurredAtRules = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
       await db.interaction.create({
         data: {
           id: createId(),
           type: 'slack_summary',
-          contactId: rulesMatch.contactId,
+          ...targetForeignKey(rulesTarget),
           occurredAt: occurredAtRules,
           summary: slackTextToPlain(message.text).slice(0, 280),
           payload: {
@@ -242,7 +242,8 @@ async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched:
             sentiment: 'neutral',
             suggestedNextAction: null,
             confidence: 1,
-            matchedVia: rulesMatch.via,
+            matchedVia: rulesTarget.via,
+            linkedTo: rulesTarget.kind,
             promptVersion: 'rules-v1',
           },
         },
@@ -277,17 +278,16 @@ async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched:
 
   if (parsed.confidence < MATCH_THRESHOLD) return { matched: false }
 
-  // Shared matcher: email → phone variants → unambiguous full name (§12).
-  const match = await matchContactByCandidate(db, parsed.candidateContactIdentifier)
-  const contactId = match.contactId
-  if (!contactId) return { matched: false }
+  // Shared resolver: Contact (email → phone → name) else B2B account (§12).
+  const target = await resolveSlackLinkTarget(parsed.candidateContactIdentifier)
+  if (!target) return { matched: false }
 
   const occurredAt = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
   await db.interaction.create({
     data: {
       id: createId(),
       type: 'slack_summary',
-      contactId,
+      ...targetForeignKey(target),
       occurredAt,
       summary: parsed.summary.slice(0, 280),
       payload: {
@@ -305,7 +305,8 @@ async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched:
         sentiment: parsed.sentiment,
         suggestedNextAction: parsed.suggestedNextAction,
         confidence: parsed.confidence,
-        matchedVia: match.via,
+        matchedVia: target.via,
+        linkedTo: target.kind,
         promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
       },
     },

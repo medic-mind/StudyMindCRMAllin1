@@ -19,7 +19,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { extractContactSignals } from './extract'
-import { matchContactByCandidate } from './match'
+import { resolveSlackLinkTarget, targetAuditTarget, targetForeignKey } from './link-target'
 import { resolveThreadParentText } from './names'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
@@ -128,14 +128,14 @@ export const slackRelinkUnassigned = inngest.createFunction(
           phone: cand.phone ?? fromText.phone,
         }
 
-        let match =
+        let target =
           candidate.name || candidate.email || candidate.phone
-            ? await matchContactByCandidate(db, candidate)
-            : { contactId: null as string | null, via: null, reason: 'no_candidate' as const }
+            ? await resolveSlackLinkTarget(candidate)
+            : null
 
         // Thread-aware retry: a reply that named no customer inherits its thread
         // root's email/phone. Bounded per tick (Slack rate limits).
-        if (!match.contactId && threadBudget > 0) {
+        if (!target && threadBudget > 0) {
           threadBudget -= 1
           const parentText = await threadParentTextForRow(row)
           if (parentText) {
@@ -149,13 +149,12 @@ export const slackRelinkUnassigned = inngest.createFunction(
               (withParent.email && withParent.email !== candidate.email) ||
               (withParent.phone && withParent.phone !== candidate.phone)
             ) {
-              match = await matchContactByCandidate(db, withParent)
+              target = await resolveSlackLinkTarget(withParent)
             }
           }
         }
 
-        if (!match.contactId) continue
-        const contactId = match.contactId
+        if (!target) continue
 
         // Idempotent: a row may have been linked by a concurrent pass, or a
         // prior tick that failed after the interaction write. Dedupe on the
@@ -170,7 +169,7 @@ export const slackRelinkUnassigned = inngest.createFunction(
             data: {
               id: createId(),
               type: 'slack_summary',
-              contactId,
+              ...targetForeignKey(target),
               occurredAt: row.createdAt,
               summary: (cand.summary ?? row.messageText ?? 'Slack message').slice(0, 280),
               payload: {
@@ -184,7 +183,8 @@ export const slackRelinkUnassigned = inngest.createFunction(
                 sentiment: cand.sentiment ?? 'neutral',
                 suggestedNextAction: cand.suggestedNextAction,
                 confidence: row.confidence,
-                matchedVia: match.via,
+                matchedVia: target.via,
+                linkedTo: target.kind,
                 autoRelinked: true,
                 promptVersion: cand.promptVersion ?? 'relink-v1',
               },
@@ -195,9 +195,9 @@ export const slackRelinkUnassigned = inngest.createFunction(
           await writeAuditLogEntry(db, {
             actorId: 'system:slack/relink-unassigned',
             action: 'slack.message_summarised',
-            target: { type: 'Contact', id: contactId },
+            target: targetAuditTarget(target),
             requestId: `slack-relink:${row.id}`,
-            after: { interactionId, matchedVia: match.via, autoRelinked: true },
+            after: { interactionId, matchedVia: target.via, autoRelinked: true },
           })
         }
 

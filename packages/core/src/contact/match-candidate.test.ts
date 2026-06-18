@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   extractIdentifiersFromText,
+  matchBusinessAccountByCandidate,
   matchContactByCandidate,
   phoneVariants,
+  type MatchAccountDb,
   type MatchDb,
 } from './match-candidate'
 
@@ -124,5 +126,118 @@ describe('matchContactByCandidate', () => {
   it('reports no_candidate when nothing was provided', async () => {
     const r = await matchContactByCandidate(fakeDb([jane]), {})
     expect(r).toMatchObject({ contactId: null, reason: 'no_candidate' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// B2B account matcher (schools / partnerships)
+// ---------------------------------------------------------------------------
+
+interface AccountRow {
+  id: string
+  name: string
+  contactEmail: string | null
+  contactPhone: string | null
+  website: string | null
+  archivedAt: Date | null
+}
+
+function fakeAccountDb(rows: AccountRow[]): MatchAccountDb {
+  const insens = (a: string | null, b: string) => (a ?? '').toLowerCase() === b.toLowerCase()
+  return {
+    businessAccount: {
+      async findMany({ where, take }) {
+        const matches = rows.filter((r) => {
+          if (r.archivedAt) return false
+          const email = where['contactEmail'] as
+            | { equals?: string; endsWith?: string }
+            | undefined
+          if (email?.equals && !insens(r.contactEmail, email.equals)) return false
+          if (email?.endsWith && !(r.contactEmail ?? '').toLowerCase().endsWith(email.endsWith.toLowerCase()))
+            return false
+          const phone = where['contactPhone'] as { in?: string[]; contains?: string } | undefined
+          if (phone?.in && !phone.in.includes(r.contactPhone ?? '')) return false
+          if (phone?.contains && !(r.contactPhone ?? '').includes(phone.contains)) return false
+          const name = where['name'] as { equals: string } | undefined
+          if (name && !insens(r.name, name.equals)) return false
+          const or = where['OR'] as Array<Record<string, { endsWith?: string; contains?: string }>>
+            | undefined
+          if (or) {
+            const any = or.some((c) => {
+              const ce = c['contactEmail']
+              if (ce?.endsWith && (r.contactEmail ?? '').toLowerCase().endsWith(ce.endsWith.toLowerCase()))
+                return true
+              const w = c['website']
+              if (w?.contains && (r.website ?? '').toLowerCase().includes(w.contains.toLowerCase()))
+                return true
+              return false
+            })
+            if (!any) return false
+          }
+          return true
+        })
+        return matches.slice(0, take).map((r) => ({ id: r.id }))
+      },
+    },
+  }
+}
+
+const oakwood: AccountRow = {
+  id: 'a1',
+  name: 'Oakwood Primary',
+  contactEmail: 'office@oakwood.sch.uk',
+  contactPhone: '+441234567890',
+  website: 'https://oakwood.sch.uk',
+  archivedAt: null,
+}
+
+describe('matchBusinessAccountByCandidate', () => {
+  it('matches a school by its exact org email', async () => {
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood]), {
+      email: 'OFFICE@oakwood.sch.uk',
+    })
+    expect(r).toMatchObject({ businessAccountId: 'a1', via: 'email', reason: 'matched' })
+  })
+
+  it('matches a school by email DOMAIN (sender at the org)', async () => {
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood]), {
+      email: 'jane.head@oakwood.sch.uk',
+    })
+    expect(r).toMatchObject({ businessAccountId: 'a1', via: 'email_domain', reason: 'matched' })
+  })
+
+  it('never domain-matches on free webmail', async () => {
+    const gmailAccount: AccountRow = { ...oakwood, contactEmail: 'someone@gmail.com', website: null }
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([gmailAccount]), {
+      email: 'other@gmail.com',
+    })
+    expect(r.businessAccountId).toBeNull()
+  })
+
+  it('matches by phone variants', async () => {
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood]), {
+      phone: '01234 567890',
+    })
+    expect(r).toMatchObject({ businessAccountId: 'a1', via: 'phone' })
+  })
+
+  it('matches by exact org name (case-insensitive)', async () => {
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood]), {
+      name: 'oakwood primary',
+    })
+    expect(r).toMatchObject({ businessAccountId: 'a1', via: 'name', reason: 'matched' })
+  })
+
+  it('parks an ambiguous domain (two accounts share it)', async () => {
+    const sister: AccountRow = { ...oakwood, id: 'a2', contactEmail: 'admin@oakwood.sch.uk' }
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood, sister]), {
+      email: 'teacher@oakwood.sch.uk',
+    })
+    expect(r).toMatchObject({ businessAccountId: null, reason: 'ambiguous' })
+  })
+
+  it('reports no_candidate when nothing was provided', async () => {
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood]), {})
+    expect(r).toMatchObject({ businessAccountId: null, reason: 'no_candidate' })
   })
 })

@@ -6,6 +6,7 @@
 
 export {
   matchContactByCandidate,
+  matchBusinessAccountByCandidate,
   phoneVariants,
   extractIdentifiersFromText,
   type MatchCandidate,
@@ -13,4 +14,7 @@ export {
   type MatchDb,
   type MatchVia,
   type MatchOutcome,
+  type MatchAccountDb,
+  type MatchAccountOutcome,
+  type MatchAccountVia,
 } from '@studymind/core/contact/match-candidate'
