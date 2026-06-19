@@ -10,6 +10,8 @@ import { getCurrentUser } from '@/lib/auth/server'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { SlackSection } from '../../contacts/[id]/sections/SlackSection'
+
 import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 
 import { AccountEditor } from './AccountEditor'
@@ -49,11 +51,12 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
   const canInvoiceWrite = Boolean(me && INVOICING_WRITE_ROLES.has(me.role))
   const canInvoiceMarkPaid = Boolean(me && INVOICING_MARK_PAID_ROLES.has(me.role))
 
-  // Notes / tasks / activity — parity with the customer view.
-  const [notes, tasks, activity] = await Promise.all([
+  // Notes / tasks / activity / Slack — parity with the customer view.
+  const [notes, tasks, activity, slackMentions] = await Promise.all([
     caller.businessAccount.notes.list({ accountId: id, limit: 50 }),
     caller.businessAccount.tasks.list({ accountId: id }),
     caller.businessAccount.activity.list({ accountId: id, limit: 30 }),
+    caller.businessAccount.slackMentions.list({ accountId: id, limit: 25 }),
   ])
 
   const fmt = (d: Date | string) =>
@@ -189,6 +192,19 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
             </span>
           </div>
           <InvoicesPanel target={{ kind: 'businessAccount', businessAccountId: account.id }} />
+        </section>
+
+        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-neutral-900">Slack mentions</h2>
+            <span className="text-[11px] uppercase tracking-wide text-neutral-500">
+              From watched channels
+            </span>
+          </div>
+          <SlackSection
+            mentions={slackMentions}
+            emptyHint="No Slack mentions yet — messages from watched channels that name this school/partner (or one of its linked contacts) will appear here."
+          />
         </section>
 
         <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
