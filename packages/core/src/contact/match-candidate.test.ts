@@ -18,16 +18,21 @@ interface Row {
   deletedAt: Date | null
 }
 
-type Cond = { firstName?: { equals: string }; lastName?: { equals: string } }
+type NameCol = { equals?: string; startsWith?: string }
+type Cond = { firstName?: NameCol; lastName?: NameCol }
+
+function colMatches(value: string | null, col: NameCol | undefined): boolean {
+  if (!col) return false
+  const v = (value ?? '').toLowerCase()
+  if (col.equals !== undefined) return v === col.equals.toLowerCase()
+  if (col.startsWith !== undefined) return v.startsWith(col.startsWith.toLowerCase())
+  return false
+}
 
 function matchesNameCond(r: Row, cond: Cond): boolean {
-  if (cond.firstName && (r.firstName ?? '').toLowerCase() !== cond.firstName.equals.toLowerCase()) {
-    return false
-  }
-  if (cond.lastName && (r.lastName ?? '').toLowerCase() !== cond.lastName.equals.toLowerCase()) {
-    return false
-  }
-  return Boolean(cond.firstName || cond.lastName)
+  if (cond.firstName) return colMatches(r.firstName, cond.firstName)
+  if (cond.lastName) return colMatches(r.lastName, cond.lastName)
+  return false
 }
 
 function fakeDb(rows: Row[]): MatchDb {
@@ -127,6 +132,36 @@ describe('matchContactByCandidate', () => {
     const r = await matchContactByCandidate(fakeDb([jane]), {})
     expect(r).toMatchObject({ contactId: null, reason: 'no_candidate' })
   })
+
+  // Fuzzy pass is OPT-IN — default (exact) must NOT match a nickname/prefix.
+  it('does NOT match a nickname by default (exact only)', async () => {
+    const jonathan: Row = { ...jane, id: 'cj', firstName: 'Jonathan', lastName: 'Doe' }
+    const r = await matchContactByCandidate(fakeDb([jonathan]), { name: 'Jon Doe' })
+    expect(r.contactId).toBeNull()
+  })
+
+  it('matches a nickname when fuzzy is enabled (Jon → Jonathan)', async () => {
+    const jonathan: Row = { ...jane, id: 'cj', firstName: 'Jonathan', lastName: 'Doe' }
+    const r = await matchContactByCandidate(fakeDb([jonathan]), { name: 'Jon Doe' }, { fuzzy: true })
+    expect(r).toMatchObject({ contactId: 'cj', via: 'name', reason: 'matched', fuzzy: true })
+  })
+
+  it('fuzzy matches a first-name prefix unambiguously (Bartho → Bartholomew)', async () => {
+    const bart: Row = { ...jane, id: 'cb', firstName: 'Bartholomew', lastName: 'Reed' }
+    const r = await matchContactByCandidate(
+      fakeDb([bart]),
+      { name: 'Bartho Reed' },
+      { fuzzy: true },
+    )
+    expect(r).toMatchObject({ contactId: 'cb', reason: 'matched', fuzzy: true })
+  })
+
+  it('fuzzy still refuses to guess between two candidates', async () => {
+    const a: Row = { ...jane, id: 'a', firstName: 'Jonathan', lastName: 'Doe' }
+    const b: Row = { ...jane, id: 'b', firstName: 'Jonny', lastName: 'Doe' }
+    const r = await matchContactByCandidate(fakeDb([a, b]), { name: 'Jon Doe' }, { fuzzy: true })
+    expect(r).toMatchObject({ contactId: null, reason: 'ambiguous' })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -158,8 +193,10 @@ function fakeAccountDb(rows: AccountRow[]): MatchAccountDb {
           const phone = where['contactPhone'] as { in?: string[]; contains?: string } | undefined
           if (phone?.in && !phone.in.includes(r.contactPhone ?? '')) return false
           if (phone?.contains && !(r.contactPhone ?? '').includes(phone.contains)) return false
-          const name = where['name'] as { equals: string } | undefined
-          if (name && !insens(r.name, name.equals)) return false
+          const name = where['name'] as { equals?: string; contains?: string } | undefined
+          if (name?.equals && !insens(r.name, name.equals)) return false
+          if (name?.contains && !r.name.toLowerCase().includes(name.contains.toLowerCase()))
+            return false
           const or = where['OR'] as Array<Record<string, { endsWith?: string; contains?: string }>>
             | undefined
           if (or) {
@@ -239,5 +276,19 @@ describe('matchBusinessAccountByCandidate', () => {
   it('reports no_candidate when nothing was provided', async () => {
     const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood]), {})
     expect(r).toMatchObject({ businessAccountId: null, reason: 'no_candidate' })
+  })
+
+  it('does NOT partial-match a name unless fuzzy is enabled', async () => {
+    const r = await matchBusinessAccountByCandidate(fakeAccountDb([oakwood]), { name: 'Oakwood' })
+    expect(r.businessAccountId).toBeNull()
+  })
+
+  it('fuzzy partial-matches an org name (Oakwood → Oakwood Primary)', async () => {
+    const r = await matchBusinessAccountByCandidate(
+      fakeAccountDb([oakwood]),
+      { name: 'Oakwood' },
+      { fuzzy: true },
+    )
+    expect(r).toMatchObject({ businessAccountId: 'a1', via: 'name', reason: 'matched', fuzzy: true })
   })
 })

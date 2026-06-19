@@ -174,6 +174,7 @@ export const slackEventReceived = inngest.createFunction(
                 suggestedNextAction: null,
                 confidence: 1,
                 matchedVia: rulesTarget.via,
+                matchFuzzy: rulesTarget.fuzzy ?? false,
                 linkedTo: rulesTarget.kind,
                 promptVersion: 'rules-v1',
               },
@@ -347,6 +348,7 @@ export const slackEventReceived = inngest.createFunction(
             suggestedNextAction: parsed.suggestedNextAction,
             confidence: parsed.confidence,
             matchedVia: target.via,
+            matchFuzzy: target.fuzzy ?? false,
             linkedTo: target.kind,
             promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
           },
@@ -427,12 +429,14 @@ export const aiDriftTriageReminder = inngest.createFunction(
 
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as SLACK_BACKFILL_FUNCTIONS } from './backfill'
-// ADR 0034 amendment: recurring auto-relink of parked mentions.
-import { slackRelinkUnassigned } from './relink'
+// ADR 0034 amendment: recurring auto-relink of parked mentions + its on-demand
+// twin (the "Re-run Slack matching now" button).
+import { slackRelinkNow, slackRelinkUnassigned } from './relink'
 
 export const FUNCTIONS = [
   slackEventReceived,
   aiDriftTriageReminder,
   slackRelinkUnassigned,
+  slackRelinkNow,
   ...SLACK_BACKFILL_FUNCTIONS,
 ] as const

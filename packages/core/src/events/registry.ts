@@ -579,6 +579,10 @@ export const INNGEST_EVENT_NAMES = [
   'trengo/event.received',
   'asana/event.received',
   'slack/event.received',
+  // On-demand "re-run Slack matching now" — Manager+ from the /inbox/slack-mentions
+  // tray. Re-runs the relink + retro-stamp passes immediately (the cron also does
+  // this every 30 min).
+  'slack/relink-now.requested',
   'gmail/event.received',
   'booking/event.received',
   'aircall/transcribe-fallback',
