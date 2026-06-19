@@ -91,6 +91,166 @@ async function threadParentTextForRow(row: {
   return resolveThreadParentText({ channelId: row.channelId, threadTs })
 }
 
+/**
+ * One pass over open parked rows: re-run the resolver and auto-link the
+ * unambiguous ones. Shared by the recurring cron and the on-demand button.
+ * `actorId` tags the audit row with which path triggered it.
+ */
+export async function relinkParkedRowsOnce(
+  actorId: string,
+): Promise<{ scanned: number; linked: number }> {
+  const rows = await db.unassignedSummary.findMany({
+    where: { resolvedAt: null },
+    orderBy: { createdAt: 'asc' },
+    take: RELINK_BATCH,
+    select: {
+      id: true,
+      slackTs: true,
+      channelId: true,
+      parsed: true,
+      confidence: true,
+      messageText: true,
+      senderName: true,
+      createdAt: true,
+    },
+  })
+
+  let linked = 0
+  let threadBudget = RELINK_THREAD_FETCHES
+  for (const row of rows) {
+    const cand = candidateFromParsed(row.parsed)
+    // Merge the stored AI candidate with a fresh deterministic scan of the
+    // original message (catches an email/phone the first pass missed, and
+    // costs nothing). extractContactSignals understands Slack's <tel:>/
+    // <mailto:> markup as well as plain text.
+    const fromText = extractContactSignals(row.messageText ?? '')
+    const candidate = {
+      name: cand.name,
+      email: cand.email ?? fromText.email,
+      phone: cand.phone ?? fromText.phone,
+    }
+
+    let target =
+      candidate.name || candidate.email || candidate.phone
+        ? await resolveSlackLinkTarget(candidate)
+        : null
+
+    // Thread-aware retry: a reply that named no customer inherits its thread
+    // root's email/phone. Bounded per tick (Slack rate limits).
+    if (!target && threadBudget > 0) {
+      threadBudget -= 1
+      const parentText = await threadParentTextForRow(row)
+      if (parentText) {
+        const parentSig = extractContactSignals(parentText)
+        const withParent = {
+          name: candidate.name,
+          email: candidate.email ?? parentSig.email,
+          phone: candidate.phone ?? parentSig.phone,
+        }
+        if (
+          (withParent.email && withParent.email !== candidate.email) ||
+          (withParent.phone && withParent.phone !== candidate.phone)
+        ) {
+          target = await resolveSlackLinkTarget(withParent)
+        }
+      }
+    }
+
+    if (!target) continue
+
+    // Idempotent: a row may have been linked by a concurrent pass, or a
+    // prior tick that failed after the interaction write. Dedupe on the
+    // Slack ts already archived in a slack_summary payload.
+    const existing = await db.interaction.findFirst({
+      where: { type: 'slack_summary', payload: { path: ['slackTs'], equals: row.slackTs } },
+      select: { id: true },
+    })
+    let interactionId = existing?.id ?? null
+    if (!interactionId) {
+      const created = await db.interaction.create({
+        data: {
+          id: createId(),
+          type: 'slack_summary',
+          ...targetForeignKey(target),
+          occurredAt: row.createdAt,
+          summary: (cand.summary ?? row.messageText ?? 'Slack message').slice(0, 280),
+          payload: {
+            event: 'slack.message_summarised',
+            slackTs: row.slackTs,
+            channelId: row.channelId,
+            permalink: buildSlackPermalink(row.channelId, row.slackTs, null),
+            messageText: row.messageText,
+            senderName: row.senderName,
+            category: cand.category ?? 'general',
+            sentiment: cand.sentiment ?? 'neutral',
+            suggestedNextAction: cand.suggestedNextAction,
+            confidence: row.confidence,
+            matchedVia: target.via,
+            matchFuzzy: target.fuzzy ?? false,
+            linkedTo: target.kind,
+            autoRelinked: true,
+            promptVersion: cand.promptVersion ?? 'relink-v1',
+          },
+        },
+        select: { id: true },
+      })
+      interactionId = created.id
+      await writeAuditLogEntry(db, {
+        actorId,
+        action: 'slack.message_summarised',
+        target: targetAuditTarget(target),
+        requestId: `slack-relink:${row.id}`,
+        after: { interactionId, matchedVia: target.via, autoRelinked: true },
+      })
+    }
+
+    await db.unassignedSummary.update({
+      where: { id: row.id },
+      data: { resolvedAt: new Date() },
+    })
+    linked += 1
+  }
+
+  return { scanned: rows.length, linked }
+}
+
+/**
+ * Retro-stamp: existing slack_summary mentions linked to a contact who belongs
+ * to a B2B account (school / partnership) were written before §12 account-
+ * stamping existed, so they never showed on the school's timeline. Walk the
+ * (small) set of account-linked contacts and fill the blank `businessAccountId`
+ * on their mentions. Idempotent (once stamped the row is excluded) and
+ * self-healing as new BusinessAccountContact links appear.
+ */
+export async function retroStampSchoolMentionsOnce(): Promise<{
+  contacts: number
+  stamped: number
+}> {
+  const links = await db.businessAccountContact.findMany({
+    select: { contactId: true, accountId: true },
+    orderBy: { accountId: 'asc' },
+    take: RETRO_LINK_BUDGET,
+  })
+  // One primary account per contact — lowest accountId, matching the live
+  // resolver's deterministic choice.
+  const primary = new Map<string, string>()
+  for (const l of links) if (!primary.has(l.contactId)) primary.set(l.contactId, l.accountId)
+  let stamped = 0
+  for (const [contactId, accountId] of primary) {
+    const res = await db.interaction.updateMany({
+      where: {
+        type: 'slack_summary',
+        contactId,
+        businessAccountId: null,
+        deletedAt: null,
+      },
+      data: { businessAccountId: accountId },
+    })
+    stamped += res.count
+  }
+  return { contacts: primary.size, stamped }
+}
+
 export const slackRelinkUnassigned = inngest.createFunction(
   {
     id: 'slack/relink-unassigned',
@@ -100,154 +260,39 @@ export const slackRelinkUnassigned = inngest.createFunction(
   },
   { cron: '*/30 * * * *' },
   async ({ step, logger }) => {
-    const result = await step.run('relink', async () => {
-      const rows = await db.unassignedSummary.findMany({
-        where: { resolvedAt: null },
-        orderBy: { createdAt: 'asc' },
-        take: RELINK_BATCH,
-        select: {
-          id: true,
-          slackTs: true,
-          channelId: true,
-          parsed: true,
-          confidence: true,
-          messageText: true,
-          senderName: true,
-          createdAt: true,
-        },
-      })
-
-      let linked = 0
-      let threadBudget = RELINK_THREAD_FETCHES
-      for (const row of rows) {
-        const cand = candidateFromParsed(row.parsed)
-        // Merge the stored AI candidate with a fresh deterministic scan of the
-        // original message (catches an email/phone the first pass missed, and
-        // costs nothing). extractContactSignals understands Slack's <tel:>/
-        // <mailto:> markup as well as plain text.
-        const fromText = extractContactSignals(row.messageText ?? '')
-        const candidate = {
-          name: cand.name,
-          email: cand.email ?? fromText.email,
-          phone: cand.phone ?? fromText.phone,
-        }
-
-        let target =
-          candidate.name || candidate.email || candidate.phone
-            ? await resolveSlackLinkTarget(candidate)
-            : null
-
-        // Thread-aware retry: a reply that named no customer inherits its thread
-        // root's email/phone. Bounded per tick (Slack rate limits).
-        if (!target && threadBudget > 0) {
-          threadBudget -= 1
-          const parentText = await threadParentTextForRow(row)
-          if (parentText) {
-            const parentSig = extractContactSignals(parentText)
-            const withParent = {
-              name: candidate.name,
-              email: candidate.email ?? parentSig.email,
-              phone: candidate.phone ?? parentSig.phone,
-            }
-            if (
-              (withParent.email && withParent.email !== candidate.email) ||
-              (withParent.phone && withParent.phone !== candidate.phone)
-            ) {
-              target = await resolveSlackLinkTarget(withParent)
-            }
-          }
-        }
-
-        if (!target) continue
-
-        // Idempotent: a row may have been linked by a concurrent pass, or a
-        // prior tick that failed after the interaction write. Dedupe on the
-        // Slack ts already archived in a slack_summary payload.
-        const existing = await db.interaction.findFirst({
-          where: { type: 'slack_summary', payload: { path: ['slackTs'], equals: row.slackTs } },
-          select: { id: true },
-        })
-        let interactionId = existing?.id ?? null
-        if (!interactionId) {
-          const created = await db.interaction.create({
-            data: {
-              id: createId(),
-              type: 'slack_summary',
-              ...targetForeignKey(target),
-              occurredAt: row.createdAt,
-              summary: (cand.summary ?? row.messageText ?? 'Slack message').slice(0, 280),
-              payload: {
-                event: 'slack.message_summarised',
-                slackTs: row.slackTs,
-                channelId: row.channelId,
-                permalink: buildSlackPermalink(row.channelId, row.slackTs, null),
-                messageText: row.messageText,
-                senderName: row.senderName,
-                category: cand.category ?? 'general',
-                sentiment: cand.sentiment ?? 'neutral',
-                suggestedNextAction: cand.suggestedNextAction,
-                confidence: row.confidence,
-                matchedVia: target.via,
-                linkedTo: target.kind,
-                autoRelinked: true,
-                promptVersion: cand.promptVersion ?? 'relink-v1',
-              },
-            },
-            select: { id: true },
-          })
-          interactionId = created.id
-          await writeAuditLogEntry(db, {
-            actorId: 'system:slack/relink-unassigned',
-            action: 'slack.message_summarised',
-            target: targetAuditTarget(target),
-            requestId: `slack-relink:${row.id}`,
-            after: { interactionId, matchedVia: target.via, autoRelinked: true },
-          })
-        }
-
-        await db.unassignedSummary.update({
-          where: { id: row.id },
-          data: { resolvedAt: new Date() },
-        })
-        linked += 1
-      }
-
-      return { scanned: rows.length, linked }
-    })
-
-    // Retro-stamp: existing slack_summary mentions linked to a contact who
-    // belongs to a B2B account (school / partnership) were written before §12
-    // account-stamping existed, so they never showed on the school's timeline.
-    // Walk the (small) set of account-linked contacts and fill the blank
-    // `businessAccountId` on their mentions. Idempotent (once stamped the row is
-    // excluded) and self-healing as new BusinessAccountContact links appear.
-    const retro = await step.run('retro-stamp-school-mentions', async () => {
-      const links = await db.businessAccountContact.findMany({
-        select: { contactId: true, accountId: true },
-        orderBy: { accountId: 'asc' },
-        take: RETRO_LINK_BUDGET,
-      })
-      // One primary account per contact — lowest accountId, matching the live
-      // resolver's deterministic choice.
-      const primary = new Map<string, string>()
-      for (const l of links) if (!primary.has(l.contactId)) primary.set(l.contactId, l.accountId)
-      let stamped = 0
-      for (const [contactId, accountId] of primary) {
-        const res = await db.interaction.updateMany({
-          where: {
-            type: 'slack_summary',
-            contactId,
-            businessAccountId: null,
-            deletedAt: null,
-          },
-          data: { businessAccountId: accountId },
-        })
-        stamped += res.count
-      }
-      return { contacts: primary.size, stamped }
-    })
-
+    const result = await step.run('relink', async () =>
+      relinkParkedRowsOnce('system:slack/relink-unassigned'),
+    )
+    const retro = await step.run('retro-stamp-school-mentions', async () =>
+      retroStampSchoolMentionsOnce(),
+    )
     logger.info({ ...result, ...retro }, 'slack relink-unassigned complete')
+    return { ...result, ...retro }
+  },
+)
+
+/**
+ * On-demand twin of the cron — fired by the "Re-run Slack matching now" button
+ * (tRPC `slackSummary.unassigned.relinkNow`). Same two passes, immediately.
+ */
+export const slackRelinkNow = inngest.createFunction(
+  {
+    id: 'slack/relink-now',
+    name: 'Re-run Slack matching on demand',
+    concurrency: { limit: 1 },
+    retries: 1,
+  },
+  { event: 'slack/relink-now.requested' },
+  async ({ event, step, logger }) => {
+    const actorId =
+      typeof (event.data as { actorId?: string })?.actorId === 'string'
+        ? (event.data as { actorId: string }).actorId
+        : 'system:slack/relink-now'
+    const result = await step.run('relink', async () => relinkParkedRowsOnce(actorId))
+    const retro = await step.run('retro-stamp-school-mentions', async () =>
+      retroStampSchoolMentionsOnce(),
+    )
+    logger.info({ ...result, ...retro }, 'slack relink-now complete')
     return { ...result, ...retro }
   },
 )

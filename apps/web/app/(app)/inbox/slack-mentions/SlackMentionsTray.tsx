@@ -26,6 +26,7 @@ export function SlackMentionsTray() {
   const diagnostics = trpc.slackSummary.unassigned.diagnostics.useQuery(undefined, {
     staleTime: 5 * 60_000,
   })
+  const relinkNow = trpc.slackSummary.unassigned.relinkNow.useMutation()
   const items = listQuery.data ?? []
   const aiOff = diagnostics.data?.aiConfigured === false
 
@@ -35,6 +36,34 @@ export function SlackMentionsTray() {
       utils.slackSummary.unassigned.count.invalidate(),
     ])
   }
+
+  const header = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-xs text-neutral-500">
+        Matching also runs automatically every 30 minutes.
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        disabled={relinkNow.isPending}
+        onClick={async () => {
+          try {
+            await relinkNow.mutateAsync()
+            toast.success(
+              'Re-running Slack matching now — newly matched mentions will appear shortly.',
+            )
+            // Give the job a moment, then refresh the tray.
+            setTimeout(() => void refresh(), 4000)
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : 'Could not start re-matching')
+          }
+        }}
+      >
+        {relinkNow.isPending ? 'Starting…' : 'Re-run matching now'}
+      </Button>
+    </div>
+  )
 
   const banner = aiOff ? (
     <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -46,11 +75,17 @@ export function SlackMentionsTray() {
   ) : null
 
   if (listQuery.isLoading) {
-    return <p className="text-sm text-neutral-500">Loading…</p>
+    return (
+      <div className="space-y-3">
+        {header}
+        <p className="text-sm text-neutral-500">Loading…</p>
+      </div>
+    )
   }
   if (items.length === 0) {
     return (
       <div className="space-y-3">
+        {header}
         {banner}
         <Card className="px-10 py-14 text-center">
           <p className="text-sm font-medium text-neutral-800">Nothing to triage.</p>
@@ -64,14 +99,17 @@ export function SlackMentionsTray() {
   }
 
   return (
-    <ul className="space-y-3">
-      {aiOff ? <li>{banner}</li> : null}
-      {items.map((m) => (
-        <li key={m.id}>
-          <MentionCard mention={m} onDone={refresh} />
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-3">
+      {header}
+      {aiOff ? banner : null}
+      <ul className="space-y-3">
+        {items.map((m) => (
+          <li key={m.id}>
+            <MentionCard mention={m} onDone={refresh} />
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

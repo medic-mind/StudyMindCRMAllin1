@@ -10,6 +10,8 @@
 // contact never resolves (§3 never auto-merge, §41.1 — the caller surfaces the
 // candidates for a human to pick).
 
+import { nameVariants } from './nicknames'
+
 export interface MatchCandidate {
   /** Full name (first + last) the message/agent referenced. */
   name?: string | null
@@ -41,7 +43,21 @@ export interface MatchOutcome {
   via: MatchVia | null
   /** Why no contact was attached (for the tray + logs). */
   reason: 'matched' | 'no_candidate' | 'no_match' | 'ambiguous'
+  /** True when the match was made by the opt-in fuzzy pass (nickname / prefix /
+   *  partial org name) rather than an exact identifier — callers tag the record
+   *  so a fuzzy auto-link is auditable and reversible. */
+  fuzzy?: boolean
 }
+
+/** Opt-in widening for name matching. OFF by default (exact only, §3); the Slack
+ *  resolver turns it on. Always still bounded by the unambiguous-only guard. */
+export interface MatchOptions {
+  fuzzy?: boolean
+}
+
+/** Minimum token length before we attempt a first-name prefix / partial org
+ *  match — shorter stems ("Jo", "St") match far too broadly. */
+const FUZZY_MIN_TOKEN = 4
 
 /** E.164-ish variants for a phone as people type it ("07700 900123",
  *  "+44 7700 900123", "447700900123"). */
@@ -99,6 +115,7 @@ async function uniqueOrNull(
 export async function matchContactByCandidate(
   db: MatchDb,
   candidate: MatchCandidate,
+  options: MatchOptions = {},
 ): Promise<MatchOutcome> {
   const email = candidate.email?.trim().toLowerCase() ?? null
   const phone = candidate.phone?.trim() ?? null
@@ -163,6 +180,35 @@ export async function matchContactByCandidate(
     })
     if (single.id) return { contactId: single.id, via: 'name', reason: 'matched' }
     if (single.ambiguous) sawAmbiguity = true
+
+    // Opt-in fuzzy pass (Slack resolver only): nickname equivalence + a
+    // first-name prefix. Still unambiguous-only — exactly one contact must
+    // match, otherwise we leave it for a human (§3). Tagged `fuzzy` so the
+    // auto-link is auditable.
+    if (options.fuzzy) {
+      const tokens = name.split(' ')
+      const first = tokens[0]!
+      const last = tokens.length >= 2 ? tokens.slice(1).join(' ') : null
+      const variants = nameVariants(first)
+      const or: Record<string, unknown>[] = []
+      for (const v of variants) {
+        // A nickname/canonical equivalent in either name column.
+        or.push({ firstName: { equals: v, mode: 'insensitive' } })
+        or.push({ lastName: { equals: v, mode: 'insensitive' } })
+      }
+      // First-name prefix ("Jonny" ~ "Jonathan"), guarded by a min length.
+      if (first.length >= FUZZY_MIN_TOKEN) {
+        or.push({ firstName: { startsWith: first, mode: 'insensitive' } })
+      }
+      const where: Record<string, unknown> = last
+        ? // With a surname given, anchor on it so the looser first-name match
+          // can't drift to a different family.
+          { deletedAt: null, lastName: { equals: last, mode: 'insensitive' }, OR: or }
+        : { deletedAt: null, OR: or }
+      const fuzzy = await uniqueOrNull(db, where)
+      if (fuzzy.id) return { contactId: fuzzy.id, via: 'name', reason: 'matched', fuzzy: true }
+      if (fuzzy.ambiguous) sawAmbiguity = true
+    }
   }
 
   return { contactId: null, via: null, reason: sawAmbiguity ? 'ambiguous' : 'no_match' }
@@ -206,6 +252,8 @@ export interface MatchAccountOutcome {
   businessAccountId: string | null
   via: MatchAccountVia | null
   reason: 'matched' | 'no_candidate' | 'no_match' | 'ambiguous'
+  /** True when matched by the opt-in fuzzy pass (partial org name). */
+  fuzzy?: boolean
 }
 
 /** Free webmail providers — a candidate's @gmail.com tells us nothing about
@@ -238,6 +286,7 @@ async function uniqueAccountOrNull(
 export async function matchBusinessAccountByCandidate(
   db: MatchAccountDb,
   candidate: MatchCandidate,
+  options: MatchOptions = {},
 ): Promise<MatchAccountOutcome> {
   const email = candidate.email?.trim().toLowerCase() ?? null
   const phone = candidate.phone?.trim() ?? null
@@ -303,6 +352,19 @@ export async function matchBusinessAccountByCandidate(
     })
     if (hit.id) return { businessAccountId: hit.id, via: 'name', reason: 'matched' }
     if (hit.ambiguous) sawAmbiguity = true
+
+    // Opt-in fuzzy pass: a partial org name ("spoke to Oakwood" → "Oakwood
+    // Primary School"). Unambiguous-only and length-guarded so a short stem
+    // can't match every account. Tagged `fuzzy` for auditability.
+    if (options.fuzzy && name.length >= FUZZY_MIN_TOKEN) {
+      const partial = await uniqueAccountOrNull(db, {
+        name: { contains: name, mode: 'insensitive' },
+        archivedAt: null,
+      })
+      if (partial.id)
+        return { businessAccountId: partial.id, via: 'name', reason: 'matched', fuzzy: true }
+      if (partial.ambiguous) sawAmbiguity = true
+    }
   }
 
   return { businessAccountId: null, via: null, reason: sawAmbiguity ? 'ambiguous' : 'no_match' }

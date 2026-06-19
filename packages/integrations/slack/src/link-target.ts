@@ -25,6 +25,9 @@ export type SlackLinkTarget = {
   contactId?: string
   businessAccountId?: string
   via: string | null
+  /** True when the link was made by the fuzzy pass (nickname / prefix / partial
+   *  org name) — stamped on the record so the approximate link is auditable. */
+  fuzzy?: boolean
 }
 
 /**
@@ -47,7 +50,9 @@ async function primaryAccountForContact(contactId: string): Promise<string | nul
 export async function resolveSlackLinkTarget(
   candidate: MatchCandidate,
 ): Promise<SlackLinkTarget | null> {
-  const contact = await matchContactByCandidate(db, candidate)
+  // Fuzzy widening is on for Slack (nicknames, partial org names), always
+  // behind the matcher's unambiguous-only guard (§3).
+  const contact = await matchContactByCandidate(db, candidate, { fuzzy: true })
   if (contact.contactId) {
     const businessAccountId = await primaryAccountForContact(contact.contactId)
     return {
@@ -55,11 +60,17 @@ export async function resolveSlackLinkTarget(
       contactId: contact.contactId,
       ...(businessAccountId ? { businessAccountId } : {}),
       via: contact.via,
+      ...(contact.fuzzy ? { fuzzy: true } : {}),
     }
   }
-  const account = await matchBusinessAccountByCandidate(db, candidate)
+  const account = await matchBusinessAccountByCandidate(db, candidate, { fuzzy: true })
   if (account.businessAccountId) {
-    return { kind: 'account', businessAccountId: account.businessAccountId, via: account.via }
+    return {
+      kind: 'account',
+      businessAccountId: account.businessAccountId,
+      via: account.via,
+      ...(account.fuzzy ? { fuzzy: true } : {}),
+    }
   }
   return null
 }

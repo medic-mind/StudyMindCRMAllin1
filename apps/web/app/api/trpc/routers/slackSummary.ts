@@ -25,6 +25,8 @@ const TRIAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'sales_executive',
 ])
 
+const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['ceo', 'senior_manager', 'manager'])
+
 function assertCanTriage(role: UserRole): void {
   if (!TRIAGE_ROLES.has(role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Sales Executive or above can triage' })
@@ -208,6 +210,34 @@ export const slackSummaryRouter = router({
         })
         return { interactionId }
       }),
+
+    /**
+     * Re-run Slack matching immediately (the cron also does this every 30 min).
+     * Fires the on-demand Inngest twin which (1) re-runs the resolver over every
+     * parked row and auto-links the unambiguous ones, and (2) retro-stamps
+     * historic contact-linked mentions onto their school. Returns once enqueued;
+     * results land asynchronously. Manager+ — a workspace-wide reprocess.
+     */
+    relinkNow: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!MANAGE_ROLES.has(user.role)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only Manager or above can re-run Slack matching',
+        })
+      }
+      const { inngest } = await import('@studymind/jobs')
+      await inngest.send({
+        name: 'slack/relink-now.requested',
+        data: { actorId: user.id },
+      })
+      await ctx.audit({
+        action: 'slack_summary.relink_requested',
+        target: { type: 'System', id: 'slack-relink' },
+        after: { requestedBy: user.id },
+      })
+      return { ok: true as const }
+    }),
 
     /** Dismiss a parked mention — no record written, just cleared from the tray. */
     dismiss: auditedProcedure
