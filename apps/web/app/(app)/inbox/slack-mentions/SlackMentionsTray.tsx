@@ -94,7 +94,7 @@ interface Mention {
 }
 
 function MentionCard({ mention, onDone }: { mention: Mention; onDone: () => Promise<void> }) {
-  const [assigning, setAssigning] = useState(false)
+  const [assigning, setAssigning] = useState<null | 'contact' | 'account'>(null)
   const assign = trpc.slackSummary.unassigned.assign.useMutation()
   const dismiss = trpc.slackSummary.unassigned.dismiss.useMutation()
   const now = new Date()
@@ -127,7 +127,7 @@ function MentionCard({ mention, onDone }: { mention: Mention; onDone: () => Prom
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {assigning ? (
+        {assigning === 'contact' ? (
           <ContactPicker
             initialQuery={mention.candidateName ?? mention.candidateEmail ?? ''}
             onPick={async (contactId) => {
@@ -139,13 +139,36 @@ function MentionCard({ mention, onDone }: { mention: Mention; onDone: () => Prom
                 toast.error(e instanceof Error ? e.message : 'Could not assign')
               }
             }}
-            onCancel={() => setAssigning(false)}
+            onCancel={() => setAssigning(null)}
+            busy={assign.isPending}
+          />
+        ) : assigning === 'account' ? (
+          <AccountPicker
+            initialQuery={mention.candidateName ?? ''}
+            onPick={async (businessAccountId) => {
+              try {
+                await assign.mutateAsync({ id: mention.id, businessAccountId })
+                toast.success('Saved to the school/partner timeline')
+                await onDone()
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Could not assign')
+              }
+            }}
+            onCancel={() => setAssigning(null)}
             busy={assign.isPending}
           />
         ) : (
           <>
-            <Button type="button" size="sm" onClick={() => setAssigning(true)}>
+            <Button type="button" size="sm" onClick={() => setAssigning('contact')}>
               Assign to customer
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => setAssigning('account')}
+            >
+              Assign to school/B2B
             </Button>
             <Button
               type="button"
@@ -234,6 +257,65 @@ function ContactPicker({
       ) : (
         <p className="mt-2 px-1 text-[11px] text-neutral-500">Type at least 2 characters.</p>
       )}
+    </div>
+  )
+}
+
+function AccountPicker({
+  initialQuery,
+  onPick,
+  onCancel,
+  busy,
+}: {
+  initialQuery: string
+  onPick: (businessAccountId: string) => void | Promise<void>
+  onCancel: () => void
+  busy: boolean
+}) {
+  const [q, setQ] = useState(initialQuery)
+  // The active set is small — load it once and filter client-side.
+  const accounts = trpc.businessAccount.pickList.useQuery({})
+  const all = accounts.data ?? []
+  const needle = q.trim().toLowerCase()
+  const items = (needle.length === 0 ? all : all.filter((a) => a.name.toLowerCase().includes(needle))).slice(
+    0,
+    8,
+  )
+
+  return (
+    <div className="w-full max-w-md rounded-md border border-primary-200 bg-primary-50/40 p-2">
+      <div className="flex items-center gap-2">
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search schools / B2B partners by name…"
+          autoFocus
+        />
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+      <ul className="mt-2 max-h-48 divide-y divide-neutral-100 overflow-y-auto rounded bg-white">
+        {accounts.isLoading ? (
+          <li className="px-3 py-2 text-xs text-neutral-500">Loading…</li>
+        ) : items.length === 0 ? (
+          <li className="px-3 py-2 text-xs text-neutral-500">No matching accounts.</li>
+        ) : (
+          items.map((a) => (
+            <li key={a.id}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void onPick(a.id)}
+                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-neutral-50 disabled:opacity-50"
+              >
+                <span className="font-medium text-neutral-900">{a.name}</span>
+                <span className="text-xs uppercase tracking-wide text-neutral-500">{a.kind}</span>
+              </button>
+            </li>
+          ))
+        )}
+      </ul>
     </div>
   )
 }

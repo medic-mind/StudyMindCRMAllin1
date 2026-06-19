@@ -64,6 +64,10 @@ export const RELINK_BATCH = 200
  *  rate-limited). The rest of the backlog is retried on the next tick. */
 export const RELINK_THREAD_FETCHES = 40
 
+/** Cap on account-linked contacts scanned per tick for the retro-stamp pass.
+ *  The junction is small relative to interactions; this bound is a safety net. */
+export const RETRO_LINK_BUDGET = 5000
+
 /**
  * A parked reply often names no customer of its own because its thread ROOT did
  * ("Sampada Neupane +447588744609"). The live ingestion now reads the parent,
@@ -211,7 +215,39 @@ export const slackRelinkUnassigned = inngest.createFunction(
       return { scanned: rows.length, linked }
     })
 
-    logger.info(result, 'slack relink-unassigned complete')
-    return result
+    // Retro-stamp: existing slack_summary mentions linked to a contact who
+    // belongs to a B2B account (school / partnership) were written before §12
+    // account-stamping existed, so they never showed on the school's timeline.
+    // Walk the (small) set of account-linked contacts and fill the blank
+    // `businessAccountId` on their mentions. Idempotent (once stamped the row is
+    // excluded) and self-healing as new BusinessAccountContact links appear.
+    const retro = await step.run('retro-stamp-school-mentions', async () => {
+      const links = await db.businessAccountContact.findMany({
+        select: { contactId: true, accountId: true },
+        orderBy: { accountId: 'asc' },
+        take: RETRO_LINK_BUDGET,
+      })
+      // One primary account per contact — lowest accountId, matching the live
+      // resolver's deterministic choice.
+      const primary = new Map<string, string>()
+      for (const l of links) if (!primary.has(l.contactId)) primary.set(l.contactId, l.accountId)
+      let stamped = 0
+      for (const [contactId, accountId] of primary) {
+        const res = await db.interaction.updateMany({
+          where: {
+            type: 'slack_summary',
+            contactId,
+            businessAccountId: null,
+            deletedAt: null,
+          },
+          data: { businessAccountId: accountId },
+        })
+        stamped += res.count
+      }
+      return { contacts: primary.size, stamped }
+    })
+
+    logger.info({ ...result, ...retro }, 'slack relink-unassigned complete')
+    return { ...result, ...retro }
   },
 )
