@@ -426,24 +426,55 @@ export async function slackMentionsForContact(
     select: { id: true, occurredAt: true, summary: true, payload: true },
   })
   const { sliced, nextCursor: nc } = nextCursor(rows, limit)
-  const items: SlackMention[] = sliced.map((r) => {
-    const p = asObject(r.payload)
-    return {
-      id: r.id,
-      occurredAt: r.occurredAt,
-      channelId: asString(p['channelId']),
-      channelName: asString(p['channelName']),
-      senderName: asString(p['senderName']),
-      messageText: asString(p['messageText']),
-      summary: r.summary,
-      category: asString(p['category']),
-      sentiment: asString(p['sentiment']),
-      suggestedNextAction: asString(p['suggestedNextAction']),
-      permalink: asString(p['permalink']) ?? asString(p['slackPermalink']),
-      confidence: asNumber(p['confidence']),
-    }
-  })
+  const items: SlackMention[] = sliced.map(rowToSlackMention)
   return { items, nextCursor: nc }
+}
+
+/** Slack mentions filed against a B2B account (school / partnership) — either a
+ *  direct org-level match, or a contact-linked mention that was also stamped
+ *  with `businessAccountId` (§12). Mirrors `slackMentionsForContact`. */
+export async function slackMentionsForAccount(
+  db: PrismaClient,
+  input: { businessAccountId: string; limit?: number; cursor?: ChannelCursor | null },
+): Promise<Paginated<SlackMention>> {
+  const limit = clampLimit(input.limit)
+  const rows = await db.interaction.findMany({
+    where: {
+      businessAccountId: input.businessAccountId,
+      deletedAt: null,
+      type: 'slack_summary',
+      ...cursorWhere(input.cursor),
+    },
+    orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    select: { id: true, occurredAt: true, summary: true, payload: true },
+  })
+  const { sliced, nextCursor: nc } = nextCursor(rows, limit)
+  const items: SlackMention[] = sliced.map(rowToSlackMention)
+  return { items, nextCursor: nc }
+}
+
+function rowToSlackMention(r: {
+  id: string
+  occurredAt: Date
+  summary: string | null
+  payload: unknown
+}): SlackMention {
+  const p = asObject(r.payload)
+  return {
+    id: r.id,
+    occurredAt: r.occurredAt,
+    channelId: asString(p['channelId']),
+    channelName: asString(p['channelName']),
+    senderName: asString(p['senderName']),
+    messageText: asString(p['messageText']),
+    summary: r.summary,
+    category: asString(p['category']),
+    sentiment: asString(p['sentiment']),
+    suggestedNextAction: asString(p['suggestedNextAction']),
+    permalink: asString(p['permalink']) ?? asString(p['slackPermalink']),
+    confidence: asNumber(p['confidence']),
+  }
 }
 
 // -----------------------------------------------------------------------------

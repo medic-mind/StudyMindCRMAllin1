@@ -4,6 +4,8 @@ import type { SlackMention } from '@/lib/view-models/contact-channels'
 
 interface Props {
   mentions: SlackMention[]
+  /** Override the empty-state copy (e.g. for a B2B account vs a contact). */
+  emptyHint?: string
 }
 
 const SENTIMENT_STYLE: Record<string, string> = {
@@ -12,12 +14,12 @@ const SENTIMENT_STYLE: Record<string, string> = {
   negative: 'bg-red-100 text-red-900',
 }
 
-export function SlackSection({ mentions }: Props): JSX.Element {
+export function SlackSection({ mentions, emptyHint }: Props): JSX.Element {
   if (mentions.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-neutral-300 p-4 text-sm text-neutral-600">
-        No Slack mentions yet — summaries from watched channels that match this
-        contact will appear here.
+        {emptyHint ??
+          'No Slack mentions yet — summaries from watched channels that match this contact will appear here.'}
       </div>
     )
   }

@@ -23,6 +23,8 @@ import { z } from 'zod'
 import { loadAccountStats } from '@studymind/core/stats'
 import { BookingApiError, createClient, isConfigured } from '@studymind/integration-booking/client'
 
+import { slackMentionsForAccount } from '@/lib/view-models/contact-channels'
+
 import {
   auditedProcedure,
   protectedProcedure,
@@ -593,6 +595,22 @@ const accountTasksRouter = router({
       }))
       const isOpen = (s: string) => s !== 'done' && s !== 'cancelled'
       return { open: items.filter((t) => isOpen(t.status)), closed: items.filter((t) => !isOpen(t.status)) }
+    }),
+})
+
+// Slack mentions filed against this account — a dedicated, labelled section
+// (channel, sender, category, original text, permalink), parity with the
+// customer view's Slack section. Reads the same slack_summary Interactions the
+// importer stamps with businessAccountId (§12).
+const accountSlackRouter = router({
+  list: protectedProcedure
+    .input(z.object({ accountId: z.string(), limit: z.number().int().min(1).max(100).default(25) }))
+    .query(async ({ ctx, input }) => {
+      const { items } = await slackMentionsForAccount(ctx.db, {
+        businessAccountId: input.accountId,
+        limit: input.limit,
+      })
+      return items
     }),
 })
 
@@ -1178,5 +1196,6 @@ export const businessAccountRouter = router({
   notes: accountNotesRouter,
   tasks: accountTasksRouter,
   activity: accountActivityRouter,
+  slackMentions: accountSlackRouter,
   companies: companiesSubRouter,
 })
