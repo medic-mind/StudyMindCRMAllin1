@@ -106,9 +106,25 @@ export const slackSummaryRouter = router({
         })
       }),
 
-    /** Assign a parked mention to a contact — writes the durable record. */
+    /**
+     * Assign a parked mention to a customer Contact OR a B2B account (school /
+     * partnership) — writes the durable `slack_summary` record on whichever was
+     * chosen. Exactly one of `contactId` / `businessAccountId` must be given.
+     * When a contact is chosen we also stamp its primary account, so the mention
+     * shows on both (§12, parity with auto-import).
+     */
     assign: auditedProcedure
-      .input(z.object({ id: z.string(), contactId: z.string() }))
+      .input(
+        z
+          .object({
+            id: z.string(),
+            contactId: z.string().optional(),
+            businessAccountId: z.string().optional(),
+          })
+          .refine((v) => Boolean(v.contactId) !== Boolean(v.businessAccountId), {
+            message: 'Provide exactly one of contactId or businessAccountId',
+          }),
+      )
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
         assertCanTriage(user.role)
@@ -122,11 +138,30 @@ export const slackSummaryRouter = router({
             message: 'Mention not found or already triaged',
           })
 
-        const contact = await ctx.db.contact.findFirst({
-          where: { id: input.contactId, deletedAt: null },
-          select: { id: true },
-        })
-        if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+        // Resolve the target: a Contact (plus its primary school) or an account.
+        let contactId: string | null = null
+        let businessAccountId: string | null = null
+        if (input.contactId) {
+          const contact = await ctx.db.contact.findFirst({
+            where: { id: input.contactId, deletedAt: null },
+            select: { id: true },
+          })
+          if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+          contactId = contact.id
+          const link = await ctx.db.businessAccountContact.findFirst({
+            where: { contactId: contact.id },
+            select: { accountId: true },
+            orderBy: { accountId: 'asc' },
+          })
+          businessAccountId = link?.accountId ?? null
+        } else {
+          const account = await ctx.db.businessAccount.findFirst({
+            where: { id: input.businessAccountId, archivedAt: null },
+            select: { id: true },
+          })
+          if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
+          businessAccountId = account.id
+        }
 
         const parsed = readParsed(row.parsed)
         const occurredAt = new Date(Number(row.slackTs.split('.')[0] ?? 0) * 1000)
@@ -137,7 +172,8 @@ export const slackSummaryRouter = router({
             data: {
               id: interactionId,
               type: 'slack_summary',
-              contactId: contact.id,
+              ...(contactId ? { contactId } : {}),
+              ...(businessAccountId ? { businessAccountId } : {}),
               occurredAt,
               summary: (parsed.summary ?? row.messageText ?? 'Slack mention').slice(0, 280),
               payload: {
@@ -152,6 +188,7 @@ export const slackSummaryRouter = router({
                 sentiment: parsed.sentiment,
                 suggestedNextAction: parsed.suggestedNextAction,
                 confidence: row.confidence,
+                linkedTo: contactId ? 'contact' : 'account',
                 assignedById: user.id,
               },
             },
@@ -164,7 +201,9 @@ export const slackSummaryRouter = router({
 
         await ctx.audit({
           action: 'slack_summary.assigned',
-          target: { type: 'Contact', id: contact.id },
+          target: contactId
+            ? { type: 'Contact', id: contactId }
+            : { type: 'BusinessAccount', id: businessAccountId! },
           after: { interactionId, unassignedSummaryId: row.id, channelId: row.channelId },
         })
         return { interactionId }
