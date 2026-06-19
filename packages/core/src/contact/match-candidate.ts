@@ -167,3 +167,143 @@ export async function matchContactByCandidate(
 
   return { contactId: null, via: null, reason: sawAmbiguity ? 'ambiguous' : 'no_match' }
 }
+
+// -----------------------------------------------------------------------------
+// B2B account (school / partnership) matcher.
+//
+// A Slack note about a SCHOOL or a B2B PARTNER ("Oakwood Primary confirmed the
+// AP placement", "invoice query from admin@oakwood.sch.uk") names an ORG, not a
+// person, so it never resolves through the contact matcher above and used to be
+// lost to the unassigned tray. This resolves the candidate to ONE BusinessAccount
+// so the importer can hang the mention off the account's timeline
+// (Interaction.businessAccountId). Same discipline as the contact matcher:
+// deterministic, FREE, and unambiguous-only — a candidate that matches more than
+// one account never resolves (§3 never guess, §41.1).
+//
+// Strength order: email (exact org email) → email DOMAIN (the account's website
+// or org email shares the sender's domain — how schools are reliably spotted) →
+// phone → name (exact org name).
+// -----------------------------------------------------------------------------
+
+export interface MatchAccountRow {
+  id: string
+}
+
+/** Minimal db port for the account matcher — just the lookups it needs. */
+export interface MatchAccountDb {
+  businessAccount: {
+    findMany(args: {
+      where: Record<string, unknown>
+      select: { id: true }
+      take: number
+    }): Promise<MatchAccountRow[]>
+  }
+}
+
+export type MatchAccountVia = 'email' | 'email_domain' | 'phone' | 'name'
+
+export interface MatchAccountOutcome {
+  businessAccountId: string | null
+  via: MatchAccountVia | null
+  reason: 'matched' | 'no_candidate' | 'no_match' | 'ambiguous'
+}
+
+/** Free webmail providers — a candidate's @gmail.com tells us nothing about
+ *  WHICH org they belong to, so we never domain-match on these. */
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'hotmail.co.uk',
+  'live.com',
+  'yahoo.com',
+  'yahoo.co.uk',
+  'icloud.com',
+  'me.com',
+  'aol.com',
+  'protonmail.com',
+  'proton.me',
+])
+
+async function uniqueAccountOrNull(
+  db: MatchAccountDb,
+  where: Record<string, unknown>,
+): Promise<{ id: string | null; ambiguous: boolean }> {
+  const rows = await db.businessAccount.findMany({ where, select: { id: true }, take: 2 })
+  if (rows.length === 1) return { id: rows[0]!.id, ambiguous: false }
+  return { id: null, ambiguous: rows.length > 1 }
+}
+
+export async function matchBusinessAccountByCandidate(
+  db: MatchAccountDb,
+  candidate: MatchCandidate,
+): Promise<MatchAccountOutcome> {
+  const email = candidate.email?.trim().toLowerCase() ?? null
+  const phone = candidate.phone?.trim() ?? null
+  const name = candidate.name?.trim().replace(/\s+/gu, ' ') ?? null
+
+  if (!email && !phone && !name) {
+    return { businessAccountId: null, via: null, reason: 'no_candidate' }
+  }
+  let sawAmbiguity = false
+
+  if (email) {
+    const exact = await uniqueAccountOrNull(db, {
+      contactEmail: { equals: email, mode: 'insensitive' },
+      archivedAt: null,
+    })
+    if (exact.id) return { businessAccountId: exact.id, via: 'email', reason: 'matched' }
+    if (exact.ambiguous) sawAmbiguity = true
+
+    // Domain match: a sender at @oakwood.sch.uk belongs to the Oakwood account
+    // whose website or org email carries that domain. Skip free webmail.
+    const domain = email.split('@')[1] ?? null
+    if (domain && !FREE_EMAIL_DOMAINS.has(domain)) {
+      const byDomain = await uniqueAccountOrNull(db, {
+        archivedAt: null,
+        OR: [
+          { contactEmail: { endsWith: `@${domain}`, mode: 'insensitive' } },
+          { website: { contains: domain, mode: 'insensitive' } },
+        ],
+      })
+      if (byDomain.id)
+        return { businessAccountId: byDomain.id, via: 'email_domain', reason: 'matched' }
+      if (byDomain.ambiguous) sawAmbiguity = true
+    }
+  }
+
+  if (phone) {
+    // BusinessAccount.contactPhone is free text (not normalised E.164), so we
+    // try each normalised variant exactly, then a last-9-digits suffix contains.
+    const variants = phoneVariants(phone)
+    if (variants.length > 0) {
+      const hit = await uniqueAccountOrNull(db, {
+        contactPhone: { in: variants },
+        archivedAt: null,
+      })
+      if (hit.id) return { businessAccountId: hit.id, via: 'phone', reason: 'matched' }
+      if (hit.ambiguous) sawAmbiguity = true
+      const digits = phone.replace(/[^\d]/gu, '')
+      if (!hit.ambiguous && digits.length >= 9) {
+        const suffix = await uniqueAccountOrNull(db, {
+          contactPhone: { contains: digits.slice(-9) },
+          archivedAt: null,
+        })
+        if (suffix.id) return { businessAccountId: suffix.id, via: 'phone', reason: 'matched' }
+        if (suffix.ambiguous) sawAmbiguity = true
+      }
+    }
+  }
+
+  if (name) {
+    const hit = await uniqueAccountOrNull(db, {
+      name: { equals: name, mode: 'insensitive' },
+      archivedAt: null,
+    })
+    if (hit.id) return { businessAccountId: hit.id, via: 'name', reason: 'matched' }
+    if (hit.ambiguous) sawAmbiguity = true
+  }
+
+  return { businessAccountId: null, via: null, reason: sawAmbiguity ? 'ambiguous' : 'no_match' }
+}

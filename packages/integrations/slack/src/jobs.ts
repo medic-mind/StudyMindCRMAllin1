@@ -24,7 +24,11 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { matchContactByCandidate } from './match'
+import {
+  resolveSlackLinkTarget,
+  targetAuditTarget,
+  targetForeignKey,
+} from './link-target'
 import { extractContactSignals, slackTextToPlain } from './extract'
 import { isIngestableSlackMessage } from './message-filter'
 import { isSkippableSlackNoise } from './noise'
@@ -138,15 +142,10 @@ export const slackEventReceived = inngest.createFunction(
     const matchEmail = signals.email ?? parentSignals.email
     const matchPhone = signals.phone ?? parentSignals.phone
     if (matchEmail || matchPhone) {
-      const rulesMatch = await step.run('match-contact-rules', async () =>
-        matchContactByCandidate(db, {
-          name: null,
-          email: matchEmail,
-          phone: matchPhone,
-        }),
+      const rulesTarget = await step.run('match-target-rules', async () =>
+        resolveSlackLinkTarget({ name: null, email: matchEmail, phone: matchPhone }),
       )
-      if (rulesMatch.contactId) {
-        const contactId = rulesMatch.contactId
+      if (rulesTarget) {
         const interaction = await step.run('upsert-interaction-rules', async () => {
           const existing = await db.interaction.findFirst({
             where: { payload: { path: ['slackEventId'], equals: eventId } },
@@ -157,7 +156,7 @@ export const slackEventReceived = inngest.createFunction(
             data: {
               id: createId(),
               type: 'slack_summary',
-              contactId,
+              ...targetForeignKey(rulesTarget),
               occurredAt,
               summary: plainText.slice(0, 280),
               payload: {
@@ -174,7 +173,8 @@ export const slackEventReceived = inngest.createFunction(
                 sentiment: 'neutral',
                 suggestedNextAction: null,
                 confidence: 1,
-                matchedVia: rulesMatch.via,
+                matchedVia: rulesTarget.via,
+                linkedTo: rulesTarget.kind,
                 promptVersion: 'rules-v1',
               },
             },
@@ -185,9 +185,9 @@ export const slackEventReceived = inngest.createFunction(
           await writeAuditLogEntry(db, {
             actorId: null,
             action: 'slack.message_summarised',
-            target: { type: 'Contact', id: contactId },
+            target: targetAuditTarget(rulesTarget),
             requestId: eventId,
-            after: { interactionId: interaction.id, matchedVia: rulesMatch.via, rules: true },
+            after: { interactionId: interaction.id, matchedVia: rulesTarget.via, rules: true },
           })
         })
         await step.run('mark-processed', async () => {
@@ -275,16 +275,15 @@ export const slackEventReceived = inngest.createFunction(
       return { ok: true, parked: true, confidence: parsed.confidence }
     }
 
-    // 3. High confidence — match to ONE contact: email, then phone
-    //    (normalised variants), then an unambiguous full name. Ambiguity and
+    // 3. High confidence — match to ONE contact (email → phone → unambiguous
+    //    name), else ONE B2B account (school / partnership). Ambiguity and
     //    misses park for triage; we never auto-create a Contact (§12) and
     //    never guess between two same-named people (§3).
-    const match = await step.run('match-contact', async () =>
-      matchContactByCandidate(db, parsed.candidateContactIdentifier),
+    const target = await step.run('match-target', async () =>
+      resolveSlackLinkTarget(parsed.candidateContactIdentifier),
     )
-    const contactId = match.contactId
 
-    if (!contactId) {
+    if (!target) {
       // Confidence said yes but no match in our DB — also park.
       await step.run('park-no-match', async () =>
         db.unassignedSummary.upsert({
@@ -326,7 +325,7 @@ export const slackEventReceived = inngest.createFunction(
         data: {
           id: createId(),
           type: 'slack_summary',
-          contactId,
+          ...targetForeignKey(target),
           occurredAt,
           summary: parsed.summary.slice(0, 280),
           payload: {
@@ -347,7 +346,8 @@ export const slackEventReceived = inngest.createFunction(
             sentiment: parsed.sentiment,
             suggestedNextAction: parsed.suggestedNextAction,
             confidence: parsed.confidence,
-            matchedVia: match.via,
+            matchedVia: target.via,
+            linkedTo: target.kind,
             promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
           },
         },
@@ -359,7 +359,7 @@ export const slackEventReceived = inngest.createFunction(
       await writeAuditLogEntry(db, {
         actorId: null,
         action: 'slack.message_summarised',
-        target: { type: 'Contact', id: contactId },
+        target: targetAuditTarget(target),
         requestId: eventId,
         after: {
           interactionId: interaction.id,
