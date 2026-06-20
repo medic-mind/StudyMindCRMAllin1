@@ -91,7 +91,10 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: '/:path*',
+        // Everything EXCEPT the email render route, which sets its own headers
+        // (relaxed CSP + X-Frame-Options SAMEORIGIN so /mail can frame it).
+        // Applying X-Frame-Options: DENY here would block that frame.
+        source: '/((?!api/internal/mail-render).*)',
         headers: STATIC_SECURITY_HEADERS,
       },
     ]

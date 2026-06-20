@@ -58,6 +58,35 @@ const base: ApplyMailInput = {
 
 beforeEach(() => vi.clearAllMocks())
 
+describe('applyMailToConversation — sender name', () => {
+  it('stores the inbound sender name on create', async () => {
+    const { db } = makeDb()
+    const row = await applyMailToConversation(db, { ...base, senderName: 'Stripe' })
+    expect(row.lastSenderName).toBe('Stripe')
+  })
+
+  it('FILLS a blank lastSenderName on a later (non-advancing) message — heals legacy heads', async () => {
+    const { db } = makeDb()
+    // Head created with no sender (older sync that didn't capture it).
+    await applyMailToConversation(db, { ...base, senderName: null })
+    // Re-applying the SAME message timestamp (does not advance the clock) but
+    // now WITH a sender must still backfill the blank.
+    const row = await applyMailToConversation(db, { ...base, senderName: 'noreply@studymind.co.uk' })
+    expect(row.lastSenderName).toBe('noreply@studymind.co.uk')
+  })
+
+  it('advances lastSenderName to the newest inbound sender', async () => {
+    const { db } = makeDb()
+    await applyMailToConversation(db, { ...base, senderName: 'First Sender' })
+    const row = await applyMailToConversation(db, {
+      ...base,
+      occurredAt: new Date('2026-06-01T10:00:00Z'),
+      senderName: 'Second Sender',
+    })
+    expect(row.lastSenderName).toBe('Second Sender')
+  })
+})
+
 describe('applyMailToConversation', () => {
   it('creates an email head on first sight', async () => {
     const { db, rows } = makeDb()

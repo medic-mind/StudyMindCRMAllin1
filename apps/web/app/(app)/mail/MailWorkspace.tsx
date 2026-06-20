@@ -60,10 +60,13 @@ function gmailDate(d: Date, now: Date): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })
 }
 
-type Folder = 'all' | 'unread' | 'starred' | 'archived' | 'trash'
+type Folder = 'inbox' | 'all' | 'unread' | 'starred' | 'archived' | 'trash'
 
 const FOLDERS: ReadonlyArray<{ key: Folder; label: string; Icon: typeof InboxIcon }> = [
-  { key: 'all', label: 'Inbox', Icon: InboxIcon },
+  // Inbox = open (not archived/trashed), mirroring Gmail's Inbox. "All mail" is
+  // the everything-except-trash view (Gmail's All Mail).
+  { key: 'inbox', label: 'Inbox', Icon: InboxIcon },
+  { key: 'all', label: 'All mail', Icon: MailIcon },
   { key: 'unread', label: 'Unread', Icon: MailIcon },
   { key: 'starred', label: 'Starred', Icon: StarIcon },
   { key: 'archived', label: 'Archived', Icon: ArchiveIcon },
@@ -74,7 +77,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   const utils = trpc.useUtils()
   useConversationStream()
   const [accountId, setAccountId] = useState<string | null>(null)
-  const [folder, setFolder] = useState<Folder>('all')
+  const [folder, setFolder] = useState<Folder>('inbox')
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -770,7 +773,7 @@ function ConversationView({
                     </div>
                     <div className="mt-2">
                       {m.bodyHtml ? (
-                        <EmailHtmlBody html={m.bodyHtml} text={displayMessageBody(m.body) ?? ''} />
+                        <EmailHtmlBody interactionId={m.id} text={displayMessageBody(m.body) ?? ''} />
                       ) : (
                         <p className="whitespace-pre-wrap break-words text-sm text-neutral-800">
                           {displayMessageBody(m.body) ?? '(no content)'}
@@ -878,30 +881,21 @@ function ConversationView({
 // -----------------------------------------------------------------------------
 // Email HTML body — rendered like Gmail in a LOCKED sandboxed iframe. ADR 0041.
 // `sandbox` WITHOUT allow-scripts (no JS) and WITHOUT allow-same-origin (unique
-// origin: can't read our cookies/DOM, doesn't inherit our strict CSP, so the
-// email's inline styles render). Sanitised server-side as defence in depth.
+// origin: can't read our cookies/DOM). The HTML is served by a dedicated route
+// (`/api/internal/mail-render/:id`) that carries its OWN relaxed CSP so remote
+// images + inline styles render (a `srcdoc` iframe inherits the app's strict CSP
+// and blocked both). Sanitised server-side as defence in depth.
 // -----------------------------------------------------------------------------
 
-function EmailHtmlBody({ html, text }: { html: string; text: string }) {
+function EmailHtmlBody({ interactionId, text }: { interactionId: string; text: string }) {
   const [showHtml, setShowHtml] = useState(true)
-  const srcDoc = useMemo(
-    () =>
-      `<!doctype html><html><head><base target="_blank">` +
-      `<meta name="color-scheme" content="light">` +
-      `<style>html,body{margin:0;padding:0;background:#fff;` +
-      `font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;` +
-      `color:#1f2933;font-size:14px;line-height:1.5;word-break:break-word}` +
-      `img{max-width:100%;height:auto}a{color:#2563eb}` +
-      `table{max-width:100%}</style></head><body>${html}</body></html>`,
-    [html],
-  )
   return (
     <div>
       {showHtml ? (
         <iframe
           title="Email message"
           sandbox="allow-popups allow-popups-to-escape-sandbox"
-          srcDoc={srcDoc}
+          src={`/api/internal/mail-render/${interactionId}`}
           className="w-full bg-white"
           style={{ height: 460, border: 0 }}
         />
