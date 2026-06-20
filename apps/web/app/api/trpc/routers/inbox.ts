@@ -473,8 +473,18 @@ export const inboxRouter = router({
             (payload['senderName'] as string).trim() !== ''
               ? (payload['senderName'] as string)
               : null
+          // For inbound email with no stored display name (legacy rows), fall
+          // back to the From address so the thread shows the real sender, never a
+          // single matched contact for every message.
+          const fromAddress =
+            direction === 'inbound' &&
+            Array.isArray(payload['from']) &&
+            typeof (payload['from'] as unknown[])[0] === 'string'
+              ? ((payload['from'] as string[])[0] as string)
+              : null
           const senderName =
             payloadSender ??
+            fromAddress ??
             (r.createdById ? (authorNameById.get(r.createdById) ?? null) : null)
           // Lifecycle rows render as centred system separators ("Closed by …"),
           // exactly like Trengo's thread.

@@ -168,8 +168,8 @@ export const mailRouter = router({
         z.object({
           mailAccountId: z.string().nullish(),
           filter: z
-            .enum(['all', 'unread', 'starred', 'archived', 'trash'])
-            .default('all'),
+            .enum(['inbox', 'all', 'unread', 'starred', 'archived', 'trash'])
+            .default('inbox'),
           q: z.string().trim().min(1).max(120).nullish(),
           cursor: z
             .object({ id: z.string(), lastMessageAt: z.date() })
@@ -186,6 +186,11 @@ export const mailRouter = router({
         // Gmail-style folders. Trash is its own view; every other folder hides
         // trashed threads (Gmail's "All Mail" excludes Trash).
         switch (input.filter) {
+          case 'inbox':
+            // Gmail's Inbox: not archived, not trashed. (`all` is All Mail.)
+            where['status'] = 'open'
+            where['isTrashed'] = false
+            break
           case 'unread':
             where['unreadCount'] = { gt: 0 }
             where['isTrashed'] = false
@@ -242,6 +247,7 @@ export const mailRouter = router({
           select: {
             id: true,
             contactId: true,
+            externalThreadId: true,
             subject: true,
             unreadCount: true,
             status: true,
@@ -261,6 +267,49 @@ export const mailRouter = router({
 
         const hasMore = rows.length > input.limit
         const sliced = hasMore ? rows.slice(0, input.limit) : rows
+
+        // Retroactive sender repair: heads synced before sender-capture have a
+        // null `lastSenderName`, which used to collapse the list onto one matched
+        // contact ("every row is Mohil Shah"). Resolve the real sender for those
+        // from their latest inbound email Interaction (payload carries the From
+        // name + addresses), in ONE bounded query. New mail stores it on the head
+        // directly, so this only runs for the legacy backlog.
+        const needSender = sliced.filter(
+          (r) => !r.lastSenderName && r.externalThreadId,
+        )
+        const senderByThread = new Map<string, string>()
+        if (needSender.length > 0) {
+          const threadIds = needSender.map((r) => r.externalThreadId as string)
+          const ints = await ctx.db.interaction.findMany({
+            where: {
+              type: 'email_received',
+              deletedAt: null,
+              OR: threadIds.map((t) => ({
+                payload: { path: ['gmailThreadId'], equals: t },
+              })),
+            },
+            orderBy: { occurredAt: 'desc' },
+            take: 400,
+            select: { payload: true },
+          })
+          for (const it of ints) {
+            const p = (it.payload ?? {}) as {
+              gmailThreadId?: unknown
+              senderName?: unknown
+              from?: unknown
+            }
+            const tid = typeof p.gmailThreadId === 'string' ? p.gmailThreadId : null
+            if (!tid || senderByThread.has(tid)) continue
+            const fromName =
+              typeof p.senderName === 'string' && p.senderName.trim() !== ''
+                ? p.senderName
+                : Array.isArray(p.from) && typeof p.from[0] === 'string'
+                  ? (p.from[0] as string)
+                  : null
+            if (fromName) senderByThread.set(tid, fromName)
+          }
+        }
+
         const items = sliced.map((r) => {
           const contactName = r.contact
             ? [r.contact.firstName, r.contact.lastName]
@@ -281,9 +330,13 @@ export const mailRouter = router({
             labels: r.tags,
             lastMessageAt: r.lastMessageAt,
             accountAddress: r.mailAccount?.address ?? null,
-            // Gmail shows the actual sender; the matched CRM contact is the
-            // fallback (and the email address as a last resort).
-            contactName: r.lastSenderName ?? contactName,
+            // Gmail shows the actual sender: the head's stored sender, else the
+            // sender resolved from the latest message (legacy heads), and only
+            // then the matched CRM contact as a last resort.
+            contactName:
+              r.lastSenderName ??
+              (r.externalThreadId ? senderByThread.get(r.externalThreadId) : null) ??
+              contactName,
           }
         })
         const last = sliced[sliced.length - 1]

@@ -271,8 +271,14 @@ function mergeMailEvent(
     const stale = existing.lastOutboundAt && occurredAt <= existing.lastOutboundAt
     if (advancesInbound && !stale) patch.unreadCount = existing.unreadCount + 1
     // Keep the list showing the latest inbound sender's real name (Gmail-like),
-    // not a matched CRM contact.
-    if (advancesInbound && input.senderName && input.senderName !== existing.lastSenderName) {
+    // not a matched CRM contact. Also FILL it when the head never had one (older
+    // rows synced before sender capture), even if this message doesn't advance
+    // the clock — so a re-sync heals the "every thread shows one contact" bug.
+    if (
+      input.senderName &&
+      input.senderName !== existing.lastSenderName &&
+      (advancesInbound || !existing.lastSenderName)
+    ) {
       patch.lastSenderName = input.senderName
     }
   } else {

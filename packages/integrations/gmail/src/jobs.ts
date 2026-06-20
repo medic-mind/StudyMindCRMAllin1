@@ -269,9 +269,12 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
     ? 'sent'
     : 'received'
 
-  // The real sender's display name (Gmail-style list), and the thread's custom
-  // labels (mapped from id→name). These drive the list + label chips.
-  const senderName = direction === 'received' ? parseFromName(fromHeader) : null
+  // The real sender's identity for the Gmail-style list: the From display name
+  // when present, else the From email ADDRESS — NEVER a matched CRM contact, so
+  // a no-display-name sender (system / no-reply mail) shows its real address
+  // instead of collapsing every thread onto one matched contact.
+  const senderName =
+    direction === 'received' ? (parseFromName(fromHeader) ?? fromAddrs[0] ?? null) : null
   const labels = customLabelNames(message.labelIds, new Map(Object.entries(input.labelMap)))
 
   // Match Contacts by every address (many-to-many — §14).

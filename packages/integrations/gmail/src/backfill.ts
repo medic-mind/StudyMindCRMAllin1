@@ -273,7 +273,10 @@ async function processBackfillMessage(
   const bccAddrs = parseAddresses(bccHeader)
 
   const direction = fromAddrs.includes(input.agentAddr) ? 'sent' : 'received'
-  const senderName = direction === 'received' ? parseFromName(fromHeader) : null
+  // From display name, else the From address — never a matched CRM contact, so
+  // the list shows the real sender even for no-display-name (system) mail.
+  const senderName =
+    direction === 'received' ? (parseFromName(fromHeader) ?? fromAddrs[0] ?? null) : null
   const labels = customLabelNames(message.labelIds, new Map(Object.entries(input.labelMap)))
   const allAddrs = Array.from(
     new Set([...fromAddrs, ...toAddrs, ...ccAddrs, ...bccAddrs]),

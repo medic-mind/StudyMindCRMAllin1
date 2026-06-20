@@ -81,6 +81,17 @@ export default authMiddleware((req) => {
   requestHeaders.set('x-request-id', requestId)
 
   const pathname = req.nextUrl.pathname
+
+  // The email reading-pane render route (ADR 0041) returns sanitised email HTML
+  // to be framed by /mail. It MUST carry its own relaxed CSP (remote images +
+  // inline styles, no scripts) and be same-origin framable, so we let it through
+  // WITHOUT the app's strict CSP / X-Frame-Options DENY (next.config also
+  // excludes it). It self-authenticates in the handler, so skipping the auth
+  // redirect here is safe.
+  if (pathname.startsWith('/api/internal/mail-render/')) {
+    return NextResponse.next()
+  }
+
   const session = req.auth as
     | {
         user?: {
