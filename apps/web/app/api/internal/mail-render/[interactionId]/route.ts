@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server'
 
 import { prepareEmailHtml } from '@studymind/core/mail'
+import { createClientForAgent } from '@studymind/integration-gmail/client'
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { db } from '@/lib/db'
@@ -25,8 +26,10 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // Own CSP for the framed email document: remote images + inline styles, never
-// scripts. `frame-ancestors 'self'` + the route-level X-Frame-Options SAMEORIGIN
-// let /mail frame it while still blocking everyone else.
+// scripts. `upgrade-insecure-requests` rewrites http:// image URLs to https://
+// so they aren't blocked as mixed content on our https page. `frame-ancestors
+// 'self'` + the route-level X-Frame-Options SAMEORIGIN let /mail frame it while
+// still blocking everyone else.
 const EMAIL_FRAME_CSP = [
   "default-src 'none'",
   'img-src https: http: data: cid:',
@@ -36,8 +39,73 @@ const EMAIL_FRAME_CSP = [
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'self'",
+  'upgrade-insecure-requests',
   'sandbox allow-popups allow-popups-to-escape-sandbox',
 ].join('; ')
+
+/**
+ * When a message has no stored HTML (synced before HTML capture, or via a path
+ * that didn't store it), fetch it live from Gmail so images still render — and
+ * cache it back onto the Interaction so the next open + the list are instant.
+ * Best-effort: any failure returns null and the caller shows plain text.
+ */
+async function fetchAndCacheHtml(row: {
+  id: string
+  payload: Record<string, unknown>
+}): Promise<string | null> {
+  const gmailMessageId =
+    typeof row.payload['gmailMessageId'] === 'string'
+      ? (row.payload['gmailMessageId'] as string)
+      : null
+  const gmailThreadId =
+    typeof row.payload['gmailThreadId'] === 'string'
+      ? (row.payload['gmailThreadId'] as string)
+      : null
+  if (!gmailMessageId || !gmailThreadId) return null
+
+  // Resolve the mailbox that owns this thread: head → MailAccount → GmailMailbox.
+  const head = await db.conversation.findFirst({
+    where: { provider: 'email', externalThreadId: gmailThreadId },
+    select: { mailAccount: { select: { gmailMailbox: { select: { agentId: true, address: true } } } } },
+  })
+  let mb = head?.mailAccount?.gmailMailbox ?? null
+  // Fallback when the head isn't bridged to a MailAccount: match a connected
+  // GmailMailbox against the message's own addresses (the inbox that synced it).
+  if (!mb) {
+    const addrs = new Set<string>()
+    for (const key of ['from', 'to', 'cc', 'bcc'] as const) {
+      const v = row.payload[key]
+      if (Array.isArray(v)) for (const a of v) if (typeof a === 'string') addrs.add(a.toLowerCase())
+    }
+    if (addrs.size > 0) {
+      mb = await db.gmailMailbox.findFirst({
+        where: { deletedAt: null, address: { in: [...addrs] } },
+        select: { agentId: true, address: true },
+      })
+    }
+  }
+  if (!mb) return null
+
+  try {
+    const client = await createClientForAgent({
+      agentId: mb.agentId,
+      address: mb.address,
+      purpose: 'mail.render',
+      requestId: row.id,
+    })
+    const message = await client.getMessage(gmailMessageId)
+    const safe = prepareEmailHtml(message.htmlBody)
+    if (!safe) return null
+    // Cache back (best-effort) so subsequent reads don't re-fetch.
+    await db.interaction.update({
+      where: { id: row.id },
+      data: { payload: { ...row.payload, bodyHtml: safe } },
+    })
+    return safe
+  } catch {
+    return null
+  }
+}
 
 function renderDocument(innerHtml: string): string {
   return (
@@ -83,8 +151,13 @@ export async function GET(
     return new NextResponse('forbidden', { status: 403 })
   }
 
-  const payload = (row.payload ?? {}) as { bodyHtml?: unknown }
-  const safe = prepareEmailHtml(typeof payload.bodyHtml === 'string' ? payload.bodyHtml : null)
+  const payload = (row.payload ?? {}) as Record<string, unknown>
+  const stored = prepareEmailHtml(
+    typeof payload['bodyHtml'] === 'string' ? (payload['bodyHtml'] as string) : null,
+  )
+  // No stored HTML → fetch it live from Gmail (and cache it) so images render
+  // for mail synced before HTML capture.
+  const safe = stored ?? (await fetchAndCacheHtml({ id: row.id, payload }))
   const inner =
     safe ??
     '<p style="font-family:sans-serif;color:#6b7280">(no formatted content — view plain text)</p>'

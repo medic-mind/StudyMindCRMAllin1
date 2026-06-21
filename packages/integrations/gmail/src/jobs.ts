@@ -106,7 +106,7 @@ export const gmailHistoryChanged = inngest.createFunction(
     // Fetch the account's label id→name map once so new messages can carry
     // their custom Gmail labels onto the head (drives the label chips).
     const labelMap =
-      result.added.length === 0
+      result.added.length === 0 && result.changedThreadIds.length === 0
         ? {}
         : await step.run('load-labels', async () => {
             const client = await createClientForAgent({
@@ -146,6 +146,7 @@ export const gmailHistoryChanged = inngest.createFunction(
           address: emailAddress,
           threadId,
           requestId: eventId,
+          labelMap,
         }),
       )
     }
@@ -173,6 +174,9 @@ interface MirrorThreadFlagsInput {
   address: string
   threadId: string
   requestId: string
+  /** Gmail label id→name map so the mirror also converges the head's custom
+   *  label chips, not just read/star/archive/trash. */
+  labelMap?: Record<string, string>
 }
 
 /**
@@ -190,11 +194,16 @@ async function mirrorThreadFlags(input: MirrorThreadFlagsInput): Promise<void> {
   })
   const state = await client.getThreadState(input.threadId)
   const flags = state ? deriveThreadFlags(state.labelIds) : DELETED_THREAD_FLAGS
+  const labels =
+    state && input.labelMap
+      ? customLabelNames(state.labelIds, new Map(Object.entries(input.labelMap)))
+      : undefined
   await applyMailFlagsToConversation(db, {
     provider: 'email',
     externalThreadId: input.threadId,
     flags,
     syncedAt: new Date(),
+    labels,
   })
 }
 
@@ -421,6 +430,22 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
     senderName,
     labels,
   })
+
+  // Reflect Gmail's actual archive / read / star / trash state on the head at
+  // sync time (not just later via the history mirror), so /mail's Inbox matches
+  // Gmail's Inbox from the first sync — an archived-in-Gmail thread is created
+  // archived here, not "open". Derived from a RECEIVED message's labels (Gmail
+  // removes INBOX from every message in an archived thread, so this is accurate);
+  // sent messages never carry INBOX so we skip them to avoid false-archiving.
+  if (direction === 'received') {
+    await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: message.threadId,
+      flags: deriveThreadFlags(message.labelIds),
+      syncedAt: occurredAt,
+      labels,
+    })
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -502,9 +527,12 @@ async function markProcessed(providerEventRowId: string): Promise<void> {
 
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as GMAIL_BACKFILL_FUNCTIONS } from './backfill'
+// On-demand retroactive resync of existing heads (flags + labels).
+import { RESYNC_FUNCTIONS as GMAIL_RESYNC_FUNCTIONS } from './resync'
 
 export const FUNCTIONS = [
   gmailHistoryChanged,
   gmailRefreshWatch,
   ...GMAIL_BACKFILL_FUNCTIONS,
+  ...GMAIL_RESYNC_FUNCTIONS,
 ] as const
