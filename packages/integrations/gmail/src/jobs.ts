@@ -290,10 +290,19 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   const allAddrs = Array.from(
     new Set([...fromAddrs, ...toAddrs, ...ccAddrs, ...bccAddrs]),
   ).filter((a) => !agentAddrs.includes(a))
-  const matchedContacts = await db.contact.findMany({
-    where: { email: { in: allAddrs }, deletedAt: null },
-    select: { id: true, email: true },
-  })
+  // Case-INSENSITIVE email match — a contact stored as "John.Smith@x.com" must
+  // match the lowercased header address, else the email never reaches the
+  // customer's timeline (§14). `in` is case-sensitive on Postgres, so OR each.
+  const matchedContacts =
+    allAddrs.length > 0
+      ? await db.contact.findMany({
+          where: {
+            deletedAt: null,
+            OR: allAddrs.map((a) => ({ email: { equals: a, mode: 'insensitive' as const } })),
+          },
+          select: { id: true, email: true },
+        })
+      : []
   // Resolve the B2B school/account each matched contact belongs to, so the
   // email also lands on the account's Activity timeline (parity with notes /
   // tasks, which stamp Interaction.businessAccountId).

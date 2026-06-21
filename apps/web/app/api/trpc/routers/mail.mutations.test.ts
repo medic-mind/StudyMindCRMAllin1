@@ -118,6 +118,11 @@ function makeCtx(opts: { role?: UserRole; head?: Head | null }): {
         },
       }),
     },
+    // No connected Gmail mailbox in the test env, so the self-heal bridge can't
+    // resolve one and the no-mailAccount path still surfaces a BAD_REQUEST.
+    gmailMailbox: {
+      findFirst: async () => null,
+    },
   }
   const user: SessionUser = { id: 'u_me', email: 'me@studymind.co.uk', role: opts.role ?? 'sales_executive' }
   const ctx: TrpcContext = {
