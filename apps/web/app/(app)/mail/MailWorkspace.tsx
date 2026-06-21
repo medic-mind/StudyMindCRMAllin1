@@ -772,7 +772,7 @@ function ConversationView({
                       </time>
                     </div>
                     <div className="mt-2">
-                      {m.bodyHtml ? (
+                      {m.bodyHtml || m.gmailMessageId ? (
                         <EmailHtmlBody interactionId={m.id} text={displayMessageBody(m.body) ?? ''} />
                       ) : (
                         <p className="whitespace-pre-wrap break-words text-sm text-neutral-800">

@@ -194,6 +194,31 @@ describe('applyMailFlagsToConversation (inbound two-way mirror)', () => {
     expect(res).toBeNull()
   })
 
+  it('mirrors the thread custom labels onto the head tags', async () => {
+    const { db } = makeDb()
+    await applyMailToConversation(db, base) // tags: []
+    const row = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: READ_INBOX,
+      syncedAt,
+      labels: ['1. Consultations', 'Trengo closed'],
+    })
+    expect(row?.tags).toEqual(['1. Consultations', 'Trengo closed'])
+  })
+
+  it('reflects Gmail archive state onto the head status', async () => {
+    const { db } = makeDb()
+    await applyMailToConversation(db, base) // status open
+    const row = await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: 'thread_1',
+      flags: { isRead: true, isStarred: false, isArchived: true, isTrashed: false },
+      syncedAt,
+    })
+    expect(row?.status).toBe('archived')
+  })
+
   it('clears unread when Gmail marks the thread read', async () => {
     const { db } = makeDb()
     await applyMailToConversation(db, base) // unread 1

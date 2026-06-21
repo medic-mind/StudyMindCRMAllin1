@@ -591,6 +591,9 @@ export const INNGEST_EVENT_NAMES = [
   // missed call hasn't come through (a dropped webhook). Reuses the sync job.
   'aircall/sync-now.requested',
   'gmail/history.changed',
+  // On-demand retroactive resync of email conversation heads (flags + labels)
+  // from Gmail — the "Resync from Gmail" button (mailAccount.resyncFromGmail).
+  'gmail/resync-threads.requested',
 
   // Cross-cutting domain events
   'finance/reconcile.completed',

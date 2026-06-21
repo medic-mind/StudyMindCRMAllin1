@@ -568,4 +568,61 @@ export const mailAccountRouter = router({
     })
     return { imported }
   }),
+
+  /**
+   * Resync this account's existing email threads FROM Gmail — re-reads each
+   * thread's current archive/read/star/trash state + custom labels and converges
+   * the Conversation heads onto Gmail. Fixes heads synced before flag/label
+   * capture (every thread showing as "Inbox", no label chips). Head-only — never
+   * writes timeline rows — so it's safe to run repeatedly. Owner or Manager+.
+   */
+  resyncFromGmail: auditedProcedure
+    .input(MailAccountIdInput)
+    .mutation(async ({ ctx, input }) => {
+      const me = requireUser(ctx)
+      const account = await ctx.db.mailAccount.findFirst({
+        where: { id: input.id, deletedAt: null },
+        select: {
+          id: true,
+          provider: true,
+          ownerKind: true,
+          ownerUserId: true,
+          gmailMailboxId: true,
+        },
+      })
+      if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' })
+      assertCanManageAccount(me, account)
+      if (account.provider !== 'gmail' || !account.gmailMailboxId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Only connected Gmail accounts can be resynced today.',
+        })
+      }
+      const mailbox = await ctx.db.gmailMailbox.findFirst({
+        where: { id: account.gmailMailboxId, deletedAt: null },
+        select: { id: true, agentId: true, address: true },
+      })
+      if (!mailbox) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'No connected Gmail mailbox.' })
+      }
+
+      const { inngest } = await import('@studymind/jobs')
+      await inngest.send({
+        name: 'gmail/resync-threads.requested',
+        data: {
+          mailAccountId: account.id,
+          gmailMailboxId: mailbox.id,
+          agentId: mailbox.agentId,
+          address: mailbox.address,
+          requestId: ctx.requestId,
+          cursor: null,
+        },
+      })
+      await ctx.audit({
+        action: 'mail_account.resync_requested',
+        target: { type: 'MailAccount', id: account.id },
+        after: { source: 'gmail' },
+      })
+      return { ok: true as const }
+    }),
 })

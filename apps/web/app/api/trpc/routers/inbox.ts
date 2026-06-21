@@ -520,6 +520,13 @@ export const inboxRouter = router({
               : rawStatus === 'sent'
                 ? 'sent'
                 : null
+          // Email messages carry a Gmail message id — the reading pane renders
+          // ALL of them via the render route (which live-fetches the HTML when
+          // it wasn't stored), so images show even for older mail.
+          const gmailMessageId =
+            typeof payload['gmailMessageId'] === 'string'
+              ? (payload['gmailMessageId'] as string)
+              : null
           return {
             id: r.id,
             kind,
@@ -528,6 +535,7 @@ export const inboxRouter = router({
             direction,
             body: body ?? r.summary,
             bodyHtml,
+            gmailMessageId,
             authorId: r.createdById,
             senderName,
             sendStatus,

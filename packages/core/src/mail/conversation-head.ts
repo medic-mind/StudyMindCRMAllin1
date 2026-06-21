@@ -184,6 +184,10 @@ export interface ApplyMailFlagsInput {
   flags: MailThreadFlags
   /** When the provider state was read — always stamped for observability. */
   syncedAt: Date
+  /** The thread's current custom Gmail label names. When provided, SETS the head
+   *  tags to this exact set (Gmail is authoritative) so label changes made in
+   *  Gmail — incl. the initial set on first sync — show as chips in the CRM. */
+  labels?: string[] | undefined
 }
 
 /**
@@ -232,6 +236,14 @@ export async function applyMailFlagsToConversation(
   }
   if (flags.isTrashed !== existing.isTrashed) {
     patch.isTrashed = flags.isTrashed
+    meaningful = true
+  }
+
+  // Mirror the thread's current custom Gmail labels onto the head (authoritative
+  // set) so a relabel in Gmail — and the initial labels on first sync — show as
+  // chips. Only when actually changed, to avoid update churn.
+  if (input.labels && !sameStringSet(input.labels, existing.tags)) {
+    patch.tags = input.labels
     meaningful = true
   }
 

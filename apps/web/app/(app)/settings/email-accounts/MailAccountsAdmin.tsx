@@ -126,6 +126,7 @@ export function MailAccountsAdmin({ canManage, meId }: { canManage: boolean; meI
   const create = trpc.mailAccount.createShared.useMutation()
   const setDefault = trpc.mailAccount.setDefault.useMutation()
   const disconnect = trpc.mailAccount.disconnect.useMutation()
+  const resync = trpc.mailAccount.resyncFromGmail.useMutation()
 
   const [provider, setProvider] = useState('gmail')
   const [address, setAddress] = useState('')
@@ -186,6 +187,15 @@ export function MailAccountsAdmin({ canManage, meId }: { canManage: boolean; meI
       router.refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not remove account')
+    }
+  }
+
+  async function onResync(id: string) {
+    try {
+      await resync.mutateAsync({ id })
+      toast.success('Resyncing from Gmail — archived state + labels will update shortly.')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start resync')
     }
   }
 
@@ -338,6 +348,18 @@ export function MailAccountsAdmin({ canManage, meId }: { canManage: boolean; meI
                           onClick={() => setExpanded((cur) => (cur === row.id ? null : row.id))}
                         >
                           Members
+                        </Button>
+                      ) : null}
+                      {canManageRow && row.provider === 'gmail' && row.gmailMailboxId ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          disabled={resync.isPending}
+                          onClick={() => onResync(row.id)}
+                          title="Re-read archived state + labels from Gmail"
+                        >
+                          Resync
                         </Button>
                       ) : null}
                       {canManageRow ? (

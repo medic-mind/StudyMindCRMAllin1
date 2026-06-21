@@ -24,11 +24,16 @@ import {
   markBackfillFailed,
   markBackfillRunning,
 } from '@studymind/core/backfill'
-import { applyMailToConversation, prepareEmailHtml } from '@studymind/core/mail'
+import {
+  applyMailFlagsToConversation,
+  applyMailToConversation,
+  prepareEmailHtml,
+} from '@studymind/core/mail'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { primaryAccountByContact } from './business-account-link'
+import { deriveThreadFlags } from './thread-flags'
 import {
   createClientForAgent,
   customLabelNames,
@@ -385,6 +390,18 @@ async function processBackfillMessage(
     senderName,
     labels,
   })
+
+  // Reflect Gmail archive / read / star / trash on the head so an imported
+  // archived thread isn't shown in the CRM Inbox (parity with the live sync).
+  if (direction === 'received') {
+    await applyMailFlagsToConversation(db, {
+      provider: 'email',
+      externalThreadId: message.threadId,
+      flags: deriveThreadFlags(message.labelIds),
+      syncedAt: occurredAt,
+      labels,
+    })
+  }
 
   return { matched: matchedContacts.length }
 }
