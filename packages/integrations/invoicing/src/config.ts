@@ -9,6 +9,7 @@
 import { createCipheriv, randomBytes } from 'node:crypto'
 
 import { writeAuditLogEntry } from '@studymind/audit'
+import { logger } from '@studymind/core/logger'
 import { decryptField, generateDataKey, KEY_VERSION } from '@studymind/core/safeguarding'
 import { db } from '@studymind/db'
 
@@ -79,6 +80,51 @@ async function unwrapSecret(
 }
 
 /**
+ * Decrypt a stored secret, but fall back to an env var when decryption FAILS.
+ *
+ * Stored secrets are envelope-encrypted under the field-encryption master key
+ * (KMS, else a local key derived from CRM_LOCAL_ENCRYPTION_KEY or AUTH_SECRET —
+ * §21.1). If that master key changes (AUTH_SECRET regenerated on a Railway
+ * redeploy, or a KMS↔local switch) the old ciphertext can no longer be
+ * unwrapped and decryptField throws 'failed to unwrap data key'.
+ *
+ * Without this guard that single throw bricks the WHOLE integration: every
+ * outbound write AND the inbound reconcile / webhook-secret-verify path call
+ * loadInvoicingConfig first. So when an INVOICING_* env var is present we prefer
+ * it on a decrypt failure — a key rotation degrades to the (already intended)
+ * env fallback instead of an outage. With no fallback we re-throw, so callers
+ * still surface the actionable "re-save the API key" guidance (mapApiError /
+ * config.test) rather than silently going dark.
+ */
+async function unwrapSecretOrFallback(
+  cols: {
+    ciphertext: Uint8Array | null
+    iv: Uint8Array | null
+    dekCiphertext: Uint8Array | null
+    aad: Uint8Array | null
+    keyVersion: number | null
+  },
+  purpose: string,
+  envFallback: string | null,
+): Promise<string | null> {
+  try {
+    // A null here means "no stored ciphertext" → use the env fallback (or null).
+    return (await unwrapSecret(cols, purpose)) ?? envFallback
+  } catch (err) {
+    if (envFallback) {
+      logger.warn(
+        { purpose, err: err instanceof Error ? err.message : String(err) },
+        'invoicing: stored secret could not be decrypted; using INVOICING_* env ' +
+          'var fallback. Re-save the key in Settings → Invoicing, or pin a stable ' +
+          'CRM_LOCAL_ENCRYPTION_KEY, to use the encrypted-at-rest value again.',
+      )
+      return envFallback
+    }
+    throw err
+  }
+}
+
+/**
  * Load the full config with secrets decrypted. Used by outbound calls and the
  * webhook verifier. Returns nulls when not yet configured (caller fails
  * closed). Falls back to env vars so a Railway-only deploy works without first
@@ -102,29 +148,29 @@ export async function loadInvoicingConfig(): Promise<InvoicingConfig> {
     }
   }
 
-  const apiKey =
-    (await unwrapSecret(
-      {
-        ciphertext: row.apiKeyCiphertext,
-        iv: row.apiKeyIv,
-        dekCiphertext: row.apiKeyDekCiphertext,
-        aad: row.apiKeyAad,
-        keyVersion: row.apiKeyKeyVersion,
-      },
-      'invoicing.outbound',
-    )) ?? envApiKey
+  const apiKey = await unwrapSecretOrFallback(
+    {
+      ciphertext: row.apiKeyCiphertext,
+      iv: row.apiKeyIv,
+      dekCiphertext: row.apiKeyDekCiphertext,
+      aad: row.apiKeyAad,
+      keyVersion: row.apiKeyKeyVersion,
+    },
+    'invoicing.outbound',
+    envApiKey,
+  )
 
-  const webhookSecret =
-    (await unwrapSecret(
-      {
-        ciphertext: row.webhookSecretCiphertext,
-        iv: row.webhookSecretIv,
-        dekCiphertext: row.webhookSecretDekCiphertext,
-        aad: row.webhookSecretAad,
-        keyVersion: row.webhookSecretKeyVersion,
-      },
-      'invoicing.webhook_verify',
-    )) ?? envSecret
+  const webhookSecret = await unwrapSecretOrFallback(
+    {
+      ciphertext: row.webhookSecretCiphertext,
+      iv: row.webhookSecretIv,
+      dekCiphertext: row.webhookSecretDekCiphertext,
+      aad: row.webhookSecretAad,
+      keyVersion: row.webhookSecretKeyVersion,
+    },
+    'invoicing.webhook_verify',
+    envSecret,
+  )
 
   return {
     baseUrl: row.baseUrl || envBaseUrl || DEFAULT_BASE_URL,

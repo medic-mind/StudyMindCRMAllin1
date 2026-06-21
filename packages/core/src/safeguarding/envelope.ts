@@ -13,8 +13,10 @@
 //     local backend, and vice versa — no migration, no schema change.
 //
 // Local master key resolution (first match wins):
-//   1. CRM_LOCAL_ENCRYPTION_KEY — base64 or hex, must decode to 32 bytes.
-//      Recommended for self-hosted production.
+//   1. CRM_LOCAL_ENCRYPTION_KEY — ANY non-empty value, any length. A value that
+//      already decodes to exactly 32 bytes (base64/hex) is used as-is; anything
+//      else is stretched to a 32-byte key via HKDF-SHA256. Recommended for
+//      self-hosted production; set it once and keep it fixed.
 //   2. Derived from AUTH_SECRET via HKDF-SHA256. Zero-config fallback so a
 //      deploy without AWS works out of the box. AUTH_SECRET is already a
 //      stable secret (rotating it logs everyone out), so binding field
@@ -167,8 +169,9 @@ function getLocalMasterKey(): Buffer {
 
   throw new Error(
     'Field encryption needs a key but none is configured. Set AWS_KMS_KEY_ID ' +
-      '(KMS, preferred), or CRM_LOCAL_ENCRYPTION_KEY (a base64 32-byte key: ' +
-      'openssl rand -base64 32). AUTH_SECRET is used as a last-resort fallback.',
+      '(KMS, preferred), or CRM_LOCAL_ENCRYPTION_KEY (any non-empty value, any ' +
+      'length — e.g. openssl rand -base64 32). AUTH_SECRET is used as a ' +
+      'last-resort fallback.',
   )
 }
 
