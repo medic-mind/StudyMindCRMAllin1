@@ -8,8 +8,13 @@
 
 import { z } from 'zod'
 import { TRPCError } from '@trpc/server'
+import { createId } from '@paralleldrive/cuid2'
 
-import { applyMailToConversation, buildOutgoingEmail } from '@studymind/core/mail'
+import {
+  applyMailToConversation,
+  buildOutgoingEmail,
+  normaliseEmail,
+} from '@studymind/core/mail'
 import { publishConversationUpdate } from '@studymind/core/realtime'
 import { sendEmail, sendReply } from '@studymind/integration-gmail/outbound'
 
@@ -94,22 +99,128 @@ async function resolveEmailThread(
   if (head.provider !== 'email' || !head.externalThreadId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'Not an email thread.' })
   }
-  if (!head.mailAccountId) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message:
-        'Import this mailbox in Settings → Email accounts before acting on it.',
-    })
+  let mailAccountId = head.mailAccountId
+  if (!mailAccountId) {
+    // Heads synced via the legacy Gmail connect have no MailAccount bridge yet,
+    // which used to make every action button fail. Self-heal: resolve (or create)
+    // the MailAccount for the owning Gmail mailbox and stamp the head, so actions
+    // just work without a manual "import" step.
+    const me = requireUser(ctx)
+    mailAccountId = await ensureMailAccountForThread(
+      ctx,
+      head.externalThreadId,
+      head.id,
+      me.id,
+    )
+    if (!mailAccountId) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          'No connected Gmail mailbox found for this thread — reconnect Gmail in Settings → Mailbox.',
+      })
+    }
   }
   return {
     id: head.id,
     externalThreadId: head.externalThreadId,
-    mailAccountId: head.mailAccountId,
+    mailAccountId,
     contactId: head.contactId,
     lastMessageAt: head.lastMessageAt,
     unreadCount: head.unreadCount,
     status: head.status,
   }
+}
+
+/**
+ * Resolve (or create) the MailAccount bridging the Gmail mailbox that owns a
+ * thread, and stamp it onto the head. Used to self-heal heads that were synced
+ * before a MailAccount existed, so action buttons work without a manual import.
+ * Returns null when no connected Gmail mailbox can be matched.
+ */
+async function ensureMailAccountForThread(
+  ctx: TrpcContext,
+  threadId: string,
+  headId: string,
+  actorId: string,
+): Promise<string | null> {
+  // Addresses on the thread tell us which connected mailbox synced it.
+  const interaction = await ctx.db.interaction.findFirst({
+    where: {
+      type: { in: ['email_received', 'email_sent'] },
+      payload: { path: ['gmailThreadId'], equals: threadId },
+    },
+    select: { payload: true },
+  })
+  const addrs = new Set<string>()
+  const p = (interaction?.payload ?? {}) as Record<string, unknown>
+  for (const key of ['from', 'to', 'cc', 'bcc'] as const) {
+    const v = p[key]
+    if (Array.isArray(v)) for (const a of v) if (typeof a === 'string') addrs.add(a.toLowerCase())
+  }
+  let mailbox =
+    addrs.size > 0
+      ? await ctx.db.gmailMailbox.findFirst({
+          where: { deletedAt: null, address: { in: [...addrs] } },
+          select: { id: true, agentId: true, address: true, isDefault: true },
+        })
+      : null
+  // Fallback: the acting user's own (default) connected mailbox.
+  if (!mailbox) {
+    mailbox = await ctx.db.gmailMailbox.findFirst({
+      where: { agentId: actorId, deletedAt: null },
+      orderBy: { isDefault: 'desc' },
+      select: { id: true, agentId: true, address: true, isDefault: true },
+    })
+  }
+  if (!mailbox) return null
+
+  const address = normaliseEmail(mailbox.address)
+  let account = await ctx.db.mailAccount.findUnique({
+    where: { gmailMailboxId: mailbox.id },
+    select: { id: true },
+  })
+  if (!account) {
+    const byAddress = await ctx.db.mailAccount.findUnique({
+      where: { address },
+      select: { id: true },
+    })
+    if (byAddress) {
+      await ctx.db.mailAccount.update({
+        where: { id: byAddress.id },
+        data: {
+          gmailMailboxId: mailbox.id,
+          provider: 'gmail',
+          ownerKind: 'personal',
+          ownerUserId: mailbox.agentId,
+          status: 'connected',
+          deletedAt: null,
+          updatedById: actorId,
+        },
+      })
+      account = byAddress
+    } else {
+      account = await ctx.db.mailAccount.create({
+        data: {
+          id: createId(),
+          provider: 'gmail',
+          ownerKind: 'personal',
+          ownerUserId: mailbox.agentId,
+          address,
+          status: 'connected',
+          isDefault: mailbox.isDefault,
+          gmailMailboxId: mailbox.id,
+          createdById: actorId,
+          updatedById: actorId,
+        },
+        select: { id: true },
+      })
+    }
+  }
+  await ctx.db.conversation.update({
+    where: { id: headId },
+    data: { mailAccountId: account.id },
+  })
+  return account.id
 }
 
 export const mailRouter = router({
@@ -157,6 +268,37 @@ export const mailRouter = router({
     }))
   }),
 
+  /**
+   * Distinct Gmail labels across the visible email heads, with a thread count —
+   * the rail's label folders (Gmail's label sidebar). Reads `Conversation.tags`
+   * (populated by the sync + resync). Excludes trashed threads.
+   */
+  labels: protectedProcedure
+    .input(z.object({ mailAccountId: z.string().nullish() }).default({}))
+    .query(async ({ ctx, input }) => {
+      const me = requireUser(ctx)
+      assertStaff(me.role)
+      const rows = await ctx.db.conversation.findMany({
+        where: {
+          provider: 'email',
+          isTrashed: false,
+          ...(input.mailAccountId ? { mailAccountId: input.mailAccountId } : {}),
+          NOT: { tags: { isEmpty: true } },
+        },
+        select: { tags: true },
+        // Bounded scan — labels stabilise quickly; this is for the rail, not a
+        // per-thread read.
+        take: 5000,
+      })
+      const counts = new Map<string, number>()
+      for (const r of rows) {
+        for (const t of r.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
+      }
+      return Array.from(counts.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    }),
+
   threads: router({
     /**
      * Email conversation heads, newest first. Optional account filter; an
@@ -170,6 +312,9 @@ export const mailRouter = router({
           filter: z
             .enum(['inbox', 'all', 'unread', 'starred', 'archived', 'trash'])
             .default('inbox'),
+          /** Filter to one Gmail label (the rail's label folders). Spans all
+           *  non-trash mail, like clicking a label in Gmail. */
+          label: z.string().trim().min(1).max(200).nullish(),
           q: z.string().trim().min(1).max(120).nullish(),
           cursor: z
             .object({ id: z.string(), lastMessageAt: z.date() })
@@ -209,6 +354,9 @@ export const mailRouter = router({
           default:
             where['isTrashed'] = false
         }
+        // Label folder: narrow to threads carrying this Gmail label (chips live
+        // on Conversation.tags). Additive to the selected folder.
+        if (input.label) where['tags'] = { has: input.label }
         // Compose cursor + search as AND clauses so neither clobbers the other.
         const and: unknown[] = []
         if (input.cursor) {

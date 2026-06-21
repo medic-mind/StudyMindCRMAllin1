@@ -27,6 +27,7 @@ import {
   SearchIcon,
   SendIcon,
   StarIcon,
+  TagIcon,
   Trash2Icon,
   XIcon,
 } from '@/components/ui/icon'
@@ -78,6 +79,9 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   useConversationStream()
   const [accountId, setAccountId] = useState<string | null>(null)
   const [folder, setFolder] = useState<Folder>('inbox')
+  // A selected Gmail label folder (Gmail's label sidebar). When set, the list
+  // shows all mail carrying that label; folder selection is suspended.
+  const [label, setLabel] = useState<string | null>(null)
   const [rawQuery, setRawQuery] = useState('')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -91,11 +95,14 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
 
   const threads = trpc.mail.threads.list.useQuery({
     mailAccountId: accountId,
-    filter: folder,
+    // A label folder spans all mail with that label (like clicking it in Gmail).
+    filter: label ? 'all' : folder,
+    label: label,
     q: query || null,
     limit: 50,
   })
   const items = useMemo(() => threads.data?.items ?? [], [threads.data])
+  const labels = trpc.mail.labels.useQuery({ mailAccountId: accountId })
 
   const kbArchive = trpc.mail.thread.setArchived.useMutation()
   const kbRead = trpc.mail.thread.setRead.useMutation()
@@ -203,14 +210,15 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
         </button>
 
         <nav aria-label="Folders" className="flex flex-col gap-0.5">
-          {FOLDERS.map(({ key, label, Icon }) => {
-            const active = folder === key
+          {FOLDERS.map(({ key, label: folderLabel, Icon }) => {
+            const active = folder === key && !label
             return (
               <button
                 key={key}
                 type="button"
                 onClick={() => {
                   setFolder(key)
+                  setLabel(null)
                   setSelectedId(null)
                   setChecked(new Set())
                 }}
@@ -222,11 +230,49 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
                 }`}
               >
                 <Icon size={16} className={active ? 'text-gmail-700' : 'text-neutral-500'} />
-                {label}
+                {folderLabel}
               </button>
             )
           })}
         </nav>
+
+        {(labels.data?.length ?? 0) > 0 ? (
+          <div className="mt-4">
+            <h2 className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+              Labels
+            </h2>
+            <nav aria-label="Labels" className="flex flex-col gap-0.5">
+              {(labels.data ?? []).map((l) => {
+                const active = label === l.name
+                return (
+                  <button
+                    key={l.name}
+                    type="button"
+                    onClick={() => {
+                      setLabel(l.name)
+                      setSelectedId(null)
+                      setChecked(new Set())
+                    }}
+                    aria-current={active ? 'true' : undefined}
+                    className={`flex items-center gap-3 rounded-full px-4 py-1.5 text-left text-sm transition-colors ${
+                      active
+                        ? 'bg-gmail-100 font-semibold text-gmail-900'
+                        : 'text-neutral-700 hover:bg-neutral-200/60'
+                    }`}
+                    title={`${l.count} conversation${l.count === 1 ? '' : 's'}`}
+                  >
+                    <TagIcon
+                      size={15}
+                      className={active ? 'text-gmail-700' : 'text-neutral-500'}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{l.name}</span>
+                    <span className="shrink-0 text-[11px] text-neutral-400">{l.count}</span>
+                  </button>
+                )
+              })}
+            </nav>
+          </div>
+        ) : null}
 
         <div className="mt-4">
           <h2 className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">

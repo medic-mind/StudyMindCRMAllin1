@@ -287,8 +287,15 @@ async function processBackfillMessage(
     new Set([...fromAddrs, ...toAddrs, ...ccAddrs, ...bccAddrs]),
   ).filter((a) => a !== input.agentAddr)
 
+  // Case-insensitive email match (parity with the live sync) so the email
+  // reaches the customer's timeline even when the stored email differs in case.
   const matchedContacts = await db.contact.findMany({
-    where: { email: { in: allAddrs }, deletedAt: null },
+    where: {
+      deletedAt: null,
+      ...(allAddrs.length > 0
+        ? { OR: allAddrs.map((a) => ({ email: { equals: a, mode: 'insensitive' as const } })) }
+        : { id: '__none__' }),
+    },
     select: { id: true, email: true },
   })
   const accountByContact =
