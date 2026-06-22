@@ -538,3 +538,186 @@ export interface OutboundContext {
   actorId: string
   requestId: string
 }
+
+// -----------------------------------------------------------------------------
+// Drafts (G1–G3). Covered by the gmail.modify scope. `saveDraft` creates or
+// updates a Gmail draft (auto-save); `sendDraftMessage` converts the draft to a
+// sent message via drafts.send — Gmail guarantees no duplicate — then links
+// Contacts + audits exactly like sendEmail.
+// -----------------------------------------------------------------------------
+
+export interface SaveDraftInput {
+  agentId: string
+  fromAddress?: string | undefined
+  /** Existing Gmail draft id to update; omitted creates a new draft. */
+  draftId?: string | undefined
+  subject: string
+  body: string
+  html?: string | undefined
+  toAddresses: string[]
+  cc?: string[] | undefined
+  bcc?: string[] | undefined
+  /** Thread to attach the draft to (reply drafts); omitted = new thread. */
+  threadId?: string | undefined
+  originalMessageId?: string | undefined
+  requestId: string
+}
+
+export async function saveDraft(
+  input: SaveDraftInput,
+): Promise<{ draftId: string; messageId: string; threadId: string }> {
+  const client = await createClientForAgent({
+    agentId: input.agentId,
+    address: input.fromAddress,
+    purpose: 'gmail.draft_save',
+    requestId: input.requestId,
+  })
+  const { raw } = buildRawReply({
+    subject: input.subject,
+    toAddresses: input.toAddresses,
+    cc: input.cc,
+    bcc: input.bcc,
+    body: input.body,
+    html: input.html,
+    fromAddress: input.fromAddress,
+    originalMessageId: input.originalMessageId,
+    literalSubject: true,
+  })
+  return input.draftId
+    ? client.updateDraft({ draftId: input.draftId, raw, threadId: input.threadId })
+    : client.createDraft({ raw, threadId: input.threadId })
+}
+
+export interface SendDraftInput {
+  agentId: string
+  fromAddress?: string | undefined
+  draftId: string
+  subject: string
+  toAddresses: string[]
+  cc?: string[] | undefined
+  bcc?: string[] | undefined
+  requestId: string
+}
+
+export async function sendDraftMessage(input: SendDraftInput): Promise<SendEmailResult> {
+  // Idempotent on (draft:<draftId>, requestId): a retry returns the prior send.
+  const idemThreadId = `draft:${input.draftId}`
+  const existing = await db.outboundEmailIntent.findUnique({
+    where: { threadId_requestId: { threadId: idemThreadId, requestId: input.requestId } },
+    select: { id: true, status: true, gmailMessageId: true },
+  })
+  if (existing && existing.status === 'sent' && existing.gmailMessageId) {
+    return {
+      outboundEmailIntentId: existing.id,
+      gmailMessageId: existing.gmailMessageId,
+      gmailThreadId: '',
+      status: 'sent',
+      replayed: true,
+    }
+  }
+  const intentId = existing?.id ?? createId()
+  if (!existing) {
+    await db.outboundEmailIntent.create({
+      data: {
+        id: intentId,
+        agentId: input.agentId,
+        threadId: idemThreadId,
+        requestId: input.requestId,
+        subject: input.subject,
+        toAddresses: input.toAddresses,
+        ccAddresses: input.cc ?? [],
+        bccAddresses: input.bcc ?? [],
+        status: 'pending',
+        createdById: input.agentId,
+        updatedById: input.agentId,
+      },
+    })
+  }
+
+  const client = await createClientForAgent({
+    agentId: input.agentId,
+    address: input.fromAddress,
+    purpose: 'gmail.draft_send',
+    requestId: input.requestId,
+  })
+  let sent
+  try {
+    sent = await client.sendDraft(input.draftId)
+  } catch (err) {
+    await db.outboundEmailIntent.update({
+      where: { id: intentId },
+      data: { status: 'failed', updatedById: input.agentId },
+    })
+    throw err
+  }
+
+  await db.outboundEmailIntent.update({
+    where: { id: intentId },
+    data: { status: 'sent', gmailMessageId: sent.id, updatedById: input.agentId },
+  })
+
+  const recipients = Array.from(
+    new Set(
+      [...input.toAddresses, ...(input.cc ?? []), ...(input.bcc ?? [])].map((s) =>
+        s.trim().toLowerCase(),
+      ),
+    ),
+  )
+  const contacts =
+    recipients.length === 0
+      ? []
+      : await db.contact.findMany({
+          where: {
+            OR: recipients.map((a) => ({ email: { equals: a, mode: 'insensitive' as const } })),
+            deletedAt: null,
+          },
+          select: { id: true, email: true },
+        })
+  if (contacts.length > 0) {
+    await db.$transaction(
+      contacts.map((c) =>
+        db.interaction.create({
+          data: {
+            id: createId(),
+            type: 'email_sent',
+            contactId: c.id,
+            occurredAt: new Date(),
+            summary: `Email: ${input.subject}`.slice(0, 280),
+            payload: {
+              event: 'email.sent',
+              threadId: sent.threadId,
+              gmailMessageId: sent.id,
+              toAddresses: input.toAddresses,
+              cc: input.cc ?? [],
+              outboundEmailIntentId: intentId,
+            },
+            createdById: input.agentId,
+            updatedById: input.agentId,
+          },
+        }),
+      ),
+    )
+  }
+
+  await writeAuditLogEntry(db, {
+    actorId: input.agentId,
+    action: 'gmail.email_sent',
+    target: { type: 'OutboundEmailIntent', id: intentId },
+    requestId: input.requestId,
+    after: {
+      via: 'draft',
+      draftId: input.draftId,
+      gmailMessageId: sent.id,
+      toAddresses: input.toAddresses,
+      contactIds: contacts.map((c) => c.id),
+    },
+  })
+
+  return {
+    outboundEmailIntentId: intentId,
+    gmailMessageId: sent.id,
+    gmailThreadId: sent.threadId || '',
+    status: 'sent',
+    replayed: false,
+  }
+}

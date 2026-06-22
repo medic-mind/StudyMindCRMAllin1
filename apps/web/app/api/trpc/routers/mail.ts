@@ -21,8 +21,13 @@ import {
   replySubject,
 } from '@studymind/core/mail'
 import { publishConversationUpdate } from '@studymind/core/realtime'
-import { sendEmail, sendReply, type OutboundAttachment } from '@studymind/integration-gmail/outbound'
+import { sendEmail, sendReply, saveDraft, sendDraftMessage, type OutboundAttachment } from '@studymind/integration-gmail/outbound'
 import { getAttachment } from '@studymind/integration-gmail/s3'
+import {
+  createClientForAgent,
+  getHeader,
+  parseAddresses,
+} from '@studymind/integration-gmail/client'
 
 import { displayMessageBody } from '@/lib/format/html-text'
 import { getMailSyncProvider } from '@/lib/mail/get-sync-provider'
@@ -284,6 +289,26 @@ async function loadThreadMessageContext(
       }))
       .filter((a) => a.s3Key.length > 0),
   }
+}
+
+/** Resolve a Gmail MailAccount to its owning agent + address for outbound /
+ *  draft operations. Throws when it's missing, non-Gmail, or owner-less. */
+async function resolveGmailAccount(
+  ctx: TrpcContext,
+  mailAccountId: string,
+): Promise<{ ownerUserId: string; address: string }> {
+  const acc = await ctx.db.mailAccount.findFirst({
+    where: { id: mailAccountId, deletedAt: null },
+    select: { provider: true, ownerUserId: true, address: true },
+  })
+  if (!acc) throw new TRPCError({ code: 'NOT_FOUND', message: 'Mail account not found' })
+  if (acc.provider !== 'gmail') {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Drafts are Gmail-only today.' })
+  }
+  if (!acc.ownerUserId) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'This mailbox has no connected owner.' })
+  }
+  return { ownerUserId: acc.ownerUserId, address: acc.address }
 }
 
 /** Our own addresses for this account (mailbox address + send-as aliases), used
@@ -586,6 +611,172 @@ export const mailRouter = router({
   // and creates the email Conversation head so the new thread shows in /mail
   // immediately. Sales Executive+ (VA read-only). Gmail today; other providers
   // arrive with Phase 7.
+  // Drafts (G1–G3). Gmail-backed (drafts.*) so they appear in Gmail too and a
+  // draft→send never duplicates. Auto-save calls `save` (create then update).
+  drafts: router({
+    list: protectedProcedure
+      .input(z.object({ mailAccountId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertStaff(me.role)
+        const acc = await resolveGmailAccount(ctx, input.mailAccountId)
+        const client = await createClientForAgent({
+          agentId: acc.ownerUserId,
+          address: acc.address,
+          purpose: 'gmail.drafts_list',
+          requestId: ctx.requestId,
+        })
+        const stubs = await client.listDrafts({ maxResults: 50 })
+        // Fetch each draft's headers/snippet (drafts are few; bounded at 50).
+        const items = await Promise.all(
+          stubs.map(async (s) => {
+            try {
+              const d = await client.getDraft(s.draftId)
+              const subject = getHeader(d.message.headers, 'Subject')
+              const to = parseAddresses(getHeader(d.message.headers, 'To'))
+              return {
+                draftId: s.draftId,
+                subject: subject && subject.length > 0 ? subject : '(no subject)',
+                to,
+                snippet: (d.message.body ?? '').slice(0, 140),
+                date: d.message.internalDate ? new Date(d.message.internalDate) : null,
+              }
+            } catch {
+              return { draftId: s.draftId, subject: '(draft)', to: [], snippet: '', date: null }
+            }
+          }),
+        )
+        items.sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0))
+        return { items }
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ mailAccountId: z.string(), draftId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertStaff(me.role)
+        const acc = await resolveGmailAccount(ctx, input.mailAccountId)
+        const client = await createClientForAgent({
+          agentId: acc.ownerUserId,
+          address: acc.address,
+          purpose: 'gmail.drafts_get',
+          requestId: ctx.requestId,
+        })
+        const d = await client.getDraft(input.draftId)
+        return {
+          draftId: d.draftId,
+          subject: getHeader(d.message.headers, 'Subject') ?? '',
+          to: parseAddresses(getHeader(d.message.headers, 'To')),
+          cc: parseAddresses(getHeader(d.message.headers, 'Cc')),
+          bcc: parseAddresses(getHeader(d.message.headers, 'Bcc')),
+          body: d.message.body ?? '',
+        }
+      }),
+
+    /** Create or update a draft (auto-save). Returns the draft id to update on
+     *  subsequent saves. */
+    save: auditedProcedure
+      .input(
+        z.object({
+          mailAccountId: z.string(),
+          draftId: z.string().optional(),
+          to: z.array(z.string().trim()).max(50).default([]),
+          cc: z.array(z.string().trim()).max(50).optional(),
+          bcc: z.array(z.string().trim()).max(50).optional(),
+          subject: z.string().max(500).default(''),
+          body: z.string().max(50_000).default(''),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const acc = await resolveGmailAccount(ctx, input.mailAccountId)
+        const bodies = buildOutgoingEmail({ body: input.body })
+        const res = await saveDraft({
+          agentId: acc.ownerUserId,
+          fromAddress: acc.address,
+          draftId: input.draftId,
+          subject: input.subject,
+          body: bodies.text,
+          html: bodies.html,
+          toAddresses: input.to.filter((a) => a.length > 0),
+          cc: input.cc,
+          bcc: input.bcc,
+          requestId: ctx.requestId,
+        })
+        ctx.audit.called = true
+        return { draftId: res.draftId }
+      }),
+
+    /** Send a draft (drafts.send — no duplicate). Links contacts + audits. */
+    send: auditedProcedure
+      .input(
+        z.object({
+          mailAccountId: z.string(),
+          draftId: z.string(),
+          to: z.array(z.string().trim().email()).min(1).max(50),
+          cc: z.array(z.string().trim().email()).max(50).optional(),
+          bcc: z.array(z.string().trim().email()).max(50).optional(),
+          subject: z.string().trim().max(500).default(''),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const acc = await resolveGmailAccount(ctx, input.mailAccountId)
+        const result = await sendDraftMessage({
+          agentId: acc.ownerUserId,
+          fromAddress: acc.address,
+          draftId: input.draftId,
+          subject: input.subject,
+          toAddresses: input.to,
+          cc: input.cc,
+          bcc: input.bcc,
+          requestId: ctx.requestId,
+        })
+        if (result.gmailThreadId) {
+          await applyMailToConversation(ctx.db, {
+            provider: 'email',
+            externalThreadId: result.gmailThreadId,
+            mailAccountId: input.mailAccountId,
+            direction: 'sent',
+            occurredAt: new Date(),
+            contactId: null,
+            familyId: null,
+            subject: input.subject || null,
+            senderName: null,
+          })
+        }
+        await ctx.audit({
+          action: 'mail.draft_sent',
+          target: { type: 'MailAccount', id: input.mailAccountId },
+          after: { to: input.to, threadId: result.gmailThreadId },
+        })
+        return { threadId: result.gmailThreadId }
+      }),
+
+    delete: auditedProcedure
+      .input(z.object({ mailAccountId: z.string(), draftId: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const acc = await resolveGmailAccount(ctx, input.mailAccountId)
+        const client = await createClientForAgent({
+          agentId: acc.ownerUserId,
+          address: acc.address,
+          purpose: 'gmail.drafts_delete',
+          requestId: ctx.requestId,
+        })
+        await client.deleteDraft(input.draftId)
+        await ctx.audit({
+          action: 'mail.draft_deleted',
+          target: { type: 'MailAccount', id: input.mailAccountId },
+          after: { draftId: input.draftId },
+        })
+        return { ok: true as const }
+      }),
+  }),
+
   compose: auditedProcedure
     .input(
       z.object({
