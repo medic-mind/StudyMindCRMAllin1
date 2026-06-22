@@ -333,6 +333,100 @@ async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
   return Buffer.concat(chunks)
 }
 
+/** Shared select for the email-head list rows (threads.list + search). */
+const MAIL_HEAD_SELECT = {
+  id: true,
+  contactId: true,
+  externalThreadId: true,
+  subject: true,
+  unreadCount: true,
+  status: true,
+  isStarred: true,
+  isTrashed: true,
+  lastMessagePreview: true,
+  lastSenderName: true,
+  tags: true,
+  lastMessageAt: true,
+  mailAccountId: true,
+  contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+  mailAccount: { select: { address: true } },
+} as const
+
+interface MailHeadRow {
+  id: string
+  contactId: string | null
+  externalThreadId: string | null
+  subject: string | null
+  unreadCount: number
+  status: string
+  isStarred: boolean
+  isTrashed: boolean
+  lastMessagePreview: string | null
+  lastSenderName: string | null
+  tags: string[]
+  lastMessageAt: Date
+  mailAccountId: string | null
+  contact: { id: string; firstName: string | null; lastName: string | null; email: string | null } | null
+  mailAccount: { address: string } | null
+}
+
+/** Shape email-head rows into list items, repairing the sender name for legacy
+ *  heads (null `lastSenderName`) from their latest inbound message in ONE bounded
+ *  query. Shared by threads.list and search so both render identically. */
+async function shapeMailHeadItems(ctx: TrpcContext, rows: MailHeadRow[]) {
+  const needSender = rows.filter((r) => !r.lastSenderName && r.externalThreadId)
+  const senderByThread = new Map<string, string>()
+  if (needSender.length > 0) {
+    const threadIds = needSender.map((r) => r.externalThreadId as string)
+    const ints = await ctx.db.interaction.findMany({
+      where: {
+        type: 'email_received',
+        deletedAt: null,
+        OR: threadIds.map((t) => ({ payload: { path: ['gmailThreadId'], equals: t } })),
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 400,
+      select: { payload: true },
+    })
+    for (const it of ints) {
+      const p = (it.payload ?? {}) as { gmailThreadId?: unknown; senderName?: unknown; from?: unknown }
+      const tid = typeof p.gmailThreadId === 'string' ? p.gmailThreadId : null
+      if (!tid || senderByThread.has(tid)) continue
+      const fromName =
+        typeof p.senderName === 'string' && p.senderName.trim() !== ''
+          ? p.senderName
+          : Array.isArray(p.from) && typeof p.from[0] === 'string'
+            ? (p.from[0] as string)
+            : null
+      if (fromName) senderByThread.set(tid, fromName)
+    }
+  }
+  return rows.map((r) => {
+    const contactName = r.contact
+      ? [r.contact.firstName, r.contact.lastName].filter((x): x is string => !!x).join(' ') ||
+        r.contact.email ||
+        null
+      : null
+    return {
+      id: r.id,
+      contactId: r.contactId,
+      subject: r.subject,
+      unreadCount: r.unreadCount,
+      status: r.status,
+      isStarred: r.isStarred,
+      isTrashed: r.isTrashed,
+      preview: r.lastMessagePreview,
+      labels: r.tags,
+      lastMessageAt: r.lastMessageAt,
+      accountAddress: r.mailAccount?.address ?? null,
+      contactName:
+        r.lastSenderName ??
+        (r.externalThreadId ? senderByThread.get(r.externalThreadId) : null) ??
+        contactName,
+    }
+  })
+}
+
 export const mailRouter = router({
   /**
    * Email accounts visible to the caller, for the folder rail / account filter.
@@ -482,127 +576,77 @@ export const mailRouter = router({
             ],
           })
         }
-        if (input.q) {
-          const c = { contains: input.q, mode: 'insensitive' as const }
-          and.push({
-            OR: [
-              { subject: c },
-              { mailAccount: { is: { address: c } } },
-              {
-                contact: {
-                  is: { OR: [{ firstName: c }, { lastName: c }, { email: c }] },
-                },
-              },
-            ],
-          })
-        }
+        // A typed query routes through Gmail search (mail.search) — this folder
+        // list stays a fast keyset browse of synced heads (no local substring
+        // search, which never matched the body anyway).
         if (and.length > 0) where['AND'] = and
 
-        const rows = await ctx.db.conversation.findMany({
+        const rows = (await ctx.db.conversation.findMany({
           where,
           orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
           take: input.limit + 1,
-          select: {
-            id: true,
-            contactId: true,
-            externalThreadId: true,
-            subject: true,
-            unreadCount: true,
-            status: true,
-            isStarred: true,
-            isTrashed: true,
-            lastMessagePreview: true,
-            lastSenderName: true,
-            tags: true,
-            lastMessageAt: true,
-            mailAccountId: true,
-            contact: {
-              select: { id: true, firstName: true, lastName: true, email: true },
-            },
-            mailAccount: { select: { address: true } },
-          },
-        })
+          select: MAIL_HEAD_SELECT,
+        })) as MailHeadRow[]
 
         const hasMore = rows.length > input.limit
         const sliced = hasMore ? rows.slice(0, input.limit) : rows
-
-        // Retroactive sender repair: heads synced before sender-capture have a
-        // null `lastSenderName`, which used to collapse the list onto one matched
-        // contact ("every row is Mohil Shah"). Resolve the real sender for those
-        // from their latest inbound email Interaction (payload carries the From
-        // name + addresses), in ONE bounded query. New mail stores it on the head
-        // directly, so this only runs for the legacy backlog.
-        const needSender = sliced.filter(
-          (r) => !r.lastSenderName && r.externalThreadId,
-        )
-        const senderByThread = new Map<string, string>()
-        if (needSender.length > 0) {
-          const threadIds = needSender.map((r) => r.externalThreadId as string)
-          const ints = await ctx.db.interaction.findMany({
-            where: {
-              type: 'email_received',
-              deletedAt: null,
-              OR: threadIds.map((t) => ({
-                payload: { path: ['gmailThreadId'], equals: t },
-              })),
-            },
-            orderBy: { occurredAt: 'desc' },
-            take: 400,
-            select: { payload: true },
-          })
-          for (const it of ints) {
-            const p = (it.payload ?? {}) as {
-              gmailThreadId?: unknown
-              senderName?: unknown
-              from?: unknown
-            }
-            const tid = typeof p.gmailThreadId === 'string' ? p.gmailThreadId : null
-            if (!tid || senderByThread.has(tid)) continue
-            const fromName =
-              typeof p.senderName === 'string' && p.senderName.trim() !== ''
-                ? p.senderName
-                : Array.isArray(p.from) && typeof p.from[0] === 'string'
-                  ? (p.from[0] as string)
-                  : null
-            if (fromName) senderByThread.set(tid, fromName)
-          }
-        }
-
-        const items = sliced.map((r) => {
-          const contactName = r.contact
-            ? [r.contact.firstName, r.contact.lastName]
-                .filter((x): x is string => !!x)
-                .join(' ') ||
-              r.contact.email ||
-              null
-            : null
-          return {
-            id: r.id,
-            contactId: r.contactId,
-            subject: r.subject,
-            unreadCount: r.unreadCount,
-            status: r.status,
-            isStarred: r.isStarred,
-            isTrashed: r.isTrashed,
-            preview: r.lastMessagePreview,
-            labels: r.tags,
-            lastMessageAt: r.lastMessageAt,
-            accountAddress: r.mailAccount?.address ?? null,
-            // Gmail shows the actual sender: the head's stored sender, else the
-            // sender resolved from the latest message (legacy heads), and only
-            // then the matched CRM contact as a last resort.
-            contactName:
-              r.lastSenderName ??
-              (r.externalThreadId ? senderByThread.get(r.externalThreadId) : null) ??
-              contactName,
-          }
-        })
+        const items = await shapeMailHeadItems(ctx, sliced)
         const last = sliced[sliced.length - 1]
         const nextCursor =
-          hasMore && last
-            ? { id: last.id, lastMessageAt: last.lastMessageAt }
-            : null
+          hasMore && last ? { id: last.id, lastMessageAt: last.lastMessageAt } : null
         return { items, nextCursor }
+      }),
+
+    /**
+     * Full Gmail search (E1/E2): the query is passed straight to Gmail's `q`, so
+     * full-body matching and every operator (from:/to:/subject:/has:attachment/
+     * is:unread/before:/OR/grouping/…) work natively. Gmail returns thread ids
+     * in relevance order; we map them to our synced Conversation heads and shape
+     * them identically to the list. Paginated via Gmail's pageToken.
+     */
+    search: protectedProcedure
+      .input(
+        z.object({
+          mailAccountId: z.string(),
+          q: z.string().trim().min(1).max(500),
+          pageToken: z.string().optional(),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertStaff(me.role)
+        const acc = await resolveGmailAccount(ctx, input.mailAccountId)
+        const client = await createClientForAgent({
+          agentId: acc.ownerUserId,
+          address: acc.address,
+          purpose: 'gmail.search',
+          requestId: ctx.requestId,
+        })
+        const { threadIds, nextPageToken } = await client.searchThreadIds({
+          q: input.q,
+          ...(input.pageToken ? { pageToken: input.pageToken } : {}),
+          maxResults: 30,
+        })
+        if (threadIds.length === 0) {
+          return { items: [] as Awaited<ReturnType<typeof shapeMailHeadItems>>, nextPageToken }
+        }
+        const rows = (await ctx.db.conversation.findMany({
+          where: {
+            provider: 'email',
+            mailAccountId: input.mailAccountId,
+            externalThreadId: { in: threadIds },
+          },
+          select: MAIL_HEAD_SELECT,
+        })) as MailHeadRow[]
+        // Preserve Gmail's relevance order.
+        const order = new Map(threadIds.map((t, i) => [t, i]))
+        rows.sort(
+          (a, b) =>
+            (order.get(a.externalThreadId ?? '') ?? 1e9) -
+            (order.get(b.externalThreadId ?? '') ?? 1e9),
+        )
+        const items = await shapeMailHeadItems(ctx, rows)
+        return { items, nextPageToken }
       }),
   }),
 

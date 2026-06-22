@@ -26,6 +26,7 @@ import {
   ReplyIcon,
   SearchIcon,
   SendIcon,
+  SlidersIcon,
   StarIcon,
   TagIcon,
   Trash2Icon,
@@ -89,6 +90,36 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [composing, setComposing] = useState(false)
   const [resumeDraft, setResumeDraft] = useState<DraftInitial | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
+  const [searchFocused, setSearchFocused] = useState(false)
+  const [recent, setRecent] = useState<string[]>([])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('mail.recentSearches')
+      if (raw) setRecent(JSON.parse(raw) as string[])
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const runSearch = useCallback((q: string) => {
+    const trimmed = q.trim()
+    setRawQuery(trimmed)
+    setQuery(trimmed)
+    setShowFilters(false)
+    setSearchFocused(false)
+    if (trimmed.length === 0) return
+    setRecent((cur) => {
+      const next = [trimmed, ...cur.filter((x) => x !== trimmed)].slice(0, 8)
+      try {
+        localStorage.setItem('mail.recentSearches', JSON.stringify(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }, [])
 
   // Drafts is its own (Gmail-backed) list, not a Conversation-head filter.
   const showDrafts = folder === 'drafts' && !label
@@ -99,18 +130,28 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
     return () => clearTimeout(t)
   }, [rawQuery])
 
+  // A typed query runs a real Gmail search (full body + operators) scoped to the
+  // selected account (or the first when "All accounts" is chosen).
+  const searching = query.length > 0 && !showDrafts && !!draftsAccountId
   const threads = trpc.mail.threads.list.useQuery(
     {
       mailAccountId: accountId,
       // A label folder spans all mail with that label (like clicking in Gmail).
       filter: label ? 'all' : folder === 'drafts' ? 'inbox' : folder,
       label: label,
-      q: query || null,
       limit: 50,
     },
-    { enabled: !showDrafts },
+    { enabled: !showDrafts && !searching },
   )
-  const items = useMemo(() => threads.data?.items ?? [], [threads.data])
+  const search = trpc.mail.threads.search.useQuery(
+    { mailAccountId: draftsAccountId ?? '', q: query },
+    { enabled: searching },
+  )
+  const items = useMemo(
+    () => (searching ? (search.data?.items ?? []) : (threads.data?.items ?? [])),
+    [searching, search.data, threads.data],
+  )
+  const listLoading = searching ? search.isLoading : threads.isLoading
   const labels = trpc.mail.labels.useQuery({ mailAccountId: accountId })
 
   const kbArchive = trpc.mail.thread.setArchived.useMutation()
@@ -120,6 +161,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
 
   const invalidateList = useCallback(() => {
     void utils.mail.threads.list.invalidate()
+    void utils.mail.threads.search.invalidate()
   }, [utils])
   const refreshOpen = useCallback(() => {
     invalidateList()
@@ -347,10 +389,64 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
               id="mail-search"
               value={rawQuery}
               onChange={(e) => setRawQuery(e.target.value)}
-              placeholder="Search mail"
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') runSearch(rawQuery)
+              }}
+              placeholder="Search mail (try from:jane has:attachment is:unread)"
               aria-label="Search mail"
-              className="h-11 w-full rounded-lg border border-transparent bg-neutral-100 pl-11 pr-3 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-gmail-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gmail-100"
+              className="h-11 w-full rounded-lg border border-transparent bg-neutral-100 pl-11 pr-20 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-gmail-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gmail-100"
             />
+            <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+              {rawQuery ? (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => runSearch('')}
+                  className="rounded p-1 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700"
+                >
+                  <XIcon size={15} />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                aria-label="Search filters"
+                aria-expanded={showFilters}
+                onClick={() => setShowFilters((v) => !v)}
+                className={`rounded p-1 hover:bg-neutral-200 ${showFilters ? 'text-gmail-700' : 'text-neutral-400 hover:text-neutral-700'}`}
+              >
+                <SlidersIcon size={16} />
+              </button>
+            </div>
+
+            {/* Recent searches */}
+            {searchFocused && !showFilters && rawQuery.length === 0 && recent.length > 0 ? (
+              <div className="absolute left-0 right-0 top-12 z-20 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
+                <p className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                  Recent searches
+                </p>
+                {recent.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => runSearch(r)}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-50"
+                  >
+                    <SearchIcon size={14} className="text-neutral-400" /> {r}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {/* Advanced filter panel */}
+            {showFilters ? (
+              <AdvancedSearchPanel
+                onApply={(q) => runSearch(q)}
+                onClose={() => setShowFilters(false)}
+              />
+            ) : null}
           </div>
         </div>
 
@@ -407,7 +503,7 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
 
             {/* List */}
             <div className="flex-1 overflow-y-auto">
-              {threads.isLoading ? (
+              {listLoading ? (
                 <ListSkeleton />
               ) : items.length === 0 ? (
                 <div className="flex flex-col items-center justify-center px-8 py-20 text-center">
@@ -1431,6 +1527,111 @@ function DraftsList({
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Advanced search — builds a Gmail `q` string from fields (E4). The operators
+// (from:/to:/subject:/has:attachment/is:unread/is:starred/after:/before:) are
+// Gmail's own, so the resulting query runs natively through mail.search.
+// -----------------------------------------------------------------------------
+
+function AdvancedSearchPanel({
+  onApply,
+  onClose,
+}: {
+  onApply: (q: string) => void
+  onClose: () => void
+}) {
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [subject, setSubject] = useState('')
+  const [words, setWords] = useState('')
+  const [after, setAfter] = useState('')
+  const [before, setBefore] = useState('')
+  const [hasAttachment, setHasAttachment] = useState(false)
+  const [isUnread, setIsUnread] = useState(false)
+  const [isStarred, setIsStarred] = useState(false)
+
+  function build(): string {
+    const parts: string[] = []
+    if (from.trim()) parts.push(`from:(${from.trim()})`)
+    if (to.trim()) parts.push(`to:(${to.trim()})`)
+    if (subject.trim()) parts.push(`subject:(${subject.trim()})`)
+    if (hasAttachment) parts.push('has:attachment')
+    if (isUnread) parts.push('is:unread')
+    if (isStarred) parts.push('is:starred')
+    // Gmail wants YYYY/MM/DD for after:/before:.
+    if (after) parts.push(`after:${after.replace(/-/g, '/')}`)
+    if (before) parts.push(`before:${before.replace(/-/g, '/')}`)
+    if (words.trim()) parts.push(words.trim())
+    return parts.join(' ')
+  }
+
+  const field = 'w-full rounded-md border border-neutral-200 px-2.5 py-1.5 text-sm focus:border-gmail-300 focus:outline-none focus:ring-1 focus:ring-gmail-100'
+
+  return (
+    <div className="absolute left-0 right-0 top-12 z-20 rounded-lg border border-neutral-200 bg-white p-4 text-sm shadow-lg">
+      <div className="grid grid-cols-2 gap-3">
+        <label className="col-span-1 flex flex-col gap-1 text-xs text-neutral-500">
+          From
+          <input value={from} onChange={(e) => setFrom(e.target.value)} className={field} />
+        </label>
+        <label className="col-span-1 flex flex-col gap-1 text-xs text-neutral-500">
+          To
+          <input value={to} onChange={(e) => setTo(e.target.value)} className={field} />
+        </label>
+        <label className="col-span-2 flex flex-col gap-1 text-xs text-neutral-500">
+          Subject
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} className={field} />
+        </label>
+        <label className="col-span-2 flex flex-col gap-1 text-xs text-neutral-500">
+          Has the words
+          <input value={words} onChange={(e) => setWords(e.target.value)} className={field} />
+        </label>
+        <label className="col-span-1 flex flex-col gap-1 text-xs text-neutral-500">
+          After
+          <input type="date" value={after} onChange={(e) => setAfter(e.target.value)} className={field} />
+        </label>
+        <label className="col-span-1 flex flex-col gap-1 text-xs text-neutral-500">
+          Before
+          <input type="date" value={before} onChange={(e) => setBefore(e.target.value)} className={field} />
+        </label>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-neutral-700">
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={hasAttachment} onChange={(e) => setHasAttachment(e.target.checked)} />
+          Has attachment
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={isUnread} onChange={(e) => setIsUnread(e.target.checked)} />
+          Unread
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={isStarred} onChange={(e) => setIsStarred(e.target.checked)} />
+          Starred
+        </label>
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md px-3 py-1.5 text-sm text-neutral-500 hover:bg-neutral-100"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const q = build()
+            if (q) onApply(q)
+          }}
+          className="rounded-full bg-gmail-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-gmail-700"
+        >
+          Search
+        </button>
+      </div>
     </div>
   )
 }
