@@ -128,6 +128,17 @@ export interface GmailClient {
   listDrafts(input?: { maxResults?: number }): Promise<GmailDraftStub[]>
   sendDraft(draftId: string): Promise<GmailMessageRef>
   deleteDraft(draftId: string): Promise<void>
+  /**
+   * Full-text Gmail search (E1/E2). Passes the query straight to Gmail's `q`
+   * so every operator (from:, to:, subject:, has:attachment, is:unread,
+   * before:, OR, grouping, …) and full-body matching work natively. Returns
+   * thread ids in Gmail's relevance order, de-duplicated, with the page token.
+   */
+  searchThreadIds(input: {
+    q: string
+    pageToken?: string
+    maxResults?: number
+  }): Promise<{ threadIds: string[]; nextPageToken: string | null }>
 }
 
 /** A Gmail draft after create/update — the draft id plus its message ref. */
@@ -442,6 +453,24 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
     },
     async deleteDraft(draftId) {
       await gmail.users.drafts.delete({ userId: 'me', id: draftId })
+    },
+    async searchThreadIds(input) {
+      const res = await gmail.users.messages.list({
+        userId: 'me',
+        q: input.q,
+        maxResults: input.maxResults ?? 30,
+        ...(input.pageToken ? { pageToken: input.pageToken } : {}),
+      })
+      const threadIds: string[] = []
+      const seen = new Set<string>()
+      for (const m of res.data.messages ?? []) {
+        const tid = m.threadId ?? ''
+        if (tid && !seen.has(tid)) {
+          seen.add(tid)
+          threadIds.push(tid)
+        }
+      }
+      return { threadIds, nextPageToken: res.data.nextPageToken ?? null }
     },
   }
 }
