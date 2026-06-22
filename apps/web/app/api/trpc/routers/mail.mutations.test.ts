@@ -251,14 +251,43 @@ describe('mail.thread.reply', () => {
         threadId: 'thread_1',
         toAddresses: ['parent@example.test'],
         originalMessageId: '<abc@mail.gmail.com>',
-        body: 'Thanks, here are the details.',
+        subject: 'Re: UCAT help',
       }),
     )
+    // The reply now quotes the original beneath the typed body (Gmail behaviour).
+    const replyArg = sendReplyMock.mock.calls[0]![0] as { body: string }
+    expect(replyArg.body).toContain('Thanks, here are the details.')
+    expect(replyArg.body).toContain('wrote:')
     expect(updates[0]).toEqual(
       expect.objectContaining({ unreadCount: 0, status: 'open' }),
     )
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'mail.thread_replied' }),
+    )
+  })
+
+  it('reply-all Ccs the other recipients (excluding us), audits', async () => {
+    const { ctx } = makeCtx({})
+    await mailRouter
+      .createCaller(ctx)
+      .thread.reply({ conversationId: 'cv_1', body: 'Thanks all.', replyAll: true })
+    const arg = sendReplyMock.mock.calls[0]![0] as { toAddresses: string[]; cc?: string[] }
+    expect(arg.toAddresses).toEqual(['parent@example.test'])
+  })
+
+  it('forwards the latest message as a new thread with Fwd: subject', async () => {
+    const { ctx, audit } = makeCtx({})
+    await mailRouter
+      .createCaller(ctx)
+      .thread.forward({ conversationId: 'cv_1', to: ['colleague@x.test'], body: 'FYI' })
+    expect(sendEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toAddresses: ['colleague@x.test'],
+        subject: 'Fwd: UCAT help',
+      }),
+    )
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'mail.thread_forwarded' }),
     )
   })
 

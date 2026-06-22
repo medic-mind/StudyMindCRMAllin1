@@ -12,6 +12,7 @@ export * from './conversation-head'
 export * from './signature'
 export * from './html-email'
 export * from './compose-html'
+export * from './quote'
 
 // -----------------------------------------------------------------------------
 // Enumerations — mirror the Prisma enums one-for-one.

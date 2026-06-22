@@ -12,11 +12,17 @@ import { createId } from '@paralleldrive/cuid2'
 
 import {
   applyMailToConversation,
+  buildForwardQuote,
   buildOutgoingEmail,
+  buildReplyQuote,
+  computeReplyAllRecipients,
+  forwardSubject,
   normaliseEmail,
+  replySubject,
 } from '@studymind/core/mail'
 import { publishConversationUpdate } from '@studymind/core/realtime'
-import { sendEmail, sendReply } from '@studymind/integration-gmail/outbound'
+import { sendEmail, sendReply, type OutboundAttachment } from '@studymind/integration-gmail/outbound'
+import { getAttachment } from '@studymind/integration-gmail/s3'
 
 import { displayMessageBody } from '@/lib/format/html-text'
 import { getMailSyncProvider } from '@/lib/mail/get-sync-provider'
@@ -221,6 +227,85 @@ async function ensureMailAccountForThread(
     data: { mailAccountId: account.id },
   })
   return account.id
+}
+
+interface ThreadMessageContext {
+  from: string[]
+  to: string[]
+  cc: string[]
+  subject: string | null
+  messageId: string | undefined
+  date: Date | null
+  senderName: string | null
+  text: string | null
+  html: string | null
+  attachments: Array<{ s3Key: string; filename: string; contentType: string }>
+}
+
+/** Load the latest message on a thread (optionally inbound-only) and shape the
+ *  fields reply/reply-all/forward need: addresses, subject, threading id, body,
+ *  and stored attachment keys. */
+async function loadThreadMessageContext(
+  ctx: TrpcContext,
+  externalThreadId: string,
+  opts: { inboundOnly: boolean },
+): Promise<ThreadMessageContext | null> {
+  const row = await ctx.db.interaction.findFirst({
+    where: {
+      deletedAt: null,
+      type: opts.inboundOnly ? 'email_received' : { in: ['email_received', 'email_sent'] },
+      payload: { path: ['gmailThreadId'], equals: externalThreadId },
+    },
+    orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+    select: { occurredAt: true, payload: true },
+  })
+  if (!row) return null
+  const p = (row.payload ?? {}) as Record<string, unknown>
+  const arr = (k: string): string[] =>
+    Array.isArray(p[k]) ? (p[k] as unknown[]).filter((x): x is string => typeof x === 'string') : []
+  const rawAtts = Array.isArray(p['attachments'])
+    ? (p['attachments'] as Array<Record<string, unknown>>)
+    : []
+  return {
+    from: arr('from'),
+    to: arr('to'),
+    cc: arr('cc'),
+    subject: typeof p['subject'] === 'string' ? (p['subject'] as string) : null,
+    messageId: typeof p['messageIdHeader'] === 'string' ? (p['messageIdHeader'] as string) : undefined,
+    date: row.occurredAt ?? null,
+    senderName: typeof p['senderName'] === 'string' ? (p['senderName'] as string) : null,
+    text: typeof p['body'] === 'string' ? (p['body'] as string) : null,
+    html: typeof p['bodyHtml'] === 'string' ? (p['bodyHtml'] as string) : null,
+    attachments: rawAtts
+      .map((a) => ({
+        s3Key: typeof a['s3Key'] === 'string' ? (a['s3Key'] as string) : '',
+        filename: typeof a['filename'] === 'string' ? (a['filename'] as string) : 'attachment',
+        contentType: typeof a['mimeType'] === 'string' ? (a['mimeType'] as string) : 'application/octet-stream',
+      }))
+      .filter((a) => a.s3Key.length > 0),
+  }
+}
+
+/** Our own addresses for this account (mailbox address + send-as aliases), used
+ *  to exclude ourselves from reply-all recipients. */
+async function selfAddressesForAccount(ctx: TrpcContext, mailAccountId: string): Promise<string[]> {
+  const acc = await ctx.db.mailAccount.findUnique({
+    where: { id: mailAccountId },
+    select: { address: true },
+  })
+  return acc?.address ? [acc.address.toLowerCase()] : []
+}
+
+/** Forwarded attachments can be large; cap total re-attached bytes (Gmail's own
+ *  message ceiling is 25 MB) so a forward can't exhaust memory. */
+const MAX_FORWARD_ATTACH_BYTES = 25 * 1024 * 1024
+
+async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks)
 }
 
 export const mailRouter = router({
@@ -507,6 +592,7 @@ export const mailRouter = router({
         mailAccountId: z.string(),
         to: z.array(z.string().trim().email()).min(1).max(50),
         cc: z.array(z.string().trim().email()).max(50).optional(),
+        bcc: z.array(z.string().trim().email()).max(50).optional(),
         subject: z.string().trim().min(1).max(500),
         body: z.string().trim().min(1).max(50_000),
       }),
@@ -556,6 +642,7 @@ export const mailRouter = router({
         html: bodies.html,
         toAddresses: input.to,
         cc: input.cc,
+        bcc: input.bcc,
         requestId: ctx.requestId,
       })
 
@@ -747,6 +834,9 @@ export const mailRouter = router({
           conversationId: z.string(),
           body: z.string().trim().min(1).max(50_000),
           cc: z.array(z.string().email()).max(50).optional(),
+          bcc: z.array(z.string().email()).max(50).optional(),
+          /** Reply to everyone (sender + original To/Cc, minus us). */
+          replyAll: z.boolean().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -765,51 +855,59 @@ export const mailRouter = router({
           })
         }
 
-        // Latest inbound message on the thread gives us who to reply to, the
-        // subject, and the Message-ID to thread against.
-        const latestInbound = await ctx.db.interaction.findFirst({
-          where: {
-            deletedAt: null,
-            type: 'email_received',
-            payload: { path: ['gmailThreadId'], equals: head.externalThreadId },
-          },
-          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-          select: { payload: true },
+        // Latest inbound message: who to reply to, the subject, the Message-ID
+        // to thread against, and the body to quote.
+        const msg = await loadThreadMessageContext(ctx, head.externalThreadId, {
+          inboundOnly: true,
         })
-        const p = (latestInbound?.payload as Record<string, unknown> | null) ?? {}
-        const from = Array.isArray(p['from']) ? (p['from'] as string[]) : []
-        const toAddresses = from.filter((a) => typeof a === 'string' && a.length > 0)
-        if (toAddresses.length === 0) {
+        if (!msg || msg.from.length === 0) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
             message: 'No inbound message to reply to on this thread yet.',
           })
         }
-        const subject = typeof p['subject'] === 'string' ? (p['subject'] as string) : ''
-        const originalMessageId =
-          typeof p['messageIdHeader'] === 'string'
-            ? (p['messageIdHeader'] as string)
-            : undefined
 
-        // Send as multipart/alternative so the message renders like Gmail and
-        // the account's copied HTML signature shows with its real formatting.
+        // Reply → sender only; Reply all → + original To/Cc minus us.
+        const self = await selfAddressesForAccount(ctx, head.mailAccountId)
+        let toAddresses: string[]
+        let cc: string[] | undefined = input.cc
+        if (input.replyAll) {
+          const r = computeReplyAllRecipients({ from: msg.from, to: msg.to, cc: msg.cc, self })
+          toAddresses = r.to
+          cc = [...new Set([...(input.cc ?? []), ...r.cc])]
+        } else {
+          toAddresses = [msg.from[0]!]
+        }
+        if (toAddresses.length === 0) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No recipient to reply to.' })
+        }
+
+        // Quote the original beneath the reply (Gmail behaviour).
+        const quote = buildReplyQuote({
+          date: msg.date,
+          fromName: msg.senderName,
+          fromEmail: msg.from[0] ?? null,
+          text: msg.text,
+          html: msg.html,
+        })
         const bodies = buildOutgoingEmail({
           body: input.body,
           signatureHtml: account.signatureHtml,
-          signatureText: account.signatureHtml
-            ? displayMessageBody(account.signatureHtml)
-            : null,
+          signatureText: account.signatureHtml ? displayMessageBody(account.signatureHtml) : null,
+          quotedText: quote.text,
+          quotedHtml: quote.html,
         })
         await sendReply({
           agentId: account.ownerUserId,
           threadId: head.externalThreadId,
-          subject,
+          subject: replySubject(msg.subject),
           body: bodies.text,
           html: bodies.html,
           toAddresses,
-          cc: input.cc,
+          cc,
+          bcc: input.bcc,
           requestId: ctx.requestId,
-          originalMessageId,
+          originalMessageId: msg.messageId,
         })
 
         const now = new Date()
@@ -826,9 +924,115 @@ export const mailRouter = router({
         await ctx.audit({
           action: 'mail.thread_replied',
           target: { type: 'Conversation', id: head.id },
-          after: { to: toAddresses, cc: input.cc ?? [] },
+          after: { to: toAddresses, cc: cc ?? [], replyAll: Boolean(input.replyAll) },
         })
         return { id: head.id }
+      }),
+
+    /**
+     * Forward the thread's latest message to new recipients as a NEW Gmail
+     * thread (Fwd: subject), with the original quoted in Gmail's "Forwarded
+     * message" block and the original attachments re-attached from S3. Sales
+     * Executive+; Gmail today.
+     */
+    forward: auditedProcedure
+      .input(
+        z.object({
+          conversationId: z.string(),
+          to: z.array(z.string().email()).min(1).max(50),
+          cc: z.array(z.string().email()).max(50).optional(),
+          bcc: z.array(z.string().email()).max(50).optional(),
+          body: z.string().trim().max(50_000).default(''),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const account = await ctx.db.mailAccount.findUnique({
+          where: { id: head.mailAccountId },
+          select: { ownerUserId: true, address: true, signatureHtml: true },
+        })
+        if (!account?.ownerUserId) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'This mailbox has no connected owner to send as.',
+          })
+        }
+        const msg = await loadThreadMessageContext(ctx, head.externalThreadId, {
+          inboundOnly: false,
+        })
+        if (!msg) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No message on this thread to forward.' })
+        }
+
+        const fwd = buildForwardQuote({
+          date: msg.date,
+          fromName: msg.senderName,
+          fromEmail: msg.from[0] ?? null,
+          to: msg.to,
+          cc: msg.cc,
+          subject: msg.subject,
+          text: msg.text,
+          html: msg.html,
+        })
+        const bodies = buildOutgoingEmail({
+          body: input.body,
+          signatureHtml: account.signatureHtml,
+          signatureText: account.signatureHtml ? displayMessageBody(account.signatureHtml) : null,
+          quotedText: fwd.text,
+          quotedHtml: fwd.html,
+        })
+
+        // Re-attach the original attachments (streamed back from S3), bounded.
+        const attachments: OutboundAttachment[] = []
+        let total = 0
+        for (const a of msg.attachments) {
+          const obj = await getAttachment(a.s3Key)
+          const buf = await streamToBuffer(obj.body)
+          total += buf.byteLength
+          if (total > MAX_FORWARD_ATTACH_BYTES) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Forwarded attachments exceed the 25 MB limit.',
+            })
+          }
+          attachments.push({ filename: a.filename, contentType: a.contentType, data: buf })
+        }
+
+        const result = await sendEmail({
+          agentId: account.ownerUserId,
+          fromAddress: account.address ?? undefined,
+          subject: forwardSubject(msg.subject),
+          body: bodies.text,
+          html: bodies.html,
+          toAddresses: input.to,
+          cc: input.cc,
+          bcc: input.bcc,
+          requestId: ctx.requestId,
+          attachments,
+        })
+
+        // Surface the forwarded thread in /mail immediately.
+        if (result.gmailThreadId) {
+          await applyMailToConversation(ctx.db, {
+            provider: 'email',
+            externalThreadId: result.gmailThreadId,
+            mailAccountId: head.mailAccountId,
+            direction: 'sent',
+            occurredAt: new Date(),
+            contactId: null,
+            familyId: null,
+            subject: forwardSubject(msg.subject),
+            senderName: null,
+          })
+        }
+        await ctx.audit({
+          action: 'mail.thread_forwarded',
+          target: { type: 'Conversation', id: head.id },
+          after: { to: input.to, cc: input.cc ?? [], attachments: attachments.length },
+        })
+        return { id: head.id, threadId: result.gmailThreadId }
       }),
 
     setLabels: auditedProcedure
