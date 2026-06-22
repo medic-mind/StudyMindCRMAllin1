@@ -121,6 +121,33 @@ export interface GmailClient {
    * gmail.readonly / gmail.modify scopes we already request — no extra consent.
    */
   listSendAs(): Promise<GmailSendAs[]>
+  // Drafts (G1–G3). Covered by the gmail.modify scope we already hold.
+  createDraft(input: { raw: string; threadId?: string }): Promise<GmailDraftRef>
+  updateDraft(input: { draftId: string; raw: string; threadId?: string }): Promise<GmailDraftRef>
+  getDraft(draftId: string): Promise<GmailDraftDetail>
+  listDrafts(input?: { maxResults?: number }): Promise<GmailDraftStub[]>
+  sendDraft(draftId: string): Promise<GmailMessageRef>
+  deleteDraft(draftId: string): Promise<void>
+}
+
+/** A Gmail draft after create/update — the draft id plus its message ref. */
+export interface GmailDraftRef {
+  draftId: string
+  messageId: string
+  threadId: string
+}
+
+/** A draft id + its (minimal) message ref, from drafts.list. */
+export interface GmailDraftStub {
+  draftId: string
+  messageId: string
+  threadId: string
+}
+
+/** A draft with its fully-normalised message, for resuming in the composer. */
+export interface GmailDraftDetail {
+  draftId: string
+  message: GmailMessage
 }
 
 export interface CreateGmailClientOptions {
@@ -358,6 +385,63 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
         isPrimary: !!s.isPrimary,
         isDefault: !!s.isDefault,
       }))
+    },
+    async createDraft(input) {
+      const res = await gmail.users.drafts.create({
+        userId: 'me',
+        requestBody: {
+          message: { raw: input.raw, ...(input.threadId ? { threadId: input.threadId } : {}) },
+        },
+      })
+      return {
+        draftId: res.data.id ?? '',
+        messageId: res.data.message?.id ?? '',
+        threadId: res.data.message?.threadId ?? '',
+      }
+    },
+    async updateDraft(input) {
+      const res = await gmail.users.drafts.update({
+        userId: 'me',
+        id: input.draftId,
+        requestBody: {
+          message: { raw: input.raw, ...(input.threadId ? { threadId: input.threadId } : {}) },
+        },
+      })
+      return {
+        draftId: res.data.id ?? input.draftId,
+        messageId: res.data.message?.id ?? '',
+        threadId: res.data.message?.threadId ?? '',
+      }
+    },
+    async getDraft(draftId) {
+      const res = await gmail.users.drafts.get({ userId: 'me', id: draftId, format: 'full' })
+      const message = res.data.message
+        ? normaliseMessage(res.data.message)
+        : normaliseMessage({})
+      return { draftId: res.data.id ?? draftId, message }
+    },
+    async listDrafts(input) {
+      const res = await gmail.users.drafts.list({
+        userId: 'me',
+        maxResults: input?.maxResults ?? 50,
+      })
+      return (res.data.drafts ?? [])
+        .filter((d): d is { id: string; message?: { id?: string; threadId?: string } } => !!d.id)
+        .map((d) => ({
+          draftId: d.id,
+          messageId: d.message?.id ?? '',
+          threadId: d.message?.threadId ?? '',
+        }))
+    },
+    async sendDraft(draftId) {
+      const res = await gmail.users.drafts.send({
+        userId: 'me',
+        requestBody: { id: draftId },
+      })
+      return { id: res.data.id ?? '', threadId: res.data.threadId ?? '' }
+    },
+    async deleteDraft(draftId) {
+      await gmail.users.drafts.delete({ userId: 'me', id: draftId })
     },
   }
 }

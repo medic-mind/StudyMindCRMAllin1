@@ -61,7 +61,7 @@ function gmailDate(d: Date, now: Date): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })
 }
 
-type Folder = 'inbox' | 'all' | 'unread' | 'starred' | 'archived' | 'trash'
+type Folder = 'inbox' | 'all' | 'unread' | 'starred' | 'drafts' | 'archived' | 'trash'
 
 const FOLDERS: ReadonlyArray<{ key: Folder; label: string; Icon: typeof InboxIcon }> = [
   // Inbox = open (not archived/trashed), mirroring Gmail's Inbox. "All mail" is
@@ -70,6 +70,7 @@ const FOLDERS: ReadonlyArray<{ key: Folder; label: string; Icon: typeof InboxIco
   { key: 'all', label: 'All mail', Icon: MailIcon },
   { key: 'unread', label: 'Unread', Icon: MailIcon },
   { key: 'starred', label: 'Starred', Icon: StarIcon },
+  { key: 'drafts', label: 'Drafts', Icon: FileTextIcon },
   { key: 'archived', label: 'Archived', Icon: ArchiveIcon },
   { key: 'trash', label: 'Trash', Icon: Trash2Icon },
 ]
@@ -87,20 +88,28 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [composing, setComposing] = useState(false)
+  const [resumeDraft, setResumeDraft] = useState<DraftInitial | null>(null)
+
+  // Drafts is its own (Gmail-backed) list, not a Conversation-head filter.
+  const showDrafts = folder === 'drafts' && !label
+  const draftsAccountId = accountId ?? accounts[0]?.id ?? null
 
   useEffect(() => {
     const t = setTimeout(() => setQuery(rawQuery.trim()), 250)
     return () => clearTimeout(t)
   }, [rawQuery])
 
-  const threads = trpc.mail.threads.list.useQuery({
-    mailAccountId: accountId,
-    // A label folder spans all mail with that label (like clicking it in Gmail).
-    filter: label ? 'all' : folder,
-    label: label,
-    q: query || null,
-    limit: 50,
-  })
+  const threads = trpc.mail.threads.list.useQuery(
+    {
+      mailAccountId: accountId,
+      // A label folder spans all mail with that label (like clicking in Gmail).
+      filter: label ? 'all' : folder === 'drafts' ? 'inbox' : folder,
+      label: label,
+      q: query || null,
+      limit: 50,
+    },
+    { enabled: !showDrafts },
+  )
   const items = useMemo(() => threads.data?.items ?? [], [threads.data])
   const labels = trpc.mail.labels.useQuery({ mailAccountId: accountId })
 
@@ -352,6 +361,11 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
             onBack={() => setSelectedId(null)}
             onChanged={invalidateList}
           />
+        ) : showDrafts ? (
+          <DraftsList
+            accountId={draftsAccountId}
+            onResume={(d) => setResumeDraft(d)}
+          />
         ) : (
           <>
             {/* Toolbar */}
@@ -433,8 +447,18 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
         )}
       </div>
 
-      {composing ? (
-        <ComposeDock accounts={accounts} onClose={() => setComposing(false)} />
+      {composing || resumeDraft ? (
+        <ComposeDock
+          accounts={accounts}
+          initial={resumeDraft ?? undefined}
+          onClose={() => {
+            setComposing(false)
+            setResumeDraft(null)
+          }}
+          onSentOrDeleted={() => {
+            if (showDrafts) void utils.mail.drafts.list.invalidate()
+          }}
+        />
       ) : null}
     </div>
   )
@@ -1056,53 +1080,177 @@ function EmailHtmlBody({ interactionId, text }: { interactionId: string; text: s
 }
 
 // -----------------------------------------------------------------------------
-// Compose — docked bottom-right (Gmail "New Message" window).
+// Compose — docked bottom-right (Gmail "New Message" window). Auto-saves to a
+// Gmail draft while typing; sends via drafts.send (no duplicate) when a draft
+// exists, else a fresh compose.
 // -----------------------------------------------------------------------------
 
-function ComposeDock({ accounts, onClose }: { accounts: AccountOption[]; onClose: () => void }) {
+export interface DraftInitial {
+  draftId: string
+  accountId: string
+  to: string
+  cc: string
+  bcc: string
+  subject: string
+  body: string
+}
+
+const splitAddrs = (s: string) => s.split(/[,;]/).map((x) => x.trim()).filter(Boolean)
+
+function ComposeDock({
+  accounts,
+  initial,
+  onClose,
+  onSentOrDeleted,
+}: {
+  accounts: AccountOption[]
+  initial?: DraftInitial | undefined
+  onClose: () => void
+  onSentOrDeleted?: () => void
+}) {
   const utils = trpc.useUtils()
   const compose = trpc.mail.compose.useMutation()
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
-  const [to, setTo] = useState('')
-  const [cc, setCc] = useState('')
-  const [bcc, setBcc] = useState('')
-  const [showCc, setShowCc] = useState(false)
-  const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
+  const draftSave = trpc.mail.drafts.save.useMutation()
+  const draftSend = trpc.mail.drafts.send.useMutation()
+  const draftDelete = trpc.mail.drafts.delete.useMutation()
+  const [accountId, setAccountId] = useState(initial?.accountId ?? accounts[0]?.id ?? '')
+  const [to, setTo] = useState(initial?.to ?? '')
+  const [cc, setCc] = useState(initial?.cc ?? '')
+  const [bcc, setBcc] = useState(initial?.bcc ?? '')
+  const [showCc, setShowCc] = useState(Boolean(initial?.cc || initial?.bcc))
+  const [subject, setSubject] = useState(initial?.subject ?? '')
+  const [body, setBody] = useState(initial?.body ?? '')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const draftIdRef = useRef<string | null>(initial?.draftId ?? null)
+  const [hasDraft, setHasDraft] = useState(Boolean(initial?.draftId))
   const sigPreview = signatureText(accounts.find((a) => a.id === accountId))
 
-  async function send() {
-    const recipients = to.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
-    if (recipients.length === 0 || !subject.trim() || !body.trim() || !accountId) {
-      toast.error('Add a recipient, subject and message.')
+  // Auto-save: debounce content changes into a Gmail draft (create then update).
+  const skipFirst = useRef(true)
+  useEffect(() => {
+    if (skipFirst.current) {
+      skipFirst.current = false
       return
     }
-    const ccList = cc.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
-    const bccList = bcc.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
+    if (!accountId) return
+    const hasContent = [to, cc, bcc, subject, body].some((v) => v.trim().length > 0)
+    if (!hasContent) return
+    const t = setTimeout(async () => {
+      try {
+        setSaveStatus('saving')
+        const res = await draftSave.mutateAsync({
+          mailAccountId: accountId,
+          ...(draftIdRef.current ? { draftId: draftIdRef.current } : {}),
+          to: splitAddrs(to),
+          cc: splitAddrs(cc),
+          bcc: splitAddrs(bcc),
+          subject,
+          body,
+        })
+        draftIdRef.current = res.draftId
+        setHasDraft(true)
+        setSaveStatus('saved')
+      } catch {
+        setSaveStatus('error')
+      }
+    }, 1500)
+    return () => clearTimeout(t)
+    // draftId intentionally excluded (ref) to avoid a save loop.
+  }, [accountId, to, cc, bcc, subject, body, draftSave])
+
+  async function send() {
+    const recipients = splitAddrs(to)
+    if (recipients.length === 0 || !accountId) {
+      toast.error('Add at least one recipient.')
+      return
+    }
+    const ccList = splitAddrs(cc)
+    const bccList = splitAddrs(bcc)
     try {
-      await compose.mutateAsync({
-        mailAccountId: accountId,
-        to: recipients,
-        ...(ccList.length > 0 ? { cc: ccList } : {}),
-        ...(bccList.length > 0 ? { bcc: bccList } : {}),
-        subject: subject.trim(),
-        body: body.trim(),
-      })
+      if (draftIdRef.current) {
+        // Flush the latest content into the draft, then send it (no duplicate).
+        await draftSave.mutateAsync({
+          mailAccountId: accountId,
+          draftId: draftIdRef.current,
+          to: recipients,
+          cc: ccList,
+          bcc: bccList,
+          subject,
+          body,
+        })
+        await draftSend.mutateAsync({
+          mailAccountId: accountId,
+          draftId: draftIdRef.current,
+          to: recipients,
+          ...(ccList.length > 0 ? { cc: ccList } : {}),
+          ...(bccList.length > 0 ? { bcc: bccList } : {}),
+          subject: subject.trim(),
+        })
+      } else {
+        if (!subject.trim() || !body.trim()) {
+          toast.error('Add a subject and message.')
+          return
+        }
+        await compose.mutateAsync({
+          mailAccountId: accountId,
+          to: recipients,
+          ...(ccList.length > 0 ? { cc: ccList } : {}),
+          ...(bccList.length > 0 ? { bcc: bccList } : {}),
+          subject: subject.trim(),
+          body: body.trim(),
+        })
+      }
       toast.success('Email sent')
       void utils.mail.threads.list.invalidate()
+      onSentOrDeleted?.()
       onClose()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not send the email')
     }
   }
 
+  async function discardDraft() {
+    if (!draftIdRef.current) {
+      onClose()
+      return
+    }
+    try {
+      await draftDelete.mutateAsync({ mailAccountId: accountId, draftId: draftIdRef.current })
+      toast.message('Draft discarded')
+      onSentOrDeleted?.()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not discard the draft')
+    } finally {
+      onClose()
+    }
+  }
+
+  const sending = compose.isPending || draftSend.isPending
+  const statusLabel =
+    saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Draft saved' : hasDraft ? 'Draft' : ''
+
   return (
     <div className="fixed bottom-0 right-6 z-50 flex w-[min(32rem,calc(100vw-2rem))] flex-col rounded-t-lg bg-white shadow-2xl ring-1 ring-neutral-200">
       <div className="flex items-center justify-between rounded-t-lg bg-neutral-800 px-4 py-2 text-sm font-medium text-white">
-        New message
-        <button type="button" onClick={onClose} aria-label="Close" className="rounded p-0.5 hover:bg-white/10">
-          <XIcon size={16} />
-        </button>
+        <span className="flex items-center gap-2">
+          {hasDraft ? 'Draft' : 'New message'}
+          {statusLabel ? <span className="text-[11px] font-normal text-white/60">{statusLabel}</span> : null}
+        </span>
+        <span className="flex items-center gap-1">
+          {hasDraft ? (
+            <button
+              type="button"
+              onClick={discardDraft}
+              aria-label="Discard draft"
+              className="rounded p-0.5 hover:bg-white/10"
+            >
+              <Trash2Icon size={15} />
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded p-0.5 hover:bg-white/10">
+            <XIcon size={16} />
+          </button>
+        </span>
       </div>
       <div className="flex flex-col">
         <select
@@ -1177,13 +1325,112 @@ function ComposeDock({ accounts, onClose }: { accounts: AccountOption[]; onClose
       <div className="flex items-center gap-3 px-4 py-3">
         <button
           type="button"
-          disabled={compose.isPending}
+          disabled={sending}
           onClick={send}
           className="inline-flex items-center gap-1.5 rounded-full bg-gmail-600 px-5 py-2 text-sm font-medium text-white hover:bg-gmail-700 disabled:opacity-50"
         >
-          <SendIcon size={15} /> {compose.isPending ? 'Sending…' : 'Send'}
+          <SendIcon size={15} /> {sending ? 'Sending…' : 'Send'}
         </button>
       </div>
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Drafts folder — Gmail-backed list with resume + delete.
+// -----------------------------------------------------------------------------
+
+function DraftsList({
+  accountId,
+  onResume,
+}: {
+  accountId: string | null
+  onResume: (d: DraftInitial) => void
+}) {
+  const utils = trpc.useUtils()
+  const del = trpc.mail.drafts.delete.useMutation()
+  const list = trpc.mail.drafts.list.useQuery(
+    { mailAccountId: accountId ?? '' },
+    { enabled: !!accountId },
+  )
+  const now = new Date()
+
+  if (!accountId) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center px-8 py-20 text-center">
+        <FileTextIcon size={40} className="text-neutral-200" />
+        <p className="mt-3 text-sm text-neutral-500">Connect a Gmail account to see drafts.</p>
+      </div>
+    )
+  }
+  if (list.isLoading) return <ListSkeleton />
+  const items = list.data?.items ?? []
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center px-8 py-20 text-center">
+        <FileTextIcon size={40} className="text-neutral-200" />
+        <p className="mt-3 text-sm text-neutral-500">No drafts.</p>
+      </div>
+    )
+  }
+
+  async function resume(draftId: string) {
+    try {
+      const d = await utils.mail.drafts.get.fetch({ mailAccountId: accountId!, draftId })
+      onResume({
+        draftId,
+        accountId: accountId!,
+        to: d.to.join(', '),
+        cc: d.cc.join(', '),
+        bcc: d.bcc.join(', '),
+        subject: d.subject,
+        body: d.body,
+      })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not open the draft')
+    }
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <ul>
+        {items.map((d) => (
+          <li
+            key={d.draftId}
+            className="group flex cursor-pointer items-center gap-3 border-b border-neutral-100 px-4 py-2.5 hover:bg-neutral-50"
+            onClick={() => void resume(d.draftId)}
+          >
+            <span className="w-44 shrink-0 truncate text-sm text-neutral-700">
+              {d.to.length > 0 ? `To: ${d.to.join(', ')}` : 'No recipient'}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-sm">
+              <span className="font-medium text-red-600">Draft</span>{' '}
+              <span className="text-neutral-900">{d.subject}</span>
+              {d.snippet ? <span className="text-neutral-500"> — {d.snippet}</span> : null}
+            </span>
+            <span className="shrink-0 text-xs text-neutral-400 group-hover:hidden">
+              {d.date ? gmailDate(new Date(d.date), now) : ''}
+            </span>
+            <button
+              type="button"
+              aria-label="Delete draft"
+              onClick={(e) => {
+                e.stopPropagation()
+                del
+                  .mutateAsync({ mailAccountId: accountId!, draftId: d.draftId })
+                  .then(() => {
+                    toast.message('Draft deleted')
+                    void utils.mail.drafts.list.invalidate()
+                  })
+                  .catch((err) => toast.error(err instanceof Error ? err.message : 'Could not delete'))
+              }}
+              className="hidden shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700 group-hover:block"
+            >
+              <Trash2Icon size={15} />
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
