@@ -59,12 +59,22 @@ export function buildOutgoingEmail(input: {
   body: string
   signatureHtml?: string | null
   signatureText?: string | null
+  /** Quoted original (reply) or forwarded block, appended AFTER the signature
+   *  exactly like Gmail. Already-built text + html forms (see `quote.ts`). */
+  quotedText?: string | null
+  quotedHtml?: string | null
 }): OutgoingEmailBodies {
   const sigHtml = input.signatureHtml?.trim() || ''
   const sigText = input.signatureText?.trim() || ''
-  const text = sigText ? `${input.body}\n\n${sigText}` : input.body
-  const html = sigHtml
+  let text = sigText ? `${input.body}\n\n${sigText}` : input.body
+  let html = sigHtml
     ? `${plaintextToHtml(input.body)}<br>${sigHtml}`
     : plaintextToHtml(input.body)
+  if (input.quotedText && input.quotedText.trim().length > 0) {
+    text = `${text}\n\n${input.quotedText}`
+  }
+  if (input.quotedHtml && input.quotedHtml.trim().length > 0) {
+    html = `${html}<br>${input.quotedHtml}`
+  }
   return { text, html }
 }

@@ -690,8 +690,13 @@ function ConversationView({
   const setStarred = trpc.mail.thread.setStarred.useMutation()
   const setTrashed = trpc.mail.thread.setTrashed.useMutation()
   const reply = trpc.mail.thread.reply.useMutation()
+  const forward = trpc.mail.thread.forward.useMutation()
   const [body, setBody] = useState('')
-  const [replying, setReplying] = useState(false)
+  const [mode, setMode] = useState<null | 'reply' | 'replyAll' | 'forward'>(null)
+  const [to, setTo] = useState('')
+  const [cc, setCc] = useState('')
+  const [bcc, setBcc] = useState('')
+  const [showCcBcc, setShowCcBcc] = useState(false)
   const markedRef = useRef<Set<string>>(new Set())
 
   const head = convo.data?.head
@@ -720,18 +725,58 @@ function ConversationView({
     }
   }
 
-  async function sendReply() {
-    const trimmed = body.trim()
-    if (!trimmed) return
+  const sending = reply.isPending || forward.isPending
+
+  function openComposer(next: 'reply' | 'replyAll' | 'forward') {
+    setMode(next)
+    setShowCcBcc(false)
+    setTimeout(() => document.getElementById('mail-reply')?.focus(), 0)
+  }
+  function closeComposer() {
+    setMode(null)
+    setBody('')
+    setTo('')
+    setCc('')
+    setBcc('')
+    setShowCcBcc(false)
+  }
+  const parseList = (s: string) => s.split(/[,;]/).map((x) => x.trim()).filter(Boolean)
+
+  async function sendComposer() {
     try {
-      await reply.mutateAsync({ conversationId, body: trimmed })
-      setBody('')
-      setReplying(false)
-      toast.success('Reply sent')
+      const ccList = parseList(cc)
+      const bccList = parseList(bcc)
+      if (mode === 'forward') {
+        const toList = parseList(to)
+        if (toList.length === 0) {
+          toast.error('Add at least one recipient to forward to')
+          return
+        }
+        await forward.mutateAsync({
+          conversationId,
+          to: toList,
+          ...(ccList.length > 0 ? { cc: ccList } : {}),
+          ...(bccList.length > 0 ? { bcc: bccList } : {}),
+          body: body.trim(),
+        })
+        toast.success('Forwarded')
+      } else {
+        const trimmed = body.trim()
+        if (!trimmed) return
+        await reply.mutateAsync({
+          conversationId,
+          body: trimmed,
+          replyAll: mode === 'replyAll',
+          ...(ccList.length > 0 ? { cc: ccList } : {}),
+          ...(bccList.length > 0 ? { bcc: bccList } : {}),
+        })
+        toast.success(mode === 'replyAll' ? 'Reply-all sent' : 'Reply sent')
+      }
+      closeComposer()
       await utils.inbox.conversations.get.invalidate({ conversationId })
       onChanged()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not send the reply')
+      toast.error(e instanceof Error ? e.message : 'Could not send')
     }
   }
 
@@ -854,42 +899,92 @@ function ConversationView({
         )}
       </div>
 
-      {/* Reply */}
+      {/* Reply / Reply all / Forward */}
       {isEmail ? (
         <div className="border-t border-neutral-200 bg-white px-6 py-3">
-          {replying ? (
+          {mode ? (
             <div className="rounded-xl border border-neutral-200 shadow-sm">
+              <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-500">
+                {mode === 'forward' ? (
+                  <>
+                    <ForwardIcon size={13} /> Forward
+                  </>
+                ) : mode === 'replyAll' ? (
+                  <>
+                    <ReplyIcon size={13} /> Reply all
+                  </>
+                ) : (
+                  <>
+                    <ReplyIcon size={13} /> Reply
+                  </>
+                )}
+              </div>
+              {mode === 'forward' ? (
+                <input
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  placeholder="To (comma-separated)"
+                  aria-label="Forward to"
+                  className="w-full border-b border-neutral-100 px-3 py-2 text-sm focus:outline-none"
+                />
+              ) : null}
+              {showCcBcc ? (
+                <>
+                  <input
+                    value={cc}
+                    onChange={(e) => setCc(e.target.value)}
+                    placeholder="Cc"
+                    aria-label="Cc"
+                    className="w-full border-b border-neutral-100 px-3 py-2 text-sm focus:outline-none"
+                  />
+                  <input
+                    value={bcc}
+                    onChange={(e) => setBcc(e.target.value)}
+                    placeholder="Bcc"
+                    aria-label="Bcc"
+                    className="w-full border-b border-neutral-100 px-3 py-2 text-sm focus:outline-none"
+                  />
+                </>
+              ) : null}
               <Textarea
                 id="mail-reply"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 rows={4}
-                placeholder="Reply…"
-                aria-label="Reply"
-                className="rounded-xl border-0 focus:ring-0"
+                placeholder={mode === 'forward' ? 'Add a message (optional)…' : 'Reply…'}
+                aria-label={mode === 'forward' ? 'Forward message' : 'Reply'}
+                className="rounded-none border-0 focus:ring-0"
               />
               <div className="flex items-center justify-between gap-3 border-t border-neutral-100 px-3 py-2">
-                <span className="truncate text-[11px] text-neutral-400" title={replySigPreview}>
-                  {replySigPreview ? `Signature: ${replySigPreview}` : ''}
-                </span>
+                <div className="flex items-center gap-3">
+                  {!showCcBcc ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowCcBcc(true)}
+                      className="text-[11px] font-medium text-neutral-500 hover:text-neutral-700"
+                    >
+                      Cc/Bcc
+                    </button>
+                  ) : null}
+                  <span className="truncate text-[11px] text-neutral-400" title={replySigPreview}>
+                    {replySigPreview ? `Signature: ${replySigPreview}` : ''}
+                  </span>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setReplying(false)
-                      setBody('')
-                    }}
+                    onClick={closeComposer}
                     className="rounded-md px-2 py-1 text-sm text-neutral-500 hover:bg-neutral-100"
                   >
                     Discard
                   </button>
                   <button
                     type="button"
-                    disabled={reply.isPending || !body.trim()}
-                    onClick={sendReply}
+                    disabled={sending || (mode === 'forward' ? !to.trim() : !body.trim())}
+                    onClick={sendComposer}
                     className="inline-flex items-center gap-1.5 rounded-full bg-gmail-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-gmail-700 disabled:opacity-50"
                   >
-                    <SendIcon size={15} /> {reply.isPending ? 'Sending…' : 'Send'}
+                    <SendIcon size={15} /> {sending ? 'Sending…' : 'Send'}
                   </button>
                 </div>
               </div>
@@ -898,20 +993,21 @@ function ConversationView({
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setReplying(true)
-                  setTimeout(() => document.getElementById('mail-reply')?.focus(), 0)
-                }}
+                onClick={() => openComposer('reply')}
                 className="inline-flex items-center gap-2 rounded-full border border-neutral-300 px-4 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
               >
                 <ReplyIcon size={15} /> Reply
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setReplying(true)
-                  setTimeout(() => document.getElementById('mail-reply')?.focus(), 0)
-                }}
+                onClick={() => openComposer('replyAll')}
+                className="inline-flex items-center gap-2 rounded-full border border-neutral-300 px-4 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+              >
+                <ReplyIcon size={15} /> Reply all
+              </button>
+              <button
+                type="button"
+                onClick={() => openComposer('forward')}
                 className="inline-flex items-center gap-2 rounded-full border border-neutral-300 px-4 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
               >
                 <ForwardIcon size={15} /> Forward
@@ -969,6 +1065,7 @@ function ComposeDock({ accounts, onClose }: { accounts: AccountOption[]; onClose
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
   const [to, setTo] = useState('')
   const [cc, setCc] = useState('')
+  const [bcc, setBcc] = useState('')
   const [showCc, setShowCc] = useState(false)
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
@@ -981,11 +1078,13 @@ function ComposeDock({ accounts, onClose }: { accounts: AccountOption[]; onClose
       return
     }
     const ccList = cc.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
+    const bccList = bcc.split(/[,;]/).map((s) => s.trim()).filter(Boolean)
     try {
       await compose.mutateAsync({
         mailAccountId: accountId,
         to: recipients,
         ...(ccList.length > 0 ? { cc: ccList } : {}),
+        ...(bccList.length > 0 ? { bcc: bccList } : {}),
         subject: subject.trim(),
         body: body.trim(),
       })
@@ -1032,18 +1131,27 @@ function ComposeDock({ accounts, onClose }: { accounts: AccountOption[]; onClose
               onClick={() => setShowCc(true)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-neutral-400 hover:text-neutral-600"
             >
-              Cc
+              Cc/Bcc
             </button>
           ) : null}
         </div>
         {showCc ? (
-          <input
-            value={cc}
-            onChange={(e) => setCc(e.target.value)}
-            placeholder="Cc"
-            aria-label="Cc"
-            className="border-b border-neutral-100 px-4 py-2 text-sm placeholder:text-neutral-400 focus:outline-none"
-          />
+          <>
+            <input
+              value={cc}
+              onChange={(e) => setCc(e.target.value)}
+              placeholder="Cc"
+              aria-label="Cc"
+              className="border-b border-neutral-100 px-4 py-2 text-sm placeholder:text-neutral-400 focus:outline-none"
+            />
+            <input
+              value={bcc}
+              onChange={(e) => setBcc(e.target.value)}
+              placeholder="Bcc"
+              aria-label="Bcc"
+              className="border-b border-neutral-100 px-4 py-2 text-sm placeholder:text-neutral-400 focus:outline-none"
+            />
+          </>
         ) : null}
         <input
           value={subject}
