@@ -239,6 +239,42 @@ export const slackSummaryRouter = router({
       return { ok: true as const }
     }),
 
+    /**
+     * Pull recent messages from EVERY channel the bot is in, right now (the
+     * slack/sync-messages cron also runs every 15 min). This is the fix for
+     * "messages aren't being pulled": it doesn't rely on the Events webhook —
+     * it fetches via the bot token across all member channels. `lookbackHours`
+     * lets a manual sync reach back further. Manager+.
+     */
+    syncNow: auditedProcedure
+      .input(z.object({ lookbackHours: z.number().int().min(1).max(168).optional() }).default({}))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!MANAGE_ROLES.has(user.role)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Only Manager or above can sync from Slack',
+          })
+        }
+        const configured = Boolean(process.env['SLACK_BOT_TOKEN'])
+        if (configured) {
+          const { inngest } = await import('@studymind/jobs')
+          await inngest.send({
+            name: 'slack/sync-now.requested',
+            data: {
+              actorId: user.id,
+              ...(input.lookbackHours ? { lookbackMinutes: input.lookbackHours * 60 } : {}),
+            },
+          })
+        }
+        await ctx.audit({
+          action: 'slack_summary.sync_requested',
+          target: { type: 'System', id: 'slack-sync' },
+          after: { requestedBy: user.id, configured },
+        })
+        return { ok: true as const, configured }
+      }),
+
     /** Dismiss a parked mention — no record written, just cleared from the tray. */
     dismiss: auditedProcedure
       .input(z.object({ id: z.string() }))

@@ -207,3 +207,22 @@ export function createClient(opts: CreateSlackClientOptions = {}): SlackClient {
     },
   }
 }
+
+// -----------------------------------------------------------------------------
+// Channel resolution for ingestion (pull paths). "Everything the bot can read":
+// the SLACK_WATCHED_CHANNELS allowlist when set, otherwise EVERY channel the bot
+// is a member of (conversations.list → isMember). conversations.history only
+// works on channels the bot has joined, so we filter to membership.
+// -----------------------------------------------------------------------------
+
+import { getWatchedChannels } from './config'
+
+export async function listIngestChannelIds(
+  opts: CreateSlackClientOptions = {},
+): Promise<string[]> {
+  const allow = getWatchedChannels()
+  if (allow.length > 0) return [...allow]
+  const client = createClient(opts)
+  const channels = await client.listChannels()
+  return channels.filter((c) => c.isMember).map((c) => c.id)
+}

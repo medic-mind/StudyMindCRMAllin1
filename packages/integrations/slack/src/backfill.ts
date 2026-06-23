@@ -28,8 +28,7 @@ import { safeFetch } from '@studymind/core/observability/safe-fetch'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { SLACK_API_BASE } from './client'
-import { getWatchedChannels } from './config'
+import { SLACK_API_BASE, listIngestChannelIds } from './client'
 import { resolveSlackLinkTarget, targetForeignKey } from './link-target'
 import { extractContactSignals, slackTextToPlain } from './extract'
 import { isSkippableSlackNoise } from './noise'
@@ -43,7 +42,7 @@ interface BackfillRequestedData {
   windowTo: string
 }
 
-interface SlackHistoryMessage {
+export interface SlackHistoryMessage {
   type?: string
   subtype?: string
   ts: string
@@ -52,7 +51,7 @@ interface SlackHistoryMessage {
   permalink?: string
 }
 
-interface SlackHistoryResponse {
+export interface SlackHistoryResponse {
   ok: boolean
   error?: string
   messages?: SlackHistoryMessage[]
@@ -87,7 +86,16 @@ export const slackBackfillRequested = inngest.createFunction(
     let matched = 0
     let skipped = 0
     const oldest = Math.floor(new Date(windowFrom).getTime() / 1000)
-    const channels = getWatchedChannels()
+    // Channels to walk: the allowlist if set, else EVERY channel the bot is a
+    // member of (auto-discovered). Previously this used getWatchedChannels()
+    // directly, which is EMPTY when no allowlist is set — so the import pulled
+    // from zero channels and nothing ever showed up.
+    const channels = await step.run('resolve-channels', async () =>
+      listIngestChannelIds({ token }),
+    )
+    if (channels.length === 0) {
+      logger.warn({ jobId }, 'slack backfill: bot is in no channels — nothing to import')
+    }
 
     try {
       for (const channelId of channels) {
@@ -152,7 +160,7 @@ export const slackBackfillRequested = inngest.createFunction(
   },
 )
 
-async function fetchHistory(
+export async function fetchHistory(
   token: string,
   channelId: string,
   oldest: number,
@@ -181,7 +189,7 @@ interface ProcessSlackInput {
   requestId: string
 }
 
-async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched: boolean }> {
+export async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched: boolean }> {
   const { message, channelId } = input
   if (message.type !== 'message' || !message.text || message.subtype) {
     return { matched: false }

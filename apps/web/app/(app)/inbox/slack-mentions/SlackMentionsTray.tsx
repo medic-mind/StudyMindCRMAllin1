@@ -27,6 +27,7 @@ export function SlackMentionsTray() {
     staleTime: 5 * 60_000,
   })
   const relinkNow = trpc.slackSummary.unassigned.relinkNow.useMutation()
+  const syncNow = trpc.slackSummary.unassigned.syncNow.useMutation()
   const items = listQuery.data ?? []
   const aiOff = diagnostics.data?.aiConfigured === false
 
@@ -40,28 +41,50 @@ export function SlackMentionsTray() {
   const header = (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-xs text-neutral-500">
-        Matching also runs automatically every 30 minutes.
+        Slack is pulled from every channel the bot is in, every 15 minutes; matching re-runs every 30.
       </p>
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        disabled={relinkNow.isPending}
-        onClick={async () => {
-          try {
-            await relinkNow.mutateAsync()
-            toast.success(
-              'Re-running Slack matching now — newly matched mentions will appear shortly.',
-            )
-            // Give the job a moment, then refresh the tray.
-            setTimeout(() => void refresh(), 4000)
-          } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Could not start re-matching')
-          }
-        }}
-      >
-        {relinkNow.isPending ? 'Starting…' : 'Re-run matching now'}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={syncNow.isPending}
+          onClick={async () => {
+            try {
+              const r = await syncNow.mutateAsync({ lookbackHours: 24 })
+              if (r.configured) {
+                toast.success('Pulling recent Slack messages from all channels — this can take a minute.')
+                setTimeout(() => void refresh(), 6000)
+              } else {
+                toast.error('Slack isn’t configured (SLACK_BOT_TOKEN missing).')
+              }
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not start the Slack sync')
+            }
+          }}
+        >
+          {syncNow.isPending ? 'Syncing…' : 'Sync from Slack now'}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={relinkNow.isPending}
+          onClick={async () => {
+            try {
+              await relinkNow.mutateAsync()
+              toast.success(
+                'Re-running Slack matching now — newly matched mentions will appear shortly.',
+              )
+              setTimeout(() => void refresh(), 4000)
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not start re-matching')
+            }
+          }}
+        >
+          {relinkNow.isPending ? 'Starting…' : 'Re-run matching now'}
+        </Button>
+      </div>
     </div>
   )
 
