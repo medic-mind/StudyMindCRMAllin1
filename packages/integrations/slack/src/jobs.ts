@@ -432,11 +432,15 @@ import { BACKFILL_FUNCTIONS as SLACK_BACKFILL_FUNCTIONS } from './backfill'
 // ADR 0034 amendment: recurring auto-relink of parked mentions + its on-demand
 // twin (the "Re-run Slack matching now" button).
 import { slackRelinkNow, slackRelinkUnassigned } from './relink'
+// Recurring + on-demand PULL of messages from every bot channel (robust
+// ingestion independent of the Events webhook).
+import { SYNC_FUNCTIONS as SLACK_SYNC_FUNCTIONS } from './sync'
 
 export const FUNCTIONS = [
   slackEventReceived,
   aiDriftTriageReminder,
   slackRelinkUnassigned,
   slackRelinkNow,
+  ...SLACK_SYNC_FUNCTIONS,
   ...SLACK_BACKFILL_FUNCTIONS,
 ] as const

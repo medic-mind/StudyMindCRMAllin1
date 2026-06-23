@@ -583,6 +583,9 @@ export const INNGEST_EVENT_NAMES = [
   // tray. Re-runs the relink + retro-stamp passes immediately (the cron also does
   // this every 30 min).
   'slack/relink-now.requested',
+  // On-demand "Sync from Slack now" — pull recent messages from every bot
+  // channel immediately (the slack/sync-messages cron also runs every 15 min).
+  'slack/sync-now.requested',
   'gmail/event.received',
   'booking/event.received',
   'aircall/transcribe-fallback',
