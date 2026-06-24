@@ -9,6 +9,7 @@ import { z } from 'zod'
 
 export * from './sync-provider'
 export * from './conversation-head'
+export * from './gmail-folders'
 export * from './signature'
 export * from './html-email'
 export * from './compose-html'

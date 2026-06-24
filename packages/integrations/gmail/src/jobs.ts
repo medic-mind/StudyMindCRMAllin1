@@ -44,6 +44,132 @@ interface HistoryChangedData {
   historyId: string
 }
 
+/** Minimal Inngest `step` surface the shared sync helpers need. */
+type StepRunner = { run: <T>(id: string, fn: () => Promise<T>) => Promise<T> }
+
+interface MailboxToSync {
+  id: string
+  agentId: string
+  address: string
+  historyId: string | null
+}
+
+/**
+ * Sync ONE mailbox forward from its stored historyId: pull new messages +
+ * changed-thread flags from Gmail's history feed and converge them onto the
+ * Conversation heads, then advance the cursor. This is the SHARED engine behind
+ * BOTH the real-time push handler (`gmail/history.changed`) and the recurring
+ * `gmail/sync` poll — so the CRM stays in step with Gmail even when Pub/Sub push
+ * isn't delivering (the common self-hosted case), exactly like the Trengo /
+ * Aircall reconcile crons. Idempotent + convergent.
+ *
+ * `keyPrefix` namespaces the step ids so a single poll can sweep many mailboxes
+ * without step-id collisions. The push handler passes '' to keep its step ids
+ * stable.
+ */
+async function syncMailboxHistory(
+  step: StepRunner,
+  input: { mailbox: MailboxToSync; startHistoryId: string; requestId: string; keyPrefix: string },
+  logger: { warn: (...a: unknown[]) => void },
+): Promise<{ status: 'ok' | 'needs_reconnect'; processed: number; flagsMirrored: number }> {
+  const { mailbox, startHistoryId, requestId, keyPrefix } = input
+  const address = mailbox.address
+
+  let result
+  try {
+    result = await step.run(`${keyPrefix}list-history`, async () => {
+      const client = await createClientForAgent({
+        agentId: mailbox.agentId,
+        address,
+        purpose: 'gmail.sync',
+        requestId,
+      })
+      return client.listHistorySince(startHistoryId)
+    })
+  } catch (err) {
+    if (isInvalidGrantError(err)) {
+      logger.warn(
+        { agentId: mailbox.agentId, requestId },
+        'gmail refresh token rejected (invalid_grant) — marking needs_reconnect',
+      )
+      await step.run(`${keyPrefix}mark-needs-reconnect`, async () =>
+        markNeedsReconnect(mailbox.agentId),
+      )
+      await step.run(`${keyPrefix}audit-needs-reconnect`, async () =>
+        writeAuditLogEntry(db, {
+          actorId: null,
+          action: 'gmail.oauth_needs_reconnect',
+          target: { type: 'User', id: mailbox.agentId },
+          requestId,
+        }),
+      )
+      return { status: 'needs_reconnect', processed: 0, flagsMirrored: 0 }
+    }
+    throw err
+  }
+
+  // Fetch the account's label id→name map once so new messages can carry their
+  // custom Gmail labels onto the head (drives the label chips + folder state).
+  const labelMap =
+    result.added.length === 0 && result.changedThreadIds.length === 0
+      ? {}
+      : await step.run(`${keyPrefix}load-labels`, async () => {
+          const client = await createClientForAgent({
+            agentId: mailbox.agentId,
+            address,
+            purpose: 'gmail.sync',
+            requestId,
+          })
+          const labels = await client.listLabels()
+          return Object.fromEntries(labels.map((l) => [l.id, l.name]))
+        })
+
+  for (const added of result.added) {
+    // Per-message step lets a single bad message land in DLQ rather than
+    // poisoning the whole history sync.
+    await step.run(`${keyPrefix}process-${added.messageId}`, async () =>
+      processMessage({
+        agentId: mailbox.agentId,
+        mailboxId: mailbox.id,
+        address,
+        messageId: added.messageId,
+        requestId,
+        labelMap,
+      }),
+    )
+  }
+
+  // Inbound two-way sync (ADR 0021 Phase 5): threads whose Gmail flags changed
+  // (read / star / archive / trash / label) without a new message. Re-read each
+  // thread's current label state and mirror it onto the head, so a change made
+  // in the Gmail UI shows in the CRM. Idempotent + convergent — re-running
+  // yields the same head, and our own outbound echoes are no-ops.
+  for (const threadId of result.changedThreadIds) {
+    await step.run(`${keyPrefix}flags-${threadId}`, async () =>
+      mirrorThreadFlags({
+        agentId: mailbox.agentId,
+        address,
+        threadId,
+        requestId,
+        labelMap,
+      }),
+    )
+  }
+
+  await step.run(`${keyPrefix}advance-history`, async () =>
+    db.gmailMailbox.update({
+      where: { address },
+      data: { historyId: result.newHistoryId },
+    }),
+  )
+
+  return {
+    status: 'ok',
+    processed: result.added.length,
+    flagsMirrored: result.changedThreadIds.length,
+  }
+}
+
 export const gmailHistoryChanged = inngest.createFunction(
   {
     id: 'gmail/history.changed',
@@ -59,7 +185,7 @@ export const gmailHistoryChanged = inngest.createFunction(
     const mailbox = await step.run('load-mailbox', async () =>
       db.gmailMailbox.findUnique({
         where: { address: emailAddress },
-        select: { id: true, agentId: true, historyId: true },
+        select: { id: true, agentId: true, address: true, historyId: true },
       }),
     )
     if (!mailbox) {
@@ -68,103 +194,24 @@ export const gmailHistoryChanged = inngest.createFunction(
       return { skipped: true }
     }
 
-    const startHistoryId = mailbox.historyId ?? historyId
-    let result
-    try {
-      result = await step.run('list-history', async () => {
-        const client = await createClientForAgent({
-          agentId: mailbox.agentId,
-          address: emailAddress,
-          purpose: 'gmail.sync',
-          requestId: eventId,
-        })
-        return client.listHistorySince(startHistoryId)
-      })
-    } catch (err) {
-      if (isInvalidGrantError(err)) {
-        logger.warn(
-          { eventId, agentId: mailbox.agentId, requestId: eventId },
-          'gmail refresh token rejected (invalid_grant) — marking needs_reconnect',
-        )
-        await step.run('mark-needs-reconnect', async () =>
-          markNeedsReconnect(mailbox.agentId),
-        )
-        await step.run('audit-needs-reconnect', async () =>
-          writeAuditLogEntry(db, {
-            actorId: null,
-            action: 'gmail.oauth_needs_reconnect',
-            target: { type: 'User', id: mailbox.agentId },
-            requestId: eventId,
-          }),
-        )
-        await step.run('mark-processed', async () => markProcessed(providerEventRowId))
-        return { skipped: true, reason: 'needs_reconnect' as const }
-      }
-      throw err
-    }
-
-    // Fetch the account's label id→name map once so new messages can carry
-    // their custom Gmail labels onto the head (drives the label chips).
-    const labelMap =
-      result.added.length === 0 && result.changedThreadIds.length === 0
-        ? {}
-        : await step.run('load-labels', async () => {
-            const client = await createClientForAgent({
-              agentId: mailbox.agentId,
-              address: emailAddress,
-              purpose: 'gmail.sync',
-              requestId: eventId,
-            })
-            const labels = await client.listLabels()
-            return Object.fromEntries(labels.map((l) => [l.id, l.name]))
-          })
-
-    for (const added of result.added) {
-      // Per-message step lets a single bad message land in DLQ rather than
-      // poisoning the whole history sync.
-      await step.run(`process-${added.messageId}`, async () =>
-        processMessage({
-          agentId: mailbox.agentId,
-          mailboxId: mailbox.id,
-          address: emailAddress,
-          messageId: added.messageId,
-          requestId: eventId,
-          labelMap,
-        }),
-      )
-    }
-
-    // Inbound two-way sync (ADR 0021 Phase 5): threads whose Gmail flags
-    // changed (read / star / archive / trash) without a new message. Re-read
-    // each thread's current label state and mirror it onto the head, so a
-    // change made in the Gmail UI shows in the CRM. Idempotent + convergent —
-    // re-running yields the same head, and our own outbound echoes are no-ops.
-    for (const threadId of result.changedThreadIds) {
-      await step.run(`flags-${threadId}`, async () =>
-        mirrorThreadFlags({
-          agentId: mailbox.agentId,
-          address: emailAddress,
-          threadId,
-          requestId: eventId,
-          labelMap,
-        }),
-      )
-    }
-
-    await step.run('advance-history', async () =>
-      db.gmailMailbox.update({
-        where: { address: emailAddress },
-        data: { historyId: result.newHistoryId },
-      }),
+    const res = await syncMailboxHistory(
+      // Inngest's step.run returns a JSON-serialized result type; our helpers
+      // only move plain string values across the boundary, so this narrowing is
+      // safe.
+      step as unknown as StepRunner,
+      {
+        mailbox,
+        startHistoryId: mailbox.historyId ?? historyId,
+        requestId: eventId,
+        keyPrefix: '',
+      },
+      logger,
     )
-
     await step.run('mark-processed', async () => markProcessed(providerEventRowId))
-    return {
-      ok: true,
-      processed: result.added.length,
-      flagsMirrored: result.changedThreadIds.length,
-      historyId: result.newHistoryId,
+    if (res.status === 'needs_reconnect') {
+      return { skipped: true, reason: 'needs_reconnect' as const }
     }
+    return { ok: true, processed: res.processed, flagsMirrored: res.flagsMirrored }
   },
 )
 
@@ -180,6 +227,40 @@ interface MirrorThreadFlagsInput {
 }
 
 /**
+ * Re-read a thread's CURRENT Gmail label state (the union across all its
+ * messages) and converge the Conversation head onto it — the inbound half of
+ * two-way sync (ADR 0021 Phase 5) AND the source of the authoritative folder
+ * state. Writes the read/star/archive/trash flags, the custom-label chips, and
+ * the FULL Gmail label-id set (`gmailLabelIds`) that /mail's Gmail-native
+ * folders read, so the CRM mirrors Gmail's Inbox / tabs / Spam / Important /
+ * Sent exactly. A null head (message never synced) is a no-op; a 404 (thread
+ * permanently deleted) marks it trashed rather than hard-deleting it (§3).
+ *
+ * Takes a pre-built client so the live message path can reuse its own client
+ * (one OAuth/KMS decrypt) instead of constructing another per thread.
+ */
+async function convergeThreadStateToHead(
+  client: { getThreadState: (id: string) => Promise<{ labelIds: string[] } | null> },
+  threadId: string,
+  idToName: ReadonlyMap<string, string>,
+): Promise<void> {
+  const state = await client.getThreadState(threadId)
+  const flags = state ? deriveThreadFlags(state.labelIds) : DELETED_THREAD_FLAGS
+  // Permanently-deleted threads are reported as Trash so they leave the active
+  // mailbox but stay recoverable/auditable (§3 — no silent delete).
+  const gmailLabelIds = state ? state.labelIds : ['TRASH']
+  const labels = state ? customLabelNames(state.labelIds, idToName) : []
+  await applyMailFlagsToConversation(db, {
+    provider: 'email',
+    externalThreadId: threadId,
+    flags,
+    syncedAt: new Date(),
+    labels,
+    gmailLabelIds,
+  })
+}
+
+/**
  * Re-read a thread's current Gmail label state and mirror it onto the
  * Conversation head (ADR 0021 Phase 5 — inbound half of two-way sync). A null
  * head (message never synced) is a no-op; a 404 from Gmail (thread permanently
@@ -192,19 +273,11 @@ async function mirrorThreadFlags(input: MirrorThreadFlagsInput): Promise<void> {
     purpose: 'gmail.sync',
     requestId: input.requestId,
   })
-  const state = await client.getThreadState(input.threadId)
-  const flags = state ? deriveThreadFlags(state.labelIds) : DELETED_THREAD_FLAGS
-  const labels =
-    state && input.labelMap
-      ? customLabelNames(state.labelIds, new Map(Object.entries(input.labelMap)))
-      : undefined
-  await applyMailFlagsToConversation(db, {
-    provider: 'email',
-    externalThreadId: input.threadId,
-    flags,
-    syncedAt: new Date(),
-    labels,
-  })
+  await convergeThreadStateToHead(
+    client,
+    input.threadId,
+    new Map(Object.entries(input.labelMap ?? {})),
+  )
 }
 
 interface ProcessMessageInput {
@@ -284,7 +357,8 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
   // instead of collapsing every thread onto one matched contact.
   const senderName =
     direction === 'received' ? (parseFromName(fromHeader) ?? fromAddrs[0] ?? null) : null
-  const labels = customLabelNames(message.labelIds, new Map(Object.entries(input.labelMap)))
+  const idToName = new Map(Object.entries(input.labelMap))
+  const labels = customLabelNames(message.labelIds, idToName)
 
   // Match Contacts by every address (many-to-many — §14).
   const allAddrs = Array.from(
@@ -438,23 +512,19 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
     subject: subject || null,
     senderName,
     labels,
+    // Best-effort initial folder state from this message; the thread-union
+    // converge below overwrites it with the authoritative set.
+    gmailLabelIds: message.labelIds,
   })
 
-  // Reflect Gmail's actual archive / read / star / trash state on the head at
-  // sync time (not just later via the history mirror), so /mail's Inbox matches
-  // Gmail's Inbox from the first sync — an archived-in-Gmail thread is created
-  // archived here, not "open". Derived from a RECEIVED message's labels (Gmail
-  // removes INBOX from every message in an archived thread, so this is accurate);
-  // sent messages never carry INBOX so we skip them to avoid false-archiving.
-  if (direction === 'received') {
-    await applyMailFlagsToConversation(db, {
-      provider: 'email',
-      externalThreadId: message.threadId,
-      flags: deriveThreadFlags(message.labelIds),
-      syncedAt: occurredAt,
-      labels,
-    })
-  }
+  // Converge the head onto the thread's CURRENT Gmail label state (the union
+  // across every message) so /mail's Inbox / tabs / Spam / Important / Sent
+  // match Gmail's own views from the first sync. Run for BOTH directions: a
+  // sent-only thread that was archived/starred in Gmail must land in the right
+  // folder too — deriving from a single sent message (which lacks INBOX) would
+  // false-archive, so we read the thread union instead. Reuses this message's
+  // client (no extra OAuth/KMS decrypt).
+  await convergeThreadStateToHead(client, message.threadId, idToName)
 }
 
 // -----------------------------------------------------------------------------
@@ -534,6 +604,197 @@ async function markProcessed(providerEventRowId: string): Promise<void> {
   })
 }
 
+// -----------------------------------------------------------------------------
+// gmail/sync — the push-independent safety net (§17.1). Mirrors the Trengo /
+// Aircall reconcile crons: webhooks/push are the fast path, this poll is what
+// guarantees "open Gmail == open the CRM" even when Pub/Sub push isn't
+// delivering. Each tick (a) pulls every connected mailbox forward from its
+// historyId (new mail + Gmail-side read/star/archive/trash/label changes) and
+// (b) heals a bounded round-robin batch of existing heads onto Gmail's current
+// thread state — so legacy heads converge their flags + full label set without
+// anyone clicking "Resync".
+// -----------------------------------------------------------------------------
+
+/** Mailboxes pulled forward per tick. */
+const SYNC_MAILBOX_CAP = 50
+/** Existing heads re-read against Gmail's current thread state per tick
+ *  (oldest `flagsSyncedAt` first), sweeping the whole population over time. */
+const HEAL_BATCH = 40
+
+/**
+ * Re-read a bounded batch of the least-recently-synced email heads against
+ * Gmail's CURRENT thread state and converge them (flags + custom-label chips +
+ * the full `gmailLabelIds` folder set). Oldest `flagsSyncedAt` first (nulls —
+ * never-synced legacy heads — first) so the population is swept fairly and no
+ * row is starved. A broken account (invalid_grant) stamps its heads forward so
+ * the sweep is never stuck on it.
+ */
+async function healEmailHeads(
+  step: StepRunner,
+  requestId: string,
+  logger: { warn: (...a: unknown[]) => void },
+): Promise<{ healed: number }> {
+  const heads = await step.run('heal-load-heads', async () =>
+    db.conversation.findMany({
+      where: {
+        provider: 'email',
+        externalThreadId: { not: null },
+        mailAccountId: { not: null },
+      },
+      orderBy: [{ flagsSyncedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
+      take: HEAL_BATCH,
+      select: { id: true, externalThreadId: true, mailAccountId: true },
+    }),
+  )
+  if (heads.length === 0) return { healed: 0 }
+
+  const accountIds = [
+    ...new Set(heads.map((h) => h.mailAccountId).filter((x): x is string => !!x)),
+  ]
+  const accounts = await step.run('heal-load-accounts', async () =>
+    db.mailAccount.findMany({
+      where: {
+        id: { in: accountIds },
+        provider: 'gmail',
+        deletedAt: null,
+        ownerUserId: { not: null },
+      },
+      select: { id: true, ownerUserId: true, address: true },
+    }),
+  )
+  const accById = new Map(accounts.map((a) => [a.id, a]))
+
+  let healed = 0
+  for (const acc of accounts) {
+    const accHeads = heads.filter(
+      (h) => h.mailAccountId === acc.id && h.externalThreadId,
+    )
+    if (accHeads.length === 0) continue
+    const done = await step.run(`heal-account-${acc.id}`, async () => {
+      try {
+        const client = await createClientForAgent({
+          agentId: acc.ownerUserId as string,
+          address: acc.address,
+          purpose: 'gmail.sync',
+          requestId,
+        })
+        const labels = await client.listLabels()
+        const idToName = new Map(labels.map((l) => [l.id, l.name]))
+        for (const head of accHeads) {
+          await convergeThreadStateToHead(
+            client,
+            head.externalThreadId as string,
+            idToName,
+          )
+        }
+        return accHeads.length
+      } catch (err) {
+        // A broken mailbox must not stick the round-robin: stamp its heads
+        // forward (so the sweep advances) and mark it for reconnect on auth
+        // failure. The next full sync's history pull surfaces other errors.
+        if (isInvalidGrantError(err)) {
+          await markNeedsReconnect(acc.ownerUserId as string)
+        }
+        logger.warn(
+          { mailAccountId: acc.id, err },
+          'gmail heal: account batch failed — stamping heads forward',
+        )
+        await db.conversation.updateMany({
+          where: { id: { in: accHeads.map((h) => h.id) } },
+          data: { flagsSyncedAt: new Date() },
+        })
+        return 0
+      }
+    })
+    healed += done
+  }
+
+  // Heads pointing at a non-Gmail / vanished account can't be converged — stamp
+  // them so the oldest-first cursor keeps moving.
+  const unresolved = heads.filter(
+    (h) => !h.mailAccountId || !accById.has(h.mailAccountId),
+  )
+  if (unresolved.length > 0) {
+    await step.run('heal-stamp-unresolved', async () =>
+      db.conversation.updateMany({
+        where: { id: { in: unresolved.map((h) => h.id) } },
+        data: { flagsSyncedAt: new Date() },
+      }),
+    )
+  }
+
+  return { healed }
+}
+
+/** Sweep every connected mailbox (history pull) + heal a round-robin batch.
+ *  Shared by the recurring cron and the on-demand "Sync from Gmail" button. */
+async function runFullGmailSync(
+  step: StepRunner,
+  requestId: string,
+  logger: { warn: (...a: unknown[]) => void },
+): Promise<{ mailboxes: number; processed: number; flagsMirrored: number; healed: number }> {
+  const mailboxes = await step.run('sync-load-mailboxes', async () =>
+    db.gmailMailbox.findMany({
+      where: { deletedAt: null, historyId: { not: null } },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      take: SYNC_MAILBOX_CAP,
+      select: { id: true, agentId: true, address: true, historyId: true },
+    }),
+  )
+
+  let processed = 0
+  let flagsMirrored = 0
+  for (const mb of mailboxes) {
+    const res = await syncMailboxHistory(
+      step,
+      {
+        mailbox: mb,
+        startHistoryId: mb.historyId as string,
+        requestId,
+        keyPrefix: `${mb.id}:`,
+      },
+      logger,
+    )
+    processed += res.processed
+    flagsMirrored += res.flagsMirrored
+  }
+
+  const { healed } = await healEmailHeads(step, requestId, logger)
+  return { mailboxes: mailboxes.length, processed, flagsMirrored, healed }
+}
+
+export const gmailSyncMailboxes = inngest.createFunction(
+  {
+    id: 'gmail/sync',
+    name: 'Poll Gmail for every connected mailbox (push-independent safety net)',
+    // The function id is the lock — only one sweep at a time (like Trengo's
+    // reconcile), so ticks never overlap and double-process.
+    concurrency: { limit: 1 },
+    retries: 2,
+  },
+  { cron: '*/10 * * * *' },
+  async ({ runId, step, logger }) => {
+    const res = await runFullGmailSync(step as unknown as StepRunner, runId, logger)
+    logger.info(res, 'gmail/sync tick complete')
+    return res
+  },
+)
+
+export const gmailSyncNow = inngest.createFunction(
+  {
+    id: 'gmail/sync-now',
+    name: 'Force a Gmail sync now (staff "Sync from Gmail" button)',
+    concurrency: { limit: 1 },
+    retries: 1,
+  },
+  { event: 'gmail/sync-now.requested' },
+  async ({ runId, step, logger }) => {
+    const res = await runFullGmailSync(step as unknown as StepRunner, runId, logger)
+    logger.info(res, 'gmail/sync-now complete')
+    return res
+  },
+)
+
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as GMAIL_BACKFILL_FUNCTIONS } from './backfill'
 // On-demand retroactive resync of existing heads (flags + labels).
@@ -542,6 +803,8 @@ import { RESYNC_FUNCTIONS as GMAIL_RESYNC_FUNCTIONS } from './resync'
 export const FUNCTIONS = [
   gmailHistoryChanged,
   gmailRefreshWatch,
+  gmailSyncMailboxes,
+  gmailSyncNow,
   ...GMAIL_BACKFILL_FUNCTIONS,
   ...GMAIL_RESYNC_FUNCTIONS,
 ] as const

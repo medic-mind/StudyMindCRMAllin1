@@ -380,11 +380,45 @@ async function reconcileOne(
 ): Promise<{ converged: boolean; deleted: boolean }> {
   const { client, endpoint, head, runId } = input
   const fetched = await fetchTicketDetail(client.request, endpoint, head.trengoTicketId)
-  if (fetched.deleted || !fetched.ticket) {
-    // Ticket gone or unparsable — never silent-delete the head (CLAUDE.md §3);
-    // just advance the cursor so the sweep moves on.
+  if (fetched.deleted) {
+    // Ticket DELETED in Trengo — converge the head OUT of the active inbox so the
+    // CRM mirrors Trengo (a deleted ticket is hidden there; leaving it `open`
+    // here is exactly the "tickets hidden on Trengo still showing in the CRM"
+    // drift). We never hard-delete the head (CLAUDE.md §3): move it to `archived`
+    // — out of every active folder, but recoverable + auditable.
+    let converged = false
+    if (head.status !== 'archived') {
+      await db.conversation.updateMany({
+        where: { trengoTicketId: head.trengoTicketId, status: { not: 'archived' } },
+        data: { status: 'archived' },
+      })
+      converged = true
+      if (head.contactId || head.familyId) {
+        await writeAuditLogEntry(db, {
+          actorId: null,
+          action: 'trengo.status_reconciled',
+          target: head.familyId
+            ? { type: 'Family', id: head.familyId }
+            : { type: 'Contact', id: head.contactId as string },
+          requestId: `${runId}:reconcile-deleted:${head.trengoTicketId}`,
+          after: {
+            ticketId: head.trengoTicketId,
+            from: head.status,
+            to: 'archived',
+            source: 'reconcile',
+            reason: 'deleted_in_trengo',
+          },
+        })
+      }
+    }
     await stampChecked(head.trengoTicketId)
-    return { converged: false, deleted: fetched.deleted }
+    return { converged, deleted: true }
+  }
+  if (!fetched.ticket) {
+    // Unparsable response (not a 404) — never mutate on ambiguity (§3); just
+    // advance the cursor so the sweep moves on.
+    await stampChecked(head.trengoTicketId)
+    return { converged: false, deleted: false }
   }
   const ticket = fetched.ticket
   const plan = planReconcile(head, ticket)

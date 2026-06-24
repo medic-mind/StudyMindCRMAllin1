@@ -45,6 +45,9 @@ export interface MailConversationRow {
   flagsSyncedAt: Date | null
   lastSenderName: string | null
   tags: string[]
+  /** Full current Gmail label-id set — the authoritative folder state (§14
+   *  label-mirror). Drives the Gmail-accurate folder queries. */
+  gmailLabelIds: string[]
 }
 
 interface MailConversationCreateInput {
@@ -65,6 +68,7 @@ interface MailConversationCreateInput {
   unreadCount: number
   subject: string | null
   tags: string[]
+  gmailLabelIds: string[]
   lastSenderName: string | null
   replyDeadlineAt: null
 }
@@ -84,6 +88,7 @@ interface MailConversationUpdateInput {
   flagsSyncedAt?: Date
   lastSenderName?: string | null
   tags?: string[]
+  gmailLabelIds?: string[]
 }
 
 export interface ApplyMailInput {
@@ -103,6 +108,10 @@ export interface ApplyMailInput {
   /** Custom Gmail label names on the thread (drives the label chips). When
    *  provided, SETS the head tags to this exact set (Gmail is the source). */
   labels?: string[] | undefined
+  /** Full current Gmail label-id set (system + category + custom). When
+   *  provided, SETS the authoritative folder state used by /mail's Gmail-native
+   *  folder queries (§14 label-mirror). */
+  gmailLabelIds?: string[] | undefined
 }
 
 /**
@@ -145,6 +154,7 @@ export async function applyMailToConversation(
         unreadCount: isInbound ? 1 : 0,
         subject: input.subject,
         tags: input.labels ?? [],
+        gmailLabelIds: input.gmailLabelIds ?? [],
         lastSenderName: isInbound ? (input.senderName ?? null) : null,
         replyDeadlineAt: null,
       },
@@ -188,6 +198,10 @@ export interface ApplyMailFlagsInput {
    *  tags to this exact set (Gmail is authoritative) so label changes made in
    *  Gmail — incl. the initial set on first sync — show as chips in the CRM. */
   labels?: string[] | undefined
+  /** The thread's full current Gmail label-id set (system + category + custom).
+   *  When provided, SETS the authoritative folder state so /mail's Inbox / tabs
+   *  / Spam / Important / Sent mirror Gmail exactly (§14 label-mirror). */
+  gmailLabelIds?: string[] | undefined
 }
 
 /**
@@ -244,6 +258,16 @@ export async function applyMailFlagsToConversation(
   // chips. Only when actually changed, to avoid update churn.
   if (input.labels && !sameStringSet(input.labels, existing.tags)) {
     patch.tags = input.labels
+    meaningful = true
+  }
+  // Mirror the FULL Gmail label-id set so /mail's Gmail-native folders (Inbox,
+  // tabs, Spam, Important, Sent, …) converge onto Gmail's own views. This is the
+  // authoritative folder state — written whenever Gmail's set differs from ours.
+  if (
+    input.gmailLabelIds &&
+    !sameStringSet(input.gmailLabelIds, existing.gmailLabelIds)
+  ) {
+    patch.gmailLabelIds = input.gmailLabelIds
     meaningful = true
   }
 
@@ -304,6 +328,10 @@ function mergeMailEvent(
   // provided (only when it actually changed, to avoid churn).
   if (input.labels && !sameStringSet(input.labels, existing.tags)) {
     patch.tags = input.labels
+  }
+  // Same for the full label-id set that drives the Gmail-native folders.
+  if (input.gmailLabelIds && !sameStringSet(input.gmailLabelIds, existing.gmailLabelIds)) {
+    patch.gmailLabelIds = input.gmailLabelIds
   }
 
   return patch
