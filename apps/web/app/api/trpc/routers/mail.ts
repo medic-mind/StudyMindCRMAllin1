@@ -81,6 +81,21 @@ function assertCanMutate(role: UserRole): void {
   }
 }
 
+/** Gmail system label ids the UI exposes as first-class folders/actions, not as
+ *  user "labels" (the label rail + picker show only custom labels, like Gmail). */
+const SYSTEM_LABEL_IDS: ReadonlySet<string> = new Set([
+  'INBOX',
+  'UNREAD',
+  'STARRED',
+  'TRASH',
+  'SENT',
+  'DRAFT',
+  'SPAM',
+  'CHAT',
+  'IMPORTANT',
+  'SNOOZED',
+])
+
 interface EmailThreadRef {
   id: string
   externalThreadId: string
@@ -505,6 +520,27 @@ export const mailRouter = router({
       const counts = new Map<string, number>()
       for (const r of rows) {
         for (const t of r.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
+      }
+      // When a single Gmail account is selected, union in its FULL custom-label
+      // catalogue (from the live mailbox) so the rail matches Gmail's own label
+      // sidebar exactly — including labels that currently have no threads. Best
+      // effort: a provider error (not a Gmail account, token issue) falls back to
+      // the tags-derived set so the rail never breaks.
+      if (input.mailAccountId) {
+        try {
+          const provider = await getMailSyncProvider({
+            accountId: input.mailAccountId,
+            requestId: ctx.requestId,
+            purpose: 'mail.label_catalogue',
+          })
+          const live = await provider.listLabels()
+          for (const l of live) {
+            if (SYSTEM_LABEL_IDS.has(l.id) || l.id.startsWith('CATEGORY_')) continue
+            if (!counts.has(l.name)) counts.set(l.name, 0)
+          }
+        } catch {
+          /* fall back to the tags-derived list */
+        }
       }
       return Array.from(counts.entries())
         .map(([name, count]) => ({ name, count }))
@@ -973,18 +1009,11 @@ export const mailRouter = router({
           purpose: 'mail.labels',
         })
         const labels = await provider.listLabels()
-        // Hide Gmail system labels the UI exposes as first-class actions.
-        const SYSTEM = new Set([
-          'INBOX',
-          'UNREAD',
-          'STARRED',
-          'TRASH',
-          'SENT',
-          'DRAFT',
-          'SPAM',
-          'CHAT',
-        ])
-        return labels.filter((l) => !SYSTEM.has(l.id))
+        // Hide Gmail system labels + category tabs — the UI exposes those as
+        // first-class folders/actions; the picker shows only custom labels.
+        return labels.filter(
+          (l) => !SYSTEM_LABEL_IDS.has(l.id) && !l.id.startsWith('CATEGORY_'),
+        )
       }),
 
     setRead: auditedProcedure
