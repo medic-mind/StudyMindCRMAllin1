@@ -13,10 +13,13 @@ import { createId } from '@paralleldrive/cuid2'
 import {
   applyMailToConversation,
   buildForwardQuote,
+  buildGmailFolderWhere,
   buildOutgoingEmail,
   buildReplyQuote,
   computeReplyAllRecipients,
   forwardSubject,
+  GMAIL_FOLDERS,
+  mutateLabelSet,
   normaliseEmail,
   replySubject,
 } from '@studymind/core/mail'
@@ -86,6 +89,9 @@ interface EmailThreadRef {
   lastMessageAt: Date
   unreadCount: number
   status: string
+  /** Full current Gmail label-id set — patched optimistically by the CRM-side
+   *  actions so the thread moves folder immediately (§14 label-mirror). */
+  gmailLabelIds: string[]
 }
 
 /** Resolve an actionable email thread head, or throw a typed error. */
@@ -104,6 +110,7 @@ async function resolveEmailThread(
       lastMessageAt: true,
       unreadCount: true,
       status: true,
+      gmailLabelIds: true,
     },
   })
   if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -139,6 +146,7 @@ async function resolveEmailThread(
     lastMessageAt: head.lastMessageAt,
     unreadCount: head.unreadCount,
     status: head.status,
+    gmailLabelIds: head.gmailLabelIds,
   }
 }
 
@@ -503,6 +511,64 @@ export const mailRouter = router({
         .sort((a, b) => a.name.localeCompare(b.name))
     }),
 
+  /**
+   * Force an immediate Gmail sync (the "Sync from Gmail" button). Fires the same
+   * sweep the gmail/sync cron runs — pulls every connected mailbox forward and
+   * heals a batch of heads — so a change made in Gmail shows in the CRM within
+   * seconds instead of waiting for the 10-min poll. Sales Executive+.
+   */
+  syncNow: auditedProcedure.mutation(async ({ ctx }) => {
+    const me = requireUser(ctx)
+    assertCanMutate(me.role)
+    const connected = await ctx.db.gmailMailbox.count({
+      where: { deletedAt: null, historyId: { not: null } },
+    })
+    if (connected > 0) {
+      const { inngest } = await import('@studymind/jobs')
+      await inngest.send({ name: 'gmail/sync-now.requested', data: {} })
+    }
+    await ctx.audit({
+      action: 'mail.sync_requested',
+      target: { type: 'Integration', id: 'gmail' },
+      after: { connected },
+    })
+    return { ok: true as const, connected }
+  }),
+
+  /**
+   * Unread counts for the Inbox + its category tabs, and the Spam total — the
+   * badges Gmail shows in its rail / tab strip. Each is a fast indexed count
+   * over the same Gmail-native folder predicates the list uses, so the badge and
+   * the list can never disagree.
+   */
+  folderCounts: protectedProcedure
+    .input(z.object({ mailAccountId: z.string().nullish() }).default({}))
+    .query(async ({ ctx, input }) => {
+      const me = requireUser(ctx)
+      assertStaff(me.role)
+      const base: Record<string, unknown> = { provider: 'email' }
+      if (input.mailAccountId) base['mailAccountId'] = input.mailAccountId
+      const unread = (folder: (typeof GMAIL_FOLDERS)[number]) =>
+        ctx.db.conversation.count({
+          where: { ...base, AND: [buildGmailFolderWhere(folder), { unreadCount: { gt: 0 } }] },
+        })
+      const total = (folder: (typeof GMAIL_FOLDERS)[number]) =>
+        ctx.db.conversation.count({
+          where: { ...base, AND: [buildGmailFolderWhere(folder)] },
+        })
+      const [inbox, primary, social, promotions, updates, forums, spam] =
+        await Promise.all([
+          unread('inbox'),
+          unread('primary'),
+          unread('social'),
+          unread('promotions'),
+          unread('updates'),
+          unread('forums'),
+          total('spam'),
+        ])
+      return { inbox, primary, social, promotions, updates, forums, spam }
+    }),
+
   threads: router({
     /**
      * Email conversation heads, newest first. Optional account filter; an
@@ -513,9 +579,11 @@ export const mailRouter = router({
       .input(
         z.object({
           mailAccountId: z.string().nullish(),
-          filter: z
-            .enum(['inbox', 'all', 'unread', 'starred', 'archived', 'trash'])
-            .default('inbox'),
+          // Gmail's own views, derived from the thread's live label set so /mail
+          // mirrors Gmail exactly: Inbox + the category tabs (Primary/Social/
+          // Promotions/Updates/Forums), Unread, Starred, Snoozed, Important,
+          // Sent, Spam, All Mail, Archived, Trash (§14 label-mirror).
+          filter: z.enum(GMAIL_FOLDERS).default('inbox'),
           /** Filter to one Gmail label (the rail's label folders). Spans all
            *  non-trash mail, like clicking a label in Gmail. */
           label: z.string().trim().min(1).max(200).nullish(),
@@ -532,37 +600,20 @@ export const mailRouter = router({
 
         const where: Record<string, unknown> = { provider: 'email' }
         if (input.mailAccountId) where['mailAccountId'] = input.mailAccountId
-        // Gmail-style folders. Trash is its own view; every other folder hides
-        // trashed threads (Gmail's "All Mail" excludes Trash).
-        switch (input.filter) {
-          case 'inbox':
-            // Gmail's Inbox: not archived, not trashed. (`all` is All Mail.)
-            where['status'] = 'open'
-            where['isTrashed'] = false
-            break
-          case 'unread':
-            where['unreadCount'] = { gt: 0 }
-            where['isTrashed'] = false
-            break
-          case 'starred':
-            where['isStarred'] = true
-            where['isTrashed'] = false
-            break
-          case 'archived':
-            where['status'] = 'archived'
-            where['isTrashed'] = false
-            break
-          case 'trash':
-            where['isTrashed'] = true
-            break
-          default:
-            where['isTrashed'] = false
-        }
-        // Label folder: narrow to threads carrying this Gmail label (chips live
-        // on Conversation.tags). Additive to the selected folder.
-        if (input.label) where['tags'] = { has: input.label }
-        // Compose cursor + search as AND clauses so neither clobbers the other.
+        // Compose folder + label + cursor as AND clauses so none clobbers another.
         const and: unknown[] = []
+        if (input.label) {
+          // A label folder spans every non-trash/non-spam thread carrying that
+          // label (chips live on Conversation.tags), exactly like clicking a
+          // label in Gmail. Suspends the folder filter.
+          and.push({ tags: { has: input.label } })
+          and.push({ NOT: { gmailLabelIds: { hasSome: ['TRASH', 'SPAM'] } } })
+        } else {
+          // Gmail-native folder membership from the live label set, with a
+          // legacy (empty gmailLabelIds → status) fallback so un-healed heads
+          // never disappear mid-migration.
+          and.push(buildGmailFolderWhere(input.filter))
+        }
         if (input.cursor) {
           and.push({
             OR: [
@@ -579,7 +630,7 @@ export const mailRouter = router({
         // A typed query routes through Gmail search (mail.search) — this folder
         // list stays a fast keyset browse of synced heads (no local substring
         // search, which never matched the body anyway).
-        if (and.length > 0) where['AND'] = and
+        where['AND'] = and
 
         const rows = (await ctx.db.conversation.findMany({
           where,
@@ -950,7 +1001,14 @@ export const mailRouter = router({
         await provider.setReadState(head.externalThreadId, input.read)
         await ctx.db.conversation.update({
           where: { id: head.id },
-          data: { unreadCount: input.read ? 0 : Math.max(1, head.unreadCount) },
+          data: {
+            unreadCount: input.read ? 0 : Math.max(1, head.unreadCount),
+            // Keep the Gmail label mirror consistent (Unread folder parity).
+            gmailLabelIds: mutateLabelSet(
+              head.gmailLabelIds,
+              input.read ? { remove: ['UNREAD'] } : { add: ['UNREAD'] },
+            ),
+          },
         })
         publishConversationUpdate({
           id: head.id,
@@ -980,7 +1038,14 @@ export const mailRouter = router({
         await provider.setArchived(head.externalThreadId, input.archived)
         await ctx.db.conversation.update({
           where: { id: head.id },
-          data: { status: input.archived ? 'archived' : 'open' },
+          data: {
+            status: input.archived ? 'archived' : 'open',
+            // Archive = remove the INBOX label (Gmail's own model).
+            gmailLabelIds: mutateLabelSet(
+              head.gmailLabelIds,
+              input.archived ? { remove: ['INBOX'] } : { add: ['INBOX'] },
+            ),
+          },
         })
         publishConversationUpdate({
           id: head.id,
@@ -1010,7 +1075,13 @@ export const mailRouter = router({
         await provider.setStarred(head.externalThreadId, input.starred)
         await ctx.db.conversation.update({
           where: { id: head.id },
-          data: { isStarred: input.starred },
+          data: {
+            isStarred: input.starred,
+            gmailLabelIds: mutateLabelSet(
+              head.gmailLabelIds,
+              input.starred ? { add: ['STARRED'] } : { remove: ['STARRED'] },
+            ),
+          },
         })
         publishConversationUpdate({
           id: head.id,
@@ -1041,7 +1112,17 @@ export const mailRouter = router({
         await provider.setTrashed(head.externalThreadId, input.trashed)
         await ctx.db.conversation.update({
           where: { id: head.id },
-          data: { status: input.trashed ? 'archived' : 'open', isTrashed: input.trashed },
+          data: {
+            status: input.trashed ? 'archived' : 'open',
+            isTrashed: input.trashed,
+            // Trash adds the TRASH label + drops INBOX; untrash restores INBOX.
+            gmailLabelIds: mutateLabelSet(
+              head.gmailLabelIds,
+              input.trashed
+                ? { add: ['TRASH'], remove: ['INBOX'] }
+                : { remove: ['TRASH'], add: ['INBOX'] },
+            ),
+          },
         })
         publishConversationUpdate({
           id: head.id,
@@ -1296,6 +1377,17 @@ export const mailRouter = router({
         await provider.modifyLabels(head.externalThreadId, {
           ...(input.add ? { add: input.add } : {}),
           ...(input.remove ? { remove: input.remove } : {}),
+        })
+        // Keep the label-id mirror consistent; the next sync re-reads Gmail to
+        // converge the human-readable `tags` chips.
+        await ctx.db.conversation.update({
+          where: { id: head.id },
+          data: {
+            gmailLabelIds: mutateLabelSet(head.gmailLabelIds, {
+              ...(input.add ? { add: input.add } : {}),
+              ...(input.remove ? { remove: input.remove } : {}),
+            }),
+          },
         })
         await ctx.audit({
           action: 'mail.thread_labeled',

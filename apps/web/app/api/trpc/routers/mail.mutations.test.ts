@@ -81,6 +81,7 @@ interface Head {
   lastMessageAt: Date
   unreadCount: number
   status: string
+  gmailLabelIds: string[]
 }
 
 function emailHead(over: Partial<Head> = {}): Head {
@@ -93,6 +94,7 @@ function emailHead(over: Partial<Head> = {}): Head {
     lastMessageAt: new Date('2026-05-31T10:00:00Z'),
     unreadCount: 2,
     status: 'open',
+    gmailLabelIds: ['INBOX', 'UNREAD'],
     ...over,
   }
 }
@@ -162,7 +164,11 @@ describe('mail.thread.setRead', () => {
     const { ctx, audit, updates } = makeCtx({})
     await mailRouter.createCaller(ctx).thread.setRead({ conversationId: 'cv_1', read: true })
     expect(fakeProvider.setReadState).toHaveBeenCalledWith('thread_1', true)
-    expect(updates[0]).toEqual({ unreadCount: 0 })
+    // Zeroes unread AND drops the Gmail UNREAD label so the label-mirror folders
+    // converge immediately.
+    expect(updates[0]).toEqual(
+      expect.objectContaining({ unreadCount: 0, gmailLabelIds: ['INBOX'] }),
+    )
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'mail.thread_read_changed' }),
     )
@@ -182,7 +188,11 @@ describe('mail.thread.setArchived / setTrashed', () => {
     const { ctx, updates } = makeCtx({})
     await mailRouter.createCaller(ctx).thread.setArchived({ conversationId: 'cv_1', archived: true })
     expect(fakeProvider.setArchived).toHaveBeenCalledWith('thread_1', true)
-    expect(updates[0]).toEqual({ status: 'archived' })
+    // Archive removes the INBOX label too (the label-mirror is what /mail's
+    // Inbox folder reads).
+    expect(updates[0]).toEqual(
+      expect.objectContaining({ status: 'archived', gmailLabelIds: ['UNREAD'] }),
+    )
   })
 
   it('trashes via the provider (reversible) and audits', async () => {

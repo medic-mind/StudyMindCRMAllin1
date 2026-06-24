@@ -597,6 +597,10 @@ export const INNGEST_EVENT_NAMES = [
   // On-demand retroactive resync of email conversation heads (flags + labels)
   // from Gmail — the "Resync from Gmail" button (mailAccount.resyncFromGmail).
   'gmail/resync-threads.requested',
+  // On-demand "Sync from Gmail now" — pull every connected mailbox forward +
+  // heal a batch of heads immediately (the gmail/sync cron also runs every
+  // 10 min as the push-independent safety net). §17.1.
+  'gmail/sync-now.requested',
 
   // Cross-cutting domain events
   'finance/reconcile.completed',

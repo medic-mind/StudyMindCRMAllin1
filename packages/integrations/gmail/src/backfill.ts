@@ -396,10 +396,17 @@ async function processBackfillMessage(
     subject: subject || null,
     senderName,
     labels,
+    // Folder state from this message's labels, so a sent-only imported thread
+    // lands in Sent (not Inbox) immediately. The gmail/sync resync-heal later
+    // converges multi-message threads onto the accurate thread union.
+    gmailLabelIds: message.labelIds,
   })
 
   // Reflect Gmail archive / read / star / trash on the head so an imported
   // archived thread isn't shown in the CRM Inbox (parity with the live sync).
+  // Received-only: a sent message lacks INBOX, so deriving flags from it would
+  // false-archive a live thread; the create above + the resync-heal handle the
+  // sent case. gmailLabelIds is still set here so the chips/folders are accurate.
   if (direction === 'received') {
     await applyMailFlagsToConversation(db, {
       provider: 'email',
@@ -407,6 +414,7 @@ async function processBackfillMessage(
       flags: deriveThreadFlags(message.labelIds),
       syncedAt: occurredAt,
       labels,
+      gmailLabelIds: message.labelIds,
     })
   }
 

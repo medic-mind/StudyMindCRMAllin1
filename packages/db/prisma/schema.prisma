@@ -1295,6 +1295,18 @@ model Conversation {
   /// True when the Gmail thread is in TRASH. Distinct from `status='archived'`
   /// (no INBOX label) so the mail client can show separate Archive / Trash.
   isTrashed        Boolean            @default(false)
+  /// ADR 0021 Phase 5 (label-mirror) — the email thread's FULL current Gmail
+  /// label-id set: system (INBOX, SENT, SPAM, IMPORTANT, STARRED, UNREAD,
+  /// DRAFT, SNOOZED), Gmail category tabs (CATEGORY_PERSONAL/SOCIAL/PROMOTIONS/
+  /// UPDATES/FORUMS) AND custom label ids. This is the AUTHORITATIVE folder
+  /// state: `/mail` derives Inbox/Primary/Promotions/Spam/Important/Sent/…
+  /// directly from it so the CRM mirrors Gmail's own views exactly, instead of
+  /// re-deriving from the lossy `status` enum. Written by every sync path
+  /// (live, backfill, history mirror, resync, the gmail/sync poll). Empty for
+  /// non-email rows and for email heads synced before this field existed — the
+  /// folder queries fall back to `status`/`isStarred`/`isTrashed` for those
+  /// until the resync-heal converges them.
+  gmailLabelIds    String[]           @default([])
   /// Last time `mirrorThreadFlags` re-read this thread's Gmail label state.
   flagsSyncedAt    DateTime?
 
@@ -1319,6 +1331,10 @@ model Conversation {
   @@index([trengoChannelId, status])
   @@index([provider, isStarred])
   @@index([provider, isTrashed])
+  /// GIN index so the label-mirror folder queries (`gmailLabelIds has 'INBOX'`,
+  /// `hasSome [...categories]`) stay fast on large mailboxes.
+  @@index([gmailLabelIds], type: Gin)
+  @@index([provider, flagsSyncedAt])
 }
 
 enum ConversationStatus {

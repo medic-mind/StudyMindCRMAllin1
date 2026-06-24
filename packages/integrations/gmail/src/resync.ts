@@ -103,6 +103,9 @@ export const gmailResyncThreads = inngest.createFunction(
           flags,
           syncedAt: new Date(),
           labels,
+          // The authoritative folder state — the full thread label union (or
+          // Trash when Gmail no longer has the thread).
+          gmailLabelIds: state ? state.labelIds : ['TRASH'],
         })
         return true
       })

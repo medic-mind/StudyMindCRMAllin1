@@ -14,7 +14,10 @@ import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import {
+  AlertTriangleIcon,
   ArchiveIcon,
+  BellIcon,
+  CalendarIcon,
   CheckIcon,
   ChevronLeftIcon,
   FileTextIcon,
@@ -62,18 +65,43 @@ function gmailDate(d: Date, now: Date): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })
 }
 
-type Folder = 'inbox' | 'all' | 'unread' | 'starred' | 'drafts' | 'archived' | 'trash'
+// The /mail rail folders. Membership is derived from each thread's live Gmail
+// label set server-side (mail.threads.list), so every folder mirrors the
+// matching Gmail view exactly (§14 label-mirror). 'drafts' is Gmail-API-backed.
+type Folder =
+  | 'inbox'
+  | 'snoozed'
+  | 'important'
+  | 'sent'
+  | 'drafts'
+  | 'starred'
+  | 'spam'
+  | 'all'
+  | 'archived'
+  | 'trash'
+
+// Gmail's inbox category tabs, shown as a strip above the Inbox list.
+type InboxTab = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
 
 const FOLDERS: ReadonlyArray<{ key: Folder; label: string; Icon: typeof InboxIcon }> = [
-  // Inbox = open (not archived/trashed), mirroring Gmail's Inbox. "All mail" is
-  // the everything-except-trash view (Gmail's All Mail).
   { key: 'inbox', label: 'Inbox', Icon: InboxIcon },
-  { key: 'all', label: 'All mail', Icon: MailIcon },
-  { key: 'unread', label: 'Unread', Icon: MailIcon },
-  { key: 'starred', label: 'Starred', Icon: StarIcon },
+  { key: 'snoozed', label: 'Snoozed', Icon: CalendarIcon },
+  { key: 'important', label: 'Important', Icon: BellIcon },
+  { key: 'sent', label: 'Sent', Icon: SendIcon },
   { key: 'drafts', label: 'Drafts', Icon: FileTextIcon },
+  { key: 'starred', label: 'Starred', Icon: StarIcon },
+  { key: 'spam', label: 'Spam', Icon: AlertTriangleIcon },
+  { key: 'all', label: 'All mail', Icon: MailIcon },
   { key: 'archived', label: 'Archived', Icon: ArchiveIcon },
   { key: 'trash', label: 'Trash', Icon: Trash2Icon },
+]
+
+const INBOX_TABS: ReadonlyArray<{ key: InboxTab; label: string }> = [
+  { key: 'primary', label: 'Primary' },
+  { key: 'social', label: 'Social' },
+  { key: 'promotions', label: 'Promotions' },
+  { key: 'updates', label: 'Updates' },
+  { key: 'forums', label: 'Forums' },
 ]
 
 export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
@@ -81,6 +109,8 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   useConversationStream()
   const [accountId, setAccountId] = useState<string | null>(null)
   const [folder, setFolder] = useState<Folder>('inbox')
+  // The active Gmail inbox category tab (only meaningful when folder === 'inbox').
+  const [tab, setTab] = useState<InboxTab>('primary')
   // A selected Gmail label folder (Gmail's label sidebar). When set, the list
   // shows all mail carrying that label; folder selection is suspended.
   const [label, setLabel] = useState<string | null>(null)
@@ -130,14 +160,24 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
     return () => clearTimeout(t)
   }, [rawQuery])
 
+  // The Gmail-native folder to query: a label folder spans all labelled mail;
+  // the Inbox resolves to its active category tab (Primary by default); every
+  // other folder maps 1:1.
+  const listFilter: InboxTab | Folder = label
+    ? 'all'
+    : folder === 'inbox'
+      ? tab
+      : folder === 'drafts'
+        ? 'inbox'
+        : folder
+
   // A typed query runs a real Gmail search (full body + operators) scoped to the
   // selected account (or the first when "All accounts" is chosen).
   const searching = query.length > 0 && !showDrafts && !!draftsAccountId
   const threads = trpc.mail.threads.list.useQuery(
     {
       mailAccountId: accountId,
-      // A label folder spans all mail with that label (like clicking in Gmail).
-      filter: label ? 'all' : folder === 'drafts' ? 'inbox' : folder,
+      filter: listFilter,
       label: label,
       limit: 50,
     },
@@ -153,6 +193,9 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   )
   const listLoading = searching ? search.isLoading : threads.isLoading
   const labels = trpc.mail.labels.useQuery({ mailAccountId: accountId })
+  // Gmail-style unread badges for Inbox + its category tabs, plus the Spam total.
+  const counts = trpc.mail.folderCounts.useQuery({ mailAccountId: accountId })
+  const syncNow = trpc.mail.syncNow.useMutation()
 
   const kbArchive = trpc.mail.thread.setArchived.useMutation()
   const kbRead = trpc.mail.thread.setRead.useMutation()
@@ -252,17 +295,52 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
     <div className="flex h-full w-full overflow-hidden bg-white">
       {/* Rail */}
       <aside className="flex w-60 shrink-0 flex-col gap-1 overflow-y-auto border-r border-neutral-200 bg-neutral-50 p-3">
-        <button
-          type="button"
-          onClick={() => setComposing(true)}
-          className="mb-3 inline-flex w-fit items-center gap-3 rounded-2xl bg-gmail-600 py-3 pl-4 pr-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gmail-700"
-        >
-          <PencilIcon size={18} /> Compose
-        </button>
+        <div className="mb-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setComposing(true)}
+            className="inline-flex w-fit items-center gap-3 rounded-2xl bg-gmail-600 py-3 pl-4 pr-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gmail-700"
+          >
+            <PencilIcon size={18} /> Compose
+          </button>
+          {/* Force a Gmail sync — the safety net that converges the CRM onto
+              Gmail's current state on demand (the gmail/sync cron also runs
+              every 10 min). */}
+          <button
+            type="button"
+            title="Sync from Gmail"
+            aria-label="Sync from Gmail"
+            disabled={syncNow.isPending}
+            onClick={() => {
+              syncNow
+                .mutateAsync()
+                .then((r) => {
+                  toast.success(
+                    r.connected > 0 ? 'Syncing from Gmail…' : 'No Gmail account connected',
+                  )
+                  setTimeout(() => {
+                    void utils.mail.threads.list.invalidate()
+                    void utils.mail.labels.invalidate()
+                    void utils.mail.folderCounts.invalidate()
+                  }, 1500)
+                })
+                .catch((e) => toast.error(e instanceof Error ? e.message : 'Sync failed'))
+            }}
+            className="rounded-full border border-neutral-300 bg-white p-2 text-neutral-500 hover:bg-neutral-100 disabled:opacity-50"
+          >
+            <RepeatIcon size={16} className={syncNow.isPending ? 'animate-spin' : ''} />
+          </button>
+        </div>
 
         <nav aria-label="Folders" className="flex flex-col gap-0.5">
           {FOLDERS.map(({ key, label: folderLabel, Icon }) => {
             const active = folder === key && !label
+            const badge =
+              key === 'inbox'
+                ? (counts.data?.inbox ?? 0)
+                : key === 'spam'
+                  ? (counts.data?.spam ?? 0)
+                  : 0
             return (
               <button
                 key={key}
@@ -281,7 +359,16 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
                 }`}
               >
                 <Icon size={16} className={active ? 'text-gmail-700' : 'text-neutral-500'} />
-                {folderLabel}
+                <span className="flex-1">{folderLabel}</span>
+                {badge > 0 ? (
+                  <span
+                    className={`shrink-0 text-xs tabular-nums ${
+                      active ? 'text-gmail-700' : 'text-neutral-500'
+                    }`}
+                  >
+                    {badge}
+                  </span>
+                ) : null}
               </button>
             )
           })}
@@ -464,6 +551,51 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
           />
         ) : (
           <>
+            {/* Gmail inbox category tabs (Primary / Social / Promotions / …).
+                Shown only on the Inbox folder; each switches the list filter to
+                that category exactly like Gmail's tabbed inbox. */}
+            {folder === 'inbox' && !label && !searching ? (
+              <div className="flex items-stretch border-b border-neutral-200">
+                {INBOX_TABS.map((t) => {
+                  const activeTab = tab === t.key
+                  const badge =
+                    t.key === 'primary'
+                      ? (counts.data?.primary ?? 0)
+                      : t.key === 'social'
+                        ? (counts.data?.social ?? 0)
+                        : t.key === 'promotions'
+                          ? (counts.data?.promotions ?? 0)
+                          : t.key === 'updates'
+                            ? (counts.data?.updates ?? 0)
+                            : (counts.data?.forums ?? 0)
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => {
+                        setTab(t.key)
+                        setSelectedId(null)
+                        setChecked(new Set())
+                      }}
+                      aria-current={activeTab ? 'true' : undefined}
+                      className={`flex min-w-0 items-center gap-2 border-b-2 px-4 py-2 text-sm transition-colors ${
+                        activeTab
+                          ? 'border-gmail-600 font-medium text-gmail-700'
+                          : 'border-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'
+                      }`}
+                    >
+                      <span className="truncate">{t.label}</span>
+                      {badge > 0 ? (
+                        <span className="shrink-0 rounded-full bg-gmail-100 px-1.5 text-[11px] font-medium text-gmail-700">
+                          {badge}
+                        </span>
+                      ) : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+
             {/* Toolbar */}
             <div className="flex items-center gap-1 border-b border-neutral-200 px-4 py-1.5">
               <button
@@ -511,9 +643,11 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
                   <p className="mt-3 text-sm text-neutral-500">
                     {query
                       ? `No mail matches “${query}”.`
-                      : folder === 'unread'
-                        ? 'No unread email.'
-                        : 'No email here yet.'}
+                      : label
+                        ? `No mail with the “${label}” label.`
+                        : folder === 'spam'
+                          ? 'No spam.'
+                          : 'No email here yet.'}
                   </p>
                 </div>
               ) : (
