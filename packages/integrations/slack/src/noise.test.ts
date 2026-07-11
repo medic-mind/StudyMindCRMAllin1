@@ -23,4 +23,17 @@ describe('isSkippableSlackNoise', () => {
     expect(isSkippableSlackNoise('Jane Smith wants her invoice re-sent')).toBe(false)
     expect(isSkippableSlackNoise('chase Mr Patel about the UCAT course')).toBe(false)
   })
+
+  it('keeps a bare name-shaped message (terse thread header) — it used to be a silent drop', () => {
+    expect(isSkippableSlackNoise('Sampada')).toBe(false)
+    expect(isSkippableSlackNoise('Sampada Neupane')).toBe(false)
+    expect(isSkippableSlackNoise('O’Brien')).toBe(false)
+  })
+
+  it('capitalised acks/calendar words are still noise, not names', () => {
+    expect(isSkippableSlackNoise('Thanks')).toBe(true)
+    expect(isSkippableSlackNoise('Ok')).toBe(true)
+    expect(isSkippableSlackNoise('Monday')).toBe(true)
+    expect(isSkippableSlackNoise('UCAT')).toBe(true) // all-caps acronym
+  })
 })

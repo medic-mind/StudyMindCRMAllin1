@@ -18,8 +18,13 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { extractContactSignals } from './extract'
-import { resolveSlackLinkTarget, targetAuditTarget, targetForeignKey } from './link-target'
+import { extractContactSignals, extractNameCandidates } from './extract'
+import {
+  resolveSlackLinkTarget,
+  resolveSlackLinkTargetFromNames,
+  targetAuditTarget,
+  targetForeignKey,
+} from './link-target'
 import { resolveThreadParentText } from './names'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
@@ -134,6 +139,16 @@ export async function relinkParkedRowsOnce(
       candidate.name || candidate.email || candidate.phone
         ? await resolveSlackLinkTarget(candidate)
         : null
+
+    // Deterministic NAME retry (free, DB-only): rows parked before name
+    // extraction existed carry name:null and could never be rescued. Re-scan
+    // the archived message text for name candidates and run them through the
+    // same unambiguous-only resolver — so the historic backlog self-heals
+    // without AI.
+    if (!target && row.messageText) {
+      const names = extractNameCandidates(row.messageText)
+      if (names.length > 0) target = await resolveSlackLinkTargetFromNames(names)
+    }
 
     // Thread-aware retry: a reply that named no customer inherits its thread
     // root's email/phone. Bounded per tick (Slack rate limits).

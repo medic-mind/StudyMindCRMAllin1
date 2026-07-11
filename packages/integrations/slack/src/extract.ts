@@ -23,6 +23,100 @@ export interface ContactSignals {
   phone: string | null
 }
 
+// -----------------------------------------------------------------------------
+// Deterministic NAME candidates — the free path used to hard-code `name: null`,
+// which made every name-only mention ("Spoke to Aanya Sharma about the mocks")
+// AI-only: with no provider key configured it could never link and parked with
+// a null candidate the relink cron couldn't rescue. This extractor feeds the
+// SAME unambiguous-only matcher the AI path uses (`matchContactByCandidate`,
+// take:2 — resolves only when EXACTLY one contact matches, §3), so a wrong
+// guess here cannot mislink: it simply matches nobody.
+// -----------------------------------------------------------------------------
+
+/** Proper-noun shape: capitalised segments joined by apostrophe/hyphen —
+ *  Aanya, O'Brien, Anne-Marie. Deliberately excludes ALL-CAPS acronyms
+ *  (UK, GCSE, CRM) and requires ≥2 characters. */
+const PROPER_TOKEN = /^(?=.{2,})\p{Lu}\p{Ll}*(?:['’-]\p{Lu}?\p{Ll}+)*$/u
+
+/** Common capitalised words that are never a customer's name on their own —
+ *  sentence openers, acks, calendar words. Single-token candidates only;
+ *  multi-token runs ("Grace Monday" a real name) are left to the matcher. */
+const NAME_STOPWORDS = new Set([
+  'thanks', 'thank', 'thankyou', 'cheers', 'ok', 'okay', 'yes', 'no', 'yep', 'nope',
+  'done', 'great', 'nice', 'cool', 'perfect', 'brilliant', 'awesome', 'sure',
+  'hello', 'hi', 'hey', 'morning', 'afternoon', 'evening', 'welcome', 'sorry',
+  'please', 'noted', 'agreed', 'understood', 'update', 'reminder', 'urgent', 'fyi',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+  'september', 'october', 'november', 'december', 'today', 'tomorrow', 'yesterday',
+])
+
+/** Bound the matcher round-trips per message. */
+const MAX_NAME_CANDIDATES = 5
+
+/**
+ * Pull likely person-name candidates out of a Slack message, deterministically.
+ * Strategy: maximal runs of proper-noun-shaped tokens. Runs of 2–3 tokens
+ * ("Aanya Sharma", "Anne-Marie O'Brien") are the strongest candidates and come
+ * first; single tokens count only when they are NOT the message/sentence opener
+ * (sentence-start capitalisation) and not a stop word. The unambiguous-only
+ * matcher is the real safety — a non-name candidate matches nobody.
+ */
+export function extractNameCandidates(text: string): string[] {
+  const plain = slackTextToPlain(text)
+  // Token stream with sentence-boundary markers preserved.
+  const rawTokens = plain.split(/\s+/u).filter((t) => t.length > 0)
+
+  const runs: Array<{ tokens: string[]; startsSentence: boolean }> = []
+  let current: string[] = []
+  let currentStartsSentence = true
+  let atSentenceStart = true
+  for (const raw of rawTokens) {
+    const word = raw.replace(/^[^\p{L}'’-]+|[^\p{L}'’-]+$/gu, '')
+    const isProper = PROPER_TOKEN.test(word)
+    if (isProper) {
+      if (current.length === 0) currentStartsSentence = atSentenceStart
+      current.push(word)
+    } else if (current.length > 0) {
+      runs.push({ tokens: current, startsSentence: currentStartsSentence })
+      current = []
+    }
+    // The next token starts a sentence when this raw token ends one.
+    atSentenceStart = /[.!?:;]$/u.test(raw)
+    if (isProper && atSentenceStart) {
+      // Run broken by terminal punctuation ("…with Aanya. Next…").
+      runs.push({ tokens: current, startsSentence: currentStartsSentence })
+      current = []
+    }
+  }
+  if (current.length > 0) runs.push({ tokens: current, startsSentence: currentStartsSentence })
+
+  // A message that IS just a name ("Sampada", "Sampada Neupane" as a thread
+  // header) has its single run at sentence start by definition — exempt it.
+  const wholeMessageIsRun = runs.length === 1 && runs[0]!.tokens.length === rawTokens.length
+
+  const multi: string[] = []
+  const single: string[] = []
+  for (const run of runs) {
+    if (run.tokens.length >= 2 && run.tokens.length <= 3) {
+      multi.push(run.tokens.join(' '))
+    } else if (run.tokens.length === 1) {
+      const token = run.tokens[0]!
+      if (run.startsSentence && !wholeMessageIsRun) continue // "Spoke to…", "Called her…"
+      if (NAME_STOPWORDS.has(token.toLowerCase())) continue
+      single.push(token)
+    }
+    // Runs of 4+ proper tokens are headlines/titles, not names — skipped.
+  }
+
+  const out: string[] = []
+  for (const c of [...multi, ...single]) {
+    if (!out.includes(c)) out.push(c)
+    if (out.length >= MAX_NAME_CANDIDATES) break
+  }
+  return out
+}
+
 const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/iu
 /** A phone-shaped run: optional +, then 9+ digits allowing spaces/()-. */
 const PHONE_RE = /\+?\d[\d\s().-]{7,}\d/u

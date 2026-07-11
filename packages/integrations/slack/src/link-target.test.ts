@@ -15,7 +15,12 @@ vi.mock('@studymind/db', () => ({
   db: { businessAccountContact: { findFirst: baFindFirst } },
 }))
 
-import { resolveSlackLinkTarget, targetAuditTarget, targetForeignKey } from './link-target'
+import {
+  resolveSlackLinkTarget,
+  resolveSlackLinkTargetFromNames,
+  targetAuditTarget,
+  targetForeignKey,
+} from './link-target'
 
 beforeEach(() => {
   matchContact.mockReset()
@@ -63,6 +68,82 @@ describe('resolveSlackLinkTarget', () => {
     matchContact.mockResolvedValue({ contactId: null, via: null, reason: 'no_match' })
     matchAccount.mockResolvedValue({ businessAccountId: null, via: null, reason: 'no_match' })
     expect(await resolveSlackLinkTarget({ name: 'Nobody Known' })).toBeNull()
+  })
+})
+
+describe('resolveSlackLinkTargetFromNames', () => {
+  it('links when exactly one candidate resolves (name-only, no AI)', async () => {
+    matchContact.mockImplementation(async (_db: unknown, cand: { name?: string | null }) =>
+      cand.name === 'Aanya Sharma'
+        ? { contactId: 'c1', via: 'name', reason: 'matched' }
+        : { contactId: null, via: null, reason: 'no_match' },
+    )
+    matchAccount.mockResolvedValue({ businessAccountId: null, via: null, reason: 'no_match' })
+    baFindFirst.mockResolvedValue(null)
+
+    const t = await resolveSlackLinkTargetFromNames(['Aanya Sharma', 'Monday'])
+    expect(t).toEqual({ kind: 'contact', contactId: 'c1', via: 'name' })
+  })
+
+  it('parks (null) when two candidates resolve to two DIFFERENT contacts', async () => {
+    matchContact.mockImplementation(async (_db: unknown, cand: { name?: string | null }) => {
+      if (cand.name === 'Aanya Sharma')
+        return { contactId: 'c1', via: 'name', reason: 'matched' }
+      if (cand.name === 'Leisha Burgess')
+        return { contactId: 'c2', via: 'name', reason: 'matched' }
+      return { contactId: null, via: null, reason: 'no_match' }
+    })
+    matchAccount.mockResolvedValue({ businessAccountId: null, via: null, reason: 'no_match' })
+    baFindFirst.mockResolvedValue(null)
+
+    expect(
+      await resolveSlackLinkTargetFromNames(['Aanya Sharma', 'Leisha Burgess']),
+    ).toBeNull()
+  })
+
+  it('a person + their OWN school is consistent — keeps the contact target', async () => {
+    matchContact.mockImplementation(async (_db: unknown, cand: { name?: string | null }) =>
+      cand.name === 'Aanya Sharma'
+        ? { contactId: 'c1', via: 'name', reason: 'matched' }
+        : { contactId: null, via: null, reason: 'no_match' },
+    )
+    matchAccount.mockImplementation(async (_db: unknown, cand: { name?: string | null }) =>
+      cand.name === 'Oakwood Primary'
+        ? { businessAccountId: 'a1', via: 'name', reason: 'matched' }
+        : { businessAccountId: null, via: null, reason: 'no_match' },
+    )
+    baFindFirst.mockResolvedValue({ accountId: 'a1' }) // Aanya belongs to a1
+
+    const t = await resolveSlackLinkTargetFromNames(['Aanya Sharma', 'Oakwood Primary'])
+    expect(t).toEqual({
+      kind: 'contact',
+      contactId: 'c1',
+      businessAccountId: 'a1',
+      via: 'name',
+    })
+  })
+
+  it('a person + an UNRELATED school is ambiguous — parks (null)', async () => {
+    matchContact.mockImplementation(async (_db: unknown, cand: { name?: string | null }) =>
+      cand.name === 'Aanya Sharma'
+        ? { contactId: 'c1', via: 'name', reason: 'matched' }
+        : { contactId: null, via: null, reason: 'no_match' },
+    )
+    matchAccount.mockImplementation(async (_db: unknown, cand: { name?: string | null }) =>
+      cand.name === 'Elm Grove'
+        ? { businessAccountId: 'a9', via: 'name', reason: 'matched' }
+        : { businessAccountId: null, via: null, reason: 'no_match' },
+    )
+    baFindFirst.mockResolvedValue(null) // Aanya belongs to no school
+
+    expect(await resolveSlackLinkTargetFromNames(['Aanya Sharma', 'Elm Grove'])).toBeNull()
+  })
+
+  it('returns null when nothing resolves (empty list, or no matches)', async () => {
+    matchContact.mockResolvedValue({ contactId: null, via: null, reason: 'no_match' })
+    matchAccount.mockResolvedValue({ businessAccountId: null, via: null, reason: 'no_match' })
+    expect(await resolveSlackLinkTargetFromNames([])).toBeNull()
+    expect(await resolveSlackLinkTargetFromNames(['Nobody Known'])).toBeNull()
   })
 })
 

@@ -26,10 +26,11 @@ import { inngest } from '@studymind/jobs'
 
 import {
   resolveSlackLinkTarget,
+  resolveSlackLinkTargetFromNames,
   targetAuditTarget,
   targetForeignKey,
 } from './link-target'
-import { extractContactSignals, slackTextToPlain } from './extract'
+import { extractContactSignals, extractNameCandidates, slackTextToPlain } from './extract'
 import { isIngestableSlackMessage } from './message-filter'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames, resolveThreadParentText } from './names'
@@ -141,64 +142,85 @@ export const slackEventReceived = inngest.createFunction(
       : { email: null, phone: null }
     const matchEmail = signals.email ?? parentSignals.email
     const matchPhone = signals.phone ?? parentSignals.phone
-    if (matchEmail || matchPhone) {
-      const rulesTarget = await step.run('match-target-rules', async () =>
-        resolveSlackLinkTarget({ name: null, email: matchEmail, phone: matchPhone }),
-      )
-      if (rulesTarget) {
-        const interaction = await step.run('upsert-interaction-rules', async () => {
-          const existing = await db.interaction.findFirst({
-            where: { payload: { path: ['slackEventId'], equals: eventId } },
-            select: { id: true },
-          })
-          if (existing) return existing
-          return db.interaction.create({
-            data: {
-              id: createId(),
-              type: 'slack_summary',
-              ...targetForeignKey(rulesTarget),
-              occurredAt,
-              summary: plainText.slice(0, 280),
-              payload: {
-                event: 'slack.message_summarised',
-                slackEventId: eventId,
-                slackTs: message.ts,
-                channelId: message.channel,
-                channelName,
-                permalink,
-                ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
-                messageText: message.text,
-                senderName,
-                category: 'general',
-                sentiment: 'neutral',
-                suggestedNextAction: null,
-                confidence: 1,
-                matchedVia: rulesTarget.via,
-                matchFuzzy: rulesTarget.fuzzy ?? false,
-                linkedTo: rulesTarget.kind,
-                promptVersion: 'rules-v1',
-              },
+    let rulesTarget =
+      matchEmail || matchPhone
+        ? await step.run('match-target-rules', async () =>
+            resolveSlackLinkTarget({ name: null, email: matchEmail, phone: matchPhone }),
+          )
+        : null
+
+    // Free NAME pass (still no AI): the deterministic path used to hard-code
+    // name:null, so a name-only mention could only ever link through the AI —
+    // and never linked at all when no provider key was configured. The
+    // unambiguous-only matcher (take:2, §3) is the safety: a non-name token
+    // matches nobody, two same-named contacts park for a human.
+    const nameCandidates = extractNameCandidates(message.text)
+    const parentNameCandidates = threadParentText
+      ? extractNameCandidates(threadParentText)
+      : []
+    if (!rulesTarget && (nameCandidates.length > 0 || parentNameCandidates.length > 0)) {
+      rulesTarget = await step.run('match-target-names', async () => {
+        const own = await resolveSlackLinkTargetFromNames(nameCandidates)
+        if (own) return own
+        return parentNameCandidates.length > 0
+          ? resolveSlackLinkTargetFromNames(parentNameCandidates)
+          : null
+      })
+    }
+    if (rulesTarget) {
+      const target = rulesTarget
+      const interaction = await step.run('upsert-interaction-rules', async () => {
+        const existing = await db.interaction.findFirst({
+          where: { payload: { path: ['slackEventId'], equals: eventId } },
+          select: { id: true },
+        })
+        if (existing) return existing
+        return db.interaction.create({
+          data: {
+            id: createId(),
+            type: 'slack_summary',
+            ...targetForeignKey(target),
+            occurredAt,
+            summary: plainText.slice(0, 280),
+            payload: {
+              event: 'slack.message_summarised',
+              slackEventId: eventId,
+              slackTs: message.ts,
+              channelId: message.channel,
+              channelName,
+              permalink,
+              ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
+              messageText: message.text,
+              senderName,
+              category: 'general',
+              sentiment: 'neutral',
+              suggestedNextAction: null,
+              confidence: 1,
+              matchedVia: target.via,
+              matchFuzzy: target.fuzzy ?? false,
+              linkedTo: target.kind,
+              promptVersion: 'rules-v1',
             },
-            select: { id: true },
-          })
+          },
+          select: { id: true },
         })
-        await step.run('audit-rules', async () => {
-          await writeAuditLogEntry(db, {
-            actorId: null,
-            action: 'slack.message_summarised',
-            target: targetAuditTarget(rulesTarget),
-            requestId: eventId,
-            after: { interactionId: interaction.id, matchedVia: rulesTarget.via, rules: true },
-          })
+      })
+      await step.run('audit-rules', async () => {
+        await writeAuditLogEntry(db, {
+          actorId: null,
+          action: 'slack.message_summarised',
+          target: targetAuditTarget(target),
+          requestId: eventId,
+          after: { interactionId: interaction.id, matchedVia: target.via, rules: true },
         })
-        await step.run('mark-processed', async () => {
-          await db.providerEvent.update({
-            where: { id: providerEventRowId },
-            data: { processedAt: new Date() },
-          })
+      })
+      await step.run('mark-processed', async () => {
+        await db.providerEvent.update({
+          where: { id: providerEventRowId },
+          data: { processedAt: new Date() },
         })
-        return { ok: true, interactionId: interaction.id, matchedVia: 'rules' }
-      }
+      })
+      return { ok: true, interactionId: interaction.id, matchedVia: 'rules' }
     }
 
     // 2. AI parse (LAST — only when the free route found no unique contact).
@@ -231,9 +253,12 @@ export const slackEventReceived = inngest.createFunction(
       )
     } catch (err) {
       logger.warn({ eventId, err }, 'slack ai-parse failed — parking for human triage')
+      // The deterministic name candidate rides along so the relink cron can
+      // resolve this row by name once the contact exists (a null name made
+      // the parked row un-rescuable).
       parsed = {
         candidateContactIdentifier: {
-          name: null,
+          name: nameCandidates[0] ?? parentNameCandidates[0] ?? null,
           email: signals.email,
           phone: signals.phone,
         },

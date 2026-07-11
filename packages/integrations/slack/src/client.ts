@@ -1,6 +1,7 @@
 // Slack Web API client. CLAUDE.md §12.
 // One bot user posts to the agreed `#crm-alerts` channel only. No DMs.
 
+import { logger } from '@studymind/core/logger'
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
 
 export const SLACK_API_BASE = 'https://slack.com/api' as const
@@ -170,7 +171,15 @@ export function createClient(opts: CreateSlackClientOptions = {}): SlackClient {
         return await listWith('public_channel,private_channel')
       } catch (err) {
         if (err instanceof SlackApiError && err.slackError === 'missing_scope') {
-          // groups:read absent — public channels still beat nothing.
+          // groups:read absent — public channels still beat nothing, but say
+          // so loudly: swallowing this silently is how "the bot is in all the
+          // channels but private history never imports" stays invisible. The
+          // operator-facing fix is re-installing the Slack app with the
+          // groups:read (+ groups:history) bot scopes.
+          logger.warn(
+            { slackError: err.slackError },
+            'slack: groups:read scope missing — PRIVATE channels are excluded from listing and ingestion; re-install the Slack app with groups:read + groups:history to include them',
+          )
           return listWith('public_channel')
         }
         throw err

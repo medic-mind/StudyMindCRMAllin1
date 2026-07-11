@@ -75,6 +75,50 @@ export async function resolveSlackLinkTarget(
   return null
 }
 
+/**
+ * Resolve a list of deterministically-extracted name candidates to ONE target.
+ * Each candidate goes through the same unambiguous-only resolver; the link is
+ * made only when every candidate that resolves at all points at the SAME
+ * entity. Two candidates resolving to two different people is ambiguity at the
+ * message level — we park rather than guess (§3), exactly like the matcher's
+ * own take:2 guard. Free (no AI); powers name-only matching when no AI
+ * provider is configured.
+ */
+export async function resolveSlackLinkTargetFromNames(
+  names: readonly string[],
+): Promise<SlackLinkTarget | null> {
+  let resolved: SlackLinkTarget | null = null
+  for (const name of names) {
+    const target = await resolveSlackLinkTarget({ name, email: null, phone: null })
+    if (!target) continue
+    if (!resolved) {
+      resolved = target
+      continue
+    }
+    if (resolved.kind === target.kind) {
+      const same =
+        resolved.contactId === target.contactId &&
+        resolved.businessAccountId === target.businessAccountId
+      if (!same) return null // two candidates → two different entities: ambiguous
+      continue
+    }
+    // Mixed kinds are consistent when the person belongs to the named school
+    // ("Aanya Sharma at Oakwood Primary") — keep the more specific contact
+    // target. Anything else is ambiguous.
+    const contactTarget: SlackLinkTarget = resolved.kind === 'contact' ? resolved : target
+    const accountTarget: SlackLinkTarget = resolved.kind === 'account' ? resolved : target
+    if (
+      contactTarget.businessAccountId &&
+      contactTarget.businessAccountId === accountTarget.businessAccountId
+    ) {
+      resolved = contactTarget
+      continue
+    }
+    return null
+  }
+  return resolved
+}
+
 /** The interaction foreign keys for a target — `contactId` and/or
  *  `businessAccountId`, whichever the target carries. */
 export function targetForeignKey(

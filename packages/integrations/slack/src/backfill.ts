@@ -38,8 +38,12 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE, listIngestChannelIds } from './client'
-import { resolveSlackLinkTarget, targetForeignKey } from './link-target'
-import { extractContactSignals, slackTextToPlain } from './extract'
+import {
+  resolveSlackLinkTarget,
+  resolveSlackLinkTargetFromNames,
+  targetForeignKey,
+} from './link-target'
+import { extractContactSignals, extractNameCandidates, slackTextToPlain } from './extract'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 
@@ -398,44 +402,60 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     : { email: null, phone: null }
   const matchEmail = signals.email ?? parentSignals.email
   const matchPhone = signals.phone ?? parentSignals.phone
-  if (matchEmail || matchPhone) {
-    const rulesTarget = await resolveSlackLinkTarget({
-      name: null,
-      email: matchEmail,
-      phone: matchPhone,
-    })
-    if (rulesTarget) {
-      const occurredAtRules = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
-      await db.interaction.create({
-        data: {
-          id: createId(),
-          type: 'slack_summary',
-          ...targetForeignKey(rulesTarget),
-          occurredAt: occurredAtRules,
-          summary: slackTextToPlain(message.text).slice(0, 280),
-          payload: {
-            backfill: true,
-            event: 'slack.message_summarised',
-            slackTs: message.ts,
-            channelId,
-            channelName,
-            permalink: message.permalink ?? null,
-            ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
-            messageText: message.text ?? null,
-            senderName,
-            category: 'general',
-            sentiment: 'neutral',
-            suggestedNextAction: null,
-            confidence: 1,
-            matchedVia: rulesTarget.via,
-            matchFuzzy: rulesTarget.fuzzy ?? false,
-            linkedTo: rulesTarget.kind,
-            promptVersion: 'rules-v1',
-          },
+  let rulesTarget =
+    matchEmail || matchPhone
+      ? await resolveSlackLinkTarget({ name: null, email: matchEmail, phone: matchPhone })
+      : null
+
+  // Free NAME pass (still no AI): the deterministic path used to hard-code
+  // name:null, so "Spoke to Aanya Sharma about the mocks" could only link via
+  // the AI — and never linked at all when no provider key was configured.
+  // extractNameCandidates + the unambiguous-only matcher resolve it for free;
+  // a reply that names nobody inherits the thread root's names, mirroring the
+  // email/phone inheritance above.
+  const nameCandidates = extractNameCandidates(message.text)
+  const parentNameCandidates = input.threadParentText
+    ? extractNameCandidates(input.threadParentText)
+    : []
+  if (!rulesTarget) {
+    rulesTarget =
+      (await resolveSlackLinkTargetFromNames(nameCandidates)) ??
+      (parentNameCandidates.length > 0
+        ? await resolveSlackLinkTargetFromNames(parentNameCandidates)
+        : null)
+  }
+
+  if (rulesTarget) {
+    const occurredAtRules = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
+    await db.interaction.create({
+      data: {
+        id: createId(),
+        type: 'slack_summary',
+        ...targetForeignKey(rulesTarget),
+        occurredAt: occurredAtRules,
+        summary: slackTextToPlain(message.text).slice(0, 280),
+        payload: {
+          backfill: true,
+          event: 'slack.message_summarised',
+          slackTs: message.ts,
+          channelId,
+          channelName,
+          permalink: message.permalink ?? null,
+          ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
+          messageText: message.text ?? null,
+          senderName,
+          category: 'general',
+          sentiment: 'neutral',
+          suggestedNextAction: null,
+          confidence: 1,
+          matchedVia: rulesTarget.via,
+          matchFuzzy: rulesTarget.fuzzy ?? false,
+          linkedTo: rulesTarget.kind,
+          promptVersion: 'rules-v1',
         },
-      })
-      return { matched: true }
-    }
+      },
+    })
+    return { matched: true }
   }
 
   const safeText = sanitiseUserContent(message.text)
@@ -467,8 +487,14 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     // No AI provider (or over budget) must NOT silently drop the message — park
     // it as a record with the deterministic signals as the candidate, exactly
     // as the live handler does, so it stays visible + relinkable (never lost).
+    // The extracted name candidate rides along so the relink cron can resolve
+    // the row by name once the contact exists (a null name was un-rescuable).
     parsed = {
-      candidateContactIdentifier: { name: null, email: matchEmail, phone: matchPhone },
+      candidateContactIdentifier: {
+        name: nameCandidates[0] ?? parentNameCandidates[0] ?? null,
+        email: matchEmail,
+        phone: matchPhone,
+      },
       summary: slackTextToPlain(message.text).slice(0, 600) || 'Slack message',
       category: 'general',
       sentiment: 'neutral',
