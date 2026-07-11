@@ -1,10 +1,19 @@
 // Slack 90-day historic backfill worker (ADR 0017).
 //
-// Walks each watched channel via `conversations.history?oldest=<unix>` and
-// runs the existing slack-summary AI prompt against each message. Persists
-// a `slack_summary` Interaction when confidence >= 0.7 AND the parsed
-// candidate matches a CRM Contact by email/phone. We do NOT create
-// UnassignedSummary rows during backfill — too noisy per the brief.
+// Walks each watched channel via `conversations.history?oldest=<unix>` (plus
+// each thread's replies, walkThread) and runs the existing slack-summary AI
+// prompt against each message. Persists a `slack_summary` Interaction when the
+// message resolves to a Contact / B2B account; otherwise — mirroring the LIVE
+// webhook (jobs.ts) — it PARKS the message in the `UnassignedSummary` triage
+// tray (/inbox/slack-mentions) instead of silently dropping it. The old
+// behaviour (drop everything unmatched) is exactly why historic messages, and
+// every name-only message when no AI provider is configured, "never showed up":
+// a message that named a customer we hadn't imported yet, or that the AI
+// couldn't extract, vanished with no record and no error. Parking makes them
+// VISIBLE and lets the `slack/relink-unassigned` cron auto-link them the moment
+// the contact exists (§12, ADR 0034). The noise filter (acks/emoji/bare links)
+// is the volume control — those are still skipped, never parked. We NEVER
+// auto-create a Contact from an unmatched message (§11/§12).
 //
 // AI-heavy: concurrency capped at 3 to respect rate limits (§17).
 
@@ -345,7 +354,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     return { matched: false }
   }
 
-  // Idempotent on (channelId, ts).
+  // Idempotent on (channelId, ts) — already archived as a slack_summary.
   const existing = await db.interaction.findFirst({
     where: {
       type: 'slack_summary',
@@ -358,7 +367,17 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   })
   if (existing) return { matched: true }
 
+  // Already captured in the triage tray (open, resolved, or dismissed). Skip
+  // WITHOUT re-spending AI so re-running the import "many times" converges and
+  // never re-parks a mention a human already dismissed (§32 cost control).
+  const parkedAlready = await db.unassignedSummary.findUnique({
+    where: { slackTs_channelId: { slackTs: message.ts, channelId } },
+    select: { id: true },
+  })
+  if (parkedAlready) return { matched: false }
+
   // Free pre-filter (§32) — no AI spend on chatter that can't name a customer.
+  // This is the volume control: acks/emoji/bare links are skipped, never parked.
   if (isSkippableSlackNoise(message.text)) return { matched: false }
 
   const { senderName: resolvedSender, channelName } = await resolveSlackNames({
@@ -445,14 +464,34 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
       ctx: { channelId, slackTs: message.ts, backfill: true },
     })
   } catch {
+    // No AI provider (or over budget) must NOT silently drop the message — park
+    // it as a record with the deterministic signals as the candidate, exactly
+    // as the live handler does, so it stays visible + relinkable (never lost).
+    parsed = {
+      candidateContactIdentifier: { name: null, email: matchEmail, phone: matchPhone },
+      summary: slackTextToPlain(message.text).slice(0, 600) || 'Slack message',
+      category: 'general',
+      sentiment: 'neutral',
+      suggestedNextAction: null,
+      confidence: 0,
+    }
+  }
+
+  if (parsed.confidence < MATCH_THRESHOLD) {
+    // Below the AI's confidence floor — park for human triage rather than drop.
+    await parkUnassignedSummary({ message, channelId, parsed, senderName })
     return { matched: false }
   }
 
-  if (parsed.confidence < MATCH_THRESHOLD) return { matched: false }
-
   // Shared resolver: Contact (email → phone → name) else B2B account (§12).
   const target = await resolveSlackLinkTarget(parsed.candidateContactIdentifier)
-  if (!target) return { matched: false }
+  if (!target) {
+    // The AI named someone, but no Contact/account matches (yet). Park it — the
+    // relink cron auto-links it once the customer is created (§12). Never
+    // auto-create a Contact from an unmatched Slack message (§11/§12).
+    await parkUnassignedSummary({ message, channelId, parsed, senderName })
+    return { matched: false }
+  }
 
   const occurredAt = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
   await db.interaction.create({
@@ -486,6 +525,40 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     },
   })
   return { matched: true }
+}
+
+/**
+ * Park a non-noise message we could not resolve to a Contact/account into the
+ * `UnassignedSummary` triage tray — the same home the live webhook uses for
+ * unmatched mentions (jobs.ts). Idempotent on (slackTs, channelId). This is
+ * what turns "history is silently dropped" into "history shows up in the tray
+ * and self-links via the relink cron once the customer exists".
+ */
+async function parkUnassignedSummary(input: {
+  message: SlackHistoryMessage
+  channelId: string
+  parsed: SlackSummary
+  senderName: string | null
+}): Promise<void> {
+  const { message, channelId, parsed, senderName } = input
+  await db.unassignedSummary.upsert({
+    where: { slackTs_channelId: { slackTs: message.ts, channelId } },
+    create: {
+      id: createId(),
+      slackTs: message.ts,
+      channelId,
+      parsed: parsed as unknown as object,
+      confidence: parsed.confidence,
+      messageText: message.text ?? null,
+      senderName,
+    },
+    update: {
+      parsed: parsed as unknown as object,
+      confidence: parsed.confidence,
+      messageText: message.text ?? null,
+      senderName,
+    },
+  })
 }
 
 export const BACKFILL_FUNCTIONS = [slackBackfillRequested] as const
