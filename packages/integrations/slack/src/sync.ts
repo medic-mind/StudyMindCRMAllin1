@@ -13,7 +13,7 @@
 
 import { inngest } from '@studymind/jobs'
 
-import { fetchHistory, processSlackMessage } from './backfill'
+import { fetchHistory, processMessageWithReplies } from './backfill'
 import { listIngestChannelIds } from './client'
 
 /** How far back each pull looks. Kept short (overlaps the 15-min cadence ~2×) so
@@ -43,9 +43,16 @@ export async function pullRecentSlack(input: {
       const res = await fetchHistory(input.token, channelId, input.sinceUnix, cursor)
       for (const m of res.messages ?? []) {
         try {
-          const r = await processSlackMessage({ message: m, channelId, requestId: input.requestId })
-          processed += 1
-          if (r.matched) matched += 1
+          // Process the message and, when it is a thread root, its replies too —
+          // so a threaded reply about a customer isn't lost by the pull path.
+          const r = await processMessageWithReplies({
+            token: input.token,
+            channelId,
+            message: m,
+            requestId: input.requestId,
+          })
+          processed += r.processed
+          matched += r.matched
         } catch (err) {
           input.logger?.warn?.({ channelId, ts: m.ts, err }, 'slack sync: skipped a message')
         }

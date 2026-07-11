@@ -49,6 +49,13 @@ export interface SlackHistoryMessage {
   user?: string
   text?: string
   permalink?: string
+  /** Present on a threaded message; equals `ts` on the thread ROOT. */
+  thread_ts?: string
+  /** Only the thread ROOT carries this — how many replies hang off it. */
+  reply_count?: number
+  /** A bot/app post (e.g. the CRM's own #callsummaries announcement) — skipped. */
+  bot_id?: string
+  app_id?: string
 }
 
 export interface SlackHistoryResponse {
@@ -107,12 +114,14 @@ export const slackBackfillRequested = inngest.createFunction(
           )
           for (const m of res.messages ?? []) {
             try {
+              // Process the message AND, when it is a thread root, every reply
+              // hanging off it (conversations.history omits in-thread replies).
               const result = await step.run(`msg-${channelId}-${m.ts}`, async () =>
-                processSlackMessage({ message: m, channelId, requestId: jobId }),
+                processMessageWithReplies({ token, channelId, message: m, requestId: jobId }),
               )
-              processed += 1
-              if (result.matched) matched += 1
-              else skipped += 1
+              processed += result.processed
+              matched += result.matched
+              skipped += result.skipped
             } catch (err) {
               // One message that fails AI parsing/persist must not abort the
               // whole channel import. Skip it and keep going.
@@ -183,15 +192,156 @@ export async function fetchHistory(
   return parsed
 }
 
+/**
+ * Fetch a thread's replies via `conversations.replies`. Slack's
+ * `conversations.history` returns thread ROOTS but not the replies inside them,
+ * so without this every threaded reply about a customer is silently dropped
+ * from the archive. The first message returned is the root itself (the caller
+ * skips it — it was already processed from history). No `oldest` bound: we want
+ * the whole thread while Slack still retains it (the point of the 90-day
+ * bypass). Needs the `channels:history` scope already required for message
+ * ingestion.
+ */
+export async function fetchReplies(
+  token: string,
+  channelId: string,
+  threadTs: string,
+  cursor: string | undefined,
+): Promise<SlackHistoryResponse> {
+  const params = new URLSearchParams({
+    channel: channelId,
+    ts: threadTs,
+    limit: '100',
+  })
+  if (cursor) params.set('cursor', cursor)
+  const res = await safeFetch(`${SLACK_API_BASE}/conversations.replies?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const text = await res.text()
+  const parsed = (text ? JSON.parse(text) : {}) as SlackHistoryResponse
+  if (!parsed.ok) {
+    throw new Error(`slack conversations.replies error: ${parsed.error}`)
+  }
+  return parsed
+}
+
+/** Injectable deps for `walkThread` so the thread-walk logic (skip-root,
+ *  paginate, inherit parent, tally) is unit-testable without real I/O. */
+export interface ThreadWalkDeps {
+  fetchReplies: (threadTs: string, cursor: string | undefined) => Promise<SlackHistoryResponse>
+  process: (
+    message: SlackHistoryMessage,
+    threadParentText: string | null,
+  ) => Promise<{ matched: boolean }>
+}
+
+export interface WalkTally {
+  processed: number
+  matched: number
+  skipped: number
+}
+
+/** Bound on reply pages per thread — 30 × 100 = 3 000 replies, far beyond any
+ *  real internal thread and a backstop against a runaway cursor loop. */
+const MAX_REPLY_PAGES = 30
+
+/**
+ * Process a thread root and every reply hanging off it. Each reply is matched
+ * to a customer in its own right; a reply that names no customer inherits the
+ * root's customer via `threadParentText` — exactly how the live webhook handler
+ * (jobs.ts) already treats threaded replies. Pure orchestration over injected
+ * deps; one reply that throws is skipped, never aborting the thread.
+ */
+export async function walkThread(
+  root: SlackHistoryMessage,
+  deps: ThreadWalkDeps,
+): Promise<WalkTally> {
+  const tally: WalkTally = { processed: 0, matched: 0, skipped: 0 }
+  const record = (r: { matched: boolean }) => {
+    tally.processed += 1
+    if (r.matched) tally.matched += 1
+    else tally.skipped += 1
+  }
+
+  try {
+    record(await deps.process(root, null))
+  } catch {
+    tally.processed += 1
+    tally.skipped += 1
+  }
+
+  // Only a thread ROOT has replies to walk. `conversations.history` returns the
+  // root with `reply_count`; a plain message has none.
+  const isThreadRoot =
+    (root.reply_count ?? 0) > 0 && (!root.thread_ts || root.thread_ts === root.ts)
+  if (!isThreadRoot) return tally
+
+  const parentText = root.text ?? null
+  let cursor: string | undefined
+  let page = 0
+  do {
+    let res: SlackHistoryResponse
+    try {
+      res = await deps.fetchReplies(root.ts, cursor)
+    } catch {
+      break // a thread we can't read must not abort the channel import
+    }
+    for (const reply of res.messages ?? []) {
+      // conversations.replies returns the ROOT as its first element — already
+      // processed above, so skip it to avoid a wasted AI re-parse.
+      if (reply.ts === root.ts) continue
+      try {
+        record(await deps.process(reply, parentText))
+      } catch {
+        tally.processed += 1
+        tally.skipped += 1
+      }
+    }
+    cursor = res.has_more ? res.response_metadata?.next_cursor : undefined
+    page += 1
+  } while (cursor && page < MAX_REPLY_PAGES)
+
+  return tally
+}
+
+/** Process a history message and, when it is a thread root, all of its replies.
+ *  Wires the real `fetchReplies` + `processSlackMessage` into `walkThread`. */
+export async function processMessageWithReplies(input: {
+  token: string
+  channelId: string
+  message: SlackHistoryMessage
+  requestId: string
+}): Promise<WalkTally> {
+  const { token, channelId, message, requestId } = input
+  return walkThread(message, {
+    fetchReplies: (threadTs, cursor) => fetchReplies(token, channelId, threadTs, cursor),
+    process: (msg, threadParentText) =>
+      processSlackMessage({ message: msg, channelId, requestId, threadParentText }),
+  })
+}
+
 interface ProcessSlackInput {
   message: SlackHistoryMessage
   channelId: string
   requestId: string
+  /** The thread root's text when this message is a reply — lets a reply that
+   *  names no customer of its own inherit the customer named upthread. */
+  threadParentText?: string | null
 }
 
 export async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched: boolean }> {
   const { message, channelId } = input
-  if (message.type !== 'message' || !message.text || message.subtype) {
+  // Human-authored text messages only. Skip non-messages, edits/joins (subtype)
+  // and — like the live handler (message-filter.ts) — any bot/app post, so the
+  // backfill never re-ingests the CRM's OWN #callsummaries announcement as a
+  // duplicate slack_summary (§3).
+  if (
+    message.type !== 'message' ||
+    !message.text ||
+    message.subtype ||
+    message.bot_id ||
+    message.app_id
+  ) {
     return { matched: false }
   }
 
@@ -220,13 +370,20 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   // Deterministic pre-match FIRST (cheapest route; AI last — §32). The
   // call-log format carries the customer's phone/email verbatim, so the
   // backfill archives those mentions with zero AI spend — and still works
-  // when no AI provider is configured at all.
+  // when no AI provider is configured at all. A threaded reply that names no
+  // customer of its own inherits the phone/email named in the thread root
+  // (threadParentText) — same rule as the live handler.
   const signals = extractContactSignals(message.text)
-  if (signals.email || signals.phone) {
+  const parentSignals = input.threadParentText
+    ? extractContactSignals(input.threadParentText)
+    : { email: null, phone: null }
+  const matchEmail = signals.email ?? parentSignals.email
+  const matchPhone = signals.phone ?? parentSignals.phone
+  if (matchEmail || matchPhone) {
     const rulesTarget = await resolveSlackLinkTarget({
       name: null,
-      email: signals.email,
-      phone: signals.phone,
+      email: matchEmail,
+      phone: matchPhone,
     })
     if (rulesTarget) {
       const occurredAtRules = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
@@ -244,6 +401,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
             channelId,
             channelName,
             permalink: message.permalink ?? null,
+            ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
             messageText: message.text ?? null,
             senderName,
             category: 'general',
@@ -262,10 +420,15 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   }
 
   const safeText = sanitiseUserContent(message.text)
+  // Give the AI the thread root as context so a reply ("paid £40…") resolves to
+  // the customer named upthread, not "no identifier found" — same as jobs.ts.
+  const aiText = input.threadParentText
+    ? `[Earlier in this thread] ${sanitiseUserContent(input.threadParentText)}\n\n[This message] ${safeText}`
+    : safeText
   const prompt = buildSlackSummaryPrompt({
     channelName,
     authorDisplayName: senderName,
-    text: safeText,
+    text: aiText,
   })
   // AI is best-effort in the backfill: no provider key / budget exhaustion
   // must not abort the whole history walk — the deterministic pass above has
@@ -306,6 +469,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
         channelId,
         channelName,
         permalink: message.permalink ?? null,
+        ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
         // Archive the original message + author so the record outlives Slack's
         // 90-day window (ADR 0034). Category sorts the record.
         messageText: message.text ?? null,
