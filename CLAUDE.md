@@ -647,7 +647,7 @@ literals below — they are now **tier hints**: `gpt-4o-mini` → the `mini` tie
 
 ## 20. Auth, RBAC, and access control
 
-**Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and (optional) TOTP MFA (mandatory for `ceo`, `senior_manager`, `manager`). No third-party identity processor — see ADR 0010.
+**Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and TOTP 2FA (two-step sign-in with recovery codes; enrolment at `/account/setup-2fa`, secrets KMS-encrypted). **Mandatory-enrolment policy** (`apps/web/lib/auth/mfa-policy.ts`, enforced in middleware, unit-tested): by default `ceo`/`senior_manager`/`manager` (+ legacy aliases) are redirected to the setup page until they enrol; `MANDATORY_MFA_ENABLED=all` extends that to every staff role; `MANDATORY_MFA_ENABLED=false` is the explicit fresh-deploy/break-glass opt-out (the pre-launch default-off deviation is closed). Other roles can always enrol voluntarily. No third-party identity processor — see ADR 0010.
 
 **Roles.** Five canonical sales-CRM roles (ADR 0014), with friendly UI labels via `formatRoleLabel`:
 

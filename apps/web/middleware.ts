@@ -15,6 +15,7 @@ import type { NextRequest } from 'next/server'
 import { logger } from '@studymind/core/logger/edge'
 
 import { authEdgeConfig } from '@/lib/auth/edge-config'
+import { mfaEnrolmentRequired, resolveMfaEnforcementMode } from '@/lib/auth/mfa-policy'
 import { buildCsp, generateNonce } from '@/lib/security/csp'
 
 const { auth: authMiddleware } = NextAuth(authEdgeConfig)
@@ -122,24 +123,23 @@ export default authMiddleware((req) => {
     return NextResponse.redirect(new URL('/account/change-password', req.nextUrl.origin))
   }
 
-  // Mandatory MFA enrolment gate: privileged roles cannot do anything until
-  // they have set up TOTP. CLAUDE.md §20 mandates this for production, but
-  // we gate it behind MANDATORY_MFA_ENABLED so a fresh deploy can sign in
-  // and explore without being forced through 2FA setup first. Flip the env
-  // var to 'true' once you're ready to enforce. Exempts the setup page
-  // itself, the change-password page, sign-out, the auth API, and the
-  // healthcheck.
+  // Mandatory MFA enrolment gate (CLAUDE.md §20, policy in lib/auth/mfa-policy):
+  // enforced BY DEFAULT for the privileged roles (CEO / Senior Manager /
+  // Manager). MANDATORY_MFA_ENABLED='all' extends it to every staff role;
+  // 'false' disables it (fresh-deploy / break-glass escape hatch — the
+  // pre-launch deviation that used to be the default is now the opt-out).
+  // The policy exempts the setup page itself, the change-password page,
+  // sign-out, the auth API, and the healthcheck.
   if (
-    process.env['MANDATORY_MFA_ENABLED'] === 'true' &&
     session?.user &&
-    !session.user.totpEnabledAt &&
-    isPrivilegedRole(session.user.roles, session.user.role) &&
     !isPublicPath(pathname) &&
-    pathname !== '/account/setup-2fa' &&
-    pathname !== '/account/change-password' &&
-    pathname !== '/api/auth/signout' &&
-    !pathname.startsWith('/api/auth/') &&
-    pathname !== '/api/health'
+    mfaEnrolmentRequired({
+      mode: resolveMfaEnforcementMode(process.env['MANDATORY_MFA_ENABLED']),
+      roles: session.user.roles,
+      role: session.user.role,
+      totpEnabled: Boolean(session.user.totpEnabledAt),
+      pathname,
+    })
   ) {
     return NextResponse.redirect(new URL('/account/setup-2fa', req.nextUrl.origin))
   }
@@ -163,33 +163,6 @@ export default authMiddleware((req) => {
   }
   return res
 }) as unknown as (req: NextRequest) => Promise<NextResponse>
-
-// Roles required to set up MFA before they can use the CRM. Per ADR 0014
-// (canonical names) plus the legacy aliases retained in the Postgres enum so
-// a row that has not yet been migrated still triggers the gate. The three
-// privileged canonical roles are CEO, Senior Manager, and Manager — the
-// people who can move money or manage other users.
-const PRIVILEGED_ROLES = new Set([
-  // canonical (ADR 0014)
-  'ceo',
-  'senior_manager',
-  'manager',
-  // legacy aliases (CLAUDE.md §19 forward-only)
-  'super_admin',
-  'admin',
-  'ops_manager',
-  'finance',
-  'dsl',
-])
-
-function isPrivilegedRole(
-  roles: string[] | undefined,
-  primary: string | undefined,
-): boolean {
-  if (Array.isArray(roles) && roles.some((r) => PRIVILEGED_ROLES.has(r))) return true
-  if (primary && PRIVILEGED_ROLES.has(primary)) return true
-  return false
-}
 
 function cryptoRandomId(): string {
   const bytes = new Uint8Array(8)
