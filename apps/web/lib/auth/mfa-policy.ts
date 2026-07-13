@@ -6,17 +6,17 @@
 // stays thin and the policy is unit-testable.
 //
 // Enforcement mode comes from MANDATORY_MFA_ENABLED:
-//   - unset or 'true'  → enforced for the privileged roles (§20 spec default:
-//                        CEO, Senior Manager, Manager — the people who can
-//                        move money or manage other users)
+//   - 'true'           → enforced for the privileged roles (§20: CEO, Senior
+//                        Manager, Manager — the people who can move money or
+//                        manage other users)
 //   - 'all'            → enforced for EVERY staff role
-//   - 'false'          → off (the fresh-deploy / break-glass escape hatch;
-//                        the previous default, now explicit opt-OUT)
+//   - unset / 'false'  → off. Enrolment stays voluntary; the sign-in TOTP
+//                        gate still applies to anyone who has enrolled.
 //
-// History: enforcement used to default OFF (opt-in via the env var), a
-// documented temporary v1-launch deviation so the first operator could sign
-// in before enrolling. That deviation is now closed — the spec behaviour is
-// the default and the env var is the way out, not the way in.
+// Default is OFF at the operator's request (they cannot set Railway env vars
+// yet, so a default-on gate would lock the team into the setup flow with no
+// escape hatch). Flip MANDATORY_MFA_ENABLED=true (or 'all') once the env is
+// editable — the §20 target state remains mandatory for privileged roles.
 
 export type MfaEnforcementMode = 'privileged' | 'all' | 'off'
 
@@ -38,9 +38,9 @@ export const PRIVILEGED_ROLES: ReadonlySet<string> = new Set([
 
 export function resolveMfaEnforcementMode(envValue: string | undefined): MfaEnforcementMode {
   const v = envValue?.trim().toLowerCase()
-  if (v === 'false') return 'off'
+  if (v === 'true') return 'privileged'
   if (v === 'all') return 'all'
-  return 'privileged' // unset / 'true' / anything else → the §20 spec default
+  return 'off' // unset / 'false' / anything else → enforcement paused
 }
 
 export function isPrivilegedRole(
@@ -53,17 +53,17 @@ export function isPrivilegedRole(
 }
 
 /** Paths a not-yet-enrolled user must still reach: the setup page itself,
- *  the forced password change, sign-out, the auth API, the healthcheck. */
-const MFA_EXEMPT_PATHS = new Set([
-  '/account/setup-2fa',
-  '/account/change-password',
-  '/api/auth/signout',
-  '/api/health',
-])
+ *  the forced password change, and sign-out. */
+const MFA_EXEMPT_PATHS = new Set(['/account/setup-2fa', '/account/change-password'])
 
 export function isMfaExemptPath(pathname: string): boolean {
   if (MFA_EXEMPT_PATHS.has(pathname)) return true
-  if (pathname.startsWith('/api/auth/')) return true
+  // NEVER redirect an API/data request to an HTML page: the client expects
+  // JSON and surfaces "Unexpected token '<' … not valid JSON". This includes
+  // /api/trpc (which the setup-2fa page itself needs to enrol), /api/auth,
+  // and the healthcheck. The enrolment gate is a page-navigation nudge; API
+  // authorisation is enforced server-side by the tRPC procedures (§20).
+  if (pathname.startsWith('/api/')) return true
   return false
 }
 

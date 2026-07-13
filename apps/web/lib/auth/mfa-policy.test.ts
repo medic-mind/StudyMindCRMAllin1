@@ -8,21 +8,18 @@ import {
 } from './mfa-policy'
 
 describe('resolveMfaEnforcementMode', () => {
-  it('defaults to privileged enforcement when unset (the §20 spec)', () => {
-    expect(resolveMfaEnforcementMode(undefined)).toBe('privileged')
-    expect(resolveMfaEnforcementMode('')).toBe('privileged')
-    expect(resolveMfaEnforcementMode('true')).toBe('privileged')
+  it('defaults to OFF when unset (enforcement paused until the env is editable)', () => {
+    expect(resolveMfaEnforcementMode(undefined)).toBe('off')
+    expect(resolveMfaEnforcementMode('')).toBe('off')
+    expect(resolveMfaEnforcementMode('false')).toBe('off')
+    expect(resolveMfaEnforcementMode('yes')).toBe('off') // unrecognised → off
   })
 
-  it("'all' extends enforcement to every role; 'false' is the explicit opt-out", () => {
+  it("'true' enforces for privileged roles; 'all' for every role", () => {
+    expect(resolveMfaEnforcementMode('true')).toBe('privileged')
+    expect(resolveMfaEnforcementMode('TRUE')).toBe('privileged')
     expect(resolveMfaEnforcementMode('all')).toBe('all')
     expect(resolveMfaEnforcementMode('ALL')).toBe('all')
-    expect(resolveMfaEnforcementMode('false')).toBe('off')
-    expect(resolveMfaEnforcementMode('False')).toBe('off')
-  })
-
-  it('an unrecognised value fails closed to the spec default, not to off', () => {
-    expect(resolveMfaEnforcementMode('yes')).toBe('privileged')
   })
 })
 
@@ -73,16 +70,23 @@ describe('mfaEnrolmentRequired', () => {
   })
 
   it('exempts the pages an unenrolled user must still reach', () => {
-    for (const pathname of [
-      '/account/setup-2fa',
-      '/account/change-password',
-      '/api/auth/signout',
-      '/api/auth/session',
-      '/api/health',
-    ]) {
+    for (const pathname of ['/account/setup-2fa', '/account/change-password']) {
       expect(mfaEnrolmentRequired({ ...base, pathname })).toBe(false)
       expect(isMfaExemptPath(pathname)).toBe(true)
     }
     expect(isMfaExemptPath('/contacts')).toBe(false)
+  })
+
+  it('NEVER redirects an API/data request (the "<!DOCTYPE is not valid JSON" bug)', () => {
+    for (const pathname of [
+      '/api/trpc/account.totpSetupStart', // the setup page needs these to enrol
+      '/api/auth/session',
+      '/api/auth/signout',
+      '/api/health',
+      '/api/internal/mail-render/abc',
+    ]) {
+      expect(isMfaExemptPath(pathname)).toBe(true)
+      expect(mfaEnrolmentRequired({ ...base, pathname })).toBe(false)
+    }
   })
 })

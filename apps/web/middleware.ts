@@ -124,12 +124,12 @@ export default authMiddleware((req) => {
   }
 
   // Mandatory MFA enrolment gate (CLAUDE.md §20, policy in lib/auth/mfa-policy):
-  // enforced BY DEFAULT for the privileged roles (CEO / Senior Manager /
-  // Manager). MANDATORY_MFA_ENABLED='all' extends it to every staff role;
-  // 'false' disables it (fresh-deploy / break-glass escape hatch — the
-  // pre-launch deviation that used to be the default is now the opt-out).
-  // The policy exempts the setup page itself, the change-password page,
-  // sign-out, the auth API, and the healthcheck.
+  // OFF by default (enrolment stays voluntary; the sign-in TOTP gate applies
+  // to anyone enrolled). Set MANDATORY_MFA_ENABLED='true' to force the
+  // privileged roles (CEO / Senior Manager / Manager) to enrol, or 'all' for
+  // every staff role. The policy exempts the setup + change-password pages
+  // and ALL /api/ paths — redirecting a JSON request to an HTML page is what
+  // produced the "Unexpected token '<' … not valid JSON" sign-in error.
   if (
     session?.user &&
     !isPublicPath(pathname) &&
