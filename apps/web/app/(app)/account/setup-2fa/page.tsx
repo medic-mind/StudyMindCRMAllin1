@@ -30,8 +30,10 @@ export default async function Setup2faPage() {
           Set up two-factor authentication
         </h1>
         <p className="text-sm text-neutral-600">
-          Two-factor adds a six-digit code from your phone to every sign-in. It
-          is required for admin and finance staff.
+          StudyMind uses Google Authenticator for two-factor authentication:
+          alongside your password, you enter a six-digit code from the app at
+          every sign-in. Setup takes about two minutes — this page walks you
+          through it step by step.
         </p>
       </header>
       <Setup2faFlow />

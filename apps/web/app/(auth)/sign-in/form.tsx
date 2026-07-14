@@ -110,7 +110,7 @@ export function SignInForm({
 
         <div className="space-y-1.5">
           <Label htmlFor="second-factor">
-            {useRecovery ? 'Recovery code' : 'Six-digit code from your Authenticator app'}
+            {useRecovery ? 'Recovery code' : 'Six-digit code from Google Authenticator'}
           </Label>
           <Input
             id="second-factor"
@@ -137,8 +137,8 @@ export function SignInForm({
             }}
           >
             {useRecovery
-              ? 'Use a code from your Authenticator app'
-              : 'Use a recovery code instead'}
+              ? 'Use a code from Google Authenticator'
+              : 'Lost your phone? Use a recovery code'}
           </button>
           <button
             type="button"
