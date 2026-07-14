@@ -52,9 +52,17 @@ const SYNC_NOW_CAP = 500
 const DISCOVER_PAGES_CRON = 3
 /** The staff-triggered "Sync from Trengo" digs deeper in one go. */
 const DISCOVER_PAGES_SYNC_NOW = 8
-/** Only auto-import discovered tickets newer than this — anything older is
- *  the manual "Import all from Trengo" backfill's job. */
+/** Recency horizon used by the ORIENTATION PROBE and the stale-known refresh
+ *  gate. Imports themselves are NOT limited by it — the CRM is a full mirror,
+ *  so any ticket without a local head is imported however old it is. */
 const DISCOVER_WINDOW_DAYS = 30
+/** Full-mirror deep sweep: how many rotating listing pages each cron tick
+ *  walks across the WHOLE workspace history (page picked by time rotation, so
+ *  the entire listing is covered over successive ticks with no stored
+ *  cursor). Unknown tickets are imported whatever their age; known tickets
+ *  are skipped, so once the mirror has converged each deep page costs one
+ *  listing request + one DB lookup. */
+const DEEP_SWEEP_PAGES = 2
 
 type RequestFn = <T>(method: string, path: string) => Promise<T>
 
@@ -258,7 +266,13 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export async function discoverNewTickets(
   input: DiscoverInput,
-): Promise<{ scanned: number; imported: number; refreshed: number; failed: number }> {
+): Promise<{
+  scanned: number
+  imported: number
+  refreshed: number
+  failed: number
+  lastPage: number | null
+}> {
   const { client, endpoint, pages, jobId } = input
   const windowFrom = new Date(Date.now() - DISCOVER_WINDOW_DAYS * 24 * 60 * 60 * 1000)
   const since = windowFrom.toISOString().slice(0, 10)
@@ -276,6 +290,7 @@ export async function discoverNewTickets(
   let imported = 0
   let refreshed = 0
   let failed = 0
+  let lastPageSeen: number | null = null
   // Trengo's `/tickets` listing has no documented sort parameter, and some
   // workspaces return it OLDEST-first. A forward-only scan of pages 1..N on
   // such a workspace re-reads the oldest tickets forever and NEVER sees a new
@@ -289,15 +304,16 @@ export async function discoverNewTickets(
   while (remaining > 0) {
     remaining -= 1
     const listing = await listTicketsPage(client.request, page, endpoint, since)
+    if (listing.lastPage !== null) lastPageSeen = listing.lastPage
     const allRows = listing.rows
       .map((raw) => normaliseTicketRow(raw))
       .filter((t): t is NormalisedTicket => t !== null)
-    const tickets = allRows.filter((t) => ticketWithinWindow(t.createdAt, windowFrom))
+    const inWindow = allRows.filter((t) => ticketWithinWindow(t.createdAt, windowFrom))
     if (
       page === 1 &&
       direction === 1 &&
       allRows.length > 0 &&
-      tickets.length === 0 &&
+      inWindow.length === 0 &&
       listing.lastPage !== null &&
       listing.lastPage > 1
     ) {
@@ -305,6 +321,11 @@ export async function discoverNewTickets(
       page = listing.lastPage
       continue
     }
+    // Full mirror: EVERY listed ticket is a candidate — an unknown ticket is
+    // imported whatever its age (the operator wants old messages on the
+    // customer timeline too); the recency window only gates the stale-known
+    // refresh below.
+    const tickets = allRows
     scanned += tickets.length
     if (tickets.length > 0) {
       const known = await db.conversation.findMany({
@@ -360,7 +381,89 @@ export async function discoverNewTickets(
       if (page <= 1) break // page 1 was the orientation probe
     }
   }
-  return { scanned, imported, refreshed, failed }
+  return { scanned, imported, refreshed, failed, lastPage: lastPageSeen }
+}
+
+// -----------------------------------------------------------------------------
+// Full-mirror deep sweep. The newest-end discovery above keeps the mirror
+// CURRENT; this walks the REST of the workspace history a few rotating pages
+// per tick so every old conversation eventually lands on the customer's
+// timeline with no manual import. The page choice derives from the clock, so
+// the sweep needs no stored cursor and every page is revisited on a fixed
+// rotation. Once converged, a deep page is one listing request + one DB
+// lookup (all tickets known → nothing imported).
+// -----------------------------------------------------------------------------
+
+export async function deepMirrorSweep(input: {
+  client: TrengoClient
+  endpoint: TrengoListEndpoint
+  jobId: string
+  /** Total pages in the listing, from the discovery scan; null = unknown. */
+  lastPage: number | null
+  pages?: number
+}): Promise<{ scanned: number; imported: number; failed: number }> {
+  const { client, endpoint, jobId } = input
+  const pageBudget = input.pages ?? DEEP_SWEEP_PAGES
+  const totalPages = input.lastPage ?? 1
+  if (totalPages <= 1) return { scanned: 0, imported: 0, failed: 0 }
+  const since = new Date(Date.now() - DISCOVER_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10)
+
+  let userNames: Record<string, string> = {}
+  try {
+    const res = await client.request<unknown>('GET', '/users?page=1&per_page=200')
+    userNames = buildUserNameMap(parseListResponse<unknown>(res, 1).rows)
+  } catch {
+    // best-effort attribution
+  }
+
+  // Clock-derived rotation: one tick ≈ 10 minutes, so with the default budget
+  // the whole listing is revisited every totalPages/2 ticks.
+  const tick = Math.floor(Date.now() / (10 * 60 * 1000))
+  let scanned = 0
+  let imported = 0
+  let failed = 0
+  for (let k = 0; k < pageBudget; k += 1) {
+    const page = ((tick * pageBudget + k) % totalPages) + 1
+    let listing
+    try {
+      listing = await listTicketsPage(client.request, page, endpoint, since)
+    } catch {
+      failed += 1
+      continue
+    }
+    const tickets = listing.rows
+      .map((raw) => normaliseTicketRow(raw))
+      .filter((t): t is NormalisedTicket => t !== null)
+    scanned += tickets.length
+    if (tickets.length === 0) continue
+    const known = await db.conversation.findMany({
+      where: { trengoTicketId: { in: tickets.map((t) => t.id) } },
+      select: { trengoTicketId: true },
+    })
+    const knownIds = new Set(known.map((r) => r.trengoTicketId))
+    for (const ticket of tickets) {
+      if (knownIds.has(ticket.id)) continue
+      try {
+        await processTicket({
+          client,
+          endpoint: listing.endpoint,
+          ticket,
+          jobId,
+          createContacts: false,
+          actorId: null,
+          userNames,
+          attachUnmatched: true,
+        })
+        imported += 1
+      } catch {
+        failed += 1
+      }
+      await pause(IMPORT_PACING_MS)
+    }
+  }
+  return { scanned, imported, failed }
 }
 
 // -----------------------------------------------------------------------------
@@ -449,7 +552,25 @@ export const trengoReconcileStatus = inngest.createFunction(
         })
       } catch (err) {
         logger.warn({ err }, 'trengo discovery sweep failed — continuing with convergence')
-        return { scanned: 0, imported: 0, refreshed: 0, failed: 0 }
+        return { scanned: 0, imported: 0, refreshed: 0, failed: 0, lastPage: null }
+      }
+    })
+
+    // Full-mirror deep sweep: rotate a couple of pages through the WHOLE
+    // workspace history each tick, importing anything we have never seen —
+    // so every old conversation reaches the customer's timeline automatically
+    // (no manual "Import all" needed). Cheap once converged. Best-effort.
+    const deep = await step.run('deep-mirror-sweep', async () => {
+      try {
+        return await deepMirrorSweep({
+          client,
+          endpoint,
+          jobId: runId,
+          lastPage: discovered.lastPage,
+        })
+      } catch (err) {
+        logger.warn({ err }, 'trengo deep mirror sweep failed — continuing')
+        return { scanned: 0, imported: 0, failed: 0 }
       }
     })
 
@@ -477,7 +598,12 @@ export const trengoReconcileStatus = inngest.createFunction(
       }),
     )
     if (heads.length === 0) {
-      return { checked: 0, converged: 0, discovered: discovered.imported }
+      return {
+        checked: 0,
+        converged: 0,
+        discovered: discovered.imported,
+        deepImported: deep.imported,
+      }
     }
 
     let converged = 0
@@ -508,10 +634,17 @@ export const trengoReconcileStatus = inngest.createFunction(
     }
 
     logger.info(
-      { checked: heads.length, converged, deleted, errored, discovered },
+      { checked: heads.length, converged, deleted, errored, discovered, deep },
       'trengo reconcile-status tick complete',
     )
-    return { checked: heads.length, converged, deleted, errored, discovered: discovered.imported }
+    return {
+      checked: heads.length,
+      converged,
+      deleted,
+      errored,
+      discovered: discovered.imported,
+      deepImported: deep.imported,
+    }
   },
 )
 
@@ -566,7 +699,7 @@ export const trengoReconcileNow = inngest.createFunction(
         })
       } catch (err) {
         logger.warn({ err }, 'trengo discovery sweep failed — continuing with convergence')
-        return { scanned: 0, imported: 0, refreshed: 0, failed: 0 }
+        return { scanned: 0, imported: 0, refreshed: 0, failed: 0, lastPage: null }
       }
     })
 

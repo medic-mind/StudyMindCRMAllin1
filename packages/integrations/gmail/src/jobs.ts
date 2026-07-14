@@ -47,6 +47,77 @@ import { deriveThreadFlags, DELETED_THREAD_FLAGS } from './thread-flags'
 const GAP_BACKFILL_MIN_DAYS = 7
 const GAP_BACKFILL_MAX_DAYS = 90
 
+/** Full-mirror auto-deepening: the sync cron keeps extending each agent's
+ *  imported history backwards in 90-day chunks (one in-flight chunk per
+ *  agent) until this horizon is reached, so the WHOLE mailbox lands on the
+ *  customer timelines automatically — no manual "Import history" needed.
+ *  Override with GMAIL_MIRROR_HORIZON_DAYS; default 10 years. */
+const DEEPEN_CHUNK_DAYS = 90
+function mirrorHorizonDays(): number {
+  const raw = Number(process.env['GMAIL_MIRROR_HORIZON_DAYS'] ?? '')
+  return Number.isInteger(raw) && raw > 0 ? raw : 3650
+}
+
+/**
+ * For every agent with a live mailbox, look at how far back their COMPLETED
+ * Gmail backfills reach and enqueue the next 90-day chunk further into the
+ * past (idempotent — an in-flight chunk blocks a duplicate). Progress state
+ * IS the BackfillJob history, so this needs no new table and a manual
+ * "Everything" import simply completes the walk early.
+ */
+async function autoDeepenGmailMirror(
+  logger: { warn: (...a: unknown[]) => void },
+  requestId: string,
+): Promise<{ enqueued: number; done: number }> {
+  const horizon = new Date(Date.now() - mirrorHorizonDays() * 24 * 60 * 60 * 1000)
+  const mailboxAgents = await db.gmailMailbox.findMany({
+    where: { deletedAt: null },
+    select: { agentId: true },
+    distinct: ['agentId'],
+    take: 50,
+  })
+  let enqueued = 0
+  let done = 0
+  for (const { agentId } of mailboxAgents) {
+    try {
+      const earliest = await db.backfillJob.findFirst({
+        where: { provider: 'gmail', agentId, status: 'completed' },
+        orderBy: { windowFrom: 'asc' },
+        select: { windowFrom: true },
+      })
+      if (!earliest) {
+        // No completed import yet — the connect flow's initial 90-day job is
+        // either still running or was never started (legacy connect). Start
+        // it; BackfillAlreadyRunningError below covers the in-flight case.
+        await startBackfill(db, inngest, {
+          provider: 'gmail',
+          agentId,
+          windowDays: DEEPEN_CHUNK_DAYS,
+          ctx: { actorId: null, requestId },
+        })
+        enqueued += 1
+        continue
+      }
+      if (earliest.windowFrom.getTime() <= horizon.getTime()) {
+        done += 1
+        continue
+      }
+      await startBackfill(db, inngest, {
+        provider: 'gmail',
+        agentId,
+        windowDays: DEEPEN_CHUNK_DAYS,
+        windowTo: earliest.windowFrom,
+        ctx: { actorId: null, requestId },
+      })
+      enqueued += 1
+    } catch (err) {
+      if (err instanceof BackfillAlreadyRunningError) continue
+      logger.warn({ agentId, err }, 'gmail auto-deepen: skipping agent')
+    }
+  }
+  return { enqueued, done }
+}
+
 /** How many days of mail to re-import after a cursor expiry/bootstrap: since
  *  the mailbox row was last touched (every successful sync advances
  *  `historyId`, bumping `updatedAt`, so this approximates the stall length),
@@ -900,6 +971,7 @@ async function runFullGmailSync(
   healed: number
   adopted: number
   failed: number
+  deepened: { enqueued: number; done: number }
 }> {
   // Every live GmailMailbox must have a MailAccount bridge — head attribution
   // and the /mail account rail both hang off it, and the OAuth connect of
@@ -996,7 +1068,28 @@ async function runFullGmailSync(
   }
 
   const { healed, adopted } = await healEmailHeads(step, requestId, logger)
-  return { mailboxes: mailboxes.length, processed, flagsMirrored, healed, adopted, failed }
+
+  // Full-mirror auto-deepening: keep walking each agent's history backwards
+  // one 90-day chunk at a time until the horizon, so old mail reaches the
+  // customer timelines without anyone pressing "Import history".
+  const deepened = await step.run('deepen-history-mirror', async () => {
+    try {
+      return await autoDeepenGmailMirror(logger, requestId)
+    } catch (err) {
+      logger.warn({ err }, 'gmail auto-deepen failed — continuing')
+      return { enqueued: 0, done: 0 }
+    }
+  })
+
+  return {
+    mailboxes: mailboxes.length,
+    processed,
+    flagsMirrored,
+    healed,
+    adopted,
+    failed,
+    deepened,
+  }
 }
 
 export const gmailSyncMailboxes = inngest.createFunction(
