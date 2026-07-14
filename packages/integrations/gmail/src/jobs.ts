@@ -12,6 +12,7 @@
 import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
+import { BackfillAlreadyRunningError, startBackfill } from '@studymind/core/backfill'
 import { flag } from '@studymind/core/flags'
 import {
   applyMailFlagsToConversation,
@@ -25,6 +26,7 @@ import {
   createClientForAgent,
   customLabelNames,
   isInvalidGrantError,
+  isNotFoundError,
   markNeedsReconnect,
   getHeader,
   parseAddresses,
@@ -32,10 +34,16 @@ import {
   type GmailMessage,
 } from './client'
 import { primaryAccountByContact } from './business-account-link'
+import { ensureAllMailAccountBridges } from './mail-account-bridge'
 import { isGoogleVoiceSender } from './google-voice'
 import { handleGoogleVoiceMessage } from './google-voice-handler'
 import { putAttachment } from './s3'
 import { deriveThreadFlags, DELETED_THREAD_FLAGS } from './thread-flags'
+
+/** Window for the catch-up backfill fired when a history cursor expires —
+ *  Gmail retains history for roughly a week, so 7 days covers the largest
+ *  possible gap between the dead cursor and the fresh anchor. */
+const GAP_BACKFILL_DAYS = 7
 
 interface HistoryChangedData {
   eventId: string
@@ -71,7 +79,11 @@ async function syncMailboxHistory(
   step: StepRunner,
   input: { mailbox: MailboxToSync; startHistoryId: string; requestId: string; keyPrefix: string },
   logger: { warn: (...a: unknown[]) => void },
-): Promise<{ status: 'ok' | 'needs_reconnect'; processed: number; flagsMirrored: number }> {
+): Promise<{
+  status: 'ok' | 'needs_reconnect' | 'reanchored'
+  processed: number
+  flagsMirrored: number
+}> {
   const { mailbox, startHistoryId, requestId, keyPrefix } = input
   const address = mailbox.address
 
@@ -104,6 +116,52 @@ async function syncMailboxHistory(
         }),
       )
       return { status: 'needs_reconnect', processed: 0, flagsMirrored: 0 }
+    }
+    if (isNotFoundError(err)) {
+      // The stored cursor is OLDER than Gmail's retained history window
+      // (~a week) — Gmail 404s it forever. Without recovery this mailbox
+      // stalls permanently: every tick replays the same expired cursor and
+      // new mail never lands ("Gmail looks completely different to the CRM").
+      // Re-anchor at the profile's CURRENT historyId so incremental sync
+      // resumes, and fire a short idempotent backfill to import whatever
+      // arrived inside the gap.
+      logger.warn(
+        { address, startHistoryId, requestId },
+        'gmail history cursor expired (404) — re-anchoring and backfilling the gap',
+      )
+      await step.run(`${keyPrefix}reanchor-history`, async () => {
+        const client = await createClientForAgent({
+          agentId: mailbox.agentId,
+          address,
+          purpose: 'gmail.sync',
+          requestId,
+        })
+        const current = await client.getCurrentHistoryId()
+        if (current) {
+          await db.gmailMailbox.update({
+            where: { address },
+            data: { historyId: current },
+          })
+        }
+        return current
+      })
+      await step.run(`${keyPrefix}backfill-gap`, async () => {
+        try {
+          const res = await startBackfill(db, inngest, {
+            provider: 'gmail',
+            agentId: mailbox.agentId,
+            windowDays: GAP_BACKFILL_DAYS,
+            ctx: { actorId: null, requestId },
+          })
+          return res.jobId
+        } catch (backfillErr) {
+          if (backfillErr instanceof BackfillAlreadyRunningError) {
+            return backfillErr.existingJobId
+          }
+          throw backfillErr
+        }
+      })
+      return { status: 'reanchored', processed: 0, flagsMirrored: 0 }
     }
     throw err
   }
@@ -633,28 +691,28 @@ async function healEmailHeads(
   step: StepRunner,
   requestId: string,
   logger: { warn: (...a: unknown[]) => void },
-): Promise<{ healed: number }> {
+): Promise<{ healed: number; adopted: number }> {
+  // Orphan heads (mailAccountId null — synced before the account bridge
+  // existed) are INCLUDED: they are adopted below by asking each connected
+  // account whether it owns the thread. Excluding them left every
+  // pre-bridge thread permanently un-healed, so its folder/label state never
+  // converged with Gmail.
   const heads = await step.run('heal-load-heads', async () =>
     db.conversation.findMany({
       where: {
         provider: 'email',
         externalThreadId: { not: null },
-        mailAccountId: { not: null },
       },
       orderBy: [{ flagsSyncedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
       take: HEAL_BATCH,
       select: { id: true, externalThreadId: true, mailAccountId: true },
     }),
   )
-  if (heads.length === 0) return { healed: 0 }
+  if (heads.length === 0) return { healed: 0, adopted: 0 }
 
-  const accountIds = [
-    ...new Set(heads.map((h) => h.mailAccountId).filter((x): x is string => !!x)),
-  ]
   const accounts = await step.run('heal-load-accounts', async () =>
     db.mailAccount.findMany({
       where: {
-        id: { in: accountIds },
         provider: 'gmail',
         deletedAt: null,
         ownerUserId: { not: null },
@@ -663,6 +721,74 @@ async function healEmailHeads(
     }),
   )
   const accById = new Map(accounts.map((a) => [a.id, a]))
+
+  // Adopt orphans: probe each connected account for the thread; the first
+  // account Gmail confirms owns it claims the head (sets mailAccountId) and
+  // converges its state in the same call. A thread no account can see is
+  // stamped forward so the sweep never sticks on it.
+  const orphans = heads.filter((h) => !h.mailAccountId && h.externalThreadId)
+  let adopted = 0
+  if (orphans.length > 0 && accounts.length > 0) {
+    adopted = await step.run('heal-adopt-orphans', async () => {
+      let count = 0
+      const clients = new Map<
+        string,
+        Awaited<ReturnType<typeof createClientForAgent>> | null
+      >()
+      const labelMaps = new Map<string, Map<string, string>>()
+      for (const head of orphans) {
+        let claimed = false
+        for (const acc of accounts) {
+          try {
+            let client = clients.get(acc.id)
+            if (client === undefined) {
+              client = await createClientForAgent({
+                agentId: acc.ownerUserId as string,
+                address: acc.address,
+                purpose: 'gmail.sync',
+                requestId,
+              })
+              clients.set(acc.id, client)
+              const labels = await client.listLabels()
+              labelMaps.set(acc.id, new Map(labels.map((l) => [l.id, l.name])))
+            }
+            if (client === null) continue
+            const state = await client.getThreadState(head.externalThreadId as string)
+            if (!state) continue
+            await db.conversation.update({
+              where: { id: head.id },
+              data: { mailAccountId: acc.id },
+            })
+            await convergeThreadStateToHead(
+              client,
+              head.externalThreadId as string,
+              labelMaps.get(acc.id) ?? new Map(),
+            )
+            claimed = true
+            count += 1
+            break
+          } catch (err) {
+            // A broken account must not block adoption via the others.
+            clients.set(acc.id, null)
+            if (isInvalidGrantError(err)) {
+              await markNeedsReconnect(acc.ownerUserId as string)
+            }
+            logger.warn(
+              { mailAccountId: acc.id, err },
+              'gmail heal: adoption probe failed for account',
+            )
+          }
+        }
+        if (!claimed) {
+          await db.conversation.update({
+            where: { id: head.id },
+            data: { flagsSyncedAt: new Date() },
+          })
+        }
+      }
+      return count
+    })
+  }
 
   let healed = 0
   for (const acc of accounts) {
@@ -710,9 +836,10 @@ async function healEmailHeads(
   }
 
   // Heads pointing at a non-Gmail / vanished account can't be converged — stamp
-  // them so the oldest-first cursor keeps moving.
+  // them so the oldest-first cursor keeps moving. (Orphans were handled by the
+  // adoption pass above.)
   const unresolved = heads.filter(
-    (h) => !h.mailAccountId || !accById.has(h.mailAccountId),
+    (h) => h.mailAccountId && !accById.has(h.mailAccountId),
   )
   if (unresolved.length > 0) {
     await step.run('heal-stamp-unresolved', async () =>
@@ -723,7 +850,7 @@ async function healEmailHeads(
     )
   }
 
-  return { healed }
+  return { healed, adopted }
 }
 
 /** Sweep every connected mailbox (history pull) + heal a round-robin batch.
@@ -732,10 +859,32 @@ async function runFullGmailSync(
   step: StepRunner,
   requestId: string,
   logger: { warn: (...a: unknown[]) => void },
-): Promise<{ mailboxes: number; processed: number; flagsMirrored: number; healed: number }> {
+): Promise<{
+  mailboxes: number
+  processed: number
+  flagsMirrored: number
+  healed: number
+  adopted: number
+  failed: number
+}> {
+  // Every live GmailMailbox must have a MailAccount bridge — head attribution
+  // and the /mail account rail both hang off it, and the OAuth connect of
+  // older deploys never created one. Idempotent + cheap.
+  await step.run('ensure-mail-account-bridges', async () => {
+    try {
+      return await ensureAllMailAccountBridges()
+    } catch (err) {
+      logger.warn({ err }, 'gmail sync: bridge ensure failed — continuing')
+      return 0
+    }
+  })
+
+  // Include mailboxes with a NULL cursor: a mailbox whose watch setup failed
+  // at connect time never got a historyId, and excluding it here made it
+  // invisible to the poll forever. It bootstraps below.
   const mailboxes = await step.run('sync-load-mailboxes', async () =>
     db.gmailMailbox.findMany({
-      where: { deletedAt: null, historyId: { not: null } },
+      where: { deletedAt: null },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
       take: SYNC_MAILBOX_CAP,
       select: { id: true, agentId: true, address: true, historyId: true },
@@ -744,23 +893,73 @@ async function runFullGmailSync(
 
   let processed = 0
   let flagsMirrored = 0
+  let failed = 0
   for (const mb of mailboxes) {
-    const res = await syncMailboxHistory(
-      step,
-      {
-        mailbox: mb,
-        startHistoryId: mb.historyId as string,
-        requestId,
-        keyPrefix: `${mb.id}:`,
-      },
-      logger,
-    )
-    processed += res.processed
-    flagsMirrored += res.flagsMirrored
+    // Each mailbox is isolated: one broken account (expired token, transient
+    // 5xx) must not abort the sweep for every other mailbox AND kill the
+    // heal below — that is how a single stale connection froze the whole
+    // mirror. Errors are logged and the sweep moves on; the failing mailbox
+    // is retried next tick.
+    try {
+      let cursor = mb.historyId
+      if (cursor === null) {
+        // Bootstrap: anchor at the profile's current historyId, then fire the
+        // standard idempotent backfill so existing mail lands too.
+        cursor = await step.run(`${mb.id}:bootstrap-history`, async () => {
+          const client = await createClientForAgent({
+            agentId: mb.agentId,
+            address: mb.address,
+            purpose: 'gmail.sync',
+            requestId,
+          })
+          const current = await client.getCurrentHistoryId()
+          if (current) {
+            await db.gmailMailbox.update({
+              where: { id: mb.id },
+              data: { historyId: current },
+            })
+          }
+          return current
+        })
+        if (cursor === null) continue
+        await step.run(`${mb.id}:bootstrap-backfill`, async () => {
+          try {
+            const res = await startBackfill(db, inngest, {
+              provider: 'gmail',
+              agentId: mb.agentId,
+              windowDays: GAP_BACKFILL_DAYS,
+              ctx: { actorId: null, requestId },
+            })
+            return res.jobId
+          } catch (err) {
+            if (err instanceof BackfillAlreadyRunningError) return err.existingJobId
+            throw err
+          }
+        })
+      }
+      const res = await syncMailboxHistory(
+        step,
+        {
+          mailbox: mb,
+          startHistoryId: cursor,
+          requestId,
+          keyPrefix: `${mb.id}:`,
+        },
+        logger,
+      )
+      processed += res.processed
+      flagsMirrored += res.flagsMirrored
+    } catch (err) {
+      failed += 1
+      logger.warn(
+        { mailboxId: mb.id, address: mb.address, err },
+        'gmail sync: mailbox failed — continuing with the remaining mailboxes',
+      )
+    }
   }
 
-  const { healed } = await healEmailHeads(step, requestId, logger)
-  return { mailboxes: mailboxes.length, processed, flagsMirrored, healed }
+  const { healed, adopted } = await healEmailHeads(step, requestId, logger)
+  return { mailboxes: mailboxes.length, processed, flagsMirrored, healed, adopted, failed }
 }
 
 export const gmailSyncMailboxes = inngest.createFunction(

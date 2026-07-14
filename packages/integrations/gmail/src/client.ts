@@ -98,6 +98,12 @@ export interface GmailClient {
   getMessage(messageId: string): Promise<GmailMessage>
   listHistorySince(startHistoryId: string): Promise<GmailHistoryResult>
   /**
+   * The mailbox's CURRENT historyId from users.getProfile. Used to re-anchor
+   * the incremental sync when a stored cursor has expired (Gmail keeps
+   * history for roughly a week; older cursors 404 forever).
+   */
+  getCurrentHistoryId(): Promise<string | null>
+  /**
    * Current aggregated label state for a thread, or null if Gmail no longer
    * has it (permanently deleted). Used by the inbound flag mirror.
    */
@@ -318,6 +324,10 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
       // path, so don't double-process it here.
       const changedThreadIds = [...changed].filter((t) => !addedThreadIds.has(t))
       return { added, changedThreadIds, newHistoryId }
+    },
+    async getCurrentHistoryId() {
+      const res = await gmail.users.getProfile({ userId: 'me' })
+      return res.data.historyId ? String(res.data.historyId) : null
     },
     async getThreadState(threadId) {
       try {

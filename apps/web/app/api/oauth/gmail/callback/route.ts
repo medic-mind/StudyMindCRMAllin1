@@ -10,6 +10,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { startBackfill, BackfillAlreadyRunningError } from '@studymind/core/backfill'
 import { encryptField } from '@studymind/core/safeguarding'
 import { setupWatchForUser } from '@studymind/integration-gmail/client'
+import { ensureMailAccountBridge } from '@studymind/integration-gmail/mail-account-bridge'
 import { safeFetch } from '@studymind/core/observability/safe-fetch'
 import { inngest } from '@studymind/jobs'
 import { db } from '@/lib/db'
@@ -231,6 +232,26 @@ async function runCallback(
       where: { id: me.id },
       data: { gmailConnectionStatus: 'needs_reconnect' },
     })
+  }
+
+  // ADR 0021: materialise the MailAccount bridge NOW, not on a later manual
+  // "Import from Gmail" click — without it every synced thread lands with a
+  // null mailAccountId (the heal skips it, /mail shows no account). Best-effort:
+  // the recurring sync sweep also ensures bridges, so a failure self-heals.
+  try {
+    const mailboxRow = await db.gmailMailbox.findUnique({
+      where: { address },
+      select: {
+        id: true,
+        agentId: true,
+        address: true,
+        isDefault: true,
+        watchExpiresAt: true,
+      },
+    })
+    if (mailboxRow) await ensureMailAccountBridge(mailboxRow)
+  } catch {
+    // swallowed — the gmail/sync cron's ensure-bridges step converges this
   }
 
   await writeAuditLogEntry(db, {
