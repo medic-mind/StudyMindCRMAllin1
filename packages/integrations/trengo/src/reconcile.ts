@@ -45,12 +45,13 @@ const BATCH = 120
  *  ~500 GETs ≈ 5 min at the rate limit; the cron covers the long tail. */
 const SYNC_NOW_CAP = 500
 /** Discovery sweep: how many listing pages (50 rows each) each cron tick
- *  scans for tickets Trengo has that we do not. Newest tickets sit on the
- *  first pages, so 2 pages every 10 minutes catches anything a dropped
- *  webhook failed to announce well before staff notice. */
-const DISCOVER_PAGES_CRON = 2
+ *  scans for tickets Trengo has that we do not. The sweep auto-detects
+ *  whether the workspace lists newest-first or oldest-first and reads from
+ *  the newest end either way; one page may be spent on that probe, so the
+ *  budget is 3 to keep two useful pages per tick. */
+const DISCOVER_PAGES_CRON = 3
 /** The staff-triggered "Sync from Trengo" digs deeper in one go. */
-const DISCOVER_PAGES_SYNC_NOW = 6
+const DISCOVER_PAGES_SYNC_NOW = 8
 /** Only auto-import discovered tickets newer than this — anything older is
  *  the manual "Import all from Trengo" backfill's job. */
 const DISCOVER_WINDOW_DAYS = 30
@@ -275,12 +276,35 @@ export async function discoverNewTickets(
   let imported = 0
   let refreshed = 0
   let failed = 0
-  for (let page = 1; page <= pages; page += 1) {
+  // Trengo's `/tickets` listing has no documented sort parameter, and some
+  // workspaces return it OLDEST-first. A forward-only scan of pages 1..N on
+  // such a workspace re-reads the oldest tickets forever and NEVER sees a new
+  // one — the exact "inbox frozen weeks ago" failure. So the first page is
+  // also an orientation probe: if it holds rows but none are inside the
+  // discovery window and the API reports more pages, the new tickets live at
+  // the END — jump to the last page and walk backwards instead.
+  let remaining = pages
+  let page = 1
+  let direction: 1 | -1 = 1
+  while (remaining > 0) {
+    remaining -= 1
     const listing = await listTicketsPage(client.request, page, endpoint, since)
-    const tickets = listing.rows
+    const allRows = listing.rows
       .map((raw) => normaliseTicketRow(raw))
       .filter((t): t is NormalisedTicket => t !== null)
-      .filter((t) => ticketWithinWindow(t.createdAt, windowFrom))
+    const tickets = allRows.filter((t) => ticketWithinWindow(t.createdAt, windowFrom))
+    if (
+      page === 1 &&
+      direction === 1 &&
+      allRows.length > 0 &&
+      tickets.length === 0 &&
+      listing.lastPage !== null &&
+      listing.lastPage > 1
+    ) {
+      direction = -1
+      page = listing.lastPage
+      continue
+    }
     scanned += tickets.length
     if (tickets.length > 0) {
       const known = await db.conversation.findMany({
@@ -328,7 +352,13 @@ export async function discoverNewTickets(
         await pause(IMPORT_PACING_MS)
       }
     }
-    if (!listing.hasNext) break
+    if (direction === 1) {
+      if (!listing.hasNext) break
+      page += 1
+    } else {
+      page -= 1
+      if (page <= 1) break // page 1 was the orientation probe
+    }
   }
   return { scanned, imported, refreshed, failed }
 }

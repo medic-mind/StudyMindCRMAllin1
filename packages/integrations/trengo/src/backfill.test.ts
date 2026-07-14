@@ -114,6 +114,7 @@ describe('parseListResponse', () => {
       rows: [{ id: 1 }],
       hasNext: true,
       total: 120,
+      lastPage: 3,
     })
     expect(parseListResponse(res, 3).hasNext).toBe(false)
   })
@@ -131,6 +132,7 @@ describe('parseListResponse', () => {
       rows: [{ id: 1 }],
       hasNext: false,
       total: 1,
+      lastPage: null,
     })
   })
 

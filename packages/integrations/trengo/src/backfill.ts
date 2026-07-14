@@ -182,6 +182,9 @@ export interface ParsedListPage<T> {
   hasNext: boolean
   /** Total rows across all pages when the API reports it (`meta.total`). */
   total: number | null
+  /** `meta.last_page` when the API reports it — lets a caller jump to the
+   *  END of a listing whose default ordering is oldest-first. */
+  lastPage: number | null
 }
 
 /**
@@ -191,7 +194,7 @@ export interface ParsedListPage<T> {
  */
 export function parseListResponse<T>(res: unknown, page: number): ParsedListPage<T> {
   if (Array.isArray(res)) {
-    return { rows: res as T[], hasNext: false, total: res.length }
+    return { rows: res as T[], hasNext: false, total: res.length, lastPage: null }
   }
   const o = (res ?? {}) as Record<string, unknown>
   const rows = Array.isArray(o['data']) ? (o['data'] as T[]) : []
@@ -204,7 +207,7 @@ export function parseListResponse<T>(res: unknown, page: number): ParsedListPage
     (lastPage !== null
       ? page < lastPage
       : typeof links['next'] === 'string' && links['next'] !== '')
-  return { rows, hasNext, total }
+  return { rows, hasNext, total, lastPage }
 }
 
 export interface TrengoTicketRow {
@@ -396,6 +399,7 @@ export interface TicketPageResult {
   rows: TrengoTicketRow[]
   hasNext: boolean
   total: number | null
+  lastPage: number | null
   endpoint: TrengoListEndpoint
 }
 
