@@ -315,6 +315,16 @@ export const EVENT_NAMES = [
   'gocardless.mandate.created',
   'gocardless.mandate.cancelled',
   'gocardless.mandate.cancel_requested',
+  // Full-operations pass: amend plan / reinstate mandate / refund / edit
+  // customer, so every dashboard action runs from the CRM.
+  'gocardless.subscription.updated',
+  'gocardless.subscription.update_requested',
+  'gocardless.mandate.reinstated',
+  'gocardless.mandate.reinstate_requested',
+  'gocardless.payment.refunded',
+  'gocardless.payment.refund_requested',
+  'gocardless.customer.updated',
+  'gocardless.customer.update_requested',
   'gocardless.customer.linked',
   'gocardless.customer.unlinked',
   'gocardless.customers.relinked',

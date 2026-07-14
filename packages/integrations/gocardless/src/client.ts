@@ -15,6 +15,7 @@ import type {
   GcListMeta,
   GcMandateResource,
   GcPaymentResource,
+  GcRefundResource,
   GcPayoutResource,
   GcRedirectFlowResource,
   GcSubscriptionResource,
@@ -79,12 +80,30 @@ export interface GocardlessClient {
     idempotencyKey: string,
   ): Promise<GcSubscriptionResource>
   cancelSubscription(subscriptionId: string): Promise<GcSubscriptionResource>
-  pauseSubscription(subscriptionId: string): Promise<GcSubscriptionResource>
+  /** Pause a plan; `pauseCycles` auto-resumes after N skipped collections. */
+  pauseSubscription(subscriptionId: string, pauseCycles?: number): Promise<GcSubscriptionResource>
   resumeSubscription(subscriptionId: string): Promise<GcSubscriptionResource>
   createPayment(input: CreatePaymentInput, idempotencyKey: string): Promise<GcPaymentResource>
   cancelPayment(paymentId: string): Promise<GcPaymentResource>
   retryPayment(paymentId: string): Promise<GcPaymentResource>
   cancelMandate(mandateId: string): Promise<GcMandateResource>
+  /** Amend a live plan in place (PUT /subscriptions/:id) — name, amount and
+   *  payment reference are the fields GoCardless allows to change. */
+  updateSubscription(
+    subscriptionId: string,
+    input: UpdateSubscriptionInput,
+  ): Promise<GcSubscriptionResource>
+  /** Reinstate a cancelled/expired mandate where the scheme allows it. */
+  reinstateMandate(mandateId: string): Promise<GcMandateResource>
+  /** Refund a collected payment. Requires refunds to be enabled on the
+   *  GoCardless account; `total_amount_confirmation` is GoCardless's own
+   *  double-entry guard against double refunds. */
+  createRefund(input: CreateRefundInput, idempotencyKey: string): Promise<GcRefundResource>
+  /** Update a customer's identity details (PUT /customers/:id). */
+  updateCustomer(
+    customerId: string,
+    input: UpdateCustomerInput,
+  ): Promise<GcCustomerResource>
 
   /** Escape hatch for tests and rare endpoints. */
   request<T>(method: string, path: string, body?: unknown, idempotencyKey?: string): Promise<T>
@@ -107,12 +126,37 @@ export interface CreateSubscriptionInput {
   interval_unit: 'weekly' | 'monthly' | 'yearly'
   interval?: number
   day_of_month?: number
+  /** Yearly plans: which month the collection lands in (1-12). */
+  month?: number
   name?: string
   start_date?: string
   end_date?: string
   count?: number
   metadata?: Record<string, string>
   links: { mandate: string }
+}
+
+export interface UpdateSubscriptionInput {
+  amount?: number
+  name?: string
+  payment_reference?: string
+  metadata?: Record<string, string>
+}
+
+export interface CreateRefundInput {
+  amount: number
+  total_amount_confirmation: number
+  reference?: string
+  metadata?: Record<string, string>
+  links: { payment: string }
+}
+
+export interface UpdateCustomerInput {
+  email?: string
+  given_name?: string
+  family_name?: string
+  phone_number?: string
+  company_name?: string
 }
 
 export interface CreatePaymentInput {
@@ -324,11 +368,11 @@ export function createClient(opts: GocardlessClientOptions = {}): GocardlessClie
       )
       return res.subscriptions
     },
-    async pauseSubscription(subscriptionId) {
+    async pauseSubscription(subscriptionId, pauseCycles) {
       const res = await request<{ subscriptions: GcSubscriptionResource }>(
         'POST',
         `/subscriptions/${subscriptionId}/actions/pause`,
-        { data: {} },
+        { data: pauseCycles && pauseCycles > 0 ? { pause_cycles: pauseCycles } : {} },
       )
       return res.subscriptions
     },
@@ -372,6 +416,39 @@ export function createClient(opts: GocardlessClientOptions = {}): GocardlessClie
         { data: {} },
       )
       return res.mandates
+    },
+    async updateSubscription(subscriptionId, input) {
+      const res = await request<{ subscriptions: GcSubscriptionResource }>(
+        'PUT',
+        `/subscriptions/${subscriptionId}`,
+        { subscriptions: input },
+      )
+      return res.subscriptions
+    },
+    async reinstateMandate(mandateId) {
+      const res = await request<{ mandates: GcMandateResource }>(
+        'POST',
+        `/mandates/${mandateId}/actions/reinstate`,
+        { data: {} },
+      )
+      return res.mandates
+    },
+    async createRefund(input, idempotencyKey) {
+      const res = await request<{ refunds: GcRefundResource }>(
+        'POST',
+        '/refunds',
+        { refunds: input },
+        idempotencyKey,
+      )
+      return res.refunds
+    },
+    async updateCustomer(customerId, input) {
+      const res = await request<{ customers: GcCustomerResource }>(
+        'PUT',
+        `/customers/${customerId}`,
+        { customers: input },
+      )
+      return res.customers
     },
   }
 

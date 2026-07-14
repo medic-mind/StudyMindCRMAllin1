@@ -109,10 +109,14 @@ export function PaymentsTab() {
 
   const [showNew, setShowNew] = useState(false)
   const [action, setAction] = useState<{
-    kind: 'cancel' | 'retry'
+    kind: 'cancel' | 'retry' | 'refund'
     gcPaymentId: string
     label: string
+    amountMinor?: number
+    currency?: string
   } | null>(null)
+  const [refundAmount, setRefundAmount] = useState('')
+  const [refundReason, setRefundReason] = useState('')
 
   const refresh = () => {
     void utils.gocardless.payments.list.invalidate()
@@ -136,8 +140,18 @@ export function PaymentsTab() {
     },
     onError: (e) => toast.error(e.message),
   })
+  const refund = trpc.gocardless.payments.refund.useMutation({
+    onSuccess: (res) => {
+      toast.success(`Refund submitted (${res.gcRefundId}).`)
+      setAction(null)
+      setRefundAmount('')
+      setRefundReason('')
+      refresh()
+    },
+    onError: (e) => toast.error(e.message),
+  })
 
-  const busy = cancel.isPending || retry.isPending
+  const busy = cancel.isPending || retry.isPending || refund.isPending
   const items = list.data?.items ?? []
   const total = list.data?.total ?? 0
 
@@ -268,27 +282,92 @@ export function PaymentsTab() {
       {action ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           <div className="font-semibold">
-            {action.kind === 'cancel' ? 'Cancel this payment?' : 'Retry this payment?'}
+            {action.kind === 'cancel'
+              ? 'Cancel this payment?'
+              : action.kind === 'retry'
+                ? 'Retry this payment?'
+                : 'Refund this payment?'}
           </div>
           <p className="mt-1">
             {action.label} —{' '}
             {action.kind === 'cancel'
               ? 'it has not been submitted to the bank yet, so nothing will be collected.'
-              : 'GoCardless will submit it to the bank again on the next working day.'}
+              : action.kind === 'retry'
+                ? 'GoCardless will submit it to the bank again on the next working day.'
+                : 'the money goes back to the customer\u2019s bank account. This cannot be undone.'}
           </p>
+          {action.kind === 'refund' ? (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="dd-refund-amount">Amount to refund (GBP)</Label>
+                <Input
+                  id="dd-refund-amount"
+                  inputMode="decimal"
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value)}
+                  placeholder={
+                    action.amountMinor !== undefined
+                      ? (action.amountMinor / 100).toFixed(2)
+                      : '0.00'
+                  }
+                />
+                <p className="text-xs text-amber-800">
+                  Up to{' '}
+                  {action.amountMinor !== undefined
+                    ? formatMoneyMinor(action.amountMinor, action.currency)
+                    : 'the collected amount'}
+                  .
+                </p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="dd-refund-reason">Reason</Label>
+                <Input
+                  id="dd-refund-reason"
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  placeholder="Why? Recorded in the audit log."
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="mt-3 flex gap-2">
             <Button
               size="sm"
-              variant={action.kind === 'cancel' ? 'destructive' : 'default'}
-              disabled={busy}
+              variant={action.kind === 'retry' ? 'default' : 'destructive'}
+              disabled={
+                busy ||
+                (action.kind === 'refund' &&
+                  (gbpToMinor(refundAmount) === null ||
+                    refundReason.trim().length < 2 ||
+                    (action.amountMinor !== undefined &&
+                      (gbpToMinor(refundAmount) ?? 0) > action.amountMinor)))
+              }
               onClick={() => {
                 if (action.kind === 'cancel') cancel.mutate({ gcPaymentId: action.gcPaymentId })
-                else retry.mutate({ gcPaymentId: action.gcPaymentId })
+                else if (action.kind === 'retry') retry.mutate({ gcPaymentId: action.gcPaymentId })
+                else {
+                  const minor = gbpToMinor(refundAmount)
+                  if (minor === null) return
+                  refund.mutate({
+                    gcPaymentId: action.gcPaymentId,
+                    amountMinor: minor,
+                    reason: refundReason.trim(),
+                  })
+                }
               }}
             >
               {busy ? 'Working…' : 'Confirm'}
             </Button>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => setAction(null)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => {
+                setAction(null)
+                setRefundAmount('')
+                setRefundReason('')
+              }}
+            >
               Back
             </Button>
           </div>
@@ -397,6 +476,27 @@ export function PaymentsTab() {
                             }
                           >
                             Retry
+                          </Button>
+                        ) : null}
+                        {['confirmed', 'paid_out'].includes(p.status) ? (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            className="text-red-700"
+                            onClick={() => {
+                              setRefundAmount((p.amountMinor / 100).toFixed(2))
+                              setAction({
+                                kind: 'refund',
+                                gcPaymentId: p.gcPaymentId,
+                                amountMinor: p.amountMinor,
+                                currency: p.currency,
+                                label: `${formatMoneyMinor(p.amountMinor, p.currency)} from ${
+                                  p.customer?.displayName ?? 'customer'
+                                }`,
+                              })
+                            }}
+                          >
+                            Refund
                           </Button>
                         ) : null}
                       </div>
@@ -531,6 +631,7 @@ function CollectPaymentForm({
           <Input
             id="pay-date"
             type="date"
+            min={new Date().toISOString().slice(0, 10)}
             value={chargeDate}
             onChange={(e) => setChargeDate(e.target.value)}
           />

@@ -35,8 +35,12 @@ import {
   createSubscriptionPlan,
   GcMandateNotFoundError,
   pauseSubscriptionPlan,
+  refundCollectedPayment,
+  reinstateMandateAction,
   resumeSubscriptionPlan,
   retryFailedPayment,
+  updateGcCustomerDetails,
+  updateSubscriptionPlan,
 } from '@studymind/integration-gocardless/outbound'
 import { inngest } from '@studymind/jobs'
 
@@ -531,11 +535,23 @@ const SubscriptionCreateInput = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be YYYY-MM-DD')
     .optional(),
   count: z.number().int().min(1).max(520).optional(),
+  /** Yearly plans: which month (1-12) the collection lands in. */
+  month: z.number().int().min(1).max(12).optional(),
+})
+
+const SubscriptionUpdateInput = z.object({
+  gcSubscriptionId: z.string().min(3).max(120),
+  amountMinor: z.number().int().positive().max(10_000_000).optional(),
+  name: z.string().trim().min(2).max(255).optional(),
+  paymentReference: z.string().trim().min(1).max(140).optional(),
+  reason: z.string().trim().min(2).max(500).optional(),
 })
 
 const SubscriptionActionInput = z.object({
   gcSubscriptionId: z.string().min(3).max(120),
   reason: z.string().trim().min(2).max(500).optional(),
+  /** Pause only: auto-resume after skipping this many collections. */
+  pauseCycles: z.number().int().min(1).max(52).optional(),
 })
 
 const PaymentFilterInput = {
@@ -984,6 +1000,49 @@ export const gocardlessRouter = router({
         return result
       }),
 
+    /** Edit the customer's identity details AT GoCardless (name / email /
+     *  phone / company) — mirrored back immediately. Never touches the CRM
+     *  contact link (§3). */
+    update: auditedProcedure
+      .input(
+        z.object({
+          gcCustomerId: z.string().min(3).max(120),
+          email: z.string().trim().email().max(320).optional(),
+          givenName: z.string().trim().min(1).max(120).optional(),
+          familyName: z.string().trim().min(1).max(120).optional(),
+          phone: z.string().trim().min(3).max(40).optional(),
+          companyName: z.string().trim().min(1).max(200).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        const { gcCustomerId, ...fields } = input
+        if (Object.values(fields).every((v) => v === undefined)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Nothing to update.' })
+        }
+        try {
+          const result = await updateGcCustomerDetails(ctx.db, {
+            gcCustomerId,
+            ...(fields.email !== undefined ? { email: fields.email } : {}),
+            ...(fields.givenName !== undefined ? { givenName: fields.givenName } : {}),
+            ...(fields.familyName !== undefined ? { familyName: fields.familyName } : {}),
+            ...(fields.phone !== undefined ? { phone: fields.phone } : {}),
+            ...(fields.companyName !== undefined ? { companyName: fields.companyName } : {}),
+            actorId: user.id,
+            requestId: ctx.requestId,
+          })
+          await ctx.audit({
+            action: 'gocardless.customer.update_requested',
+            target: { type: 'GcCustomer', id: gcCustomerId },
+            after: { ...fields },
+          })
+          return result
+        } catch (err) {
+          rethrowGcError(err)
+        }
+      }),
+
     /**
      * Full customer record (the GoCardless dashboard's customer page):
      * identity + CRM link, lifetime totals, every mandate, every plan (all
@@ -1239,6 +1298,37 @@ export const gocardlessRouter = router({
           })
           await ctx.audit({
             action: 'gocardless.mandate.cancel_requested',
+            target: { type: 'GcMandate', id: input.gcMandateId },
+            after: { state: result.state, reason: input.reason },
+          })
+          return result
+        } catch (err) {
+          rethrowGcError(err)
+        }
+      }),
+
+    /** Reinstate a cancelled mandate where the banking scheme allows it —
+     *  GoCardless rejects impossible reinstatements and that error surfaces
+     *  verbatim (nothing changes locally on failure). */
+    reinstate: auditedProcedure
+      .input(
+        z.object({
+          gcMandateId: z.string().min(3).max(120),
+          reason: z.string().trim().min(2).max(500),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        try {
+          const result = await reinstateMandateAction(ctx.db, {
+            gcMandateId: input.gcMandateId,
+            reason: input.reason,
+            actorId: user.id,
+            requestId: ctx.requestId,
+          })
+          await ctx.audit({
+            action: 'gocardless.mandate.reinstate_requested',
             target: { type: 'GcMandate', id: input.gcMandateId },
             after: { state: result.state, reason: input.reason },
           })
@@ -1576,6 +1666,7 @@ export const gocardlessRouter = router({
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.startDate !== undefined ? { startDate: input.startDate } : {}),
           ...(input.count !== undefined ? { count: input.count } : {}),
+          ...(input.month !== undefined ? { month: input.month } : {}),
           actorId: user.id,
           requestId: ctx.requestId,
         })
@@ -1589,6 +1680,38 @@ export const gocardlessRouter = router({
             interval: input.interval,
             dayOfMonth: input.dayOfMonth ?? null,
             name: input.name ?? null,
+          },
+        })
+        return result
+      } catch (err) {
+        rethrowGcError(err)
+      }
+    }),
+
+    /** Amend a live plan in place (amount / name / reference) — no more
+     *  cancel-and-recreate for a simple price change. */
+    update: auditedProcedure.input(SubscriptionUpdateInput).mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertFinanceRole(user)
+      try {
+        const result = await updateSubscriptionPlan(ctx.db, {
+          gcSubscriptionId: input.gcSubscriptionId,
+          ...(input.amountMinor !== undefined ? { amountMinor: input.amountMinor } : {}),
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.paymentReference !== undefined
+            ? { paymentReference: input.paymentReference }
+            : {}),
+          ...(input.reason !== undefined ? { reason: input.reason } : {}),
+          actorId: user.id,
+          requestId: ctx.requestId,
+        })
+        await ctx.audit({
+          action: 'gocardless.subscription.update_requested',
+          target: { type: 'GcSubscription', id: input.gcSubscriptionId },
+          after: {
+            amountMinor: input.amountMinor ?? null,
+            name: input.name ?? null,
+            reason: input.reason ?? null,
           },
         })
         return result
@@ -1625,13 +1748,18 @@ export const gocardlessRouter = router({
         const result = await pauseSubscriptionPlan(ctx.db, {
           gcSubscriptionId: input.gcSubscriptionId,
           ...(input.reason !== undefined ? { reason: input.reason } : {}),
+          ...(input.pauseCycles !== undefined ? { pauseCycles: input.pauseCycles } : {}),
           actorId: user.id,
           requestId: ctx.requestId,
         })
         await ctx.audit({
           action: 'gocardless.subscription.pause_requested',
           target: { type: 'GcSubscription', id: input.gcSubscriptionId },
-          after: { status: result.status, reason: input.reason ?? null },
+          after: {
+            status: result.status,
+            reason: input.reason ?? null,
+            pauseCycles: input.pauseCycles ?? null,
+          },
         })
         return result
       } catch (err) {
@@ -1800,6 +1928,44 @@ export const gocardlessRouter = router({
         rethrowGcError(err)
       }
     }),
+
+    /** Refund a collected payment. Human-confirmed with a mandatory reason,
+     *  audited, request-id idempotent; GoCardless's total_amount_confirmation
+     *  guard makes a second attempt fail at the provider rather than
+     *  double-refund. Requires refunds enabled on the GoCardless account. */
+    refund: auditedProcedure
+      .input(
+        z.object({
+          gcPaymentId: z.string().min(3).max(120),
+          amountMinor: z.number().int().positive().max(10_000_000),
+          reason: z.string().trim().min(2).max(500),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertFinanceRole(user)
+        try {
+          const result = await refundCollectedPayment(ctx.db, {
+            gcPaymentId: input.gcPaymentId,
+            amountMinor: input.amountMinor,
+            reason: input.reason,
+            actorId: user.id,
+            requestId: ctx.requestId,
+          })
+          await ctx.audit({
+            action: 'gocardless.payment.refund_requested',
+            target: { type: 'GcPayment', id: input.gcPaymentId },
+            after: {
+              gcRefundId: result.gcRefundId,
+              amountMinor: input.amountMinor,
+              reason: input.reason,
+            },
+          })
+          return result
+        } catch (err) {
+          rethrowGcError(err)
+        }
+      }),
   }),
 
   // Payouts (parity pass 2): the batch transfers of collected funds to the

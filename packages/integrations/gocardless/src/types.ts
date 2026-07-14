@@ -222,6 +222,17 @@ export interface GcSubscriptionResource {
   }
 }
 
+export interface GcRefundResource {
+  id: string
+  created_at: string
+  amount: number
+  currency: string
+  reference?: string | null
+  status?: string
+  metadata?: Record<string, string>
+  links: { payment?: string; mandate?: string }
+}
+
 export interface GcRedirectFlowResource {
   id: string
   redirect_url: string

@@ -39,7 +39,15 @@ export function CustomerDetail({ gcCustomerId }: { gcCustomerId: string }) {
   const detail = trpc.gocardless.customers.detail.useQuery({ gcCustomerId })
   const [linking, setLinking] = useState(false)
   const [cancelTarget, setCancelTarget] = useState<string | null>(null)
+  const [reinstateTarget, setReinstateTarget] = useState<string | null>(null)
   const [reason, setReason] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [editFields, setEditFields] = useState({
+    givenName: '',
+    familyName: '',
+    email: '',
+    phone: '',
+  })
 
   const refresh = () => {
     void utils.gocardless.customers.detail.invalidate({ gcCustomerId })
@@ -65,6 +73,23 @@ export function CustomerDetail({ gcCustomerId }: { gcCustomerId: string }) {
       toast.success('Mandate cancelled.')
       setCancelTarget(null)
       setReason('')
+      refresh()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const reinstateMandate = trpc.gocardless.mandates.reinstate.useMutation({
+    onSuccess: () => {
+      toast.success('Mandate reinstated.')
+      setReinstateTarget(null)
+      setReason('')
+      refresh()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const updateCustomer = trpc.gocardless.customers.update.useMutation({
+    onSuccess: () => {
+      toast.success('Customer details updated at GoCardless.')
+      setEditing(false)
       refresh()
     },
     onError: (e) => toast.error(e.message),
@@ -111,7 +136,69 @@ export function CustomerDetail({ gcCustomerId }: { gcCustomerId: string }) {
               {customer.email ? <span>{customer.email}</span> : null}
               <code className="font-mono text-xs text-neutral-400">{customer.gcCustomerId}</code>
               <span>Customer since {formatDate(customer.gcCreatedAt ?? customer.createdAt)}</span>
+              <Button size="xs" variant="ghost" onClick={() => setEditing((v) => !v)}>
+                {editing ? 'Close' : 'Edit details'}
+              </Button>
             </div>
+            {editing ? (
+              <div className="mt-3 grid max-w-2xl gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 sm:grid-cols-2">
+                <Input
+                  aria-label="First name"
+                  placeholder="First name"
+                  value={editFields.givenName}
+                  onChange={(e) => setEditFields((f) => ({ ...f, givenName: e.target.value }))}
+                />
+                <Input
+                  aria-label="Last name"
+                  placeholder="Last name"
+                  value={editFields.familyName}
+                  onChange={(e) => setEditFields((f) => ({ ...f, familyName: e.target.value }))}
+                />
+                <Input
+                  aria-label="Email"
+                  placeholder={customer.email ?? 'Email'}
+                  value={editFields.email}
+                  onChange={(e) => setEditFields((f) => ({ ...f, email: e.target.value }))}
+                />
+                <Input
+                  aria-label="Phone"
+                  placeholder="Phone"
+                  value={editFields.phone}
+                  onChange={(e) => setEditFields((f) => ({ ...f, phone: e.target.value }))}
+                />
+                <p className="text-xs text-neutral-500 sm:col-span-2">
+                  Only filled fields are changed — updates the customer record AT GoCardless and
+                  mirrors back here. The CRM contact link is untouched.
+                </p>
+                <div className="flex gap-2 sm:col-span-2">
+                  <Button
+                    size="xs"
+                    disabled={
+                      updateCustomer.isPending ||
+                      Object.values(editFields).every((v) => v.trim() === '')
+                    }
+                    onClick={() =>
+                      updateCustomer.mutate({
+                        gcCustomerId: customer.gcCustomerId,
+                        ...(editFields.givenName.trim()
+                          ? { givenName: editFields.givenName.trim() }
+                          : {}),
+                        ...(editFields.familyName.trim()
+                          ? { familyName: editFields.familyName.trim() }
+                          : {}),
+                        ...(editFields.email.trim() ? { email: editFields.email.trim() } : {}),
+                        ...(editFields.phone.trim() ? { phone: editFields.phone.trim() } : {}),
+                      })
+                    }
+                  >
+                    {updateCustomer.isPending ? 'Saving…' : 'Save to GoCardless'}
+                  </Button>
+                  <Button size="xs" variant="ghost" onClick={() => setEditing(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             <div className="mt-2">
               {customer.contactId ? (
                 <span className="flex flex-wrap items-center gap-2 text-sm">
@@ -263,6 +350,49 @@ export function CustomerDetail({ gcCustomerId }: { gcCustomerId: string }) {
                             onClick={() => setCancelTarget(m.gcMandateId)}
                           >
                             Cancel mandate
+                          </Button>
+                        </div>
+                      )
+                    ) : ['cancelled', 'expired'].includes(m.state) ? (
+                      reinstateTarget === m.gcMandateId ? (
+                        <span className="flex items-center justify-end gap-2">
+                          <Input
+                            value={reason}
+                            onChange={(e) => setReason(e.target.value)}
+                            placeholder="Reason (audited)"
+                            className="h-7 w-48 text-xs"
+                          />
+                          <Button
+                            size="xs"
+                            disabled={reinstateMandate.isPending || reason.trim().length < 2}
+                            onClick={() =>
+                              reinstateMandate.mutate({
+                                gcMandateId: m.gcMandateId,
+                                reason: reason.trim(),
+                              })
+                            }
+                          >
+                            Confirm reinstate
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => {
+                              setReinstateTarget(null)
+                              setReason('')
+                            }}
+                          >
+                            Back
+                          </Button>
+                        </span>
+                      ) : (
+                        <div className="flex justify-end">
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => setReinstateTarget(m.gcMandateId)}
+                          >
+                            Reinstate
                           </Button>
                         </div>
                       )

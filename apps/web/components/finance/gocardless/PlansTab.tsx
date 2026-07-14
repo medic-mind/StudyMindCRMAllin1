@@ -135,11 +135,17 @@ export function PlansTab() {
 
   const [showNew, setShowNew] = useState(false)
   const [action, setAction] = useState<{
-    kind: 'cancel' | 'pause' | 'resume'
+    kind: 'cancel' | 'pause' | 'resume' | 'edit'
     gcSubscriptionId: string
     label: string
+    /** Current values, prefilled into the edit panel. */
+    currentAmountMinor?: number
+    currentName?: string | null
   } | null>(null)
   const [reason, setReason] = useState('')
+  const [pauseCycles, setPauseCycles] = useState('')
+  const [editAmount, setEditAmount] = useState('')
+  const [editName, setEditName] = useState('')
 
   const refresh = () => {
     void utils.gocardless.subscriptions.list.invalidate()
@@ -174,8 +180,19 @@ export function PlansTab() {
     },
     onError: (e) => toast.error(e.message),
   })
+  const update = trpc.gocardless.subscriptions.update.useMutation({
+    onSuccess: () => {
+      toast.success('Plan amended — GoCardless notifies the customer of the change.')
+      setAction(null)
+      setReason('')
+      setEditAmount('')
+      setEditName('')
+      refresh()
+    },
+    onError: (e) => toast.error(e.message),
+  })
 
-  const busy = cancel.isPending || pause.isPending || resume.isPending
+  const busy = cancel.isPending || pause.isPending || resume.isPending || update.isPending
   const items = list.data?.items ?? []
   const total = list.data?.total ?? 0
 
@@ -315,16 +332,59 @@ export function PlansTab() {
               ? 'Cancel this plan?'
               : action.kind === 'pause'
                 ? 'Pause this plan?'
-                : 'Resume this plan?'}
+                : action.kind === 'edit'
+                  ? 'Amend this plan'
+                  : 'Resume this plan?'}
           </div>
           <p className="mt-1">
             {action.label} —{' '}
             {action.kind === 'cancel'
               ? 'no further payments will be collected. This cannot be undone (a new plan would be needed).'
               : action.kind === 'pause'
-                ? 'collections stop until the plan is resumed.'
-                : 'collections start again on the next charge date.'}
+                ? 'collections stop until the plan is resumed (or auto-resume after the cycles below).'
+                : action.kind === 'edit'
+                  ? 'change the amount and/or name in place — the schedule keeps running and GoCardless notifies the customer.'
+                  : 'collections start again on the next charge date.'}
           </p>
+          {action.kind === 'edit' ? (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="dd-edit-amount">New amount (GBP)</Label>
+                <Input
+                  id="dd-edit-amount"
+                  inputMode="decimal"
+                  value={editAmount}
+                  onChange={(e) => setEditAmount(e.target.value)}
+                  placeholder={
+                    action.currentAmountMinor !== undefined
+                      ? (action.currentAmountMinor / 100).toFixed(2)
+                      : '40.00'
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="dd-edit-name">New plan name</Label>
+                <Input
+                  id="dd-edit-name"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder={action.currentName ?? 'leave blank to keep'}
+                />
+              </div>
+            </div>
+          ) : null}
+          {action.kind === 'pause' ? (
+            <div className="mt-2 space-y-1">
+              <Label htmlFor="dd-pause-cycles">Auto-resume after (collections skipped, optional)</Label>
+              <Input
+                id="dd-pause-cycles"
+                inputMode="numeric"
+                value={pauseCycles}
+                onChange={(e) => setPauseCycles(e.target.value)}
+                placeholder="Leave blank to pause until manually resumed"
+              />
+            </div>
+          ) : null}
           {action.kind !== 'resume' ? (
             <div className="mt-2 space-y-1">
               <Label htmlFor="dd-action-reason">Reason</Label>
@@ -340,14 +400,37 @@ export function PlansTab() {
             <Button
               size="sm"
               variant={action.kind === 'cancel' ? 'destructive' : 'default'}
-              disabled={busy || (action.kind !== 'resume' && reason.trim().length < 2)}
+              disabled={
+                busy ||
+                (action.kind !== 'resume' && reason.trim().length < 2) ||
+                (action.kind === 'edit' &&
+                  gbpToMinor(editAmount) === null &&
+                  editName.trim().length < 2)
+              }
               onClick={() => {
+                if (action.kind === 'edit') {
+                  const newMinor = gbpToMinor(editAmount)
+                  update.mutate({
+                    gcSubscriptionId: action.gcSubscriptionId,
+                    ...(newMinor !== null ? { amountMinor: newMinor } : {}),
+                    ...(editName.trim().length >= 2 ? { name: editName.trim() } : {}),
+                    ...(reason.trim().length >= 2 ? { reason: reason.trim() } : {}),
+                  })
+                  return
+                }
+                const cyclesNum = Number(pauseCycles.trim())
                 const input = {
                   gcSubscriptionId: action.gcSubscriptionId,
                   ...(reason.trim().length >= 2 ? { reason: reason.trim() } : {}),
                 }
                 if (action.kind === 'cancel') cancel.mutate(input)
-                else if (action.kind === 'pause') pause.mutate(input)
+                else if (action.kind === 'pause')
+                  pause.mutate({
+                    ...input,
+                    ...(Number.isInteger(cyclesNum) && cyclesNum >= 1 && cyclesNum <= 52
+                      ? { pauseCycles: cyclesNum }
+                      : {}),
+                  })
                 else resume.mutate(input)
               }}
             >
@@ -360,6 +443,9 @@ export function PlansTab() {
               onClick={() => {
                 setAction(null)
                 setReason('')
+                setPauseCycles('')
+                setEditAmount('')
+                setEditName('')
               }}
             >
               Back
@@ -445,6 +531,23 @@ export function PlansTab() {
                     </Td>
                     <Td>
                       <div className="flex justify-end gap-1">
+                        {['active', 'paused'].includes(s.status) ? (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() =>
+                              setAction({
+                                kind: 'edit',
+                                gcSubscriptionId: s.gcSubscriptionId,
+                                label: s.name ?? s.gcSubscriptionId,
+                                currentAmountMinor: s.amountMinor,
+                                currentName: s.name ?? null,
+                              })
+                            }
+                          >
+                            Edit
+                          </Button>
+                        ) : null}
                         {s.status === 'active' ? (
                           <Button
                             size="xs"
@@ -522,10 +625,14 @@ function NewPlanForm({
   const [mandate, setMandate] = useState<PickedMandate | null>(null)
   const [amount, setAmount] = useState('')
   const [intervalUnit, setIntervalUnit] = useState<'weekly' | 'monthly' | 'yearly'>('monthly')
+  const [intervalEvery, setIntervalEvery] = useState('1')
   const [dayOfMonth, setDayOfMonth] = useState('')
+  const [month, setMonth] = useState('')
+  const [count, setCount] = useState('')
   const [name, setName] = useState('')
   const [startDate, setStartDate] = useState('')
   const [confirming, setConfirming] = useState(false)
+  const todayIso = new Date().toISOString().slice(0, 10)
 
   const create = trpc.gocardless.subscriptions.create.useMutation({
     onSuccess: (res) => {
@@ -542,7 +649,12 @@ function NewPlanForm({
   })
 
   const minor = gbpToMinor(amount)
-  const valid = mandate !== null && minor !== null
+  const intervalNum = Number(intervalEvery)
+  const intervalValid = Number.isInteger(intervalNum) && intervalNum >= 1 && intervalNum <= 12
+  const countNum = count.trim() === '' ? null : Number(count.trim())
+  const countValid =
+    countNum === null || (Number.isInteger(countNum) && countNum >= 1 && countNum <= 520)
+  const valid = mandate !== null && minor !== null && intervalValid && countValid
 
   if (confirming && mandate && minor) {
     return (
@@ -551,9 +663,21 @@ function NewPlanForm({
         <ul className="mt-2 space-y-1">
           <li>Customer: {mandate.customerLabel}</li>
           <li>
-            Amount: {formatMoneyMinor(minor)} {intervalUnit}
+            Amount: {formatMoneyMinor(minor)}{' '}
+            {intervalNum === 1
+              ? intervalUnit
+              : `every ${intervalNum} ${intervalUnit.replace('ly', 's')}`}
             {dayOfMonth ? ` (day ${dayOfMonth === '-1' ? 'last' : dayOfMonth})` : ''}
+            {intervalUnit === 'yearly' && month ? ` (month ${month})` : ''}
           </li>
+          {countNum !== null ? (
+            <li>
+              Fixed length: {countNum} collection{countNum === 1 ? '' : 's'} (total{' '}
+              {formatMoneyMinor(minor * countNum)}) — then the plan finishes itself.
+            </li>
+          ) : (
+            <li>Open-ended — collects until cancelled.</li>
+          )}
           {name ? <li>Name: {name}</li> : null}
           {startDate ? <li>First charge on/after: {startDate}</li> : null}
         </ul>
@@ -570,8 +694,10 @@ function NewPlanForm({
                 gcMandateId: mandate.gcMandateId,
                 amountMinor: minor,
                 intervalUnit,
-                interval: 1,
+                interval: intervalValid ? intervalNum : 1,
                 ...(dayOfMonth ? { dayOfMonth: Number(dayOfMonth) } : {}),
+                ...(intervalUnit === 'yearly' && month ? { month: Number(month) } : {}),
+                ...(countNum !== null ? { count: countNum } : {}),
                 ...(name.trim().length >= 2 ? { name: name.trim() } : {}),
                 ...(startDate ? { startDate } : {}),
               })
@@ -615,17 +741,53 @@ function NewPlanForm({
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="plan-interval">Collect</Label>
-          <select
-            id="plan-interval"
-            className="h-9 w-full rounded-md border border-neutral-300 bg-white px-2 text-sm"
-            value={intervalUnit}
-            onChange={(e) => setIntervalUnit(e.target.value as typeof intervalUnit)}
-          >
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="yearly">Yearly</option>
-          </select>
+          <div className="flex gap-1.5">
+            <select
+              id="plan-interval-every"
+              aria-label="Every how many periods"
+              className="h-9 w-20 rounded-md border border-neutral-300 bg-white px-2 text-sm"
+              value={intervalEvery}
+              onChange={(e) => setIntervalEvery(e.target.value)}
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={String(n)}>
+                  {n === 1 ? 'Every' : `Every ${n}`}
+                </option>
+              ))}
+            </select>
+            <select
+              id="plan-interval"
+              className="h-9 w-full rounded-md border border-neutral-300 bg-white px-2 text-sm"
+              value={intervalUnit}
+              onChange={(e) => setIntervalUnit(e.target.value as typeof intervalUnit)}
+            >
+              <option value="weekly">{intervalNum === 1 ? 'Week' : 'Weeks'}</option>
+              <option value="monthly">{intervalNum === 1 ? 'Month' : 'Months'}</option>
+              <option value="yearly">{intervalNum === 1 ? 'Year' : 'Years'}</option>
+            </select>
+          </div>
         </div>
+        {intervalUnit === 'yearly' ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="plan-month">Month</Label>
+            <select
+              id="plan-month"
+              className="h-9 w-full rounded-md border border-neutral-300 bg-white px-2 text-sm"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+            >
+              <option value="">Next available</option>
+              {[
+                'January','February','March','April','May','June',
+                'July','August','September','October','November','December',
+              ].map((m, i) => (
+                <option key={m} value={String(i + 1)}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         {intervalUnit === 'monthly' ? (
           <div className="space-y-1.5">
             <Label htmlFor="plan-day">Day of month</Label>
@@ -650,8 +812,19 @@ function NewPlanForm({
           <Input
             id="plan-start"
             type="date"
+            min={todayIso}
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="plan-count">Number of collections (optional)</Label>
+          <Input
+            id="plan-count"
+            inputMode="numeric"
+            placeholder="Blank = ongoing"
+            value={count}
+            onChange={(e) => setCount(e.target.value)}
           />
         </div>
       </div>
