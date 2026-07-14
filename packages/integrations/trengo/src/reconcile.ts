@@ -231,9 +231,16 @@ interface DiscoverInput {
   jobId: string
 }
 
+/** Per sweep, at most this many KNOWN tickets are message-refreshed (each
+ *  refresh costs a messages fetch) — protects Trengo's 120 req/min limit. */
+const REFRESH_KNOWN_CAP = 30
+/** Tolerance when comparing Trengo's activity clock to our head clock, so
+ *  sub-second formatting differences never cause a refresh loop. */
+const ACTIVITY_SLACK_MS = 60 * 1000
+
 export async function discoverNewTickets(
   input: DiscoverInput,
-): Promise<{ scanned: number; imported: number; failed: number }> {
+): Promise<{ scanned: number; imported: number; refreshed: number; failed: number }> {
   const { client, endpoint, pages, jobId } = input
   const windowFrom = new Date(Date.now() - DISCOVER_WINDOW_DAYS * 24 * 60 * 60 * 1000)
   const since = windowFrom.toISOString().slice(0, 10)
@@ -249,6 +256,7 @@ export async function discoverNewTickets(
 
   let scanned = 0
   let imported = 0
+  let refreshed = 0
   let failed = 0
   for (let page = 1; page <= pages; page += 1) {
     const listing = await listTicketsPage(client.request, page, endpoint, since)
@@ -260,11 +268,26 @@ export async function discoverNewTickets(
     if (tickets.length > 0) {
       const known = await db.conversation.findMany({
         where: { trengoTicketId: { in: tickets.map((t) => t.id) } },
-        select: { trengoTicketId: true },
+        select: { trengoTicketId: true, lastMessageAt: true },
       })
-      const knownIds = new Set(known.map((k) => k.trengoTicketId))
+      const knownById = new Map(
+        known.map((k) => [k.trengoTicketId, k.lastMessageAt] as const),
+      )
       for (const ticket of tickets) {
-        if (knownIds.has(ticket.id)) continue
+        const headLastMessageAt = knownById.get(ticket.id)
+        // A KNOWN ticket whose Trengo-side activity is newer than our head has
+        // messages we never received (dropped webhook). Re-import it — the
+        // importer dedupes per message, so this converges instead of
+        // duplicating. Without this, only brand-NEW tickets self-healed and a
+        // reply on an existing conversation stayed invisible until someone
+        // ran a manual import.
+        const isStaleKnown =
+          headLastMessageAt !== undefined &&
+          ticket.activityAt !== null &&
+          ticket.activityAt.getTime() >
+            headLastMessageAt.getTime() + ACTIVITY_SLACK_MS &&
+          refreshed < REFRESH_KNOWN_CAP
+        if (headLastMessageAt !== undefined && !isStaleKnown) continue
         try {
           await processTicket({
             client,
@@ -276,17 +299,18 @@ export async function discoverNewTickets(
             userNames,
             attachUnmatched: true,
           })
-          imported += 1
+          if (headLastMessageAt !== undefined) refreshed += 1
+          else imported += 1
         } catch {
           // One odd ticket must not abort the sweep; the next tick retries it
-          // (it still has no head, so it is re-discovered).
+          // (still missing / still stale, so it is re-discovered).
           failed += 1
         }
       }
     }
     if (!listing.hasNext) break
   }
-  return { scanned, imported, failed }
+  return { scanned, imported, refreshed, failed }
 }
 
 // -----------------------------------------------------------------------------
@@ -357,7 +381,7 @@ export const trengoReconcileStatus = inngest.createFunction(
         })
       } catch (err) {
         logger.warn({ err }, 'trengo discovery sweep failed — continuing with convergence')
-        return { scanned: 0, imported: 0, failed: 0 }
+        return { scanned: 0, imported: 0, refreshed: 0, failed: 0 }
       }
     })
 
@@ -459,7 +483,7 @@ export const trengoReconcileNow = inngest.createFunction(
         })
       } catch (err) {
         logger.warn({ err }, 'trengo discovery sweep failed — continuing with convergence')
-        return { scanned: 0, imported: 0, failed: 0 }
+        return { scanned: 0, imported: 0, refreshed: 0, failed: 0 }
       }
     })
 

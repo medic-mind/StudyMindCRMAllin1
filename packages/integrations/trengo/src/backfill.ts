@@ -247,6 +247,12 @@ export interface NormalisedTicket {
   labelsKnown: boolean
   contact: { phone: string | null; email: string | null; name: string | null }
   createdAt: Date | null
+  /** When the ticket last had activity, however the listing spells it
+   *  (updated_at / last_message_at / latest_message.created_at). Lets the
+   *  reconcile sweep spot "Trengo has newer messages than we do" and
+   *  re-import just those tickets. Null when the listing carries no
+   *  activity timestamp — then only webhooks deliver new messages. */
+  activityAt: Date | null
 }
 
 /** The ticket's SPECIFIC channel ("business number") — id + display name —
@@ -307,6 +313,21 @@ export function extractTicketAssigneeId(t: Record<string, unknown>): number | nu
  *  displayed as open, but never used to reopen a closed head (§8). */
 const KNOWN_OPEN_STATUSES = new Set(['open', 'assigned', 'new', 'pending'])
 
+/** The ticket's last-activity time, however the listing row spells it. */
+export function extractTicketActivityAt(t: Record<string, unknown>): Date | null {
+  const direct =
+    parseTrengoDate(t['updated_at']) ?? parseTrengoDate(t['last_message_at'])
+  if (direct) return direct
+  for (const key of ['latest_message', 'last_message'] as const) {
+    const v = t[key]
+    if (v !== null && typeof v === 'object') {
+      const nested = parseTrengoDate((v as Record<string, unknown>)['created_at'])
+      if (nested) return nested
+    }
+  }
+  return null
+}
+
 export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
   if (raw === null || typeof raw !== 'object') return null
   const t = raw as TrengoTicketRow
@@ -341,6 +362,7 @@ export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
       name: t.contact?.name?.trim() || null,
     },
     createdAt: parseTrengoDate(t.created_at),
+    activityAt: extractTicketActivityAt(t as Record<string, unknown>),
   }
 }
 
@@ -784,8 +806,20 @@ export async function processTicket(
           : null
         : (ticket.contact.name ?? null)
 
+    // Dedupe against BOTH key spellings: imports write `trengoMessageId`, the
+    // live webhook writes `messageId` (numeric or string). Matching only the
+    // import key duplicated every webhook-captured message when a ticket was
+    // re-imported — fatal now that the reconcile sweep refreshes active
+    // tickets routinely.
     const existing = await db.interaction.findFirst({
-      where: { payload: { path: ['trengoMessageId'], equals: messageId } },
+      where: {
+        OR: [
+          { payload: { path: ['trengoMessageId'], equals: messageId } },
+          { payload: { path: ['trengoMessageId'], equals: String(messageId) } },
+          { payload: { path: ['messageId'], equals: messageId } },
+          { payload: { path: ['messageId'], equals: String(messageId) } },
+        ],
+      },
       select: { id: true, payload: true },
     })
     if (existing) {

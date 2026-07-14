@@ -153,6 +153,21 @@ describe('normaliseTicketRow', () => {
     expect(normaliseTicketRow({ id: 1 })?.status).toBe('open')
   })
 
+  it('reads the last-activity time from any spelling the listing uses', () => {
+    const at = new Date('2026-07-01T09:30:00.000Z')
+    expect(
+      normaliseTicketRow({ id: 1, updated_at: '2026-07-01 09:30:00' })?.activityAt,
+    ).toEqual(at)
+    expect(
+      normaliseTicketRow({ id: 1, last_message_at: '2026-07-01 09:30:00' })?.activityAt,
+    ).toEqual(at)
+    expect(
+      normaliseTicketRow({ id: 1, latest_message: { created_at: '2026-07-01 09:30:00' } })
+        ?.activityAt,
+    ).toEqual(at)
+    expect(normaliseTicketRow({ id: 1 })?.activityAt).toBeNull()
+  })
+
   it('marks recognised statuses known; missing/novel ones unknown (fail closed, §8)', () => {
     expect(normaliseTicketRow({ id: 1, status: 'CLOSED' })?.statusKnown).toBe(true)
     expect(normaliseTicketRow({ id: 1, status: 'OPEN' })?.statusKnown).toBe(true)
@@ -184,6 +199,7 @@ describe('normaliseTicketRow', () => {
       labelsKnown: true,
       contact: { phone: '+447700900123', email: 'parent@example.com', name: 'Jo Smith' },
       createdAt: new Date('2026-05-30T10:00:00.000Z'),
+      activityAt: null,
     })
   })
 

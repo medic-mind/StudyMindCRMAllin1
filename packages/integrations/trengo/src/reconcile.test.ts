@@ -40,6 +40,7 @@ function ticket(over: Partial<NormalisedTicket> = {}): NormalisedTicket {
     labelsKnown: true,
     contact: { phone: null, email: null, name: null },
     createdAt: null,
+    activityAt: null,
     ...over,
   }
 }
