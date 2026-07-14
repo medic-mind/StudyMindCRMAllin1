@@ -147,7 +147,7 @@ export class SummerCampClient {
     return this.get<BookingsPage>(`/api/external/bookings${qs ? `?${qs}` : ''}`)
   }
 
-  private async write(path: string, method: 'POST' | 'PATCH', body: unknown): Promise<void> {
+  private async write(path: string, method: 'POST' | 'PATCH' | 'PUT', body: unknown): Promise<unknown> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 6000)
     try {
@@ -160,23 +160,45 @@ export class SummerCampClient {
         body: JSON.stringify(body),
         signal: controller.signal,
       })
-      if (!res.ok) throw new Error(`summer-camp ${method} ${path} failed: ${res.status}`)
+      const parsed: unknown = await res.json().catch(() => null)
+      if (!res.ok) {
+        const detail =
+          parsed && typeof parsed === 'object' && 'error' in parsed && typeof parsed.error === 'string'
+            ? `: ${parsed.error}`
+            : ''
+        throw new Error(`summer-camp ${method} ${path} failed: ${res.status}${detail}`)
+      }
+      return parsed
     } finally {
       clearTimeout(timer)
     }
   }
 
-  /** Write-back: add a note to a camp booking. */
-  postNote(bookingId: string, body: string, author?: string | null): Promise<void> {
-    return this.write(`/api/external/bookings/${encodeURIComponent(bookingId)}/notes`, 'POST', {
+  /** Write-back: add a note to a camp booking. Returns the camp's note id so
+   *  the CRM can store it as the dedupe key for feed round-trips. */
+  async postNote(bookingId: string, body: string, author?: string | null): Promise<string | null> {
+    const out = await this.write(`/api/external/bookings/${encodeURIComponent(bookingId)}/notes`, 'POST', {
       body,
       author: author ?? null,
     })
+    if (out && typeof out === 'object' && 'note' in out) {
+      const note = (out as { note?: { id?: unknown } }).note
+      if (note && typeof note.id === 'string') return note.id
+    }
+    return null
   }
 
   /** Write-back: update whitelisted fields on a camp booking. */
-  patchBooking(bookingId: string, fields: Record<string, unknown>): Promise<void> {
-    return this.write(`/api/external/bookings/${encodeURIComponent(bookingId)}`, 'PATCH', fields)
+  async patchBooking(bookingId: string, fields: Record<string, unknown>): Promise<void> {
+    await this.write(`/api/external/bookings/${encodeURIComponent(bookingId)}`, 'PATCH', fields)
+  }
+
+  /** Write-back: assign the booking's student to camps (first id = primary).
+   *  An empty array clears the assignment. */
+  async putCampAssignment(bookingId: string, campIds: string[]): Promise<void> {
+    await this.write(`/api/external/bookings/${encodeURIComponent(bookingId)}/camps`, 'PUT', {
+      camp_ids: campIds,
+    })
   }
 }
 

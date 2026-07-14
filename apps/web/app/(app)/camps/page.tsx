@@ -49,10 +49,16 @@ export default async function CampsPage({ searchParams }: { searchParams?: { yea
     <>
       <PageHeader
         title="Summer Camps"
-        subtitle="Live view of which camps are running and how full they are. Read-only — bookings are managed in the Summer Camp app."
+        subtitle="Live view of which camps are running and how full they are. Work individual bookings — edit, assign camps, add notes — in the bookings workspace."
       />
       <PageBody>
-        <div className="mb-4">
+        <div className="mb-4 flex flex-wrap gap-2">
+          <a
+            href="/camps/bookings"
+            className="inline-flex items-center gap-1 rounded-md border border-primary-300 bg-white px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-primary-50"
+          >
+            Bookings workspace →
+          </a>
           <a
             href="/camps/instalments"
             className="inline-flex items-center gap-1 rounded-md border border-primary-300 bg-white px-3 py-1.5 text-sm font-medium text-primary-700 hover:bg-primary-50"

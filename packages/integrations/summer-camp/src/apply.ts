@@ -293,6 +293,9 @@ async function writeBookingInteraction(
     bookingType: b.booking_type,
     campId: b.camp_id,
     campName: b.camp_name,
+    // Full multi-camp assignment (primary first) so the CRM mirrors — and can
+    // edit — which camps the student attends, not just the primary.
+    enrolledCampIds: b.enrolled_camp_ids ?? (b.camp_id ? [b.camp_id] : []),
     subject: b.subject,
     programmeType: b.programme_type ?? null,
     weekNumber: b.week_number ?? null,

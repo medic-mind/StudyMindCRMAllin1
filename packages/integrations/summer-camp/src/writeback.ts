@@ -80,6 +80,70 @@ export function mapContactToBookingFields(c: ContactDetailForPush): Record<strin
   return fields
 }
 
+/** Booking fields the camp accepts on PATCH (its write-back whitelist). */
+export interface BookingFieldsForPush {
+  status?: string
+  subject?: string
+  notes?: string
+}
+
+/** Push booking-level edits (status / subject / camp notes) onto a specific
+ *  camp booking. Used by the bookings workspace, where the exact booking id is
+ *  known (a contact can hold several bookings). */
+export async function pushBookingFields(
+  bookingId: string,
+  fields: BookingFieldsForPush,
+): Promise<PushResult> {
+  const client = createClientFromConfig()
+  if (!client) return { ok: false, skipped: true, reason: 'not_configured' }
+  const payload = Object.fromEntries(
+    Object.entries(fields).filter(([, v]) => v !== undefined),
+  ) as Record<string, string>
+  if (Object.keys(payload).length === 0) return { ok: false, skipped: true, reason: 'nothing_to_push' }
+  try {
+    await client.patchBooking(bookingId, payload)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : 'push failed' }
+  }
+}
+
+/** Assign the booking's student to camps on the camp app (first id = primary).
+ *  The camp owns assignment, so this is the authoritative write; the CRM
+ *  mirror converges via the webhook/reconcile pull. */
+export async function pushCampAssignment(bookingId: string, campIds: string[]): Promise<PushResult> {
+  const client = createClientFromConfig()
+  if (!client) return { ok: false, skipped: true, reason: 'not_configured' }
+  try {
+    await client.putCampAssignment(bookingId, campIds)
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : 'push failed' }
+  }
+}
+
+export interface NotePushResult extends PushResult {
+  /** The camp's note id (the CRM stores it as the feed-dedupe key). */
+  campNoteId?: string | null
+}
+
+/** Push a note onto a SPECIFIC camp booking (the bookings-workspace path —
+ *  unlike pushNoteForContact, which targets the contact's latest booking). */
+export async function pushNoteForBooking(
+  bookingId: string,
+  body: string,
+  author?: string | null,
+): Promise<NotePushResult> {
+  const client = createClientFromConfig()
+  if (!client) return { ok: false, skipped: true, reason: 'not_configured' }
+  try {
+    const campNoteId = await client.postNote(bookingId, body, author)
+    return { ok: true, campNoteId }
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : 'push failed' }
+  }
+}
+
 /** Push the contact's current identity fields onto its linked camp booking. */
 export async function pushContactDetailsForContact(db: PrismaClient, contactId: string): Promise<PushResult> {
   const client = createClientFromConfig()

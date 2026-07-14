@@ -549,6 +549,13 @@ export const EVENT_NAMES = [
   // backfill writes on completion (the recurring sync logs rather than audits).
   'summer_camp.backfill_requested',
   'summer_camp.bookings_synced',
+  // CRM-originated write-backs from the bookings workspace (/camps/bookings):
+  // booking field edits, cancellation, camp assignment, and shared notes. Each
+  // pushes to the camp app first, then audits here.
+  'summer_camp.booking_updated_from_crm',
+  'summer_camp.booking_cancelled_from_crm',
+  'summer_camp.booking_camps_assigned',
+  'summer_camp.booking_note_added',
 
   // Protocols & Policies knowledge base (ADR 0040): in-app edits to the
   // imported Crib content. AI proposes patches, CEO / Senior Manager
