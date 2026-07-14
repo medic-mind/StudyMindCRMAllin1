@@ -27,8 +27,12 @@ import { applyEventToConversation } from './conversation-head'
 import {
   type NormalisedTicket,
   type TrengoListEndpoint,
+  buildUserNameMap,
   listTicketsPage,
   normaliseTicketRow,
+  parseListResponse,
+  processTicket,
+  ticketWithinWindow,
 } from './backfill'
 
 /** Per tick. 120 every 10 min ≈ 17k/day, far more than the open-conversation
@@ -40,10 +44,22 @@ const BATCH = 120
  *  most likely to have been closed/spam-boxed in Trengo) converged in one run.
  *  ~500 GETs ≈ 5 min at the rate limit; the cron covers the long tail. */
 const SYNC_NOW_CAP = 500
+/** Discovery sweep: how many listing pages (50 rows each) each cron tick
+ *  scans for tickets Trengo has that we do not. Newest tickets sit on the
+ *  first pages, so 2 pages every 10 minutes catches anything a dropped
+ *  webhook failed to announce well before staff notice. */
+const DISCOVER_PAGES_CRON = 2
+/** The staff-triggered "Sync from Trengo" digs deeper in one go. */
+const DISCOVER_PAGES_SYNC_NOW = 6
+/** Only auto-import discovered tickets newer than this — anything older is
+ *  the manual "Import all from Trengo" backfill's job. */
+const DISCOVER_WINDOW_DAYS = 30
 
 type RequestFn = <T>(method: string, path: string) => Promise<T>
 
-/** The minimal head shape the planner reasons about. */
+/** The minimal head shape the planner reasons about. Note: heads cross an
+ *  Inngest step boundary (JSON), so `lastMessageAt` arrives as an ISO string
+ *  at runtime — normalise before use. */
 export interface ReconcileHead {
   id: string
   trengoTicketId: number
@@ -55,6 +71,7 @@ export interface ReconcileHead {
   channel: string | null
   trengoChannelId: number | null
   trengoChannelName: string | null
+  lastMessageAt: Date | string
 }
 
 export interface ReconcilePlan {
@@ -66,6 +83,10 @@ export interface ReconcilePlan {
   statusChange: { from: string; to: 'closed' | 'open' | 'spam' } | null
   /** Apply a `ticket.assigned` when Trengo's assignee differs from ours. */
   applyAssignee: boolean
+  /** Clear our assignee — the ticket was UNASSIGNED in Trengo. Without this
+   *  a ticket moved back to Trengo's Unassigned tray keeps showing the old
+   *  agent here forever. */
+  clearAssignee: boolean
   /** Full label set to write when Trengo's labels differ; null = leave as-is. */
   tags: string[] | null
   /** The SPECIFIC Trengo channel id to stamp, when it differs / is missing. */
@@ -103,16 +124,20 @@ export function planReconcile(
     statusChange = { from: head.status, to: 'closed' }
   } else if (
     ticket.status === 'open' &&
+    ticket.statusKnown &&
     (head.status === 'closed' || head.status === 'spam')
   ) {
     // Reopen a head Trengo now shows open — whether we had it closed or spam
-    // (Trengo un-marked it as spam).
+    // (Trengo un-marked it as spam). Guarded on `statusKnown`: an
+    // unrecognised Trengo status folds to 'open' for display but must never
+    // reopen a genuinely closed head (§8, fail closed).
     statusEvent = 'ticket.reopened'
     statusChange = { from: head.status, to: 'open' }
   }
 
   const applyAssignee =
     ticket.assigneeId !== null && ticket.assigneeId !== head.trengoAssigneeId
+  const clearAssignee = ticket.assigneeId === null && head.trengoAssigneeId !== null
 
   const tags =
     ticket.labelsKnown && !sameTagSet(head.tags, ticket.labels)
@@ -124,7 +149,7 @@ export function planReconcile(
       ? ticket.trengoChannelId
       : null
 
-  return { statusEvent, setSpam, statusChange, applyAssignee, tags, channelId }
+  return { statusEvent, setSpam, statusChange, applyAssignee, clearAssignee, tags, channelId }
 }
 
 function sameTagSet(a: string[], b: string[]): boolean {
@@ -185,6 +210,86 @@ function normaliseDetail(res: unknown): NormalisedTicket | null {
 }
 
 // -----------------------------------------------------------------------------
+// Discovery — the other half of "mirror Trengo continuously".
+//
+// Converging heads we already have is not enough: if the webhook subscription
+// is broken (secret mismatch, endpoint disabled, event not subscribed) a
+// ticket CREATED in Trengo never gets a local head, and no amount of per-head
+// re-fetching will ever surface it. That is the reported "I cannot see current
+// tickets — it shows outdated ones". So every sweep also walks the first pages
+// of Trengo's own ticket listing (newest first), finds ids with no local head,
+// and imports them through the same idempotent per-ticket importer the
+// backfill uses. Matched senders get the full message history; unknown senders
+// get a triage Lead + an unmatched head (webhook parity, §11 — never an
+// auto-created Contact).
+// -----------------------------------------------------------------------------
+
+interface DiscoverInput {
+  client: TrengoClient
+  endpoint: TrengoListEndpoint
+  pages: number
+  jobId: string
+}
+
+export async function discoverNewTickets(
+  input: DiscoverInput,
+): Promise<{ scanned: number; imported: number; failed: number }> {
+  const { client, endpoint, pages, jobId } = input
+  const windowFrom = new Date(Date.now() - DISCOVER_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+  const since = windowFrom.toISOString().slice(0, 10)
+
+  // Trengo agent names for outbound attribution — best-effort, like backfill.
+  let userNames: Record<string, string> = {}
+  try {
+    const res = await client.request<unknown>('GET', '/users?page=1&per_page=200')
+    userNames = buildUserNameMap(parseListResponse<unknown>(res, 1).rows)
+  } catch {
+    // attribution resolves on the next successful team sync
+  }
+
+  let scanned = 0
+  let imported = 0
+  let failed = 0
+  for (let page = 1; page <= pages; page += 1) {
+    const listing = await listTicketsPage(client.request, page, endpoint, since)
+    const tickets = listing.rows
+      .map((raw) => normaliseTicketRow(raw))
+      .filter((t): t is NormalisedTicket => t !== null)
+      .filter((t) => ticketWithinWindow(t.createdAt, windowFrom))
+    scanned += tickets.length
+    if (tickets.length > 0) {
+      const known = await db.conversation.findMany({
+        where: { trengoTicketId: { in: tickets.map((t) => t.id) } },
+        select: { trengoTicketId: true },
+      })
+      const knownIds = new Set(known.map((k) => k.trengoTicketId))
+      for (const ticket of tickets) {
+        if (knownIds.has(ticket.id)) continue
+        try {
+          await processTicket({
+            client,
+            endpoint: listing.endpoint,
+            ticket,
+            jobId,
+            createContacts: false,
+            actorId: null,
+            userNames,
+            attachUnmatched: true,
+          })
+          imported += 1
+        } catch {
+          // One odd ticket must not abort the sweep; the next tick retries it
+          // (it still has no head, so it is re-discovered).
+          failed += 1
+        }
+      }
+    }
+    if (!listing.hasNext) break
+  }
+  return { scanned, imported, failed }
+}
+
+// -----------------------------------------------------------------------------
 // Inngest function.
 // -----------------------------------------------------------------------------
 
@@ -217,30 +322,6 @@ export const trengoReconcileStatus = inngest.createFunction(
       return { skipped: true, reason: 'no_token' }
     }
 
-    const heads = await step.run('select-heads', async () =>
-      db.conversation.findMany({
-        where: {
-          trengoTicketId: { not: null },
-          OR: [{ provider: null }, { provider: 'trengo' }],
-        },
-        orderBy: [{ lastSyncCheckAt: { sort: 'asc', nulls: 'first' } }],
-        take: BATCH,
-        select: {
-          id: true,
-          trengoTicketId: true,
-          status: true,
-          trengoAssigneeId: true,
-          tags: true,
-          contactId: true,
-          familyId: true,
-          channel: true,
-          trengoChannelId: true,
-          trengoChannelName: true,
-        },
-      }),
-    )
-    if (heads.length === 0) return { checked: 0, converged: 0 }
-
     let client: TrengoClient
     try {
       client = await createClientForAgent({
@@ -263,6 +344,50 @@ export const trengoReconcileStatus = inngest.createFunction(
       return page.endpoint
     })
 
+    // Discovery FIRST — import tickets Trengo has that we do not, so a broken
+    // webhook subscription can no longer hide new conversations. Best-effort:
+    // a listing failure must not stop the per-head convergence below.
+    const discovered = await step.run('discover-new-tickets', async () => {
+      try {
+        return await discoverNewTickets({
+          client,
+          endpoint,
+          pages: DISCOVER_PAGES_CRON,
+          jobId: runId,
+        })
+      } catch (err) {
+        logger.warn({ err }, 'trengo discovery sweep failed — continuing with convergence')
+        return { scanned: 0, imported: 0, failed: 0 }
+      }
+    })
+
+    const heads = await step.run('select-heads', async () =>
+      db.conversation.findMany({
+        where: {
+          trengoTicketId: { not: null },
+          OR: [{ provider: null }, { provider: 'trengo' }],
+        },
+        orderBy: [{ lastSyncCheckAt: { sort: 'asc', nulls: 'first' } }],
+        take: BATCH,
+        select: {
+          id: true,
+          trengoTicketId: true,
+          status: true,
+          trengoAssigneeId: true,
+          tags: true,
+          contactId: true,
+          familyId: true,
+          channel: true,
+          trengoChannelId: true,
+          trengoChannelName: true,
+          lastMessageAt: true,
+        },
+      }),
+    )
+    if (heads.length === 0) {
+      return { checked: 0, converged: 0, discovered: discovered.imported }
+    }
+
     let converged = 0
     let deleted = 0
     for (const head of heads) {
@@ -276,10 +401,10 @@ export const trengoReconcileStatus = inngest.createFunction(
     }
 
     logger.info(
-      { checked: heads.length, converged, deleted },
+      { checked: heads.length, converged, deleted, discovered },
       'trengo reconcile-status tick complete',
     )
-    return { checked: heads.length, converged, deleted }
+    return { checked: heads.length, converged, deleted, discovered: discovered.imported }
   },
 )
 
@@ -308,6 +433,36 @@ export const trengoReconcileNow = inngest.createFunction(
     })
     if (!agentId) return { skipped: true, reason: 'no_token' }
 
+    let client: TrengoClient
+    try {
+      client = await createClientForAgent({ agentId, purpose: 'trengo.reconcile_now', requestId: runId })
+    } catch (err) {
+      logger.warn({ err }, 'reconcile-now could not build a Trengo client')
+      return { skipped: true, reason: 'client_unavailable' }
+    }
+    const endpoint = await step.run('detect-endpoint', async () => {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const page = await listTicketsPage(client.request, 1, null, since)
+      return page.endpoint
+    })
+
+    // Staff pressed "Sync from Trengo" — dig deeper than the cron for tickets
+    // we have never seen, THEN converge the open set. Best-effort so a listing
+    // hiccup still lets the convergence below run.
+    const discovered = await step.run('discover-new-tickets', async () => {
+      try {
+        return await discoverNewTickets({
+          client,
+          endpoint,
+          pages: DISCOVER_PAGES_SYNC_NOW,
+          jobId: runId,
+        })
+      } catch (err) {
+        logger.warn({ err }, 'trengo discovery sweep failed — continuing with convergence')
+        return { scanned: 0, imported: 0, failed: 0 }
+      }
+    })
+
     // The set most likely to be wrongly-open: OPEN / SNOOZED heads, newest
     // activity first (a ticket closed in Trengo was usually active recently).
     const heads = await step.run('select-open-heads', async () =>
@@ -330,23 +485,13 @@ export const trengoReconcileNow = inngest.createFunction(
           channel: true,
           trengoChannelId: true,
           trengoChannelName: true,
+          lastMessageAt: true,
         },
       }),
     )
-    if (heads.length === 0) return { checked: 0, converged: 0 }
-
-    let client: TrengoClient
-    try {
-      client = await createClientForAgent({ agentId, purpose: 'trengo.reconcile_now', requestId: runId })
-    } catch (err) {
-      logger.warn({ err }, 'reconcile-now could not build a Trengo client')
-      return { skipped: true, reason: 'client_unavailable' }
+    if (heads.length === 0) {
+      return { checked: 0, converged: 0, discovered: discovered.imported }
     }
-    const endpoint = await step.run('detect-endpoint', async () => {
-      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      const page = await listTicketsPage(client.request, 1, null, since)
-      return page.endpoint
-    })
 
     let converged = 0
     for (const head of heads) {
@@ -357,8 +502,11 @@ export const trengoReconcileNow = inngest.createFunction(
       )
       if (result.converged) converged += 1
     }
-    logger.info({ checked: heads.length, converged }, 'trengo reconcile-now complete')
-    return { checked: heads.length, converged }
+    logger.info(
+      { checked: heads.length, converged, discovered },
+      'trengo reconcile-now complete',
+    )
+    return { checked: heads.length, converged, discovered: discovered.imported }
   },
 )
 
@@ -424,7 +572,11 @@ async function reconcileOne(
   const plan = planReconcile(head, ticket)
 
   let converged = false
-  const occurredAt = new Date()
+  // A reconcile-driven flip is NOT new activity: replay it at the head's own
+  // lastMessageAt so a weeks-old drift correction never bumps the
+  // conversation to the top of the inbox. The merger applies status /
+  // assignee patches regardless of the timestamp.
+  const occurredAt = new Date(head.lastMessageAt)
 
   if (plan.statusEvent) {
     await applyEventToConversation(db, {
@@ -465,6 +617,17 @@ async function reconcileOne(
       familyId: head.familyId,
       trengoAssigneeId: ticket.assigneeId,
       assigneeUserId,
+    })
+    converged = true
+  }
+
+  if (plan.clearAssignee) {
+    // Unassigned in Trengo — mirror it. The event merger has no unassign
+    // transition (webhooks only ever carry a new assignee), so clear the
+    // head directly; updateMany is a safe no-op if the row vanished.
+    await db.conversation.updateMany({
+      where: { trengoTicketId: head.trengoTicketId },
+      data: { trengoAssigneeId: null, assigneeUserId: null },
     })
     converged = true
   }

@@ -230,6 +230,11 @@ export interface NormalisedTicket {
   /** Trengo statuses (OPEN / ASSIGNED / CLOSED / SPAM / …) folded to ours.
    *  `spam` is the Trengo Spam box — imported, not just a CRM-side toggle. */
   status: 'open' | 'closed' | 'spam'
+  /** True only when the raw status is one we explicitly recognise. An
+   *  unrecognised or missing status folds to 'open' for DISPLAY, but sync
+   *  paths must fail closed (§8) and never flip a closed head back open on
+   *  an ambiguous payload. */
+  statusKnown: boolean
   /** Trengo user id the ticket is assigned to, however the listing spells it
    *  (assignee/agent/user object or *_id field). Null when unassigned. */
   assigneeId: number | null
@@ -297,6 +302,11 @@ export function extractTicketAssigneeId(t: Record<string, unknown>): number | nu
 
 /** Fold a raw ticket row to the fields the import needs. Null on rows with
  *  no usable numeric id. */
+/** Raw Trengo statuses we positively recognise as "the ticket is open".
+ *  Anything outside this set (and not closed/spam) is treated as UNKNOWN —
+ *  displayed as open, but never used to reopen a closed head (§8). */
+const KNOWN_OPEN_STATUSES = new Set(['open', 'assigned', 'new', 'pending'])
+
 export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
   if (raw === null || typeof raw !== 'object') return null
   const t = raw as TrengoTicketRow
@@ -305,17 +315,22 @@ export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
     normaliseTicketChannel(t.channel) ??
     (Array.isArray(t.channels) ? normaliseTicketChannel(t.channels[0]) : null)
   const channelMeta = extractTicketChannelMeta(t as Record<string, unknown>)
-  const status: 'open' | 'closed' | 'spam' = ticketIsSpam(t as Record<string, unknown>)
+  const rawStatus = typeof t.status === 'string' ? t.status.toLowerCase() : null
+  const isSpam = ticketIsSpam(t as Record<string, unknown>)
+  const status: 'open' | 'closed' | 'spam' = isSpam
     ? 'spam'
-    : typeof t.status === 'string' && t.status.toLowerCase() === 'closed'
+    : rawStatus === 'closed'
       ? 'closed'
       : 'open'
+  const statusKnown =
+    isSpam || rawStatus === 'closed' || (rawStatus !== null && KNOWN_OPEN_STATUSES.has(rawStatus))
   return {
     id: t.id,
     channel,
     trengoChannelId: channelMeta.trengoChannelId,
     trengoChannelName: channelMeta.trengoChannelName,
     status,
+    statusKnown,
     assigneeId: extractTicketAssigneeId(t as Record<string, unknown>),
     subject: typeof t.subject === 'string' && t.subject.trim() !== '' ? t.subject : null,
     labels: extractTicketLabels(t.labels ?? t.tags),
@@ -584,7 +599,7 @@ export const trengoBackfillRequested = inngest.createFunction(
   },
 )
 
-interface ProcessTicketInput {
+export interface ProcessTicketInput {
   client: TrengoClient
   endpoint: TrengoListEndpoint
   ticket: NormalisedTicket
@@ -595,6 +610,14 @@ interface ProcessTicketInput {
   actorId: string | null
   /** Trengo user id → display name (buildUserNameMap). */
   userNames: Record<string, string>
+  /** Import a ticket whose sender matches NO Contact anyway: messages and the
+   *  Conversation head are written with a null contact (exactly what the live
+   *  webhook does for unmatched inbound) and a Lead is recorded for triage —
+   *  never a silently created Contact (§11/§3). Used by the reconcile
+   *  discovery sweep so a NEW Trengo ticket appears in the inbox even when
+   *  the webhook that should have announced it was dropped. Backfills keep
+   *  the historical matched-only behaviour (false). */
+  attachUnmatched?: boolean
 }
 
 const MATCH_SELECT = {
@@ -604,10 +627,11 @@ const MATCH_SELECT = {
   familyMembers: { select: { familyId: true } },
 } as const
 
-async function processTicket(
+export async function processTicket(
   input: ProcessTicketInput,
 ): Promise<{ processed: number; matched: number; skipped: number; created: number }> {
   const { client, endpoint, ticket, createContacts, userNames } = input
+  const attachUnmatched = input.attachUnmatched ?? false
 
   // Match the ticket's contact (phone first, email fallback — §11).
   const phone = ticket.contact.phone
@@ -681,6 +705,34 @@ async function processTicket(
     }
   }
 
+  // Discovery sweep for a sender the CRM does not know: record a Lead for the
+  // triage tray (deduped on phone/email so re-sweeps converge), mirroring the
+  // live webhook's unmatched-inbound behaviour. Never a Contact (§11).
+  if (!contactId && attachUnmatched && (phone || email)) {
+    const existingLead = await db.lead.findFirst({
+      where: {
+        source: 'trengo',
+        OR: [
+          ...(phone ? [{ phoneE164: phone }] : []),
+          ...(email ? [{ email }] : []),
+        ],
+      },
+      select: { id: true },
+    })
+    if (!existingLead) {
+      await db.lead.create({
+        data: {
+          id: createId(),
+          source: 'trengo',
+          rawPayload: { discoveredByReconcile: true, ticketId: ticket.id },
+          phoneE164: phone,
+          email,
+          name: ticket.contact.name,
+        },
+      })
+    }
+  }
+
   // Whether the contact still has no name after step 1 — steps 2/3 below
   // only run for these.
   const contactNeedsName =
@@ -704,7 +756,7 @@ async function processTicket(
 
   for (const m of messages) {
     processed += 1
-    if (!contactId) {
+    if (!contactId && !attachUnmatched) {
       skipped += 1
       continue
     }
@@ -810,13 +862,15 @@ async function processTicket(
   // Replay the ticket onto the Conversation head (ADR 0020 Phase 2) so the
   // comms centre / unified inbox lists the imported history immediately. The
   // merger is monotonic and keyed on trengoTicketId, so replays converge.
-  // Heads are only built for tickets that have a CRM home (matched/created
-  // contact) — a skipped-unmatched ticket must not become a ghost row.
+  // Backfills only build heads for tickets that have a CRM home (matched /
+  // created contact); the discovery sweep (`attachUnmatched`) also builds
+  // heads with a null contact — exactly what the live webhook does — so a
+  // brand-new Trengo ticket is visible in the inbox for triage.
   //
   // The listing row is Trengo's CURRENT state, so this is also the status /
   // assignee re-sync: a re-run (the "Last 7 days quick sync") converges
   // open/closed/assigned with what Trengo shows right now.
-  if (contactId) {
+  if (contactId || attachUnmatched) {
     headEvents.sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
     for (const ev of headEvents) {
       await applyEventToConversation(db, {
@@ -916,13 +970,14 @@ async function processTicket(
         contactId,
         familyId,
       })
-    } else {
+    } else if (ticket.statusKnown) {
       const head = await db.conversation.findUnique({
         where: { trengoTicketId: ticket.id },
         select: { status: true },
       })
       // Trengo shows it open → reopen a head we have as closed OR spam
-      // (Trengo un-marked it as spam).
+      // (Trengo un-marked it as spam). Guarded on `statusKnown` so an
+      // unrecognised status never reopens a closed head (§8, fail closed).
       if (head?.status === 'closed' || head?.status === 'spam') {
         await applyEventToConversation(db, {
           ticketId: ticket.id,

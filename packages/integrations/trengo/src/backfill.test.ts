@@ -153,6 +153,15 @@ describe('normaliseTicketRow', () => {
     expect(normaliseTicketRow({ id: 1 })?.status).toBe('open')
   })
 
+  it('marks recognised statuses known; missing/novel ones unknown (fail closed, §8)', () => {
+    expect(normaliseTicketRow({ id: 1, status: 'CLOSED' })?.statusKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1, status: 'OPEN' })?.statusKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1, status: 'ASSIGNED' })?.statusKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1, status: 'SPAM' })?.statusKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1 })?.statusKnown).toBe(false)
+    expect(normaliseTicketRow({ id: 1, status: 'SOME_FUTURE_STATE' })?.statusKnown).toBe(false)
+  })
+
   it('normalises contact details (trim, lowercase email)', () => {
     const t = normaliseTicketRow({
       id: 9,
@@ -168,6 +177,7 @@ describe('normaliseTicketRow', () => {
       trengoChannelId: null,
       trengoChannelName: null,
       status: 'open',
+      statusKnown: false,
       assigneeId: null,
       subject: 'Re: trial lesson',
       labels: ['GCSE', 'Billing'],

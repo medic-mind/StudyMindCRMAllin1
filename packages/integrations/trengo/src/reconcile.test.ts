@@ -21,6 +21,7 @@ function head(over: Partial<ReconcileHead> = {}): ReconcileHead {
     channel: 'whatsapp',
     trengoChannelId: null,
     trengoChannelName: null,
+    lastMessageAt: new Date('2026-01-01T00:00:00Z'),
     ...over,
   }
 }
@@ -32,6 +33,7 @@ function ticket(over: Partial<NormalisedTicket> = {}): NormalisedTicket {
     trengoChannelId: null,
     trengoChannelName: null,
     status: 'open',
+    statusKnown: true,
     assigneeId: null,
     subject: null,
     labels: [],
@@ -75,6 +77,20 @@ describe('planReconcile — status', () => {
   it('leaves a snoozed head alone when Trengo shows open (snooze is local-open)', () => {
     const plan = planReconcile(head({ status: 'snoozed' }), ticket({ status: 'open' }))
     expect(plan.statusEvent).toBeNull()
+  })
+
+  it('does NOT reopen a closed head on an unrecognised Trengo status (fail closed, §8)', () => {
+    const plan = planReconcile(
+      head({ status: 'closed' }),
+      ticket({ status: 'open', statusKnown: false }),
+    )
+    expect(plan.statusEvent).toBeNull()
+    expect(plan.statusChange).toBeNull()
+  })
+
+  it('still closes on an explicit closed status even when the head was spam', () => {
+    const plan = planReconcile(head({ status: 'spam' }), ticket({ status: 'closed' }))
+    expect(plan.statusEvent).toBe('ticket.closed')
   })
 })
 
@@ -134,9 +150,19 @@ describe('planReconcile — assignee', () => {
     expect(plan.applyAssignee).toBe(false)
   })
 
-  it('does not touch the assignee when Trengo reports none', () => {
+  it('does not APPLY an assignee when Trengo reports none', () => {
     const plan = planReconcile(head({ trengoAssigneeId: 7 }), ticket({ assigneeId: null }))
     expect(plan.applyAssignee).toBe(false)
+  })
+
+  it('CLEARS our assignee when the ticket was unassigned in Trengo', () => {
+    const plan = planReconcile(head({ trengoAssigneeId: 7 }), ticket({ assigneeId: null }))
+    expect(plan.clearAssignee).toBe(true)
+  })
+
+  it('does not clear when neither side has an assignee', () => {
+    const plan = planReconcile(head({ trengoAssigneeId: null }), ticket({ assigneeId: null }))
+    expect(plan.clearAssignee).toBe(false)
   })
 })
 
