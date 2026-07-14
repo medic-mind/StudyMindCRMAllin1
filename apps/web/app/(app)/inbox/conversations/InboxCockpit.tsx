@@ -126,7 +126,11 @@ export function InboxCockpit({
       trengoChannelId: trengoChannelId ?? null,
       limit: 100,
     },
-    { refetchOnWindowFocus: true },
+    // Safety poll on top of the SSE stream: the in-process realtime bus does
+    // not cross instances (webhooks are processed by the Inngest worker), so
+    // without a background interval the list only ever refreshed on window
+    // focus — the reported "inbox shows outdated conversations".
+    { refetchOnWindowFocus: true, refetchInterval: 45_000 },
   )
 
   // Whole-inbox server search (Trengo parity): once the query is ≥2 chars we

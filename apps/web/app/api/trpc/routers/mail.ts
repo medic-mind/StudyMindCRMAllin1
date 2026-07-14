@@ -107,6 +107,8 @@ interface EmailThreadRef {
   /** Full current Gmail label-id set — patched optimistically by the CRM-side
    *  actions so the thread moves folder immediately (§14 label-mirror). */
   gmailLabelIds: string[]
+  /** Human-readable custom label names (the chips + label rail read these). */
+  tags: string[]
 }
 
 /** Resolve an actionable email thread head, or throw a typed error. */
@@ -126,6 +128,7 @@ async function resolveEmailThread(
       unreadCount: true,
       status: true,
       gmailLabelIds: true,
+      tags: true,
     },
   })
   if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
@@ -162,6 +165,7 @@ async function resolveEmailThread(
     unreadCount: head.unreadCount,
     status: head.status,
     gmailLabelIds: head.gmailLabelIds,
+    tags: head.tags,
   }
 }
 
@@ -332,6 +336,41 @@ async function resolveGmailAccount(
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'This mailbox has no connected owner.' })
   }
   return { ownerUserId: acc.ownerUserId, address: acc.address }
+}
+
+/** All-accounts search fans out one Gmail query per account — bound it. */
+const ALL_ACCOUNT_SEARCH_CAP = 10
+
+/** The Gmail accounts this user may read — same visibility rule as
+ *  `mail.accounts` (everything for managers; own + shared-member otherwise). */
+async function visibleGmailAccountIds(
+  ctx: TrpcContext,
+  me: ReturnType<typeof requireUser>,
+): Promise<string[]> {
+  let where: Record<string, unknown> = {
+    deletedAt: null,
+    provider: 'gmail',
+    ownerUserId: { not: null },
+  }
+  if (!MANAGE_SHARED_ROLES.has(me.role)) {
+    const memberOf = await ctx.db.mailAccountMember.findMany({
+      where: { userId: me.id },
+      select: { mailAccountId: true },
+    })
+    where = {
+      ...where,
+      OR: [
+        { ownerUserId: me.id },
+        { id: { in: memberOf.map((m) => m.mailAccountId) } },
+      ],
+    }
+  }
+  const rows = await ctx.db.mailAccount.findMany({
+    where,
+    select: { id: true },
+    orderBy: [{ ownerKind: 'asc' }, { address: 'asc' }],
+  })
+  return rows.map((r) => r.id)
 }
 
 /** Our own addresses for this account (mailbox address + send-as aliases), used
@@ -694,7 +733,9 @@ export const mailRouter = router({
     search: protectedProcedure
       .input(
         z.object({
-          mailAccountId: z.string(),
+          /** Null/absent = search EVERY visible account (like Gmail's "all
+           *  inboxes"), not just the first one. */
+          mailAccountId: z.string().nullish(),
           q: z.string().trim().min(1).max(500),
           pageToken: z.string().optional(),
         }),
@@ -702,38 +743,65 @@ export const mailRouter = router({
       .query(async ({ ctx, input }) => {
         const me = requireUser(ctx)
         assertStaff(me.role)
-        const acc = await resolveGmailAccount(ctx, input.mailAccountId)
-        const client = await createClientForAgent({
-          agentId: acc.ownerUserId,
-          address: acc.address,
-          purpose: 'gmail.search',
-          requestId: ctx.requestId,
-        })
-        const { threadIds, nextPageToken } = await client.searchThreadIds({
-          q: input.q,
-          ...(input.pageToken ? { pageToken: input.pageToken } : {}),
-          maxResults: 30,
-        })
-        if (threadIds.length === 0) {
-          return { items: [] as Awaited<ReturnType<typeof shapeMailHeadItems>>, nextPageToken }
+
+        const searchOne = async (accountId: string) => {
+          const acc = await resolveGmailAccount(ctx, accountId)
+          const client = await createClientForAgent({
+            agentId: acc.ownerUserId,
+            address: acc.address,
+            purpose: 'gmail.search',
+            requestId: ctx.requestId,
+          })
+          const { threadIds, nextPageToken } = await client.searchThreadIds({
+            q: input.q,
+            ...(input.pageToken ? { pageToken: input.pageToken } : {}),
+            maxResults: 30,
+          })
+          if (threadIds.length === 0) {
+            return { rows: [] as MailHeadRow[], order: new Map<string, number>(), nextPageToken }
+          }
+          const rows = (await ctx.db.conversation.findMany({
+            where: {
+              provider: 'email',
+              mailAccountId: accountId,
+              externalThreadId: { in: threadIds },
+            },
+            select: MAIL_HEAD_SELECT,
+          })) as MailHeadRow[]
+          return { rows, order: new Map(threadIds.map((t, i) => [t, i])), nextPageToken }
         }
-        const rows = (await ctx.db.conversation.findMany({
-          where: {
-            provider: 'email',
-            mailAccountId: input.mailAccountId,
-            externalThreadId: { in: threadIds },
-          },
-          select: MAIL_HEAD_SELECT,
-        })) as MailHeadRow[]
-        // Preserve Gmail's relevance order.
-        const order = new Map(threadIds.map((t, i) => [t, i]))
+
+        if (input.mailAccountId) {
+          const res = await searchOne(input.mailAccountId)
+          // Preserve Gmail's relevance order.
+          res.rows.sort(
+            (a, b) =>
+              (res.order.get(a.externalThreadId ?? '') ?? 1e9) -
+              (res.order.get(b.externalThreadId ?? '') ?? 1e9),
+          )
+          const items = await shapeMailHeadItems(ctx, res.rows)
+          return { items, nextPageToken: res.nextPageToken }
+        }
+
+        // All-accounts search: run every visible Gmail account in parallel and
+        // merge newest-activity-first. (Cross-account paging is intentionally
+        // unsupported — one 30-result page per account.)
+        const accountIds = await visibleGmailAccountIds(ctx, me)
+        const results = await Promise.allSettled(
+          accountIds.slice(0, ALL_ACCOUNT_SEARCH_CAP).map((id) => searchOne(id)),
+        )
+        const rows = results
+          .filter(
+            (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof searchOne>>> =>
+              r.status === 'fulfilled',
+          )
+          .flatMap((r) => r.value.rows)
         rows.sort(
           (a, b) =>
-            (order.get(a.externalThreadId ?? '') ?? 1e9) -
-            (order.get(b.externalThreadId ?? '') ?? 1e9),
+            new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
         )
         const items = await shapeMailHeadItems(ctx, rows)
-        return { items, nextPageToken }
+        return { items, nextPageToken: null as string | null }
       }),
   }),
 
@@ -1407,8 +1475,30 @@ export const mailRouter = router({
           ...(input.add ? { add: input.add } : {}),
           ...(input.remove ? { remove: input.remove } : {}),
         })
-        // Keep the label-id mirror consistent; the next sync re-reads Gmail to
-        // converge the human-readable `tags` chips.
+        // Keep BOTH mirrors consistent in this write: the label-id set (folder
+        // state) and the human-readable `tags` (label chips + rail counts).
+        // Leaving `tags` to "the next sync" meant a label applied in the CRM
+        // did not show anywhere in the CRM until a heal cycle ran.
+        let nextTags = head.tags
+        try {
+          const idToName = new Map(
+            (await provider.listLabels()).map((l) => [l.id, l.name]),
+          )
+          const addNames = (input.add ?? [])
+            .map((id) => idToName.get(id))
+            .filter((n): n is string => !!n)
+          const removeNames = new Set(
+            (input.remove ?? [])
+              .map((id) => idToName.get(id))
+              .filter((n): n is string => !!n),
+          )
+          nextTags = [
+            ...head.tags.filter((t) => !removeNames.has(t)),
+            ...addNames.filter((n) => !head.tags.includes(n)),
+          ]
+        } catch {
+          // Name resolution is best-effort — the heal converges tags later.
+        }
         await ctx.db.conversation.update({
           where: { id: head.id },
           data: {
@@ -1416,6 +1506,7 @@ export const mailRouter = router({
               ...(input.add ? { add: input.add } : {}),
               ...(input.remove ? { remove: input.remove } : {}),
             }),
+            tags: nextTags,
           },
         })
         await ctx.audit({

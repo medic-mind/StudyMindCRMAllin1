@@ -171,9 +171,10 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
         ? 'inbox'
         : folder
 
-  // A typed query runs a real Gmail search (full body + operators) scoped to the
-  // selected account (or the first when "All accounts" is chosen).
-  const searching = query.length > 0 && !showDrafts && !!draftsAccountId
+  // A typed query runs a real Gmail search (full body + operators) scoped to
+  // the selected account — or across EVERY visible account when "All accounts"
+  // is chosen, exactly like Gmail's all-inboxes search.
+  const searching = query.length > 0 && !showDrafts
   const threads = trpc.mail.threads.list.useQuery(
     {
       mailAccountId: accountId,
@@ -181,10 +182,14 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
       label: label,
       limit: 50,
     },
-    { enabled: !showDrafts && !searching },
+    // The list is the /mail workspace's primary surface: refetch on focus AND
+    // on a background interval so mail arriving while the tab sits open shows
+    // without a manual refresh (SSE covers the same-instance case; the poll
+    // covers multi-instance and dropped events).
+    { enabled: !showDrafts && !searching, refetchInterval: 60_000, refetchOnWindowFocus: true },
   )
   const search = trpc.mail.threads.search.useQuery(
-    { mailAccountId: draftsAccountId ?? '', q: query },
+    { mailAccountId: accountId, q: query },
     { enabled: searching },
   )
   const items = useMemo(
@@ -258,10 +263,17 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
           if (selectedId)
             kbdAction(kbRead.mutateAsync({ conversationId: selectedId, read: false }), 'Marked unread')
           break
-        case 's':
-          if (selectedId)
-            kbdAction(kbStar.mutateAsync({ conversationId: selectedId, starred: true }), 'Starred')
+        case 's': {
+          // Toggle, like Gmail — a second press unstars.
+          if (selectedId) {
+            const starred = idx >= 0 ? (items[idx]?.isStarred ?? false) : false
+            kbdAction(
+              kbStar.mutateAsync({ conversationId: selectedId, starred: !starred }),
+              starred ? 'Unstarred' : 'Starred',
+            )
+          }
           break
+        }
         case '#':
           if (selectedId)
             kbdAction(kbTrash.mutateAsync({ conversationId: selectedId, trashed: true }), 'Moved to Trash')
@@ -621,11 +633,30 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
               ) : (
                 <button
                   type="button"
-                  onClick={() => invalidateList()}
+                  onClick={() => {
+                    // Refresh = pull from Gmail, not just re-read our own DB —
+                    // an agent pressing this expects mail that arrived in Gmail
+                    // to show up. Invalidate immediately for snappiness, then
+                    // fire the sync and re-read once it has had a moment.
+                    invalidateList()
+                    syncNow
+                      .mutateAsync()
+                      .then(() => {
+                        setTimeout(() => {
+                          invalidateList()
+                          void utils.mail.folderCounts.invalidate()
+                          void utils.mail.labels.invalidate()
+                        }, 1500)
+                      })
+                      .catch(() => {
+                        // Local refresh already happened; sync errors surface
+                        // via the rail's dedicated sync button.
+                      })
+                  }}
                   aria-label="Refresh"
                   className="ml-1 rounded-full p-1.5 text-neutral-500 hover:bg-neutral-100"
                 >
-                  <RepeatIcon size={16} />
+                  <RepeatIcon size={16} className={syncNow.isPending ? 'animate-spin' : ''} />
                 </button>
               )}
               <span className="ml-auto text-xs text-neutral-500">

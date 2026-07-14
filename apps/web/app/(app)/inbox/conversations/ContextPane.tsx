@@ -137,6 +137,7 @@ export function ContextPane({
             conversationId={head.id}
             unread={head.unreadCount > 0}
             archived={head.status === 'archived'}
+            starred={head.isStarred ?? false}
           />
         ) : (
           <>

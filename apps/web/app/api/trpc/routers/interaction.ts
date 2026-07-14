@@ -1169,6 +1169,15 @@ export const interactionRouter = router({
             where: { id: conv.id },
             data: { unreadCount: 0 },
           })
+          // Mirror snooze/unsnooze below: other agents' inboxes must see the
+          // unread badge clear without waiting for their own poll.
+          const { publishConversationUpdate } = await import('@studymind/core/realtime')
+          publishConversationUpdate({
+            id: conv.id,
+            trengoTicketId: null,
+            lastMessageAt: null,
+            contactId: conv.contactId,
+          })
         }
         await ctx.audit({
           action: 'trengo.conversation_read',
@@ -1199,6 +1208,13 @@ export const interactionRouter = router({
           await ctx.db.conversation.update({
             where: { id: conv.id },
             data: { unreadCount: 1 },
+          })
+          const { publishConversationUpdate } = await import('@studymind/core/realtime')
+          publishConversationUpdate({
+            id: conv.id,
+            trengoTicketId: null,
+            lastMessageAt: null,
+            contactId: conv.contactId,
           })
         }
         await ctx.audit({

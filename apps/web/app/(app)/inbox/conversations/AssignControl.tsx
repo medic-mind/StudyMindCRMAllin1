@@ -42,7 +42,12 @@ export function AssignControl({
   const assign = trpc.interaction.trengo.assign.useMutation({
     onSuccess: () => {
       toast.success('Assigned in Trengo')
+      // The list row's assignee avatar and the New/Mine/Assigned folder
+      // badges change with an assignment — invalidate them too, or the rail
+      // shows stale state until the next poll.
       void utils.inbox.conversations.get.invalidate({ conversationId })
+      void utils.inbox.conversations.list.invalidate()
+      void utils.inbox.conversations.counts.invalidate()
       router.refresh()
     },
     onError: (e) => toast.error(e.message ?? 'Could not assign'),

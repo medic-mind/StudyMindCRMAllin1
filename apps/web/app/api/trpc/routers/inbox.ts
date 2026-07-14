@@ -331,7 +331,10 @@ export const inboxRouter = router({
                     equals: head.externalThreadId,
                   },
                 },
-                orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+                // NEWEST 100, then re-sorted ascending below — an ascending
+                // take() kept the oldest rows and silently dropped the most
+                // recent messages on long threads.
+                orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
                 take: 100,
                 select: {
                   id: true,
@@ -363,7 +366,7 @@ export const inboxRouter = router({
                       },
                     ],
                   },
-                  orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+                  orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
                   take: 100,
                   select: {
                     id: true,
@@ -374,6 +377,14 @@ export const inboxRouter = router({
                     createdById: true,
                   },
                 })
+
+        // The queries above take the NEWEST 100 rows (descending); the thread
+        // pane renders oldest→newest, so restore chronological order here.
+        messageRows.sort(
+          (a, b) =>
+            a.occurredAt.getTime() - b.occurredAt.getTime() ||
+            a.id.localeCompare(b.id),
+        )
 
         // Resolve CRM authors (replies sent from the CRM carry createdById)
         // in one batch so each outbound bubble can name its sender.

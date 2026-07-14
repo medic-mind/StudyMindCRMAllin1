@@ -56,8 +56,14 @@ export function useConversationStream(): void {
           // contactId-scoped channel query is also invalidated so per-contact
           // pages stay in sync.
           void utils.inbox.conversations.list.invalidate()
+          // The OPEN thread and the folder count badges must move with the
+          // list — without these the reading pane and the rail lag behind
+          // (stale unread badges, action buttons showing the old state).
+          void utils.inbox.conversations.get.invalidate({ conversationId: data.id })
+          void utils.inbox.conversations.counts.invalidate()
           // ADR 0021 Phase 4 — keep the /mail client live too.
           void utils.mail.threads.list.invalidate()
+          void utils.mail.folderCounts.invalidate()
           if (data.contactId) {
             void utils.contact.channels.trengoConversations.invalidate({
               contactId: data.contactId,

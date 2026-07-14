@@ -47,6 +47,9 @@ export function TrengoThreadActions({
   const refresh = () => {
     void utils.inbox.conversations.get.invalidate({ conversationId })
     void utils.inbox.conversations.list.invalidate()
+    // Every action here (read/unread/snooze/close/labels) moves a folder
+    // badge — refresh them too, or the rail lags up to a minute behind.
+    void utils.inbox.conversations.counts.invalidate()
     router.refresh()
   }
 

@@ -5,7 +5,6 @@
 // head. Reversible — trash goes to Gmail Trash (recoverable). Sales Executive
 // and above; the server enforces too. CLAUDE.md §14, §20, §26.
 
-import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -16,10 +15,11 @@ interface Props {
   conversationId: string
   unread: boolean
   archived: boolean
+  starred: boolean
 }
 
-export function MailThreadActions({ conversationId, unread, archived }: Props) {
-  const router = useRouter()
+export function MailThreadActions({ conversationId, unread, archived, starred }: Props) {
+  const utils = trpc.useUtils()
   const [confirmTrash, setConfirmTrash] = useState(false)
   const setRead = trpc.mail.thread.setRead.useMutation()
   const setArchived = trpc.mail.thread.setArchived.useMutation()
@@ -36,7 +36,15 @@ export function MailThreadActions({ conversationId, unread, archived }: Props) {
     try {
       await p
       toast.success(ok)
-      router.refresh()
+      // This pane is fully client-rendered from tRPC queries — a Next.js
+      // router.refresh() re-runs the RSC shell but leaves the TanStack cache
+      // (and therefore these buttons' labels) untouched. Invalidate the
+      // queries that actually feed the UI.
+      void utils.inbox.conversations.get.invalidate({ conversationId })
+      void utils.inbox.conversations.list.invalidate()
+      void utils.inbox.conversations.counts.invalidate()
+      void utils.mail.threads.list.invalidate()
+      void utils.mail.folderCounts.invalidate()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not complete that')
     }
@@ -81,10 +89,13 @@ export function MailThreadActions({ conversationId, unread, archived }: Props) {
         variant="ghost"
         disabled={busy}
         onClick={() =>
-          run(setStarred.mutateAsync({ conversationId, starred: true }), 'Starred')
+          run(
+            setStarred.mutateAsync({ conversationId, starred: !starred }),
+            starred ? 'Unstarred' : 'Starred',
+          )
         }
       >
-        Star
+        {starred ? 'Unstar' : 'Star'}
       </Button>
       {confirmTrash ? (
         <span className="flex items-center gap-1.5">

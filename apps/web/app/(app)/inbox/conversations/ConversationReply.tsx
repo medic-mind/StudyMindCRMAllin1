@@ -145,6 +145,9 @@ export function ConversationReply({
   const invalidate = () => {
     void utils.inbox.conversations.get.invalidate({ conversationId })
     void utils.inbox.conversations.list.invalidate()
+    // A reply clears unread; a close moves the conversation between folders —
+    // both change the rail badges.
+    void utils.inbox.conversations.counts.invalidate()
   }
 
   const send = trpc.interaction.trengo.reply.useMutation({
