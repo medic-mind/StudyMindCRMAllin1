@@ -69,13 +69,17 @@ export const FLAGS = {
     owner: 'tech-lead',
     firstShippedAt: '2026-05-09',
   },
+  // Operational, not release (§31): this is a long-lived CHANNEL gate — it
+  // stays off until (and unless) a Google Voice number is pointed at a synced
+  // mailbox, and remains the kill switch for that ingestion afterwards. It is
+  // not decoupling a deploy from a launch, so the 30-day staleness rule for
+  // release flags does not apply.
   'google_voice.email_ingest_enabled': {
     description:
       'Ingest Google Voice notification emails (voicemail / missed call / text) from voice-noreply@google.com via the Gmail sync, logging calls + alerting the team for manual follow-up (ADR 0032). Off until a Google Voice number points at a synced mailbox.',
-    kind: 'release',
+    kind: 'operational',
     default: false,
     owner: 'tech-lead',
-    firstShippedAt: '2026-06-04',
   },
 } as const satisfies Record<string, FlagMetadata>
 
