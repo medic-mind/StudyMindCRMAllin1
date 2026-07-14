@@ -405,6 +405,7 @@ const MAIL_HEAD_SELECT = {
   status: true,
   isStarred: true,
   isTrashed: true,
+  gmailLabelIds: true,
   lastMessagePreview: true,
   lastSenderName: true,
   tags: true,
@@ -423,6 +424,7 @@ interface MailHeadRow {
   status: string
   isStarred: boolean
   isTrashed: boolean
+  gmailLabelIds: string[]
   lastMessagePreview: string | null
   lastSenderName: string | null
   tags: string[]
@@ -477,6 +479,17 @@ async function shapeMailHeadItems(ctx: TrpcContext, rows: MailHeadRow[]) {
       status: r.status,
       isStarred: r.isStarred,
       isTrashed: r.isTrashed,
+      // Gmail-parity row affordances: the importance chevron and the
+      // spam/archive-aware action buttons read these. Legacy heads synced
+      // before the label mirror have no gmailLabelIds — fall back safely.
+      isImportant: (r.gmailLabelIds ?? []).includes('IMPORTANT'),
+      isSpam: (r.gmailLabelIds ?? []).includes('SPAM'),
+      isArchived:
+        r.status === 'archived' ||
+        ((r.gmailLabelIds ?? []).length > 0 &&
+          !(r.gmailLabelIds ?? []).includes('INBOX') &&
+          !(r.gmailLabelIds ?? []).includes('TRASH') &&
+          !(r.gmailLabelIds ?? []).includes('SPAM')),
       preview: r.lastMessagePreview,
       labels: r.tags,
       lastMessageAt: r.lastMessageAt,
@@ -944,6 +957,9 @@ export const mailRouter = router({
             familyId: null,
             subject: input.subject || null,
             senderName: null,
+            // Stamp the folder mirror so the new thread lands under Sent at
+            // once instead of defaulting to the Inbox until the next heal.
+            gmailLabelIds: ['SENT'],
           })
         }
         await ctx.audit({
@@ -1048,6 +1064,7 @@ export const mailRouter = router({
           contactId: null,
           familyId: null,
           subject: input.subject,
+          gmailLabelIds: ['SENT'],
         })
       }
 
@@ -1438,6 +1455,7 @@ export const mailRouter = router({
             familyId: null,
             subject: forwardSubject(msg.subject),
             senderName: null,
+            gmailLabelIds: ['SENT'],
           })
         }
         await ctx.audit({
@@ -1446,6 +1464,46 @@ export const mailRouter = router({
           after: { to: input.to, cc: input.cc ?? [], attachments: attachments.length },
         })
         return { id: head.id, threadId: result.gmailThreadId }
+      }),
+
+    /**
+     * Create a brand-new custom label on the live mailbox AND apply it to
+     * this thread — Gmail's "Create new" affordance inside the Labels menu.
+     * Idempotent by name (an existing label of the same name is reused).
+     */
+    createLabel: auditedProcedure
+      .input(
+        z.object({
+          conversationId: z.string(),
+          name: z.string().trim().min(1).max(100),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const me = requireUser(ctx)
+        assertCanMutate(me.role)
+        const head = await resolveEmailThread(ctx, input.conversationId)
+        const provider = await getMailSyncProvider({
+          accountId: head.mailAccountId,
+          requestId: ctx.requestId,
+          purpose: 'mail.create_label',
+        })
+        const label = await provider.createLabel(input.name)
+        await provider.modifyLabels(head.externalThreadId, { add: [label.id] })
+        await ctx.db.conversation.update({
+          where: { id: head.id },
+          data: {
+            gmailLabelIds: mutateLabelSet(head.gmailLabelIds, { add: [label.id] }),
+            ...(head.tags.includes(label.name)
+              ? {}
+              : { tags: [...head.tags, label.name] }),
+          },
+        })
+        await ctx.audit({
+          action: 'mail.thread_labeled',
+          target: { type: 'Conversation', id: head.id },
+          after: { created: label.name, add: [label.id], remove: [] },
+        })
+        return { id: head.id, label }
       }),
 
     setLabels: auditedProcedure

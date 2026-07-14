@@ -122,6 +122,10 @@ export interface GmailClient {
   trashThread(threadId: string): Promise<void>
   untrashThread(threadId: string): Promise<void>
   listLabels(): Promise<GmailLabelRef[]>
+  /** Create a custom Gmail label (users.labels.create, covered by
+   *  gmail.modify). Returns the new label ref; an existing label with the
+   *  same name is returned instead of erroring (idempotent-by-name). */
+  createLabel(name: string): Promise<GmailLabelRef>
   /**
    * The account's send-as identities and signatures. Readable with the
    * gmail.readonly / gmail.modify scopes we already request — no extra consent.
@@ -396,6 +400,25 @@ function wrap(agentId: string, gmail: gmail_v1.Gmail): GmailClient {
       return (res.data.labels ?? [])
         .filter((l): l is { id: string; name: string } => !!l.id && !!l.name)
         .map((l) => ({ id: l.id, name: l.name }))
+    },
+    async createLabel(name) {
+      // Idempotent by name: Gmail 409s on duplicates, so re-resolve instead.
+      const existing = (await gmail.users.labels.list({ userId: 'me' })).data.labels?.find(
+        (l) => l.name?.toLowerCase() === name.toLowerCase(),
+      )
+      if (existing?.id && existing.name) return { id: existing.id, name: existing.name }
+      const res = await gmail.users.labels.create({
+        userId: 'me',
+        requestBody: {
+          name,
+          labelListVisibility: 'labelShow',
+          messageListVisibility: 'show',
+        },
+      })
+      if (!res.data.id || !res.data.name) {
+        throw new Error('Gmail did not return the created label')
+      }
+      return { id: res.data.id, name: res.data.name }
     },
     async listSendAs() {
       const res = await gmail.users.settings.sendAs.list({ userId: 'me' })

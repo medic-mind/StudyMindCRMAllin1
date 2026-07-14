@@ -122,6 +122,8 @@ export interface MailSyncProvider {
   ): Promise<void>
   /** List the account's labels/folders as `{ id, name }`. */
   listLabels(): Promise<MailLabelRef[]>
+  /** Create a custom label/folder on the live account (idempotent by name). */
+  createLabel(name: string): Promise<MailLabelRef>
 }
 
 export interface MailLabelRef {

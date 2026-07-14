@@ -657,3 +657,24 @@ export function SparklesIcon(props: IconProps) {
     </svg>
   )
 }
+
+// --- /mail Gmail-parity toolbar (spam + importance) --------------------------
+
+export function ChevronsRightIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="m6 17 5-5-5-5" />
+      <path d="m13 17 5-5-5-5" />
+    </svg>
+  )
+}
+
+export function AlertOctagonIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86z" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+  )
+}

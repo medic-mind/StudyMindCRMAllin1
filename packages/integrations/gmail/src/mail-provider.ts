@@ -164,5 +164,9 @@ export function createGmailMailSyncProvider(
       const c = await client()
       return c.listLabels()
     },
+    async createLabel(name): Promise<MailLabelRef> {
+      const c = await client()
+      return c.createLabel(name)
+    },
   }
 }

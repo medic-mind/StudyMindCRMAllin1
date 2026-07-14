@@ -14,8 +14,10 @@ import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import {
+  AlertOctagonIcon,
   AlertTriangleIcon,
   ArchiveIcon,
+  ChevronsRightIcon,
   BellIcon,
   CalendarIcon,
   CheckIcon,
@@ -738,6 +740,9 @@ type ThreadItem = {
   status: string
   isStarred: boolean
   isTrashed: boolean
+  isImportant: boolean
+  isSpam: boolean
+  isArchived: boolean
   preview: string | null
   labels: string[]
   lastMessageAt: Date
@@ -814,6 +819,15 @@ function ThreadRow({
 
       <Avatar name={who} size={24} />
 
+      {/* Gmail's importance chevron */}
+      {item.isImportant ? (
+        <ChevronsRightIcon
+          size={14}
+          aria-label="Marked important"
+          className="shrink-0 fill-secondary-400 text-secondary-500"
+        />
+      ) : null}
+
       <span
         className={`w-40 shrink-0 truncate text-sm ${
           unread ? 'font-semibold text-neutral-900' : 'text-neutral-600'
@@ -851,18 +865,37 @@ function ThreadRow({
         {gmailDate(item.lastMessageAt, now)}
       </time>
       <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-        <RowAction
-          label="Archive"
-          onClick={() => act(setArchived.mutateAsync({ conversationId: item.id, archived: true }), 'Archived')}
-        >
-          <ArchiveIcon size={16} />
-        </RowAction>
-        <RowAction
-          label="Trash"
-          onClick={() => act(setTrashed.mutateAsync({ conversationId: item.id, trashed: true }), 'Moved to Trash')}
-        >
-          <Trash2Icon size={16} />
-        </RowAction>
+        {item.isTrashed ? (
+          // Gmail's Trash view offers restore, not re-archive.
+          <RowAction
+            label="Restore from Trash"
+            onClick={() => act(setTrashed.mutateAsync({ conversationId: item.id, trashed: false }), 'Restored')}
+          >
+            <InboxIcon size={16} />
+          </RowAction>
+        ) : item.isArchived ? (
+          <RowAction
+            label="Move to inbox"
+            onClick={() => act(setArchived.mutateAsync({ conversationId: item.id, archived: false }), 'Moved to inbox')}
+          >
+            <InboxIcon size={16} />
+          </RowAction>
+        ) : (
+          <RowAction
+            label="Archive"
+            onClick={() => act(setArchived.mutateAsync({ conversationId: item.id, archived: true }), 'Archived')}
+          >
+            <ArchiveIcon size={16} />
+          </RowAction>
+        )}
+        {!item.isTrashed ? (
+          <RowAction
+            label="Trash"
+            onClick={() => act(setTrashed.mutateAsync({ conversationId: item.id, trashed: true }), 'Moved to Trash')}
+          >
+            <Trash2Icon size={16} />
+          </RowAction>
+        ) : null}
         <RowAction
           label={unread ? 'Mark read' : 'Mark unread'}
           onClick={() => act(setRead.mutateAsync({ conversationId: item.id, read: unread }), unread ? 'Marked read' : 'Marked unread')}
@@ -916,8 +949,11 @@ function LabelMenu({
   onChanged: () => void | Promise<void>
 }) {
   const [open, setOpen] = useState(false)
+  const [newName, setNewName] = useState('')
   const labels = trpc.mail.thread.labels.useQuery({ conversationId }, { enabled: open })
   const setLabels = trpc.mail.thread.setLabels.useMutation()
+  const createLabel = trpc.mail.thread.createLabel.useMutation()
+  const utils = trpc.useUtils()
   const current = new Set(currentNames)
 
   const toggle = (label: { id: string; name: string }) => {
@@ -932,6 +968,21 @@ function LabelMenu({
         await onChanged()
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not update labels'))
+  }
+
+  const create = () => {
+    const name = newName.trim()
+    if (!name) return
+    createLabel
+      .mutateAsync({ conversationId, name })
+      .then(async (r) => {
+        setNewName('')
+        toast.success(`Created and applied “${r.label.name}”`)
+        await utils.mail.thread.labels.invalidate({ conversationId })
+        void utils.mail.labels.invalidate()
+        await onChanged()
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not create the label'))
   }
 
   return (
@@ -955,7 +1006,7 @@ function LabelMenu({
               <p className="px-3 py-2 text-sm text-neutral-400">Loading…</p>
             ) : (labels.data?.length ?? 0) === 0 ? (
               <p className="px-3 py-2 text-sm text-neutral-400">
-                No labels yet — create them in Gmail.
+                No labels yet — create one below.
               </p>
             ) : (
               (labels.data ?? []).map((l) => {
@@ -979,6 +1030,31 @@ function LabelMenu({
                 )
               })
             )}
+            {/* Gmail's "Create new" — makes the label on the LIVE mailbox and
+                applies it to this thread in one step. */}
+            <div className="mt-1 flex items-center gap-1.5 border-t border-neutral-100 px-3 py-2">
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    create()
+                  }
+                }}
+                placeholder="Create new label…"
+                className="min-w-0 flex-1 rounded border border-neutral-200 px-2 py-1 text-sm outline-none focus:border-gmail-600"
+              />
+              <button
+                type="button"
+                disabled={createLabel.isPending || newName.trim() === ''}
+                onClick={create}
+                className="shrink-0 rounded bg-gmail-600 px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
           </div>
         </>
       ) : null}
@@ -1061,6 +1137,7 @@ function ConversationView({
   const setArchived = trpc.mail.thread.setArchived.useMutation()
   const setStarred = trpc.mail.thread.setStarred.useMutation()
   const setTrashed = trpc.mail.thread.setTrashed.useMutation()
+  const setLabels = trpc.mail.thread.setLabels.useMutation()
   const reply = trpc.mail.thread.reply.useMutation()
   const forward = trpc.mail.thread.forward.useMutation()
   const [body, setBody] = useState('')
@@ -1171,14 +1248,68 @@ function ConversationView({
         </RowAction>
         {isEmail ? (
           <>
-            <RowAction label="Archive" onClick={() => act('Archived', setArchived.mutateAsync({ conversationId, archived: true }), true)}>
-              <ArchiveIcon size={17} />
+            {head.isTrashed ? (
+              <RowAction
+                label="Restore from Trash"
+                onClick={() => act('Restored', setTrashed.mutateAsync({ conversationId, trashed: false }), true)}
+              >
+                <InboxIcon size={17} />
+              </RowAction>
+            ) : head.status === 'archived' ? (
+              <RowAction
+                label="Move to inbox"
+                onClick={() => act('Moved to inbox', setArchived.mutateAsync({ conversationId, archived: false }), true)}
+              >
+                <InboxIcon size={17} />
+              </RowAction>
+            ) : (
+              <RowAction label="Archive" onClick={() => act('Archived', setArchived.mutateAsync({ conversationId, archived: true }), true)}>
+                <ArchiveIcon size={17} />
+              </RowAction>
+            )}
+            {/* Report spam / Not spam — SPAM±INBOX, exactly what Gmail does. */}
+            <RowAction
+              label={head.isSpam ? 'Not spam' : 'Report spam'}
+              onClick={() =>
+                act(
+                  head.isSpam ? 'Marked not spam' : 'Reported spam',
+                  setLabels.mutateAsync(
+                    head.isSpam
+                      ? { conversationId, add: ['INBOX'], remove: ['SPAM'] }
+                      : { conversationId, add: ['SPAM'], remove: ['INBOX'] },
+                  ),
+                  true,
+                )
+              }
+            >
+              <AlertOctagonIcon size={17} />
             </RowAction>
-            <RowAction label="Trash" onClick={() => act('Moved to Trash', setTrashed.mutateAsync({ conversationId, trashed: true }), true)}>
-              <Trash2Icon size={17} />
-            </RowAction>
+            {!head.isTrashed ? (
+              <RowAction label="Trash" onClick={() => act('Moved to Trash', setTrashed.mutateAsync({ conversationId, trashed: true }), true)}>
+                <Trash2Icon size={17} />
+              </RowAction>
+            ) : null}
             <RowAction label="Mark unread" onClick={() => act('Marked unread', setRead.mutateAsync({ conversationId, read: false }), true)}>
               <MailIcon size={17} />
+            </RowAction>
+            {/* Gmail's importance toggle. */}
+            <RowAction
+              label={head.isImportant ? 'Mark not important' : 'Mark important'}
+              onClick={() =>
+                act(
+                  head.isImportant ? 'Marked not important' : 'Marked important',
+                  setLabels.mutateAsync(
+                    head.isImportant
+                      ? { conversationId, remove: ['IMPORTANT'] }
+                      : { conversationId, add: ['IMPORTANT'] },
+                  ),
+                )
+              }
+            >
+              <ChevronsRightIcon
+                size={17}
+                className={head.isImportant ? 'fill-secondary-400 text-secondary-500' : undefined}
+              />
             </RowAction>
             <LabelMenu
               conversationId={conversationId}
