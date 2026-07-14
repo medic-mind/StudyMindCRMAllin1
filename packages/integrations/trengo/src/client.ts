@@ -261,10 +261,20 @@ export async function createClientForAgent(
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     const text = await res.text()
-    const parsed = text ? (JSON.parse(text) as unknown) : null
+    // Parse AFTER the ok-check decision: a 429/5xx often carries an HTML
+    // body, and JSON.parse throwing first would surface as a SyntaxError
+    // instead of a typed TrengoApiError (breaking every caller's status
+    // handling). Non-JSON bodies on errors are preserved as raw text.
     if (!res.ok) {
-      throw new TrengoApiError(res.status, path, parsed)
+      let errBody: unknown = null
+      try {
+        errBody = text ? (JSON.parse(text) as unknown) : null
+      } catch {
+        errBody = text
+      }
+      throw new TrengoApiError(res.status, path, errBody)
     }
+    const parsed = text ? (JSON.parse(text) as unknown) : null
     return parsed as T
   }
 

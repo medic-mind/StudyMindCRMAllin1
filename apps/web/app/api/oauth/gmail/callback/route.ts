@@ -249,7 +249,9 @@ async function runCallback(
         watchExpiresAt: true,
       },
     })
-    if (mailboxRow) await ensureMailAccountBridge(mailboxRow)
+    // allowUndelete: reconnecting IS the explicit human action that revives a
+    // previously disconnected account.
+    if (mailboxRow) await ensureMailAccountBridge(mailboxRow, { allowUndelete: true })
   } catch {
     // swallowed — the gmail/sync cron's ensure-bridges step converges this
   }

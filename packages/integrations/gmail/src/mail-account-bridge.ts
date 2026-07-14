@@ -28,13 +28,20 @@ interface BridgeableMailbox {
 
 /**
  * Ensure a personal `MailAccount` row bridges the given GmailMailbox.
- * Idempotent: an existing bridge is left alone (bar undeleting), an existing
- * account with the same address is linked, otherwise a new row is created.
- * Returns the MailAccount id.
+ * Idempotent: an existing bridge is left alone, an existing account with the
+ * same address is linked, otherwise a new row is created. Returns the
+ * MailAccount id.
+ *
+ * A soft-DELETED account is only revived when `allowUndelete` is set — that
+ * is the explicit OAuth reconnect flow. The recurring sync sweep never sets
+ * it, so an admin's audited "disconnect" in Settings → Email accounts is
+ * respected instead of silently reverted every tick (§3).
  */
 export async function ensureMailAccountBridge(
   mailbox: BridgeableMailbox,
+  opts: { allowUndelete?: boolean } = {},
 ): Promise<string> {
+  const allowUndelete = opts.allowUndelete ?? false
   const address = mailbox.address.trim().toLowerCase()
 
   const byBridge = await db.mailAccount.findUnique({
@@ -42,7 +49,7 @@ export async function ensureMailAccountBridge(
     select: { id: true, deletedAt: true },
   })
   if (byBridge) {
-    if (byBridge.deletedAt) {
+    if (byBridge.deletedAt && allowUndelete) {
       await db.mailAccount.update({
         where: { id: byBridge.id },
         data: { deletedAt: null, status: 'connected' },
@@ -53,16 +60,24 @@ export async function ensureMailAccountBridge(
 
   const byAddress = await db.mailAccount.findUnique({
     where: { address },
-    select: { id: true },
+    select: { id: true, deletedAt: true, provider: true },
   })
   if (byAddress) {
+    if (byAddress.deletedAt && !allowUndelete) {
+      // Disconnected on purpose — link nothing, revive nothing.
+      return byAddress.id
+    }
+    if (byAddress.provider !== 'gmail') {
+      // An account with this address exists on another provider — never
+      // silently repoint it at Gmail (§3). Leave it for a human.
+      return byAddress.id
+    }
     await db.mailAccount.update({
       where: { id: byAddress.id },
       data: {
         gmailMailboxId: mailbox.id,
-        provider: 'gmail',
         status: 'connected',
-        deletedAt: null,
+        ...(allowUndelete ? { deletedAt: null } : {}),
       },
     })
     return byAddress.id
@@ -88,7 +103,9 @@ export async function ensureMailAccountBridge(
 }
 
 /** Bridge every live GmailMailbox that lacks a MailAccount. Returns how many
- *  bridges were created/repaired. Used by the recurring sync sweep. */
+ *  bridges were created. Used by the recurring sync sweep — deliberately
+ *  never revives a soft-deleted account (that would revert an admin's
+ *  audited disconnect). */
 export async function ensureAllMailAccountBridges(): Promise<number> {
   const mailboxes = await db.gmailMailbox.findMany({
     where: { deletedAt: null },
@@ -98,12 +115,12 @@ export async function ensureAllMailAccountBridges(): Promise<number> {
       address: true,
       isDefault: true,
       watchExpiresAt: true,
-      mailAccount: { select: { id: true, deletedAt: true } },
+      mailAccount: { select: { id: true } },
     },
   })
   let bridged = 0
   for (const mb of mailboxes) {
-    if (mb.mailAccount && !mb.mailAccount.deletedAt) continue
+    if (mb.mailAccount) continue
     await ensureMailAccountBridge(mb)
     bridged += 1
   }

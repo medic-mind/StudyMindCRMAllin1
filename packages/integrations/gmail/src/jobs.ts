@@ -40,10 +40,28 @@ import { handleGoogleVoiceMessage } from './google-voice-handler'
 import { putAttachment } from './s3'
 import { deriveThreadFlags, DELETED_THREAD_FLAGS } from './thread-flags'
 
-/** Window for the catch-up backfill fired when a history cursor expires —
- *  Gmail retains history for roughly a week, so 7 days covers the largest
- *  possible gap between the dead cursor and the fresh anchor. */
-const GAP_BACKFILL_DAYS = 7
+/** Floor/ceiling for the catch-up backfill fired when a history cursor
+ *  expires or bootstraps. Gmail retains ~a week of history, but the CURSOR
+ *  may have been dead far longer than that — the window must cover the whole
+ *  stall, not the retention period. */
+const GAP_BACKFILL_MIN_DAYS = 7
+const GAP_BACKFILL_MAX_DAYS = 90
+
+/** How many days of mail to re-import after a cursor expiry/bootstrap: since
+ *  the mailbox row was last touched (every successful sync advances
+ *  `historyId`, bumping `updatedAt`, so this approximates the stall length),
+ *  plus slack, clamped to [7, 90]. */
+async function gapBackfillWindowDays(address: string): Promise<number> {
+  const mb = await db.gmailMailbox.findUnique({
+    where: { address },
+    select: { updatedAt: true },
+  })
+  if (!mb) return GAP_BACKFILL_MIN_DAYS
+  const stalledDays = Math.ceil(
+    (Date.now() - mb.updatedAt.getTime()) / (24 * 60 * 60 * 1000),
+  )
+  return Math.min(GAP_BACKFILL_MAX_DAYS, Math.max(GAP_BACKFILL_MIN_DAYS, stalledDays + 2))
+}
 
 interface HistoryChangedData {
   eventId: string
@@ -87,84 +105,100 @@ async function syncMailboxHistory(
   const { mailbox, startHistoryId, requestId, keyPrefix } = input
   const address = mailbox.address
 
-  let result
-  try {
-    result = await step.run(`${keyPrefix}list-history`, async () => {
+  // IMPORTANT: expected failures (expired cursor, revoked token) are detected
+  // INSIDE the step and returned as a sentinel. A thrown error crosses the
+  // Inngest step boundary as a serialised StepError that keeps only
+  // name/message/stack — a Gmail 404's `status` field is lost, so
+  // `isNotFoundError` can never match outside the step and the recovery path
+  // would be dead code. (invalid_grant survives only via its message text —
+  // the sentinel makes both robust.)
+  const listed = await step.run(`${keyPrefix}list-history`, async () => {
+    const client = await createClientForAgent({
+      agentId: mailbox.agentId,
+      address,
+      purpose: 'gmail.sync',
+      requestId,
+    })
+    try {
+      return { ok: true as const, result: await client.listHistorySince(startHistoryId) }
+    } catch (err) {
+      if (isInvalidGrantError(err)) return { ok: false as const, reason: 'invalid_grant' as const }
+      if (isNotFoundError(err)) return { ok: false as const, reason: 'expired_cursor' as const }
+      throw err
+    }
+  })
+
+  if (!listed.ok && listed.reason === 'invalid_grant') {
+    logger.warn(
+      { agentId: mailbox.agentId, requestId },
+      'gmail refresh token rejected (invalid_grant) — marking needs_reconnect',
+    )
+    await step.run(`${keyPrefix}mark-needs-reconnect`, async () =>
+      markNeedsReconnect(mailbox.agentId),
+    )
+    await step.run(`${keyPrefix}audit-needs-reconnect`, async () =>
+      writeAuditLogEntry(db, {
+        actorId: null,
+        action: 'gmail.oauth_needs_reconnect',
+        target: { type: 'User', id: mailbox.agentId },
+        requestId,
+      }),
+    )
+    return { status: 'needs_reconnect', processed: 0, flagsMirrored: 0 }
+  }
+
+  if (!listed.ok) {
+    // The stored cursor is OLDER than Gmail's retained history window
+    // (~a week) — Gmail 404s it forever. Without recovery this mailbox
+    // stalls permanently: every tick replays the same expired cursor and
+    // new mail never lands ("Gmail looks completely different to the CRM").
+    // Re-anchor at the profile's CURRENT historyId so incremental sync
+    // resumes, and fire an idempotent backfill sized to the ACTUAL stall
+    // (how long since this mailbox last successfully synced) so the gap's
+    // mail is imported too.
+    logger.warn(
+      { address, startHistoryId, requestId },
+      'gmail history cursor expired (404) — re-anchoring and backfilling the gap',
+    )
+    const reanchor = await step.run(`${keyPrefix}reanchor-history`, async () => {
+      // Read the stall length BEFORE writing the new cursor — the update
+      // bumps `updatedAt`, which is what the window derives from.
+      const windowDays = await gapBackfillWindowDays(address)
       const client = await createClientForAgent({
         agentId: mailbox.agentId,
         address,
         purpose: 'gmail.sync',
         requestId,
       })
-      return client.listHistorySince(startHistoryId)
-    })
-  } catch (err) {
-    if (isInvalidGrantError(err)) {
-      logger.warn(
-        { agentId: mailbox.agentId, requestId },
-        'gmail refresh token rejected (invalid_grant) — marking needs_reconnect',
-      )
-      await step.run(`${keyPrefix}mark-needs-reconnect`, async () =>
-        markNeedsReconnect(mailbox.agentId),
-      )
-      await step.run(`${keyPrefix}audit-needs-reconnect`, async () =>
-        writeAuditLogEntry(db, {
-          actorId: null,
-          action: 'gmail.oauth_needs_reconnect',
-          target: { type: 'User', id: mailbox.agentId },
-          requestId,
-        }),
-      )
-      return { status: 'needs_reconnect', processed: 0, flagsMirrored: 0 }
-    }
-    if (isNotFoundError(err)) {
-      // The stored cursor is OLDER than Gmail's retained history window
-      // (~a week) — Gmail 404s it forever. Without recovery this mailbox
-      // stalls permanently: every tick replays the same expired cursor and
-      // new mail never lands ("Gmail looks completely different to the CRM").
-      // Re-anchor at the profile's CURRENT historyId so incremental sync
-      // resumes, and fire a short idempotent backfill to import whatever
-      // arrived inside the gap.
-      logger.warn(
-        { address, startHistoryId, requestId },
-        'gmail history cursor expired (404) — re-anchoring and backfilling the gap',
-      )
-      await step.run(`${keyPrefix}reanchor-history`, async () => {
-        const client = await createClientForAgent({
-          agentId: mailbox.agentId,
-          address,
-          purpose: 'gmail.sync',
-          requestId,
+      const current = await client.getCurrentHistoryId()
+      if (current) {
+        await db.gmailMailbox.update({
+          where: { address },
+          data: { historyId: current },
         })
-        const current = await client.getCurrentHistoryId()
-        if (current) {
-          await db.gmailMailbox.update({
-            where: { address },
-            data: { historyId: current },
-          })
+      }
+      return { current, windowDays }
+    })
+    await step.run(`${keyPrefix}backfill-gap`, async () => {
+      try {
+        const res = await startBackfill(db, inngest, {
+          provider: 'gmail',
+          agentId: mailbox.agentId,
+          windowDays: reanchor.windowDays,
+          ctx: { actorId: null, requestId },
+        })
+        return res.jobId
+      } catch (backfillErr) {
+        if (backfillErr instanceof BackfillAlreadyRunningError) {
+          return backfillErr.existingJobId
         }
-        return current
-      })
-      await step.run(`${keyPrefix}backfill-gap`, async () => {
-        try {
-          const res = await startBackfill(db, inngest, {
-            provider: 'gmail',
-            agentId: mailbox.agentId,
-            windowDays: GAP_BACKFILL_DAYS,
-            ctx: { actorId: null, requestId },
-          })
-          return res.jobId
-        } catch (backfillErr) {
-          if (backfillErr instanceof BackfillAlreadyRunningError) {
-            return backfillErr.existingJobId
-          }
-          throw backfillErr
-        }
-      })
-      return { status: 'reanchored', processed: 0, flagsMirrored: 0 }
-    }
-    throw err
+        throw backfillErr
+      }
+    })
+    return { status: 'reanchored', processed: 0, flagsMirrored: 0 }
   }
+
+  const result = listed.result
 
   // Fetch the account's label id→name map once so new messages can carry their
   // custom Gmail labels onto the head (drives the label chips + folder state).
@@ -904,8 +938,10 @@ async function runFullGmailSync(
       let cursor = mb.historyId
       if (cursor === null) {
         // Bootstrap: anchor at the profile's current historyId, then fire the
-        // standard idempotent backfill so existing mail lands too.
-        cursor = await step.run(`${mb.id}:bootstrap-history`, async () => {
+        // standard idempotent backfill so existing mail lands too. The stall
+        // window is read BEFORE the cursor write (which bumps updatedAt).
+        const bootstrap = await step.run(`${mb.id}:bootstrap-history`, async () => {
+          const windowDays = await gapBackfillWindowDays(mb.address)
           const client = await createClientForAgent({
             agentId: mb.agentId,
             address: mb.address,
@@ -919,15 +955,16 @@ async function runFullGmailSync(
               data: { historyId: current },
             })
           }
-          return current
+          return { current, windowDays }
         })
+        cursor = bootstrap.current
         if (cursor === null) continue
         await step.run(`${mb.id}:bootstrap-backfill`, async () => {
           try {
             const res = await startBackfill(db, inngest, {
               provider: 'gmail',
               agentId: mb.agentId,
-              windowDays: GAP_BACKFILL_DAYS,
+              windowDays: bootstrap.windowDays,
               ctx: { actorId: null, requestId },
             })
             return res.jobId

@@ -656,6 +656,28 @@ async function upsertTrengoInteraction(
       : null
   ) as TrengoChannel | null
 
+  // Sender attribution for OUTBOUND messages sent from Trengo's own UI: the
+  // event carries the sending agent's Trengo user id — resolve their name
+  // via the TrengoUser mirror so the thread bubble names the agent, exactly
+  // as Trengo's own view does. (CRM-sent messages are echo-skipped upstream
+  // and already carry their author.) Best-effort: an unsynced mirror just
+  // leaves the name blank until the next team sync enriches it.
+  let outboundSenderName: string | null = null
+  let outboundTrengoUserId: number | null = null
+  if (input.eventName === 'message.outbound') {
+    outboundTrengoUserId =
+      coerceTrengoId(input.envelope.data['user_id']) ??
+      coerceTrengoId(input.envelope.data['agent_id']) ??
+      coerceTrengoId(input.envelope.data['sent_by'])
+    if (outboundTrengoUserId !== null) {
+      const mirror = await db.trengoUser.findUnique({
+        where: { trengoUserId: outboundTrengoUserId },
+        select: { name: true },
+      })
+      outboundSenderName = mirror?.name ?? null
+    }
+  }
+
   const created = await db.interaction.create({
     data: {
       id: createId(),
@@ -673,10 +695,15 @@ async function upsertTrengoInteraction(
         channel,
         body: input.envelope.data.body ?? null,
         // Inbound rows carry the customer's Trengo display name so the
-        // thread shows WHO said it even before a Contact is matched.
+        // thread shows WHO said it even before a Contact is matched;
+        // outbound rows carry the sending Trengo agent's name.
         ...(input.eventName === 'message.inbound' &&
         input.envelope.data.contact?.name
           ? { senderName: input.envelope.data.contact.name }
+          : {}),
+        ...(outboundSenderName ? { senderName: outboundSenderName } : {}),
+        ...(outboundTrengoUserId !== null
+          ? { trengoUserId: outboundTrengoUserId }
           : {}),
         ...(leadCreated ? { leadId } : {}),
       },

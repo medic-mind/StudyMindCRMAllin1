@@ -35,6 +35,7 @@ function ticket(over: Partial<NormalisedTicket> = {}): NormalisedTicket {
     status: 'open',
     statusKnown: true,
     assigneeId: null,
+    assigneeKnown: true,
     subject: null,
     labels: [],
     labelsKnown: true,
@@ -163,6 +164,14 @@ describe('planReconcile — assignee', () => {
 
   it('does not clear when neither side has an assignee', () => {
     const plan = planReconcile(head({ trengoAssigneeId: null }), ticket({ assigneeId: null }))
+    expect(plan.clearAssignee).toBe(false)
+  })
+
+  it('does NOT clear when the payload carried no assignee key at all (fail closed, §8)', () => {
+    const plan = planReconcile(
+      head({ trengoAssigneeId: 7 }),
+      ticket({ assigneeId: null, assigneeKnown: false }),
+    )
     expect(plan.clearAssignee).toBe(false)
   })
 })

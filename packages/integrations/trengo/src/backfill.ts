@@ -238,6 +238,11 @@ export interface NormalisedTicket {
   /** Trengo user id the ticket is assigned to, however the listing spells it
    *  (assignee/agent/user object or *_id field). Null when unassigned. */
   assigneeId: number | null
+  /** True only when the payload actually carried an assignee-shaped key.
+   *  "unassigned" and "this response shape doesn't include assignment" must
+   *  never be conflated — clearing an assignee on the latter would wipe every
+   *  assignment on every sweep (§8, fail closed). */
+  assigneeKnown: boolean
   subject: string | null
   labels: string[]
   /** Whether the listing row carried a labels/tags key at all. When it did
@@ -306,6 +311,14 @@ export function extractTicketAssigneeId(t: Record<string, unknown>): number | nu
   return null
 }
 
+/** Whether the payload carries ANY assignee-shaped key (even null-valued).
+ *  Only then does `assigneeId: null` genuinely mean "unassigned". */
+export function ticketAssigneeKnown(t: Record<string, unknown>): boolean {
+  return ['assignee_id', 'agent_id', 'user_id', 'assignee', 'agent', 'user'].some(
+    (k) => k in t,
+  )
+}
+
 /** Fold a raw ticket row to the fields the import needs. Null on rows with
  *  no usable numeric id. */
 /** Raw Trengo statuses we positively recognise as "the ticket is open".
@@ -353,6 +366,7 @@ export function normaliseTicketRow(raw: unknown): NormalisedTicket | null {
     status,
     statusKnown,
     assigneeId: extractTicketAssigneeId(t as Record<string, unknown>),
+    assigneeKnown: ticketAssigneeKnown(t as Record<string, unknown>),
     subject: typeof t.subject === 'string' && t.subject.trim() !== '' ? t.subject : null,
     labels: extractTicketLabels(t.labels ?? t.tags),
     labelsKnown: 'labels' in t || 'tags' in t,
@@ -766,6 +780,35 @@ export async function processTicket(
   let processed = 0
   let matched = 0
   let skipped = 0
+
+  // ONE ticket-scoped query builds the dedupe map for the whole message loop
+  // (a per-message JSONB lookup would be an unindexed seq-scan × N, run on a
+  // 10-minute loop by the reconcile refresh). Covers BOTH id spellings: the
+  // import writes `trengoMessageId`, the live webhook writes `messageId` —
+  // matching only one duplicated every webhook-captured message on re-import.
+  const existingByMessageId = new Map<
+    string,
+    { id: string; payload: Record<string, unknown> }
+  >()
+  const existingRows = await db.interaction.findMany({
+    where: {
+      type: 'message',
+      OR: [
+        { payload: { path: ['ticketId'], equals: ticket.id } },
+        { payload: { path: ['ticketId'], equals: String(ticket.id) } },
+      ],
+    },
+    select: { id: true, payload: true },
+  })
+  for (const row of existingRows) {
+    const p = (row.payload ?? {}) as Record<string, unknown>
+    for (const key of ['trengoMessageId', 'messageId'] as const) {
+      const v = p[key]
+      if (typeof v === 'number' || typeof v === 'string') {
+        existingByMessageId.set(String(v), { id: row.id, payload: p })
+      }
+    }
+  }
   // Every message (newly written or already present) is collected so the
   // conversation-head replay below converges on re-runs too.
   const headEvents: Array<{
@@ -806,27 +849,12 @@ export async function processTicket(
           : null
         : (ticket.contact.name ?? null)
 
-    // Dedupe against BOTH key spellings: imports write `trengoMessageId`, the
-    // live webhook writes `messageId` (numeric or string). Matching only the
-    // import key duplicated every webhook-captured message when a ticket was
-    // re-imported — fatal now that the reconcile sweep refreshes active
-    // tickets routinely.
-    const existing = await db.interaction.findFirst({
-      where: {
-        OR: [
-          { payload: { path: ['trengoMessageId'], equals: messageId } },
-          { payload: { path: ['trengoMessageId'], equals: String(messageId) } },
-          { payload: { path: ['messageId'], equals: messageId } },
-          { payload: { path: ['messageId'], equals: String(messageId) } },
-        ],
-      },
-      select: { id: true, payload: true },
-    })
+    const existing = existingByMessageId.get(String(messageId))
     if (existing) {
       matched += 1
       // A re-run enriches rows imported before sender attribution existed —
       // fills the blank, never overwrites (§3).
-      const p = (existing.payload ?? {}) as Record<string, unknown>
+      const p = existing.payload
       if (senderName && typeof p['senderName'] !== 'string') {
         await db.interaction.update({
           where: { id: existing.id },
@@ -841,7 +869,17 @@ export async function processTicket(
         : typeof m['conversation_id'] === 'number'
           ? m['conversation_id']
           : ticket.id
-    await db.interaction.create({
+    const createdPayload = {
+      backfill: true,
+      interactionType: direction,
+      trengoMessageId: messageId,
+      ticketId: ticketIdOnMessage,
+      channel: normaliseTicketChannel(m['channel']) ?? ticket.channel,
+      body,
+      senderName,
+      trengoUserId,
+    }
+    const createdRow = await db.interaction.create({
       data: {
         id: createId(),
         type: 'message',
@@ -849,18 +887,30 @@ export async function processTicket(
         familyId,
         occurredAt,
         summary: (body ?? '').slice(0, 280),
-        payload: {
-          backfill: true,
-          interactionType: direction,
-          trengoMessageId: messageId,
-          ticketId: ticketIdOnMessage,
-          channel: normaliseTicketChannel(m['channel']) ?? ticket.channel,
-          body,
-          senderName,
-          trengoUserId,
-        },
+        payload: createdPayload,
       },
+      select: { id: true },
     })
+    existingByMessageId.set(String(messageId), {
+      id: createdRow.id,
+      payload: createdPayload,
+    })
+    // Attachment parity with the live webhook (which fans out the S3
+    // download worker): without this, every message that arrives via
+    // backfill or the reconcile discovery/refresh sweep lost its media —
+    // text-only bubbles for conversations the webhook never announced.
+    const rawAttachments = m['attachments']
+    if (Array.isArray(rawAttachments) && rawAttachments.length > 0) {
+      try {
+        await inngest.send({
+          name: 'trengo/download-attachments.requested',
+          data: { interactionId: createdRow.id, attachments: rawAttachments },
+        })
+      } catch {
+        // Best-effort — a re-import re-enqueues (worker is idempotent per
+        // (interactionId, attachmentId)).
+      }
+    }
     matched += 1
   }
 

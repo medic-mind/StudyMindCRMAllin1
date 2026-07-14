@@ -168,6 +168,13 @@ describe('normaliseTicketRow', () => {
     expect(normaliseTicketRow({ id: 1 })?.activityAt).toBeNull()
   })
 
+  it('distinguishes "unassigned" from "no assignee key in the payload"', () => {
+    expect(normaliseTicketRow({ id: 1, assignee_id: null })?.assigneeKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1, assignee: null })?.assigneeKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1, user_id: 7 })?.assigneeKnown).toBe(true)
+    expect(normaliseTicketRow({ id: 1 })?.assigneeKnown).toBe(false)
+  })
+
   it('marks recognised statuses known; missing/novel ones unknown (fail closed, §8)', () => {
     expect(normaliseTicketRow({ id: 1, status: 'CLOSED' })?.statusKnown).toBe(true)
     expect(normaliseTicketRow({ id: 1, status: 'OPEN' })?.statusKnown).toBe(true)
@@ -194,6 +201,7 @@ describe('normaliseTicketRow', () => {
       status: 'open',
       statusKnown: false,
       assigneeId: null,
+      assigneeKnown: false,
       subject: 'Re: trial lesson',
       labels: ['GCSE', 'Billing'],
       labelsKnown: true,

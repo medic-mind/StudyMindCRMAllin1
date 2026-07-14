@@ -137,7 +137,11 @@ export function planReconcile(
 
   const applyAssignee =
     ticket.assigneeId !== null && ticket.assigneeId !== head.trengoAssigneeId
-  const clearAssignee = ticket.assigneeId === null && head.trengoAssigneeId !== null
+  // Clearing requires POSITIVE knowledge that the ticket is unassigned — a
+  // payload that simply lacks any assignee key must never wipe assignments
+  // (§8, fail closed; mirrors labelsKnown / statusKnown).
+  const clearAssignee =
+    ticket.assigneeKnown && ticket.assigneeId === null && head.trengoAssigneeId !== null
 
   const tags =
     ticket.labelsKnown && !sameTagSet(head.tags, ticket.labels)
@@ -237,6 +241,19 @@ const REFRESH_KNOWN_CAP = 30
 /** Tolerance when comparing Trengo's activity clock to our head clock, so
  *  sub-second formatting differences never cause a refresh loop. */
 const ACTIVITY_SLACK_MS = 60 * 1000
+/** Only refresh a known ticket whose Trengo-side activity is RECENT. Trengo's
+ *  `updated_at` moves on non-message activity (a close, a label) that never
+ *  advances our `lastMessageAt`, so a purely time-vs-time comparison flags
+ *  such tickets stale forever. Bounding refreshes to recent activity keeps
+ *  the self-heal (a dropped message webhook bumps updated_at, so the ticket
+ *  is refreshed within this window) while guaranteeing redundant refreshes
+ *  stop once the activity ages out. */
+const REFRESH_ACTIVITY_WINDOW_MS = 48 * 60 * 60 * 1000
+/** Pause between per-ticket imports inside a sweep so a discovery burst never
+ *  slams Trengo's 120 req/min limit alongside the per-head convergence. */
+const IMPORT_PACING_MS = 300
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export async function discoverNewTickets(
   input: DiscoverInput,
@@ -277,15 +294,17 @@ export async function discoverNewTickets(
         const headLastMessageAt = knownById.get(ticket.id)
         // A KNOWN ticket whose Trengo-side activity is newer than our head has
         // messages we never received (dropped webhook). Re-import it — the
-        // importer dedupes per message, so this converges instead of
-        // duplicating. Without this, only brand-NEW tickets self-healed and a
-        // reply on an existing conversation stayed invisible until someone
-        // ran a manual import.
+        // importer + head merger are replay-idempotent, so this converges
+        // instead of duplicating or inflating unread counts. Bounded to
+        // RECENT activity (see REFRESH_ACTIVITY_WINDOW_MS) so a ticket whose
+        // updated_at moved for non-message reasons is retried only while the
+        // activity is fresh, not forever.
         const isStaleKnown =
           headLastMessageAt !== undefined &&
           ticket.activityAt !== null &&
           ticket.activityAt.getTime() >
             headLastMessageAt.getTime() + ACTIVITY_SLACK_MS &&
+          Date.now() - ticket.activityAt.getTime() < REFRESH_ACTIVITY_WINDOW_MS &&
           refreshed < REFRESH_KNOWN_CAP
         if (headLastMessageAt !== undefined && !isStaleKnown) continue
         try {
@@ -306,6 +325,7 @@ export async function discoverNewTickets(
           // (still missing / still stale, so it is re-discovered).
           failed += 1
         }
+        await pause(IMPORT_PACING_MS)
       }
     }
     if (!listing.hasNext) break
@@ -359,6 +379,24 @@ export const trengoReconcileStatus = inngest.createFunction(
       logger.warn({ err }, 'reconcile could not build a Trengo client — skipping tick')
       return { skipped: true, reason: 'client_unavailable' }
     }
+
+    // Keep the TrengoUser / TrengoChannel mirrors fresh — new agents and
+    // renamed inboxes previously only appeared after a manual team sync or a
+    // full import, leaving the assignee picker + channel rail stale.
+    // Best-effort (2 API calls); the sweep proceeds regardless.
+    await step.run('refresh-mirrors', async () => {
+      try {
+        const [{ syncTrengoTeam }, { syncTrengoChannels }] = await Promise.all([
+          import('./team'),
+          import('./channels'),
+        ])
+        await syncTrengoTeam(db, agentId, runId)
+        await syncTrengoChannels(db, agentId, runId)
+        return { ok: true }
+      } catch {
+        return { ok: false }
+      }
+    })
 
     // Decide the listing endpoint once (cheap probe) so each per-ticket fetch
     // hits the right path without re-probing.
@@ -414,21 +452,36 @@ export const trengoReconcileStatus = inngest.createFunction(
 
     let converged = 0
     let deleted = 0
+    let errored = 0
     for (const head of heads) {
       const ticketId = head.trengoTicketId
       if (ticketId === null) continue
-      const result = await step.run(`reconcile-ticket-${ticketId}`, async () =>
-        reconcileOne({ client, endpoint, head: { ...head, trengoTicketId: ticketId }, runId }),
-      )
-      if (result.converged) converged += 1
-      if (result.deleted) deleted += 1
+      try {
+        const result = await step.run(`reconcile-ticket-${ticketId}`, async () =>
+          reconcileOne({ client, endpoint, head: { ...head, trengoTicketId: ticketId }, runId }),
+        )
+        if (result.converged) converged += 1
+        if (result.deleted) deleted += 1
+      } catch (err) {
+        // One failing ticket (429, transient 5xx, odd payload) must not fail
+        // the whole sweep AND must not wedge the round-robin on the same
+        // head next tick — stamp the cursor forward and move on.
+        errored += 1
+        logger.warn({ ticketId, err }, 'reconcile: ticket failed — advancing cursor')
+        await step.run(`stamp-failed-${ticketId}`, async () =>
+          db.conversation.updateMany({
+            where: { trengoTicketId: ticketId },
+            data: { lastSyncCheckAt: new Date() },
+          }),
+        )
+      }
     }
 
     logger.info(
-      { checked: heads.length, converged, deleted, discovered },
+      { checked: heads.length, converged, deleted, errored, discovered },
       'trengo reconcile-status tick complete',
     )
-    return { checked: heads.length, converged, deleted, discovered: discovered.imported }
+    return { checked: heads.length, converged, deleted, errored, discovered: discovered.imported }
   },
 )
 
@@ -518,19 +571,25 @@ export const trengoReconcileNow = inngest.createFunction(
     }
 
     let converged = 0
+    let errored = 0
     for (const head of heads) {
       const ticketId = head.trengoTicketId
       if (ticketId === null) continue
-      const result = await step.run(`sync-now-${ticketId}`, async () =>
-        reconcileOne({ client, endpoint, head: { ...head, trengoTicketId: ticketId }, runId }),
-      )
-      if (result.converged) converged += 1
+      try {
+        const result = await step.run(`sync-now-${ticketId}`, async () =>
+          reconcileOne({ client, endpoint, head: { ...head, trengoTicketId: ticketId }, runId }),
+        )
+        if (result.converged) converged += 1
+      } catch (err) {
+        errored += 1
+        logger.warn({ ticketId, err }, 'reconcile-now: ticket failed — skipping')
+      }
     }
     logger.info(
-      { checked: heads.length, converged, discovered },
+      { checked: heads.length, converged, errored, discovered },
       'trengo reconcile-now complete',
     )
-    return { checked: heads.length, converged, discovered: discovered.imported }
+    return { checked: heads.length, converged, errored, discovered: discovered.imported }
   },
 )
 

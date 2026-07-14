@@ -251,14 +251,18 @@ function mergeEvent(
 
   switch (input.eventName) {
     case 'message.inbound': {
-      if (!existing.lastInboundAt || occurredAt > existing.lastInboundAt) {
-        patch.lastInboundAt = occurredAt
-      }
+      const advancesInbound =
+        !existing.lastInboundAt || occurredAt > existing.lastInboundAt
+      if (advancesInbound) patch.lastInboundAt = occurredAt
       // Don't bump unread for a stale inbound that already pre-dates an
-      // outbound (the agent has answered).
+      // outbound (the agent has answered) — and only bump when the event
+      // actually ADVANCES lastInboundAt. A replayed message (backfill /
+      // reconcile refresh re-running the importer) carries a timestamp we
+      // have already seen; without this gate every replay re-incremented
+      // the unread badge without bound.
       const stale =
         existing.lastOutboundAt && occurredAt <= existing.lastOutboundAt
-      if (!stale) patch.unreadCount = existing.unreadCount + 1
+      if (!stale && advancesInbound) patch.unreadCount = existing.unreadCount + 1
       const channel: TrengoChannel | null =
         existing.channel && isTrengoChannel(existing.channel)
           ? (existing.channel as TrengoChannel)
