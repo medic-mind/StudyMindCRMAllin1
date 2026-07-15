@@ -1,9 +1,11 @@
-// Summer Camp router. Read-only feeds for the live, view-only "Summer Camps"
-// surface (roster + fill + weekly timetables) the sales team uses. CLAUDE.md
-// §27. All staff may read; nothing here mutates, so no audit context.
+// Summer Camp router. Live feeds for the "Summer Camps" surface (roster +
+// fill + weekly timetables) plus the bookings workspace: staff can edit a
+// booking's status/subject/notes, assign the student to camps, and add notes —
+// every write goes to the camp app first (it owns bookings), is audited here,
+// and converges via the webhook/reconcile pull. CLAUDE.md §27.
 
 import { createId } from '@paralleldrive/cuid2'
-import type { Prisma } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -14,7 +16,14 @@ import {
   remainingMinor,
   summariseInstalments,
 } from '@studymind/core/camp'
+import { filterBookings } from '@studymind/integration-summer-camp/bookings-filter'
 import { createClientFromConfig } from '@studymind/integration-summer-camp/client'
+import { BookingResource } from '@studymind/integration-summer-camp/types'
+import {
+  pushBookingFields,
+  pushCampAssignment,
+  pushNoteForBooking,
+} from '@studymind/integration-summer-camp/writeback'
 
 import {
   auditedProcedure,
@@ -41,6 +50,121 @@ function assertCanWriteInstalments(role: SessionUser['role']): void {
       code: 'FORBIDDEN',
       message: 'Only Manager or above can change camp instalment records',
     })
+  }
+}
+
+// Booking write-backs (edit status/subject/notes, assign camps) mutate the
+// live camp app — Sales Executive and above (§20: VA is read-only + notes).
+const BOOKING_WRITE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+])
+// Cancelling a real paid booking is money-adjacent — Manager and above.
+const BOOKING_CANCEL_ROLES: ReadonlySet<SessionUser['role']> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+])
+
+function assertCanWriteBookings(role: SessionUser['role']): void {
+  if (!BOOKING_WRITE_ROLES.has(role)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Only Sales Executive or above can change camp bookings',
+    })
+  }
+}
+
+/** Live-feed page walk shared by the bookings workspace. Bounded so a huge
+ *  season can't make one request unbounded (10 × 500 = 5k bookings). */
+const BOOKINGS_PAGE_SIZE = 500
+const BOOKINGS_MAX_PAGES = 10
+
+async function pullAllBookings(client: NonNullable<ReturnType<typeof createClientFromConfig>>) {
+  const bookings: BookingResource[] = []
+  let cursor: string | null = null
+  for (let page = 0; page < BOOKINGS_MAX_PAGES; page += 1) {
+    const res = await client.getBookings({ cursor, limit: BOOKINGS_PAGE_SIZE })
+    for (const raw of res.bookings) {
+      const parsed = BookingResource.safeParse(raw)
+      if (parsed.success) bookings.push(parsed.data)
+    }
+    if (!res.nextCursor) break
+    cursor = res.nextCursor
+  }
+  return bookings
+}
+
+/** CRM contacts linked to a set of camp bookings, keyed by external booking
+ *  id, via the `booking` Interactions the sync writes (payload.externalBookingId). */
+async function loadBookingContactLinks(
+  db: PrismaClient,
+  externalBookingIds: string[],
+): Promise<Map<string, { contactId: string; kind: string; name: string }[]>> {
+  const map = new Map<string, { contactId: string; kind: string; name: string }[]>()
+  if (externalBookingIds.length === 0) return map
+  const rows = await db.interaction.findMany({
+    where: {
+      type: 'booking',
+      payload: { path: ['kind'], equals: 'summer_camp.booking' },
+      contactId: { not: null },
+    },
+    select: {
+      contactId: true,
+      payload: true,
+      contact: { select: { kind: true, firstName: true, lastName: true } },
+    },
+    take: 20_000,
+  })
+  const wanted = new Set(externalBookingIds)
+  for (const row of rows) {
+    const payload = row.payload as { externalBookingId?: unknown } | null
+    const extId = payload?.externalBookingId
+    if (typeof extId !== 'string' || !wanted.has(extId) || !row.contactId) continue
+    const list = map.get(extId) ?? []
+    if (!list.some((l) => l.contactId === row.contactId)) {
+      list.push({
+        contactId: row.contactId,
+        kind: row.contact?.kind ?? 'unclassified',
+        name:
+          [row.contact?.firstName, row.contact?.lastName].filter(Boolean).join(' ') || 'Contact',
+      })
+    }
+    map.set(extId, list)
+  }
+  return map
+}
+
+/** Patch the mirrored booking Interactions immediately after a successful
+ *  write-back so the UI reflects the change before the next feed pull. */
+async function patchLocalBookingInteractions(
+  db: PrismaClient,
+  externalBookingId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const rows = await db.interaction.findMany({
+    where: { type: 'booking', payload: { path: ['externalBookingId'], equals: externalBookingId } },
+    select: { id: true, payload: true },
+  })
+  for (const row of rows) {
+    const payload = { ...(row.payload as Record<string, unknown>), ...patch }
+    await db.interaction.update({
+      where: { id: row.id },
+      data: { payload: payload as Prisma.InputJsonValue },
+    })
+  }
+}
+
+/** Ask the recurring sync to converge NOW (event-triggered variant of the
+ *  15-min cron) so a write-back round-trips within seconds. Best-effort. */
+async function requestSyncNow(): Promise<void> {
+  try {
+    const { inngest } = await import('@studymind/jobs')
+    await inngest.send({ name: 'summer-camp/sync-bookings.requested', data: {} })
+  } catch {
+    // The 15-min cron remains the safety net.
   }
 }
 
@@ -104,6 +228,254 @@ export const summerCampRouter = router({
       after: { initiatedBy: user.id },
     })
     return { jobId }
+  }),
+
+  // ---------------------------------------------------------------------------
+  // Bookings workspace. Reads pull the LIVE camp feed (the camp owns bookings —
+  // golden rule #4: external API is the source of truth, not our mirror);
+  // writes go to the camp app first and only then reflect locally + audit.
+  // ---------------------------------------------------------------------------
+  bookings: router({
+    /** Live bookings list with search + facet filters. */
+    list: protectedProcedure
+      .input(
+        z
+          .object({
+            search: z.string().trim().max(120).optional(),
+            status: z.enum(['pending', 'confirmed', 'cancelled', 'waitlist']).optional(),
+            campId: z.string().trim().min(1).optional(),
+            weekNumber: z.number().int().min(0).max(60).optional(),
+            unassigned: z.boolean().optional(),
+          })
+          .default({}),
+      )
+      .query(async ({ ctx, input }) => {
+        requireUser(ctx)
+        const client = createClientFromConfig()
+        if (!client) return { connected: false as const, items: [], total: 0 }
+        let all: BookingResource[]
+        try {
+          all = await pullAllBookings(client)
+        } catch (err) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: err instanceof Error ? err.message : 'summer camp bookings feed unavailable',
+          })
+        }
+        const filtered = filterBookings(all, {
+          search: input.search ?? null,
+          status: input.status ?? null,
+          campId: input.campId ?? null,
+          weekNumber: input.weekNumber ?? null,
+          unassigned: input.unassigned ?? false,
+        })
+        // Newest first, capped for the client.
+        filtered.sort((a, b) => {
+          const at = a.created_at ? new Date(a.created_at).getTime() : 0
+          const bt = b.created_at ? new Date(b.created_at).getTime() : 0
+          return bt - at
+        })
+        const page = filtered.slice(0, 400)
+        const links = await loadBookingContactLinks(
+          ctx.db,
+          page.map((b) => b.id),
+        )
+        return {
+          connected: true as const,
+          total: filtered.length,
+          items: page.map((b) => ({
+            id: b.id,
+            status: b.status ?? null,
+            bookingType: b.booking_type ?? null,
+            campId: b.camp_id ?? null,
+            campName: b.camp_name ?? null,
+            enrolledCampIds: b.enrolled_camp_ids ?? (b.camp_id ? [b.camp_id] : []),
+            subject: b.subject ?? null,
+            weekNumber: b.week_number ?? null,
+            weekLabel: b.week_label ?? null,
+            startDate: b.start_date ?? null,
+            endDate: b.end_date ?? null,
+            multipleWeeks: b.multiple_weeks ?? false,
+            withAccommodation: b.with_accommodation ?? false,
+            withTransfer: b.with_transfer ?? false,
+            totalMinor: b.payment?.total_minor ?? null,
+            paidMinor: b.payment?.paid_minor ?? null,
+            paymentType: b.payment?.type ?? null,
+            agentName: b.agent_name ?? null,
+            campNotes: b.notes ?? null,
+            studentName:
+              [b.student?.first_name, b.student?.last_name].filter(Boolean).join(' ') || null,
+            studentEmail: b.student?.email ?? null,
+            dietaryRequirements: b.student?.dietary_requirements ?? null,
+            emergencyContactName: b.student?.emergency_contact_name ?? null,
+            emergencyContactPhone: b.student?.emergency_contact_phone ?? null,
+            guardianName: b.guardian?.name ?? null,
+            guardianEmail: b.guardian?.email ?? null,
+            guardianPhone: b.guardian?.mobile ?? null,
+            notesLog: (b.notes_log ?? []).map((n) => ({
+              id: n.id,
+              author: n.author ?? null,
+              body: n.body ?? null,
+              createdAt: n.created_at ?? null,
+              source: n.source ?? null,
+            })),
+            contacts: links.get(b.id) ?? [],
+            createdAt: b.created_at ?? null,
+            updatedAt: b.updated_at ?? null,
+          })),
+        }
+      }),
+
+    /** Edit the camp-writable booking fields: status, subject, booking notes.
+     *  Camp first; local mirror patched; sync-now event confirms convergence. */
+    update: auditedProcedure
+      .input(
+        z.object({
+          bookingId: z.string().min(1),
+          status: z.enum(['pending', 'confirmed', 'cancelled', 'waitlist']).optional(),
+          subject: z.string().trim().max(120).optional(),
+          notes: z.string().trim().max(4000).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCanWriteBookings(user.role)
+        if (input.status === undefined && input.subject === undefined && input.notes === undefined) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Nothing to update' })
+        }
+        if (input.status === 'cancelled' && !BOOKING_CANCEL_ROLES.has(user.role)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Only Manager or above can cancel a camp booking',
+          })
+        }
+        const push = await pushBookingFields(input.bookingId, {
+          status: input.status,
+          subject: input.subject,
+          notes: input.notes,
+        })
+        if (!push.ok) {
+          throw new TRPCError({
+            code: push.skipped ? 'PRECONDITION_FAILED' : 'BAD_GATEWAY',
+            message: push.skipped
+              ? 'Summer Camp app is not connected — booking edits need the live connection.'
+              : `The camp app rejected the update: ${push.reason ?? 'unknown error'}`,
+          })
+        }
+
+        const patch: Record<string, unknown> = {}
+        if (input.status !== undefined) patch['status'] = input.status
+        if (input.subject !== undefined) patch['subject'] = input.subject
+        await patchLocalBookingInteractions(ctx.db, input.bookingId, patch)
+        await requestSyncNow()
+
+        await ctx.audit({
+          action:
+            input.status === 'cancelled'
+              ? 'summer_camp.booking_cancelled_from_crm'
+              : 'summer_camp.booking_updated_from_crm',
+          target: { type: 'System', id: input.bookingId },
+          after: { status: input.status, subject: input.subject, notes: input.notes },
+        })
+        return { ok: true }
+      }),
+
+    /** Assign the booking's student to camps (first id = primary; empty array
+     *  clears). The camp app owns assignment — it writes student_enrolments
+     *  and the primary camp; we mirror + audit. */
+    assignCamps: auditedProcedure
+      .input(z.object({ bookingId: z.string().min(1), campIds: z.array(z.string().min(1)).max(20) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCanWriteBookings(user.role)
+        const push = await pushCampAssignment(input.bookingId, input.campIds)
+        if (!push.ok) {
+          throw new TRPCError({
+            code: push.skipped ? 'PRECONDITION_FAILED' : 'BAD_GATEWAY',
+            message: push.skipped
+              ? 'Summer Camp app is not connected — camp assignment needs the live connection.'
+              : `The camp app rejected the assignment: ${push.reason ?? 'unknown error'}`,
+          })
+        }
+
+        // Resolve the primary camp's name for the local mirror (best-effort —
+        // the sync-now pull corrects it either way).
+        const primary = input.campIds[0] ?? null
+        let primaryName: string | null = null
+        if (primary) {
+          try {
+            const feed = await createClientFromConfig()?.getCamps()
+            primaryName = feed?.camps.find((c) => c.id === primary)?.name ?? null
+          } catch {
+            primaryName = null
+          }
+        }
+        await patchLocalBookingInteractions(ctx.db, input.bookingId, {
+          campId: primary,
+          ...(primary === null || primaryName !== null ? { campName: primaryName } : {}),
+          enrolledCampIds: input.campIds,
+        })
+        await requestSyncNow()
+
+        await ctx.audit({
+          action: 'summer_camp.booking_camps_assigned',
+          target: { type: 'System', id: input.bookingId },
+          after: { campIds: input.campIds, primaryCampName: primaryName },
+        })
+        return { ok: true, primaryCampName: primaryName }
+      }),
+
+    /** Add a note to a specific camp booking (shared with the camp site). Any
+     *  staff — matches §20 (Virtual Assistant writes notes). */
+    addNote: auditedProcedure
+      .input(z.object({ bookingId: z.string().min(1), body: z.string().trim().min(1).max(4000) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        const push = await pushNoteForBooking(input.bookingId, input.body, user.email)
+        if (!push.ok) {
+          throw new TRPCError({
+            code: push.skipped ? 'PRECONDITION_FAILED' : 'BAD_GATEWAY',
+            message: push.skipped
+              ? 'Summer Camp app is not connected — notes need the live connection.'
+              : `The camp app rejected the note: ${push.reason ?? 'unknown error'}`,
+          })
+        }
+
+        // Reflect the note on the linked customer timeline immediately, keyed
+        // on the camp's note id so the feed round-trip never duplicates it.
+        const links = await loadBookingContactLinks(ctx.db, [input.bookingId])
+        const linked = links.get(input.bookingId) ?? []
+        const primary = linked.find((l) => l.kind === 'parent') ?? linked[0]
+        if (primary) {
+          await ctx.db.interaction.create({
+            data: {
+              id: createId(),
+              type: 'note',
+              contactId: primary.contactId,
+              occurredAt: new Date(),
+              summary: input.body.slice(0, 280),
+              payload: {
+                kind: 'summer_camp.note',
+                campNoteId: push.campNoteId ?? null,
+                author: user.email,
+                source: 'crm',
+                externalBookingId: input.bookingId,
+                body: input.body,
+              },
+              createdById: user.id,
+            },
+          })
+        }
+
+        await ctx.audit({
+          action: 'summer_camp.booking_note_added',
+          target: primary
+            ? { type: 'Contact', id: primary.contactId }
+            : { type: 'System', id: input.bookingId },
+          after: { bookingId: input.bookingId, pushed: true },
+        })
+        return { ok: true }
+      }),
   }),
 
   // ---------------------------------------------------------------------------

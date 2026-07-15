@@ -72,6 +72,10 @@ export const BookingResource = z.object({
   /** The camp's `students.id` for the attendee — the CRM stores this as the
    *  write-back linkage so a CRM edit can target the right camp student. */
   student_id: nullableString,
+  /** Every camp the linked student is enrolled in, primary first. Mirrors the
+   *  camp's `student_enrolments`; editable via PUT .../:id/camps. Optional —
+   *  older camp deploys omit it. */
+  enrolled_camp_ids: z.array(z.string()).nullable().optional(),
   student: BookingStudent.nullable().optional(),
   guardian: BookingPerson.nullable().optional(),
   payment: BookingPayment.nullable().optional(),

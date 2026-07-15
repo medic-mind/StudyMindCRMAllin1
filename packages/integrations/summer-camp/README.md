@@ -49,15 +49,42 @@ or overlap is safe.
 
 ## Outbound: camp feeds → CRM (pull)
 
-`client.ts` reads the camp app's read-only feeds for the CRM's live, view-only
-"Summer Camps" page:
+`client.ts` reads the camp app's read-only feeds for the CRM's live "Summer
+Camps" surface:
 
 - `getCamps(year)` → camps running + subject × week fill grid + per-camp counts;
 - `getTimetable(campId?)` → per-camp weekly session timetables;
-- `getBookings({ since?, cursor?, limit? })` → keyset booking feed (backfill + sync).
+- `getBookings({ since?, cursor?, limit? })` → keyset booking feed (backfill +
+  sync + the bookings workspace). Each booking carries `enrolled_camp_ids`
+  (every camp the linked student is enrolled in, primary first) so the CRM
+  mirrors multi-camp assignment.
 
 Config is env-only: `SUMMER_CAMP_API_URL` + `SUMMER_CAMP_API_KEY`. Unset → the
 client is `null` and the page renders a "not connected" state.
+
+## Write-back: CRM → camp (two-way)
+
+`writeback.ts` — every write goes to the camp app FIRST (it owns bookings; the
+CRM never creates one), is audited in the CRM, and converges via the
+webhook/pull. Loop-safe: the camp tags CRM writes `system:crm` and does not
+echo them; feed notes carry `source:'crm'` so we skip our own round-trip.
+
+- **Contact-level** (hooked best-effort into `contact.update` +
+  `interaction.create`): `pushContactDetailsForContact` (identity fields onto
+  the contact's latest camp booking), `pushNoteForContact`.
+- **Booking-level** (the `/camps/bookings` workspace — the exact booking id is
+  known): `pushBookingFields` (status / subject / booking notes via
+  `PATCH /api/external/bookings/:id`), `pushCampAssignment` (assign the
+  student to camps via `PUT /api/external/bookings/:id/camps` — first id
+  becomes the primary camp, all ids mirror into the camp's
+  `student_enrolments`), `pushNoteForBooking` (returns the camp's note id, our
+  feed-dedupe key).
+
+tRPC surface: `summerCamp.bookings.{list,update,assignCamps,addNote}` —
+list pulls the live feed (bounded keyset walk) and filters via the pure
+`bookings-filter.ts`; writes are Sales Executive+ (cancellation Manager+,
+notes any staff) and each fires `summer-camp/sync-bookings.requested` so the
+mirror converges within seconds rather than the 15-min cron.
 
 ## Env
 
