@@ -54,10 +54,10 @@ ENV AUTH_SECRET=build-placeholder-not-for-runtime \
 # directly) and roughly doubles-to-triples deploy time on a cold Docker
 # cache. CI on main is the verification gate (§24.1); the deploy build's
 # only job is producing .next.
-# The cache mount persists Next's compiler cache across deploys (BuildKit
-# keeps it outside the image), so unchanged routes are not recompiled.
-RUN --mount=type=cache,id=next-build-cache,target=/app/apps/web/.next/cache \
-    pnpm --filter web exec next build
+# (A BuildKit `--mount=type=cache` for Next's compiler cache was tried but
+# Railway's Metal builder rejects the cache-mount id syntax. The real deploy
+# speedup is the deps-layer caching above; this step just produces .next.)
+RUN pnpm --filter web exec next build
 
 # ---- runner (web) ----
 FROM base AS runner
