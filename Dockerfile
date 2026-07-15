@@ -8,17 +8,28 @@ ENV PNPM_HOME=/usr/local/share/pnpm \
     PATH=/usr/local/share/pnpm:$PATH
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 
-# ---- deps ----
-FROM base AS deps
+# ---- manifests ----
+# Isolate just the workspace package.json files. This stage re-runs on every
+# source change (cheap: copy + delete), but its OUTPUT only changes when a
+# manifest changes — so the expensive `pnpm install` layer in `deps` below
+# stays cached across ordinary code-only deploys.
+#
+# (The previous layout copied all source into the SAME stage as the install:
+# the COPY layer's cache key covered every source file, so any commit
+# invalidated it and every deploy re-installed all dependencies from scratch
+# — the main reason deploys crawled.)
+FROM base AS manifests
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY turbo.json tsconfig.base.json ./
-# Copy every workspace package.json without enumerating each so the Dockerfile
-# stays stable as new packages land. We strip non-manifest files after the COPY
-# to keep the deps layer cache hot when source code changes.
 COPY apps ./apps
 COPY packages ./packages
 RUN find apps packages -mindepth 2 -type f ! -name package.json -delete \
  && find apps packages -depth -mindepth 2 -type d -empty -delete
+
+# ---- deps ----
+FROM base AS deps
+# Cache key = content of the manifests-only tree, NOT the full source tree.
+COPY --from=manifests /app ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
 # ---- builder ----
@@ -43,7 +54,10 @@ ENV AUTH_SECRET=build-placeholder-not-for-runtime \
 # directly) and roughly doubles-to-triples deploy time on a cold Docker
 # cache. CI on main is the verification gate (§24.1); the deploy build's
 # only job is producing .next.
-RUN pnpm --filter web exec next build
+# The cache mount persists Next's compiler cache across deploys (BuildKit
+# keeps it outside the image), so unchanged routes are not recompiled.
+RUN --mount=type=cache,id=next-build-cache,target=/app/apps/web/.next/cache \
+    pnpm --filter web exec next build
 
 # ---- runner (web) ----
 FROM base AS runner
