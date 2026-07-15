@@ -37,7 +37,13 @@ RUN pnpm --filter @studymind/db exec prisma generate
 # actually serves traffic. ADR 0010 chunk 3.
 ENV AUTH_SECRET=build-placeholder-not-for-runtime \
     SKIP_ENV_VALIDATION=1
-RUN pnpm build
+# Build ONLY the Next.js app. `pnpm build` (turbo run build) would re-run
+# `tsc --noEmit` across every workspace package — pure re-verification that
+# produces no artifact the app needs (Next transpiles workspace TS sources
+# directly) and roughly doubles-to-triples deploy time on a cold Docker
+# cache. CI on main is the verification gate (§24.1); the deploy build's
+# only job is producing .next.
+RUN pnpm --filter web exec next build
 
 # ---- runner (web) ----
 FROM base AS runner

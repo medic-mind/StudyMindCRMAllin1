@@ -827,12 +827,16 @@ CI runs typecheck, lint, unit, integration, and webhook contract tests on every 
 
 ### 24.1 Pre-deploy and post-deploy contract
 
-Pre-deploy (blocks deploy if it fails):
-1. `pnpm typecheck`
-2. `pnpm lint`
-3. `pnpm test`
-4. `pnpm build` (Next.js + worker)
-5. `prisma migrate deploy`
+Verification happens ONCE, in CI on `main` (one parallel turbo graph with a
+persisted cache, cancelled when superseded by a newer push):
+1. `pnpm typecheck` + `pnpm lint` + `pnpm test` + `pnpm build` + `pnpm policy:check`
+
+The Railway Docker build then does the minimum a deploy needs — it does NOT
+re-run the verification suite (that used to re-typecheck every workspace
+package inside Docker on a cold cache and was the main reason deploys took
+ages):
+1. `pnpm --filter web exec next build` (the only step that produces artifacts)
+2. `prisma migrate deploy` at container start (`scripts/deploy/start-web.sh`)
 
 Post-deploy (does not block; surfaces on the deploy dashboard):
 1. Healthcheck `GET /api/health` returns 200 with build SHA matching the deploy
@@ -1035,13 +1039,29 @@ We are a small team. Spend has to behave.
 
 ## 33. Engineering rituals
 
-- **Code review.** Every change reviewed by one engineer (two for finance, safeguarding, or migration changes). Reviewer responsibilities: correctness, audit, retention, accessibility, test coverage, doc updates.
-- **Trunk-based.** Short-lived branches off `main`. Squash merge with a clean message. Conventional commits (`feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `revert`). The body explains the why.
+- **Single branch: `main` IS the product.** All work lands directly on `main`
+  as soon as it is green — no pull request, no waiting for a human reviewer.
+  CI (typecheck + lint + tests + build + policy drift) is the mandatory
+  merge gate; Railway auto-deploys `main` once CI passes. When a working
+  session is forced onto a scratch branch by its harness (Claude sessions
+  create `claude/<name>` branches), the session finishes by **fast-forwarding
+  `main` itself** (`git push origin HEAD:main`) after local verification —
+  never by leaving work stranded on the branch waiting for a merge. Scratch
+  branches whose commits are in `main` are garbage and may be deleted.
+- **Verification replaces review as the gate.** The full local check before
+  any push to `main` is non-negotiable: `pnpm typecheck && pnpm lint &&
+  pnpm test`. Human review is asynchronous and advisory — request it (after
+  landing) for schema migrations and money-moving changes; do not block a
+  deploy on it. The safety rails that actually protect the data (idempotency,
+  audit, fail-closed enums, human-confirmed money writes — §2) live in code
+  and tests, not in the review queue.
+- **Conventional commits** (`feat`, `fix`, `chore`, `docs`, `refactor`,
+  `test`, `perf`, `revert`). The body explains the why.
 - **Release cadence.** Continuous delivery to production from `main`. No batched releases.
 - **On call.** One primary, one secondary, week-long rotation. Handover at Friday 16:00. The primary owns Sev 1 and 2 incidents; the secondary covers if the primary is unavailable.
 - **Weekly review.** 30 minutes. Postmortems, dead-letter queue, reconciliation discrepancy backlog, AI cost forecast.
 - **ADR.** Any non-trivial decision (new dependency, schema change with downstream impact, change to integration semantics) is recorded as an ADR before code lands.
-- **Doc drift.** A change that contradicts CLAUDE.md updates CLAUDE.md in the same PR. Reviewers reject PRs that drift the doc.
+- **Doc drift.** A change that contradicts CLAUDE.md updates CLAUDE.md in the same push.
 
 ---
 
@@ -1269,8 +1289,7 @@ Day 5
 
 CLAUDE.md is part of the codebase. Treat it like code.
 
-- A PR that contradicts CLAUDE.md updates CLAUDE.md in the same PR.
-- The doc is reviewed in the PR review like any other file.
+- A change that contradicts CLAUDE.md updates CLAUDE.md in the same push.
 - Once a quarter, the tech lead does a full pass: stale flags, expired ADRs, integrations that no longer match reality.
 - Tables that mirror code (permission matrix, recurring jobs, environment matrix) are generated where possible. The build fails on drift.
 - If you do not understand a rule, do not delete it. Open an issue and ask.
