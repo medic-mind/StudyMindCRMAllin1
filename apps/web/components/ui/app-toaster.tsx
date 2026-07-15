@@ -28,10 +28,24 @@ export function AppToaster() {
       closeButton
       toastOptions={{
         classNames: {
+          // Layout notes (the source of the reported "glitchy, misaligned"
+          // error toasts):
+          //  - width stays at sonner's native 356px — forcing a narrower card
+          //    breaks the stacking/slide maths and makes toasts jump as they
+          //    settle;
+          //  - no backdrop-blur — blur on a transforming element flickers on
+          //    many GPUs while the toast animates in;
+          //  - items-start + a nudged icon so multi-line error text aligns
+          //    with the icon's first line instead of floating mid-card;
+          //  - min-w-0 + break-words so long provider errors and request ids
+          //    wrap instead of overflowing the card edge.
           toast:
-            '!rounded-xl !border !border-neutral-200/90 !bg-white/95 !text-neutral-800 !shadow-[0_8px_30px_rgb(0,0,0,0.10)] !backdrop-blur !py-3 !px-3.5 !gap-2.5 !w-[320px] !font-sans',
-          title: '!text-[13px] !font-medium !leading-snug !text-neutral-900',
-          description: '!text-xs !text-neutral-500',
+            '!rounded-xl !border !border-neutral-200 !bg-white !text-neutral-800 !shadow-[0_8px_30px_rgb(0,0,0,0.10)] !py-3 !px-3.5 !gap-2.5 !w-[356px] !items-start !font-sans',
+          content: '!min-w-0',
+          title:
+            '!text-[13px] !font-medium !leading-snug !text-neutral-900 !break-words',
+          description: '!text-xs !text-neutral-500 !break-words',
+          icon: '!mt-px !self-start',
           closeButton:
             '!border-neutral-200 !bg-white !text-neutral-400 hover:!border-neutral-300 hover:!text-neutral-600',
           // Semantic colour lives in the icon, not the surface — calm, not
