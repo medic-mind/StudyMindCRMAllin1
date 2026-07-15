@@ -221,17 +221,17 @@ async function runCallback(
     },
   })
 
-  // Best-effort watch setup. If it fails, mark needs_reconnect so the UI
-  // can prompt; the user keeps the encrypted token so retry is cheap.
+  // Best-effort watch setup. A failure here means Pub/Sub PUSH is not
+  // available (topic missing / not configured) — NOT that the token is bad:
+  // the 10-minute gmail/sync poll still syncs this mailbox fine. Flagging it
+  // needs_reconnect raised a permanent, false "Reconnect mailbox" banner on
+  // perfectly working accounts. The gap is visible as "Watch expires —" on
+  // Settings → Mailbox instead.
   let watchOk = true
   try {
     await setupWatchForUser(me.id, { address, refreshTokenCipherId: cipher.id })
   } catch {
     watchOk = false
-    await db.user.update({
-      where: { id: me.id },
-      data: { gmailConnectionStatus: 'needs_reconnect' },
-    })
   }
 
   // ADR 0021: materialise the MailAccount bridge NOW, not on a later manual

@@ -135,6 +135,15 @@ export interface TrengoChannelResource {
   id: number
   name?: string | null
   type?: string | null
+  /** Trengo spells the human label differently across versions/plans. */
+  title?: string | null
+  display_name?: string | null
+  /** Line identity — used as the display fallback when no name is set. */
+  username?: string | null
+  phone?: string | null
+  phone_number?: string | null
+  email?: string | null
+  [key: string]: unknown
 }
 
 export interface TrengoClient {

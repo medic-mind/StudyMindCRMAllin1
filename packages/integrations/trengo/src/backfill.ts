@@ -25,6 +25,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { createClientForAgent, TrengoApiError, type TrengoClient } from './client'
+import { cleanChannelName } from './channels'
 import { applyEventToConversation } from './conversation-head'
 import { extractNameFromMessages } from './name-extract'
 import { coerceTrengoId, isTrengoChannel, type TrengoChannel } from './types'
@@ -57,18 +58,86 @@ const MAX_MESSAGE_PAGES = 20
 // Pure parsing helpers (exported for tests).
 // -----------------------------------------------------------------------------
 
+/** Timezone Trengo's API uses for its timezone-LESS `YYYY-MM-DD HH:mm:ss`
+ *  timestamps: the workspace's local clock. Trengo's default (and this
+ *  workspace's observed offset — imported messages showed "in 2h") is
+ *  Europe/Amsterdam; override via TRENGO_TIMESTAMP_TIMEZONE if the workspace
+ *  is configured differently. ISO strings with an explicit offset/Z are
+ *  unaffected. */
+function trengoWallTimezone(): string {
+  return process.env['TRENGO_TIMESTAMP_TIMEZONE'] || 'Europe/Amsterdam'
+}
+
+/** Minutes ahead of UTC the given IANA timezone is at instant `at`. */
+function tzOffsetMinutes(timeZone: string, at: Date): number {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+      .formatToParts(at)
+      .map((p) => [p.type, p.value]),
+  )
+  const asUtc = Date.UTC(
+    Number(parts['year']),
+    Number(parts['month']) - 1,
+    Number(parts['day']),
+    Number(parts['hour']) % 24,
+    Number(parts['minute']),
+    Number(parts['second']),
+  )
+  return Math.round((asUtc - at.getTime()) / 60000)
+}
+
+/** Interpret a wall-clock string in the given timezone → UTC Date. Two-pass
+ *  so DST transitions resolve to the correct offset (same approach as
+ *  `londonWallToUtc` in @studymind/core). */
+function wallToUtc(wall: string, timeZone: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/u.exec(wall)
+  if (!m) return null
+  const guess = Date.UTC(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    m[6] === undefined ? 0 : Number(m[6]),
+  )
+  const off1 = tzOffsetMinutes(timeZone, new Date(guess))
+  let utc = guess - off1 * 60000
+  const off2 = tzOffsetMinutes(timeZone, new Date(utc))
+  if (off2 !== off1) utc = guess - off2 * 60000
+  return new Date(utc)
+}
+
 /**
- * Trengo timestamps arrive either as ISO 8601 or as `YYYY-MM-DD HH:mm:ss`
- * (no timezone — treated as UTC, matching how the webhook envelope's
- * occurred_at is handled). Returns null when unparseable.
+ * Trengo timestamps arrive either as ISO 8601 (kept as-is — the offset is
+ * explicit) or as `YYYY-MM-DD HH:mm:ss` with NO timezone. The latter is the
+ * workspace's WALL CLOCK, not UTC — parsing it as UTC put every imported
+ * message up to two hours in the future ("in 2h" in the inbox) and skewed
+ * the ordering. Returns null when unparseable.
  */
 export function parseTrengoDate(raw: unknown): Date | null {
   if (typeof raw !== 'string' || raw.trim() === '') return null
   const s = raw.trim()
-  const candidate = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)
-    ? `${s.replace(' ', 'T')}Z`
-    : s
-  const d = new Date(candidate)
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) {
+    const withSeconds = /:\d{2}:\d{2}$/.test(s) ? s : `${s}:00`
+    try {
+      return wallToUtc(withSeconds, trengoWallTimezone())
+    } catch {
+      // Unknown TRENGO_TIMESTAMP_TIMEZONE value — fall back to UTC parse
+      // rather than dropping the timestamp entirely.
+      const d = new Date(`${s.replace(' ', 'T')}Z`)
+      return Number.isNaN(d.getTime()) ? null : d
+    }
+  }
+  const d = new Date(s)
   return Number.isNaN(d.getTime()) ? null : d
 }
 
@@ -276,8 +345,13 @@ export function extractTicketChannelMeta(
       const o = c as Record<string, unknown>
       const id = coerceTrengoId(o['id'])
       if (id !== null) {
-        const name =
-          typeof o['name'] === 'string' && o['name'].trim() !== '' ? o['name'].trim() : null
+        // Some workspaces put the TYPE tag in the ticket row's channel `name`
+        // ("WA_BUSINESS") — that is not a name; storing it made six WhatsApp
+        // lines all render as "Wa_business". Clean it so the mirror's real
+        // name (or a distinguishable fallback) wins instead.
+        const name = cleanChannelName(
+          typeof o['name'] === 'string' ? (o['name'] as string) : null,
+        )
         return { trengoChannelId: id, trengoChannelName: name }
       }
     }

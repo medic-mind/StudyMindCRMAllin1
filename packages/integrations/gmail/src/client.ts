@@ -680,6 +680,17 @@ export async function stopWatchForUser(
  * Flip the connection status to `needs_reconnect`. Called by background jobs
  * when Google returns `invalid_grant` on a refresh attempt.
  */
+/** Inverse self-heal of `markNeedsReconnect`: a background sync that just
+ *  USED the token successfully is proof the connection works — clear the
+ *  reconnect flag so the banner reflects reality. (Nothing else ever cleared
+ *  it, so one transient invalid_grant left the banner up forever.) */
+export async function clearNeedsReconnect(userId: string): Promise<void> {
+  await db.user.updateMany({
+    where: { id: userId, gmailConnectionStatus: 'needs_reconnect' },
+    data: { gmailConnectionStatus: 'connected' },
+  })
+}
+
 export async function markNeedsReconnect(userId: string): Promise<void> {
   await db.user.update({
     where: { id: userId },

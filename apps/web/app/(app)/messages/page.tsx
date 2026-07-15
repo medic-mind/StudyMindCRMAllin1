@@ -1,37 +1,9 @@
-// Team messaging workspace (ADR 0022). Slack-style staff chat living inside the
-// CRM: channels, DMs, threads, @mentions, reactions, and inline references to
-// Contacts / Families / Cards / Tasks. CLAUDE.md §26 (RSC shell + client island),
-// §20 (role gates enforced server-side in the chat router).
+// Team chat was removed from the product at the operator's request (2026-07).
+// The route redirects to the customer inbox; the chat backend (ADR 0022) is
+// retained forward-only should the section ever return.
 
 import { redirect } from 'next/navigation'
 
-import { getCurrentUser } from '@/lib/auth/server'
-
-import { MessagesWorkspace } from './MessagesWorkspace'
-
-export const dynamic = 'force-dynamic'
-
-// Manager+ can administer channels (create/rename/archive/membership) and
-// moderate (delete any message). Everyone else participates fully.
-const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
-// Permanent channel deletion is one tier up — CEO + Senior Manager only.
-const DELETE_ROLES = new Set(['ceo', 'senior_manager'])
-
-export default async function MessagesPage() {
-  const me = await getCurrentUser()
-  if (!me) redirect('/sign-in')
-
-  const canManageChannels = MANAGE_ROLES.has(me.role)
-  const canDeleteChannels = DELETE_ROLES.has(me.role)
-
-  return (
-    <div className="-mx-6 -my-6">
-      <MessagesWorkspace
-        viewerId={me.id}
-        canModerate={canManageChannels}
-        canManageChannels={canManageChannels}
-        canDeleteChannels={canDeleteChannels}
-      />
-    </div>
-  )
+export default function MessagesPage(): never {
+  redirect('/inbox/conversations')
 }

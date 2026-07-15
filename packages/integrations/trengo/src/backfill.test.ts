@@ -30,8 +30,18 @@ describe('parseTrengoDate', () => {
     )
   })
 
-  it('parses Trengo space-separated timestamps as UTC', () => {
+  it('parses Trengo space-separated timestamps as workspace wall time (default Europe/Amsterdam)', () => {
+    // 10:00 Amsterdam in May = CEST (UTC+2) → 08:00Z. Parsing these as UTC
+    // put imported messages "in 2h" in the future and skewed inbox order.
     expect(parseTrengoDate('2026-05-30 10:00:00')?.toISOString()).toBe(
+      '2026-05-30T08:00:00.000Z',
+    )
+    // Winter → CET (UTC+1).
+    expect(parseTrengoDate('2026-01-15 10:00:00')?.toISOString()).toBe(
+      '2026-01-15T09:00:00.000Z',
+    )
+    // Explicit-offset ISO strings are untouched.
+    expect(parseTrengoDate('2026-05-30T10:00:00Z')?.toISOString()).toBe(
       '2026-05-30T10:00:00.000Z',
     )
   })
@@ -156,7 +166,8 @@ describe('normaliseTicketRow', () => {
   })
 
   it('reads the last-activity time from any spelling the listing uses', () => {
-    const at = new Date('2026-07-01T09:30:00.000Z')
+    // 09:30 Amsterdam wall time in July (CEST, UTC+2) → 07:30Z.
+    const at = new Date('2026-07-01T07:30:00.000Z')
     expect(
       normaliseTicketRow({ id: 1, updated_at: '2026-07-01 09:30:00' })?.activityAt,
     ).toEqual(at)
@@ -208,7 +219,7 @@ describe('normaliseTicketRow', () => {
       labels: ['GCSE', 'Billing'],
       labelsKnown: true,
       contact: { phone: '+447700900123', email: 'parent@example.com', name: 'Jo Smith' },
-      createdAt: new Date('2026-05-30T10:00:00.000Z'),
+      createdAt: new Date('2026-05-30T08:00:00.000Z'),
       activityAt: null,
     })
   })

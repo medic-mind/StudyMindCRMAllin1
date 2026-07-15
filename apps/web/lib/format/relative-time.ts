@@ -12,7 +12,13 @@ const MONTH = 30 * DAY
 const YEAR = 365 * DAY
 
 export function formatRelativeTime(at: Date, now: Date = new Date()): string {
-  const diffSeconds = Math.round((now.getTime() - at.getTime()) / 1000)
+  let diffSeconds = Math.round((now.getTime() - at.getTime()) / 1000)
+  // Activity timestamps can arrive skewed slightly into the future (a
+  // provider reporting wall-clock time in its own timezone). "in 2h" on a
+  // message that already happened reads as a glitch — clamp NEAR-future
+  // times to "just now". Genuinely future dates (a due date tomorrow) are
+  // beyond any timezone skew and still format as "in Xd".
+  if (diffSeconds < 0 && diffSeconds > -26 * HOUR) diffSeconds = 0
   const past = diffSeconds >= 0
   const abs = Math.abs(diffSeconds)
   if (abs < 45) return past ? 'just now' : 'in a moment'

@@ -14,7 +14,6 @@ import {
   CoinsIcon,
   FileTextIcon,
   GitBranchIcon,
-  HashIcon,
   InboxIcon,
   ListTodoIcon,
   MailIcon,
@@ -41,7 +40,6 @@ const LINKS: readonly QuickLink[] = [
   { href: '/mail', label: 'Mail', icon: MailIcon },
   { href: '/calls', label: 'Calls', icon: PhoneIcon },
   { href: '/call-summaries', label: 'Call summaries', icon: FileTextIcon },
-  { href: '/messages', label: 'Team chat', icon: HashIcon },
   { href: '/leads', label: 'Leads', icon: UserPlusIcon },
   { href: '/contacts', label: 'Customers', icon: UsersIcon },
   { href: '/accounts', label: 'B2B / Schools', icon: BuildingIcon },
@@ -52,7 +50,7 @@ const LINKS: readonly QuickLink[] = [
   { href: '/finance', label: 'Finance', icon: CoinsIcon, financeOnly: true },
   { href: '/direct-debits', label: 'Direct Debits', icon: RepeatIcon, financeOnly: true },
   { href: '/reports', label: 'Reports', icon: BarChartIcon },
-  { href: '/protocols', label: 'Protocols', icon: BookOpenIcon },
+  { href: '/protocols', label: 'Crib (Protocols)', icon: BookOpenIcon },
 ]
 
 export function QuickLinks({ role }: { role: UserRole }) {

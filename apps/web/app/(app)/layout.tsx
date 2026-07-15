@@ -67,10 +67,9 @@ function buildNav(role: Role): NavItem[] {
     // Call Summaries — submit a summary for anyone (even someone not yet on
     // the CRM); a smart de-dup guard aligns it with an existing contact.
     { href: '/call-summaries', label: 'Call Summaries' },
-    // Internal — staff↔staff chat. Renamed from the colliding "Messages"
-    // (the sidebar said "Messages" for staff chat while the inbox said
-    // "Messages" for customer messages).
-    { href: '/messages', label: 'Team chat' },
+    // Team chat removed from the nav at the operator's request (2026-07) —
+    // /messages now redirects to the inbox; the chat backend is retained
+    // (forward-only, §19) should it ever come back.
     { href: '/leads', label: 'Leads Triage' },
     {
       href: '/contacts',
@@ -157,21 +156,10 @@ function buildNav(role: Role): NavItem[] {
         { href: '/reports/cost', label: 'Cost' },
       ],
     },
-    // Knowledge — the company knowledge base imported from the internal Crib
-    // site (ADR 0040): protocols, pricing, playbooks + the AI assistant that
-    // answers from them. All staff — VAs are the primary audience. The AI
-    // editor (propose-and-confirm content edits) is CEO / Senior Manager.
-    {
-      href: '/protocols',
-      label: 'Protocols & Policies',
-      children: [
-        { href: '/protocols', label: 'Knowledge base' },
-        { href: '/protocols/ask', label: 'AI Knowledge' },
-        ...(role === 'ceo' || role === 'senior_manager'
-          ? [{ href: '/protocols/edit', label: 'Edit content' }]
-          : []),
-      ],
-    },
+    // Knowledge — the in-app knowledge base was retired at the operator's
+    // request (2026-07); /protocols is now a simple gateway to the live Crib
+    // site (crib.studymind.co.uk) with the team password. Sub-pages redirect.
+    { href: '/protocols', label: 'Crib (Protocols)' },
     {
       href: '/settings',
       label: 'Settings',

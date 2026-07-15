@@ -23,6 +23,36 @@ const TYPE_TO_KIND: Record<string, 'whatsapp' | 'sms' | 'email' | 'web_chat'> = 
   WEB_CHAT: 'web_chat',
 }
 
+/** Trengo type tags (any casing/spacing) that must never be shown as a
+ *  channel NAME — "Wa_business" six times over is not a usable rail. */
+const TYPE_TAGS = new Set([
+  'wa_business',
+  'whatsapp',
+  'sms',
+  'email',
+  'chat',
+  'web_chat',
+  'webchat',
+  'voip',
+  'voice',
+  'help_center',
+  'helpcenter',
+  'facebook',
+  'instagram',
+  'telegram',
+  'custom',
+])
+
+/** Null out "names" that are really just the channel TYPE tag — they carry
+ *  zero identity and made every WhatsApp line render as "Wa_business". */
+export function cleanChannelName(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  const folded = trimmed.toLowerCase().replace(/[^a-z0-9]+/gu, '_').replace(/^_+|_+$/gu, '')
+  return TYPE_TAGS.has(folded) ? null : trimmed
+}
+
 export function normaliseTrengoChannel(raw: unknown): {
   trengoId: number
   name: string | null
@@ -32,7 +62,18 @@ export function normaliseTrengoChannel(raw: unknown): {
   if (raw === null || typeof raw !== 'object') return null
   const c = raw as TrengoChannelResource
   if (typeof c.id !== 'number') return null
-  const name = typeof c.name === 'string' && c.name.trim() !== '' ? c.name.trim() : null
+  // Trengo spells the human label differently across versions; take the first
+  // candidate that carries real identity (a configured name, else the line's
+  // phone/username/email) — never a bare type tag.
+  const candidates = [c.name, c.title, c.display_name, c.username, c.phone, c.phone_number, c.email]
+  let name: string | null = null
+  for (const cand of candidates) {
+    const cleaned = cleanChannelName(typeof cand === 'string' ? cand : null)
+    if (cleaned) {
+      name = cleaned
+      break
+    }
+  }
   const trengoType = typeof c.type === 'string' && c.type.trim() !== '' ? c.type.trim() : null
   const channelType = trengoType ? (TYPE_TO_KIND[trengoType.toUpperCase()] ?? null) : null
   return { trengoId: c.id, name, trengoType, channelType }

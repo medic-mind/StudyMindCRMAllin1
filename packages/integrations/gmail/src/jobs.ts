@@ -23,6 +23,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import {
+  clearNeedsReconnect,
   createClientForAgent,
   customLabelNames,
   isInvalidGrantError,
@@ -270,6 +271,13 @@ async function syncMailboxHistory(
   }
 
   const result = listed.result
+
+  // The token just worked — self-heal a stale needs_reconnect flag so the
+  // "Reconnect mailbox" banner only shows while the connection is ACTUALLY
+  // broken (it previously stuck forever after any transient failure).
+  await step.run(`${keyPrefix}clear-reconnect-flag`, async () =>
+    clearNeedsReconnect(mailbox.agentId),
+  )
 
   // Fetch the account's label id→name map once so new messages can carry their
   // custom Gmail labels onto the head (drives the label chips + folder state).

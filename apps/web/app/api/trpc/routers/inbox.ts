@@ -1072,9 +1072,24 @@ export const inboxRouter = router({
           channelType: m.channelType ?? prev?.channelType ?? null,
         })
       }
+      // Every rail entry must be DISTINGUISHABLE: a line with no configured
+      // name renders as "WhatsApp · #12345" instead of six identical
+      // "Wa_business" rows. Busiest lines first, like Trengo.
+      const typeLabel: Record<string, string> = {
+        whatsapp: 'WhatsApp',
+        sms: 'SMS',
+        email: 'Email',
+        web_chat: 'Web chat',
+      }
       return [...byId.values()]
-        .map((c) => ({ ...c, count: countById.get(c.trengoId) ?? 0 }))
-        .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+        .map((c) => ({
+          ...c,
+          name:
+            c.name ??
+            `${(c.channelType && typeLabel[c.channelType]) || 'Channel'} · #${c.trengoId}`,
+          count: countById.get(c.trengoId) ?? 0,
+        }))
+        .sort((a, b) => b.count - a.count || (a.name ?? '').localeCompare(b.name ?? ''))
     }),
 
     // "Sync from Trengo" — force an immediate status re-sync of the recent
