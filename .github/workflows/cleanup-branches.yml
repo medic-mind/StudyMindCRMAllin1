@@ -10,6 +10,13 @@ name: Cleanup merged branches
 
 on:
   workflow_dispatch:
+    inputs:
+      delete_unmerged_too:
+        description: >-
+          ALSO delete branches holding commits that are NOT in main (stale
+          abandoned drafts). Leaves literally only main. Irreversible.
+        type: boolean
+        default: false
   schedule:
     - cron: '0 5 * * 1'
 
@@ -24,7 +31,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Delete branches fully contained in main
+      - name: Delete scratch branches
+        env:
+          DELETE_UNMERGED: ${{ inputs.delete_unmerged_too }}
         run: |
           git fetch origin --prune
           deleted=0
@@ -33,9 +42,12 @@ jobs:
             if git merge-base --is-ancestor "origin/$b" origin/main; then
               echo "delete (fully merged): $b"
               git push origin --delete "$b" && deleted=$((deleted+1)) || true
+            elif [ "$DELETE_UNMERGED" = "true" ]; then
+              echo "delete (unmerged scratch — requested): $b"
+              git push origin --delete "$b" && deleted=$((deleted+1)) || true
             else
               kept=$((kept+1))
             fi
           done
           echo "---"
-          echo "deleted: $deleted | kept (unique commits not in main): $kept"
+          echo "deleted: $deleted | kept: $kept"
