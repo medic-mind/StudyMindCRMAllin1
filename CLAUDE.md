@@ -1047,7 +1047,9 @@ We are a small team. Spend has to behave.
   create `claude/<name>` branches), the session finishes by **fast-forwarding
   `main` itself** (`git push origin HEAD:main`) after local verification —
   never by leaving work stranded on the branch waiting for a merge. Scratch
-  branches whose commits are in `main` are garbage and may be deleted.
+  branches whose commits are in `main` are garbage; the **Cleanup merged
+  branches** workflow (`.github/workflows/cleanup-branches.yml`, weekly +
+  on-demand) deletes every branch fully contained in `main` automatically.
 - **Verification replaces review as the gate.** The full local check before
   any push to `main` is non-negotiable: `pnpm typecheck && pnpm lint &&
   pnpm test`. Human review is asynchronous and advisory — request it (after

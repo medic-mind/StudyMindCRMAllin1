@@ -1,0 +1,41 @@
+name: Cleanup merged branches
+
+# Single-branch model (CLAUDE.md §33): `main` is the product; session branches
+# (claude/*, feat/*, …) are scratch space that fast-forward main and are then
+# garbage. This deletes every branch whose tip is an ANCESTOR of main — i.e.
+# 100% of its commits are already in main, so deletion loses nothing. Branches
+# holding commits NOT in main are never touched.
+#
+# Runs weekly and on demand (Actions → Cleanup merged branches → Run workflow).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * 1'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete branches fully contained in main
+        run: |
+          git fetch origin --prune
+          deleted=0
+          kept=0
+          for b in $(git branch -r | sed 's|^ *origin/||' | grep -vE '^(main$|HEAD)'); do
+            if git merge-base --is-ancestor "origin/$b" origin/main; then
+              echo "delete (fully merged): $b"
+              git push origin --delete "$b" && deleted=$((deleted+1)) || true
+            else
+              kept=$((kept+1))
+            fi
+          done
+          echo "---"
+          echo "deleted: $deleted | kept (unique commits not in main): $kept"
