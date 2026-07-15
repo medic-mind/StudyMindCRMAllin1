@@ -10,6 +10,8 @@ import type { PrismaClient } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { cleanChannelName } from '@studymind/integration-trengo/channels'
+
 import {
   auditedProcedure,
   protectedProcedure,
@@ -1059,7 +1061,10 @@ export const inboxRouter = router({
         if (c.trengoChannelId != null) {
           byId.set(c.trengoChannelId, {
             trengoId: c.trengoChannelId,
-            name: c.trengoChannelName,
+            // Rows denormalised before junk-name cleaning existed can carry
+            // the TYPE tag as a "name" ("Wa_business") — clean at read time
+            // so the distinguishable fallback below wins for legacy data.
+            name: cleanChannelName(c.trengoChannelName, c.channel),
             channelType: c.channel,
           })
         }

@@ -79,7 +79,6 @@ const ICONS: Record<string, IconComp> = {
   // Slack — its own category (customer mentions spotted in Slack).
   '/inbox/slack-mentions': HashIcon,
   // Internal — staff↔staff (distinct glyph from the customer Trengo inbox).
-  '/messages': HashIcon,
   // Work.
   '/leads': UserPlusIcon,
   '/contacts': UsersIcon,
@@ -113,7 +112,6 @@ const SECTION: Record<string, string> = {
   // Slack — its own category per ops request (June 2026).
   '/inbox/slack-mentions': 'Slack',
   // Internal — staff↔staff only.
-  '/messages': 'Internal',
   // Work — CRM records.
   '/leads': 'Work',
   '/contacts': 'Work',

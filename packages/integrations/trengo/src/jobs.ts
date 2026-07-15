@@ -10,7 +10,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
-import { extractTicketChannelMeta } from './backfill'
+import { extractTicketChannelMeta, parseTrengoDate } from './backfill'
 import { applyEventToConversation } from './conversation-head'
 import {
   buildContactSuggestionWrites,
@@ -63,10 +63,11 @@ export const trengoEventReceived = inngest.createFunction(
       return { skipped: true, reason: 'unrecognised_event' }
     }
 
-    const occurredAtRaw = new Date(envelope.occurred_at)
-    const occurredAt = Number.isNaN(occurredAtRaw.getTime())
-      ? new Date()
-      : occurredAtRaw
+    // parseTrengoDate handles BOTH spellings Trengo uses: ISO-with-offset
+    // (kept as-is) and the timezone-less workspace wall clock (converted) —
+    // the bare `new Date()` parse treated the latter as UTC/server-local,
+    // skewing live events the same way imports used to be skewed.
+    const occurredAt = parseTrengoDate(envelope.occurred_at) ?? new Date()
 
     // Match → Contact / Family. CLAUDE.md §11.
     const match = await step.run('match', async () => matchTrengoEvent(envelope))

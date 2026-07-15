@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { normaliseTrengoChannel } from './channels'
+import { cleanChannelName, normaliseTrengoChannel } from './channels'
 
 describe('normaliseTrengoChannel', () => {
   it('maps a WhatsApp Business channel to our kind + keeps the name', () => {
@@ -22,5 +22,44 @@ describe('normaliseTrengoChannel', () => {
     expect(normaliseTrengoChannel({ id: 9, name: '   ', type: 'EMAIL' })?.name).toBeNull()
     expect(normaliseTrengoChannel({ name: 'x' })).toBeNull()
     expect(normaliseTrengoChannel(null)).toBeNull()
+  })
+})
+
+
+describe('cleanChannelName', () => {
+  it('always rejects machine tags however cased/spaced', () => {
+    expect(cleanChannelName('Wa_business')).toBeNull()
+    expect(cleanChannelName('WA_BUSINESS')).toBeNull()
+    expect(cleanChannelName('Web chat')).toBeNull()
+    expect(cleanChannelName('Help Center')).toBeNull()
+  })
+
+  it('rejects a generic word only when it matches the channel OWN type', () => {
+    expect(cleanChannelName('Email', 'EMAIL')).toBeNull()
+    expect(cleanChannelName('Sms', 'SMS')).toBeNull()
+    expect(cleanChannelName('Chat', 'CHAT')).toBeNull()
+    expect(cleanChannelName('Whatsapp', 'WA_BUSINESS')).toBeNull()
+    // …but a channel GENUINELY named like another type is preserved.
+    expect(cleanChannelName('Facebook', 'WA_BUSINESS')).toBe('Facebook')
+    expect(cleanChannelName('Email', 'WA_BUSINESS')).toBe('Email')
+  })
+
+  it('keeps real names and identifiers', () => {
+    expect(cleanChannelName('Study Mind Support', 'WA_BUSINESS')).toBe('Study Mind Support')
+    expect(cleanChannelName('+447453918086', 'WA_BUSINESS')).toBe('+447453918086')
+    expect(cleanChannelName('  ', 'SMS')).toBeNull()
+    expect(cleanChannelName(null)).toBeNull()
+  })
+})
+
+describe('normaliseTrengoChannel — name fallbacks', () => {
+  it('falls through name candidates to the line identity', () => {
+    expect(
+      normaliseTrengoChannel({ id: 9, name: 'WA_BUSINESS', type: 'WA_BUSINESS', phone: '+4474' }),
+    ).toEqual({ trengoId: 9, name: '+4474', trengoType: 'WA_BUSINESS', channelType: 'whatsapp' })
+  })
+
+  it('yields null name when nothing but the type tag exists', () => {
+    expect(normaliseTrengoChannel({ id: 9, name: 'EMAIL', type: 'EMAIL' })?.name).toBeNull()
   })
 })

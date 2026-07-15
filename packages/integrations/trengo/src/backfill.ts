@@ -99,16 +99,19 @@ function tzOffsetMinutes(timeZone: string, at: Date): number {
  *  so DST transitions resolve to the correct offset (same approach as
  *  `londonWallToUtc` in @studymind/core). */
 function wallToUtc(wall: string, timeZone: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/u.exec(wall)
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/u.exec(wall)
   if (!m) return null
-  const guess = Date.UTC(
-    Number(m[1]),
-    Number(m[2]) - 1,
-    Number(m[3]),
-    Number(m[4]),
-    Number(m[5]),
-    m[6] === undefined ? 0 : Number(m[6]),
-  )
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  const h = Number(m[4])
+  const mi = Number(m[5])
+  const sec = m[6] === undefined ? 0 : Number(m[6])
+  // Date.UTC silently rolls out-of-range components over ('99:00' → +4 days),
+  // fabricating a plausible-looking WRONG instant. Fail closed instead —
+  // unparseable stays null (§8, and this function's own contract).
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 59) return null
+  const guess = Date.UTC(y, mo - 1, d, h, mi, sec)
   const off1 = tzOffsetMinutes(timeZone, new Date(guess))
   let utc = guess - off1 * 60000
   const off2 = tzOffsetMinutes(timeZone, new Date(utc))
@@ -126,7 +129,12 @@ function wallToUtc(wall: string, timeZone: string): Date | null {
 export function parseTrengoDate(raw: unknown): Date | null {
   if (typeof raw !== 'string' || raw.trim() === '') return null
   const s = raw.trim()
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) {
+  // Offset-less timestamps ("2026-05-30 10:00:00" or the T-separated
+  // variant) are the workspace wall clock. A T-separated string falling
+  // through to `new Date()` would parse in the SERVER's local zone —
+  // non-deterministic across deploys — so both spellings go through the
+  // wall-time path.
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(s)) {
     const withSeconds = /:\d{2}:\d{2}$/.test(s) ? s : `${s}:00`
     try {
       return wallToUtc(withSeconds, trengoWallTimezone())
@@ -351,6 +359,7 @@ export function extractTicketChannelMeta(
         // name (or a distinguishable fallback) wins instead.
         const name = cleanChannelName(
           typeof o['name'] === 'string' ? (o['name'] as string) : null,
+          typeof o['type'] === 'string' ? (o['type'] as string) : null,
         )
         return { trengoChannelId: id, trengoChannelName: name }
       }

@@ -513,6 +513,35 @@ export const trengoReconcileStatus = inngest.createFunction(
       return { skipped: true, reason: 'client_unavailable' }
     }
 
+    // One-time heal for clocks poisoned by the old UTC-parse of Trengo wall
+    // times: heads (and message rows) written up to ~2h in the FUTURE both
+    // display as "in 2h" and jam the monotonic merger (a corrected new event
+    // can't advance a future clock, so unread/preview/ordering freeze until
+    // real time catches up). Clamp anything still ahead of now; converges to
+    // a no-op once clean.
+    await step.run('clamp-skewed-clocks', async () => {
+      const now = new Date()
+      const horizon = new Date(now.getTime() + 5 * 60 * 1000)
+      const trengoHeads = { OR: [{ provider: null }, { provider: 'trengo' as const }] }
+      const a = await db.conversation.updateMany({
+        where: { ...trengoHeads, lastMessageAt: { gt: horizon } },
+        data: { lastMessageAt: now },
+      })
+      const b = await db.conversation.updateMany({
+        where: { ...trengoHeads, lastInboundAt: { gt: horizon } },
+        data: { lastInboundAt: now },
+      })
+      const c = await db.conversation.updateMany({
+        where: { ...trengoHeads, lastOutboundAt: { gt: horizon } },
+        data: { lastOutboundAt: now },
+      })
+      const d = await db.interaction.updateMany({
+        where: { type: 'message', occurredAt: { gt: horizon } },
+        data: { occurredAt: now },
+      })
+      return { heads: a.count + b.count + c.count, messages: d.count }
+    })
+
     // Keep the TrengoUser / TrengoChannel mirrors fresh — new agents and
     // renamed inboxes previously only appeared after a manual team sync or a
     // full import, leaving the assignee picker + channel rail stale.

@@ -272,13 +272,6 @@ async function syncMailboxHistory(
 
   const result = listed.result
 
-  // The token just worked — self-heal a stale needs_reconnect flag so the
-  // "Reconnect mailbox" banner only shows while the connection is ACTUALLY
-  // broken (it previously stuck forever after any transient failure).
-  await step.run(`${keyPrefix}clear-reconnect-flag`, async () =>
-    clearNeedsReconnect(mailbox.agentId),
-  )
-
   // Fetch the account's label id→name map once so new messages can carry their
   // custom Gmail labels onto the head (drives the label chips + folder state).
   const labelMap =
@@ -1008,6 +1001,11 @@ async function runFullGmailSync(
   let processed = 0
   let flagsMirrored = 0
   let failed = 0
+  // Per-AGENT health this sweep: the reconnect flag lives on the user, so it
+  // may only self-heal when EVERY one of their mailboxes worked — clearing it
+  // because one healthy sibling synced would hide a genuinely broken mailbox
+  // (and flap against the next invalid_grant).
+  const agentBroken = new Map<string, boolean>()
   for (const mb of mailboxes) {
     // Each mailbox is isolated: one broken account (expired token, transient
     // 5xx) must not abort the sweep for every other mailbox AND kill the
@@ -1066,14 +1064,35 @@ async function runFullGmailSync(
       )
       processed += res.processed
       flagsMirrored += res.flagsMirrored
+      if (res.status === 'needs_reconnect') {
+        agentBroken.set(mb.agentId, true)
+      } else if (!agentBroken.has(mb.agentId)) {
+        agentBroken.set(mb.agentId, false)
+      }
     } catch (err) {
       failed += 1
+      agentBroken.set(mb.agentId, true)
       logger.warn(
         { mailboxId: mb.id, address: mb.address, err },
         'gmail sync: mailbox failed — continuing with the remaining mailboxes',
       )
     }
   }
+
+  // Self-heal the "Reconnect mailbox" banner: only for agents whose EVERY
+  // swept mailbox just synced successfully (the flag previously stuck forever
+  // after any transient failure; equally it must not clear while a sibling
+  // mailbox is still broken).
+  await step.run('clear-reconnect-flags', async () => {
+    let cleared = 0
+    for (const [agentId, broken] of agentBroken) {
+      if (!broken) {
+        await clearNeedsReconnect(agentId)
+        cleared += 1
+      }
+    }
+    return cleared
+  })
 
   const { healed, adopted } = await healEmailHeads(step, requestId, logger)
 
