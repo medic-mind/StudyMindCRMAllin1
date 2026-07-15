@@ -17,6 +17,7 @@ import {
   PinIcon,
   StarIcon,
   UserPlusIcon,
+  CheckIcon,
 } from '@/components/ui/icon'
 import { trpc } from '@/lib/trpc/client'
 
@@ -188,7 +189,7 @@ export function ChannelHeader({
                 >
                   {NOTIFY_LABEL[level]}
                   {channel.notifyLevel === level ? (
-                    <span className="text-primary-600">✓</span>
+                    <span className="text-primary-600"><CheckIcon size={13} /></span>
                   ) : null}
                 </button>
               ))}

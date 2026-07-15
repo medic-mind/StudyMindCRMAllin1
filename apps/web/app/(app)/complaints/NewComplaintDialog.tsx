@@ -18,6 +18,7 @@ import { Select } from '@/components/ui/select'
 import { SuggestInput } from '@/components/ui/suggest-input'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
+import { XIcon } from '@/components/ui/icon'
 
 type Severity = 'low' | 'medium' | 'high'
 
@@ -139,7 +140,7 @@ export function NewComplaintDialog() {
                 aria-label="Close"
                 className="rounded p-1 text-neutral-500 hover:bg-neutral-100"
               >
-                ✕
+                <XIcon size={14} />
               </button>
             </header>
             <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">

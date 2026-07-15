@@ -18,6 +18,7 @@ import { trpc } from '@/lib/trpc/client'
 
 import { formatDate, statusLabel } from './shared'
 import { ShortfallCaseCell } from './ShortfallCaseCell'
+import { ChevronDownIcon, ChevronUpIcon, ChevronsUpDownIcon } from '@/components/ui/icon'
 
 /** A compact "chase" action for an Issues row: open a follow-up task against the
  * contact/family, plus a jump to the contact. Shown only when the plan's
@@ -103,7 +104,11 @@ function SortTh<T>({
       >
         {label}
         <span aria-hidden className="text-[10px] text-neutral-400">
-          {active ? (sort.dir === 'desc' ? '▼' : '▲') : '↕'}
+          {active ? (
+            sort.dir === 'desc' ? <ChevronDownIcon size={12} /> : <ChevronUpIcon size={12} />
+          ) : (
+            <ChevronsUpDownIcon size={12} />
+          )}
         </span>
       </button>
     </Th>

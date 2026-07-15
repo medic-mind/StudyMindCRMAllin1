@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
-import { ChevronDownIcon, InboxIcon, RepeatIcon, SearchIcon, StarIcon } from '@/components/ui/icon'
+import { CheckIcon, ChevronDownIcon, InboxIcon, RepeatIcon, SearchIcon, StarIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { useConversationStream } from '@/lib/hooks/use-conversation-stream'
@@ -129,8 +129,13 @@ export function InboxCockpit({
     // Safety poll on top of the SSE stream: the in-process realtime bus does
     // not cross instances (webhooks are processed by the Inngest worker), so
     // without a background interval the list only ever refreshed on window
-    // focus — the reported "inbox shows outdated conversations".
-    { refetchOnWindowFocus: true, refetchInterval: 45_000 },
+    // focus — the reported "inbox shows outdated conversations". keepPrevious
+    // stops the list blanking on every folder/tag/team switch and poll.
+    {
+      refetchOnWindowFocus: true,
+      refetchInterval: 45_000,
+      placeholderData: (prev) => prev,
+    },
   )
 
   // Whole-inbox server search (Trengo parity): once the query is ≥2 chars we
@@ -563,7 +568,17 @@ function FoldersRail({
   const canImport = meRole === 'ceo' || meRole === 'senior_manager'
   const importJobs = trpc.admin.backfill.list.useQuery(
     { provider: 'trengo', limit: 1 },
-    { enabled: canImport, refetchInterval: 5000, retry: false },
+    {
+      enabled: canImport,
+      retry: false,
+      placeholderData: (prev) => prev,
+      // Poll fast ONLY while an import is actually running — a permanent 5s
+      // poll on an idle inbox was pure network noise/jank.
+      refetchInterval: (q) => {
+        const status = q.state.data?.[0]?.status
+        return status === 'running' || status === 'pending' ? 5_000 : 60_000
+      },
+    },
   )
   const latestImport = importJobs.data?.[0]
   const importRunning =
@@ -733,7 +748,7 @@ function FoldersRail({
                   className="inline-flex items-center gap-1 rounded-full bg-trengo-600 px-2 py-0.5 text-[10px] font-medium text-white"
                   title="Remove label"
                 >
-                  {t} <span aria-hidden>×</span>
+                  {t} <XIcon size={11} aria-hidden />
                 </button>
               ))}
               <button
@@ -762,7 +777,7 @@ function FoldersRail({
                         on ? 'border-trengo-400 bg-trengo-500 text-white' : 'border-neutral-500'
                       }`}
                     >
-                      {on ? '✓' : ''}
+                      {on ? <CheckIcon size={12} /> : ''}
                     </span>
                     <span className="min-w-0 flex-1 truncate">{t.name}</span>
                     {t.count > 0 ? (

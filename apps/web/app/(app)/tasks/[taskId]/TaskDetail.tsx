@@ -164,7 +164,7 @@ export function TaskDetail({
                     {task.familyName ?? 'Family'}
                   </Link>
                 ) : (
-                  <span className="text-neutral-400">None</span>
+                  <span className="text-neutral-400">Not linked to a family</span>
                 )}
               </dd>
             </div>

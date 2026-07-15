@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 
 import { RecordingPlayer } from '@/components/shared/recording-player'
+import { ArrowDownLeftIcon, ArrowUpRightIcon } from '@/components/ui/icon'
 
 type Direction = 'all' | 'inbound' | 'outbound'
 type Outcome = 'all' | 'answered' | 'missed' | 'voicemail'
@@ -201,7 +202,13 @@ export function CallHistoryTable({
                           c.direction === 'outbound' ? 'text-sky-700' : 'text-neutral-700'
                         }`}
                       >
-                        {c.direction === 'inbound' ? '↘ In' : c.direction === 'outbound' ? '↗ Out' : '— Call'}
+                        {c.direction === 'inbound' ? (
+                          <><ArrowDownLeftIcon size={12} className="inline" /> In</>
+                        ) : c.direction === 'outbound' ? (
+                          <><ArrowUpRightIcon size={12} className="inline" /> Out</>
+                        ) : (
+                          '— Call'
+                        )}
                       </span>
                     </td>
                     <td className="px-4 py-3">

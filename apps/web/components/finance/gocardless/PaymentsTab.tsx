@@ -21,6 +21,8 @@ import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
+import { XIcon } from '@/components/ui/icon'
+
 import {
   CustomerMandatePicker,
   FilterChips,
@@ -101,7 +103,7 @@ export function PaymentsTab() {
   const list = trpc.gocardless.payments.list.useQuery(listInput, {
     placeholderData: (prev) => prev,
   })
-  const counts = trpc.gocardless.payments.statusCounts.useQuery(filterInput)
+  const counts = trpc.gocardless.payments.statusCounts.useQuery(filterInput, { placeholderData: (prev) => prev })
   const filteredCustomer = trpc.gocardless.customers.detail.useQuery(
     { gcCustomerId: customerFilter ?? '' },
     { enabled: customerFilter !== null },
@@ -214,7 +216,7 @@ export function PaymentsTab() {
                 className="ml-1 text-primary-500 hover:text-primary-800"
                 onClick={() => set({ customer: null })}
               >
-                ✕
+                <XIcon size={14} />
               </button>
             </span>
           ) : null}

@@ -84,7 +84,7 @@ export function CatalogueManager({
             />
           ))}
           {rows.length === 0 ? (
-            <p className="text-sm text-neutral-500">Nothing yet.</p>
+            <p className="text-sm text-neutral-500">No options yet — add the first one above and it appears in the New-group dropdowns.</p>
           ) : null}
         </div>
 

@@ -249,7 +249,7 @@ export default async function FamilyDetailPage({
                     </Td>
                     <Td className="text-xs text-neutral-700">{d.summary}</Td>
                     <Td className="text-xs whitespace-nowrap">
-                      {new Date(d.createdAt).toLocaleString('en-GB')}
+                      {new Date(d.createdAt).toLocaleString('en-GB', { timeZone: 'Europe/London' })}
                     </Td>
                   </Tr>
                 ))}
@@ -275,7 +275,7 @@ export default async function FamilyDetailPage({
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-xs text-neutral-500">{i.type}</span>
                     <span className="text-xs text-neutral-500">
-                      {new Date(i.occurredAt).toLocaleString('en-GB')}
+                      {new Date(i.occurredAt).toLocaleString('en-GB', { timeZone: 'Europe/London' })}
                     </span>
                   </div>
                   {i.summary ? (

@@ -107,6 +107,15 @@ body {
   animation: dash-rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.18s both;
 }
 
+/* §28 — animations are gated for users who ask for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise-2,
+  .animate-rise-3,
+  .animate-rise-4 {
+    animation: none;
+  }
+}
+
 /*
  * Tabular numerals — opt-in utility for ledger columns, finance tables,
  * and any vertical alignment of digits (CLAUDE.md §4, §29). Applied via

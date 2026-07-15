@@ -144,10 +144,9 @@ export function Timeline({ contactId, initialItems, initialNextCursor }: Props) 
                     ) : null}
                   </span>
                   <time dateTime={new Date(it.occurredAt).toISOString()}>
-                    {new Date(it.occurredAt).toLocaleString('en-GB', {
+                    {new Date(it.occurredAt).toLocaleString('en-GB', { timeZone: 'Europe/London', 
                       dateStyle: 'medium',
-                      timeStyle: 'short',
-                    })}
+                      timeStyle: 'short',})}
                   </time>
                 </div>
                 {it.summary ? (

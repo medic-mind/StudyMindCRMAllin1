@@ -187,18 +187,28 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
     // The list is the /mail workspace's primary surface: refetch on focus AND
     // on a background interval so mail arriving while the tab sits open shows
     // without a manual refresh (SSE covers the same-instance case; the poll
-    // covers multi-instance and dropped events).
-    { enabled: !showDrafts && !searching, refetchInterval: 60_000, refetchOnWindowFocus: true },
+    // covers multi-instance and dropped events). keepPrevious stops the list
+    // dropping to a skeleton on every folder/label/tab switch and poll.
+    {
+      enabled: !showDrafts && !searching,
+      refetchInterval: 60_000,
+      refetchOnWindowFocus: true,
+      placeholderData: (prev) => prev,
+    },
   )
   const search = trpc.mail.threads.search.useQuery(
     { mailAccountId: accountId, q: query },
-    { enabled: searching },
+    { enabled: searching, placeholderData: (prev) => prev },
   )
   const items = useMemo(
     () => (searching ? (search.data?.items ?? []) : (threads.data?.items ?? [])),
     [searching, search.data, threads.data],
   )
-  const listLoading = searching ? search.isLoading : threads.isLoading
+  // Skeleton ONLY when there is nothing to show — with keepPrevious the old
+  // rows stay visible while the next page loads (no flash).
+  const listLoading = searching
+    ? search.isLoading && !search.data
+    : threads.isLoading && !threads.data
   const labels = trpc.mail.labels.useQuery({ mailAccountId: accountId })
   // Gmail-style unread badges for Inbox + its category tabs, plus the Spam total.
   const counts = trpc.mail.folderCounts.useQuery({ mailAccountId: accountId })
@@ -1132,7 +1142,12 @@ function ConversationView({
   onChanged: () => void
 }) {
   const utils = trpc.useUtils()
-  const convo = trpc.inbox.conversations.get.useQuery({ conversationId })
+  const convo = trpc.inbox.conversations.get.useQuery(
+    { conversationId },
+    // keepPrevious: switching threads keeps the pane filled (dimmed below)
+    // instead of flashing "Loading…" on every click.
+    { placeholderData: (prev) => prev },
+  )
   const setRead = trpc.mail.thread.setRead.useMutation()
   const setArchived = trpc.mail.thread.setArchived.useMutation()
   const setStarred = trpc.mail.thread.setStarred.useMutation()
@@ -1240,7 +1255,11 @@ function ConversationView({
   const starred = head.isStarred ?? false
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div
+      className={`flex flex-1 flex-col overflow-hidden transition-opacity duration-150 ${
+        convo.isPlaceholderData ? 'pointer-events-none opacity-50' : 'opacity-100'
+      }`}
+    >
       {/* Toolbar */}
       <div className="flex items-center gap-1 border-b border-neutral-200 px-3 py-1.5">
         <RowAction label="Back" onClick={onBack}>
@@ -1744,7 +1763,7 @@ function ComposeDock({
           value={accountId}
           onChange={(e) => setAccountId(e.target.value)}
           aria-label="From"
-          className="border-b border-neutral-100 px-4 py-2 text-sm text-neutral-700 focus:outline-none"
+          className="border-b border-neutral-100 bg-white px-4 py-2 text-sm text-neutral-700 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gmail-600"
         >
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>

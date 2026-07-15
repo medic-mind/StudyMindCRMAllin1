@@ -24,7 +24,7 @@ export function ThreadPanel({ rootId, viewerId, canModerate, onClose }: Props) {
   const utils = trpc.useUtils()
   const threadQuery = trpc.chat.thread.useQuery(
     { rootId },
-    { refetchInterval: 5000 },
+    { refetchInterval: 20_000, placeholderData: (prev) => prev },
   )
 
   useEffect(() => {

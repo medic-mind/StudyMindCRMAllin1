@@ -84,10 +84,9 @@ export function FamilyTimeline({ familyId, initialItems, initialNextCursor }: Pr
               <div className="flex items-center justify-between text-xs text-neutral-500">
                 <span className="font-mono">{it.type}</span>
                 <time dateTime={it.occurredAt.toString()}>
-                  {new Date(it.occurredAt).toLocaleString('en-GB', {
+                  {new Date(it.occurredAt).toLocaleString('en-GB', { timeZone: 'Europe/London', 
                     dateStyle: 'medium',
-                    timeStyle: 'short',
-                  })}
+                    timeStyle: 'short',})}
                 </time>
               </div>
               <div className="mt-1 text-sm text-neutral-900">{it.summary ?? '—'}</div>

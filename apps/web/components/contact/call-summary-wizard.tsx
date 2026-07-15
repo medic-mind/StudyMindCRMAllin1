@@ -30,6 +30,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { LockIcon, PencilIcon, SparklesIcon, UserPlusIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -836,8 +837,8 @@ export function CallSummaryWizard({
               onClick={() => choosePath('self')}
               className="rounded-lg border border-primary-300 bg-white p-3 text-left transition-colors hover:border-primary-400 hover:bg-primary-50"
             >
-              <span className="block text-sm font-semibold text-primary-900">
-                ✍️ I&apos;ll send it now
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-primary-900">
+                <PencilIcon size={15} /> I&apos;ll send it now
               </span>
               <span className="mt-0.5 block text-xs text-neutral-600">
                 Email (full Gmail) and/or WhatsApp / SMS via Trengo, then log an internal note.
@@ -848,7 +849,9 @@ export function CallSummaryWizard({
               onClick={() => choosePath('va')}
               className="rounded-lg border border-amber-300 bg-white p-3 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
             >
-              <span className="block text-sm font-semibold text-amber-900">🤝 Hand it to a VA</span>
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+                <UserPlusIcon size={15} /> Hand it to a VA
+              </span>
               <span className="mt-0.5 block text-xs text-neutral-600">
                 Post the summary to #callsummaries — flagged for VA action — and open a task for the
                 VA team to send it and clear it on the CRM.
@@ -895,7 +898,7 @@ export function CallSummaryWizard({
             disabled={draftingVa}
             className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100/70 px-3 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50"
           >
-            <span aria-hidden="true">✨</span>
+            <SparklesIcon size={13} aria-hidden="true" />
             {draftingVa ? 'Thinking…' : 'AI draft from latest call'}
           </button>
 
@@ -1013,7 +1016,7 @@ export function CallSummaryWizard({
                   disabled={drafting}
                   className="inline-flex items-center gap-1.5 rounded-full border border-primary-300 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-800 transition-colors hover:bg-primary-100 disabled:opacity-50"
                 >
-                  <span aria-hidden="true">✨</span>
+                  <SparklesIcon size={13} aria-hidden="true" />
                   {drafting ? 'Drafting…' : 'AI draft from latest call'}
                 </button>
                 {templates.map((t) => {
@@ -1549,7 +1552,7 @@ export function CallSummaryWizard({
           <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
             <div className="flex items-center gap-2">
               <span aria-hidden className="text-amber-700">
-                🔒
+                <LockIcon size={13} />
               </span>
               <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
                 Step 3 — Internal note &amp; next steps
@@ -1565,7 +1568,7 @@ export function CallSummaryWizard({
               disabled={draftingNote}
               className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100/70 px-3 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50"
             >
-              <span aria-hidden="true">✨</span>
+              <SparklesIcon size={13} aria-hidden="true" />
               {draftingNote ? 'Thinking…' : 'AI suggest next steps'}
             </button>
 

@@ -333,7 +333,7 @@ function ComplaintDetail({ id, onChanged }: { id: string; onChanged: () => Promi
           Follow-ups &amp; action points
         </p>
         {c.updates.length === 0 ? (
-          <p className="text-xs text-neutral-400">None yet.</p>
+          <p className="text-xs text-neutral-400">No follow-ups yet — add an update below to keep the trail current.</p>
         ) : (
           <ul className="space-y-1">
             {c.updates.map((u) => (

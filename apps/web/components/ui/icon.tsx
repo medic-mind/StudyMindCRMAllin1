@@ -678,3 +678,38 @@ export function AlertOctagonIcon(props: IconProps) {
     </svg>
   )
 }
+
+export function ChevronUpIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="m18 15-6-6-6 6" />
+    </svg>
+  )
+}
+
+export function ChevronsUpDownIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="m7 15 5 5 5-5" />
+      <path d="m7 9 5-5 5 5" />
+    </svg>
+  )
+}
+
+export function ArrowDownLeftIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M17 7 7 17" />
+      <path d="M17 17H7V7" />
+    </svg>
+  )
+}
+
+export function ArrowUpRightIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M7 7h10v10" />
+      <path d="M7 17 17 7" />
+    </svg>
+  )
+}

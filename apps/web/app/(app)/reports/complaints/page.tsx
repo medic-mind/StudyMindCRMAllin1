@@ -231,7 +231,9 @@ export default async function ComplaintsReportPage({
               <p className="text-xs text-neutral-500">Active (open + in progress), now.</p>
             </div>
             {data.topCustomers.length === 0 ? (
-              <p className="p-6 text-sm text-neutral-500">No active complaints. 🎉</p>
+              <p className="p-6 text-sm text-neutral-500">
+                No active complaints — everything raised has been resolved or closed.
+              </p>
             ) : (
               <Table>
                 <Thead>

@@ -49,8 +49,15 @@ export function ThreadPane({
   const convo = trpc.inbox.conversations.get.useQuery(
     { conversationId },
     // SSE (useConversationStream) is the primary live path; this poll is a
-    // fallback, so 30s is plenty and keeps the thread light.
-    { refetchInterval: 30_000, refetchOnWindowFocus: true },
+    // fallback, so 30s is plenty and keeps the thread light. keepPrevious
+    // stops the whole pane flashing to "Loading…" on every conversation
+    // click — the previous thread stays (dimmed, see below) for the ~100ms
+    // the next one takes to arrive.
+    {
+      refetchInterval: 30_000,
+      refetchOnWindowFocus: true,
+      placeholderData: (prev) => prev,
+    },
   )
 
   // Trengo's signature header action: Close (✓) / Reopen the ticket from the
@@ -112,7 +119,11 @@ export function ThreadPane({
   const canReplyTrengo = !!head.contactId && head.trengoTicketId !== null
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div
+      className={`flex flex-1 flex-col overflow-hidden transition-opacity duration-150 ${
+        convo.isPlaceholderData ? 'pointer-events-none opacity-50' : 'opacity-100'
+      }`}
+    >
       {/* Thread header */}
       <header className="flex items-center gap-2 border-b border-neutral-200 bg-white px-3 py-2.5">
         <button

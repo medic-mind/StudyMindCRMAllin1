@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
+import { XIcon } from '@/components/ui/icon'
 
 interface Props {
   cardId: string
@@ -92,7 +93,7 @@ export function CardSubtasks({ cardId, canWrite }: Props) {
                     aria-label={`Delete sub-task "${s.title}"`}
                     className="shrink-0 text-xs text-neutral-300 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
                   >
-                    ✕
+                    <XIcon size={14} />
                   </button>
                 )}
               </li>

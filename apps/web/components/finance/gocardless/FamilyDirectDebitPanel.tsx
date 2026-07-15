@@ -155,7 +155,7 @@ export function FamilyDirectDebitPanel({ familyId }: { familyId: string }) {
           Bank mandates
         </p>
         {data.mandates.length === 0 ? (
-          <p className="mt-1 text-sm text-neutral-500">None yet.</p>
+          <p className="mt-1 text-sm text-neutral-500">No mandates yet — send a Direct Debit setup link to get one signed.</p>
         ) : (
           <ul className="mt-1.5 space-y-1.5">
             {data.mandates.map((m) => (
