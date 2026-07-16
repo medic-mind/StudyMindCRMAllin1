@@ -22,6 +22,7 @@ import { IntegrationTestButton } from '../IntegrationTestButton'
 import { AircallProbeButton } from './AircallProbeButton'
 import { BackfillButton } from './BackfillButton'
 import { CancelBackfillButton } from './CancelBackfillButton'
+import { SlackProbeButton } from './SlackProbeButton'
 import { TrengoImportButton } from './TrengoImportButton'
 import { TrengoProbeButton } from './TrengoProbeButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
@@ -264,7 +265,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                 }`}
               >
                 {detail.slackStats.eventsReceived === 0
-                  ? 'No Slack events have ever reached the CRM. The bot must be invited to the channel AND the Slack app’s Event Subscriptions must point at /api/webhooks/slack (subscribe message.channels) with SLACK_SIGNING_SECRET set. Run the 90-day backfill below once that’s done.'
+                  ? 'No Slack WEBHOOK events have reached the CRM (this counter only tracks the Events API push, not the 15-min pull). The pull sync still works from SLACK_BOT_TOKEN alone — use “Test Slack connection” below to see which channels the bot can actually read, then “Sync from Slack now”. For real-time push too, point the Slack app’s Event Subscriptions at /api/webhooks/slack (subscribe message.channels) with SLACK_SIGNING_SECRET set.'
                   : detail.slackStats.mentionsLinked === 0 && detail.slackStats.parkedForTriage === 0
                     ? 'Events are arriving but none matched a contact yet — most messages are noise (no name/phone/email). Post a message with a customer’s phone or email and re-check, or run the backfill below to reprocess history through the matcher.'
                     : 'Connected — Slack mentions are being captured and matched to contacts.'}
@@ -293,6 +294,11 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   </div>
                 ))}
               </dl>
+              {canTest ? (
+                <div className="mt-4 flex justify-end border-t border-neutral-100 pt-3">
+                  <SlackProbeButton />
+                </div>
+              ) : null}
             </section>
           ) : null}
 

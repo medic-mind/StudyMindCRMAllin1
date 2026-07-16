@@ -784,6 +784,82 @@ export const adminIntegrationsRouter = router({
   }),
 
   /**
+   * Live Slack connectivity probe (CEO / Senior Manager). The #1 reason
+   * "nothing shows from Slack" is invisible: either SLACK_BOT_TOKEN is unset,
+   * or the bot is not INVITED to the channels where staff discuss customers
+   * (Slack's conversations.history only works on channels the bot has joined
+   * — unlike Trengo's workspace token). This calls Slack directly with the
+   * shared bot token, reports the bot identity, and lists exactly which
+   * channels the bot can read — so the gap is obvious. Read-only; audited.
+   */
+  probeSlack: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    if (!TEST_ROLES.has(user.role)) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
+    }
+    const result = await (async (): Promise<
+      | {
+          ok: true
+          botName: string | null
+          teamName: string | null
+          memberChannels: string[]
+          visibleChannels: number
+          allowlistActive: boolean
+          groupsScopeMissing: boolean
+        }
+      | { ok: false; error: string }
+    > => {
+      const token = process.env['SLACK_BOT_TOKEN']
+      if (!token) {
+        return {
+          ok: false,
+          error:
+            'SLACK_BOT_TOKEN is not set — add the bot token in Railway env vars, then retry.',
+        }
+      }
+      try {
+        const { createClient, SlackApiError } = await import(
+          '@studymind/integration-slack/client'
+        )
+        const { getWatchedChannels } = await import('@studymind/integration-slack/config')
+        const client = createClient({ token })
+        const identity = await client.identity()
+        let groupsScopeMissing = false
+        let channels: Array<{ name: string; isMember: boolean }> = []
+        try {
+          const list = await client.listChannels()
+          channels = list.map((c) => ({ name: c.name, isMember: c.isMember }))
+        } catch (err) {
+          if (err instanceof SlackApiError && err.slackError === 'missing_scope') {
+            groupsScopeMissing = true
+          } else {
+            throw err
+          }
+        }
+        const allow = getWatchedChannels()
+        const member = channels.filter((c) => c.isMember).map((c) => `#${c.name}`)
+        return {
+          ok: true,
+          botName: identity.botName,
+          teamName: identity.teamName,
+          memberChannels: member.slice(0, 50),
+          visibleChannels: channels.length,
+          allowlistActive: allow.length > 0,
+          groupsScopeMissing,
+        }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'unknown error' }
+      }
+    })()
+    await ctx.audit({
+      action: 'admin.integration_tested',
+      target: { type: 'Integration', id: 'slack' },
+      after: { probe: 'slack_api_live', ok: result.ok },
+    })
+    return result
+  }),
+
+  /**
    * Synthetic ping that proves the ProviderEvent persistence path is
    * healthy end-to-end. CEO / Senior Manager only and audited. Does NOT
    * call the live provider API or forge a signature — instead it inserts
