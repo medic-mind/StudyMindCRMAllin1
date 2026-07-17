@@ -1,8 +1,9 @@
-// StudyMind brand mark — a clean violet→magenta rounded-square tile with a
-// white "S" monogram. Authored as an inline SVG so it scales crisply at any
-// size and needs no asset pipeline (the previous hand-drawn brain glyph went
-// rough at small sizes). If marketing supplies an exact PNG, drop it at
-// apps/web/public/logo.png and swap <BrandLogo> for <img>. CLAUDE.md §4.
+// StudyMind brand mark — a clean blue rounded-square tile with a white "S"
+// monogram, matching the primary-blue brand intent (§4). Authored as an inline
+// SVG so it scales crisply at any size and needs no asset pipeline (the previous
+// hand-drawn brain glyph went rough at small sizes). If marketing supplies an
+// exact PNG, drop it at apps/web/public/logo.png and swap <BrandLogo> for
+// <img>. CLAUDE.md §4.
 
 interface Props {
   size?: number
@@ -52,8 +53,8 @@ export function BrandLogo({
       >
         <defs>
           <linearGradient id="sm-brand" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#7c3aed" />
-            <stop offset="100%" stopColor="#a21caf" />
+            <stop offset="0%" stopColor="#2563eb" />
+            <stop offset="100%" stopColor="#1d4ed8" />
           </linearGradient>
         </defs>
         <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#sm-brand)" />

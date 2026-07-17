@@ -198,13 +198,15 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     <div className="mx-auto max-w-6xl space-y-5">
       {/* Hero header */}
       <header className="relative overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-card">
-        {/* Brand wash background */}
+        {/* Brand wash background — a whisper of the primary blue in the top
+            corner (matches the dashboard hero), kept low-opacity so it reads
+            calm, not washed in colour. */}
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              'radial-gradient(120% 100% at 0% 0%, rgb(147 51 234 / 0.10), transparent 55%), linear-gradient(180deg, rgb(250 245 255 / 0.5) 0%, transparent 60%)',
+              'radial-gradient(120% 100% at 0% 0%, rgb(37 99 235 / 0.06), transparent 55%), linear-gradient(180deg, rgb(239 246 255 / 0.5) 0%, transparent 60%)',
           }}
         />
         <div className="relative flex flex-col gap-5 p-6 lg:flex-row lg:items-start lg:justify-between">

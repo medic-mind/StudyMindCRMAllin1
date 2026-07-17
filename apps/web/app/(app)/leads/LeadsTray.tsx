@@ -73,7 +73,7 @@ function BrandChip({ brand }: { brand: { name: string; color: string | null } | 
     <span className="inline-flex items-center gap-1.5">
       <span
         className="h-2.5 w-2.5 rounded-full"
-        style={{ backgroundColor: brand.color ?? '#9333ea' }}
+        style={{ backgroundColor: brand.color ?? '#2563eb' }}
         aria-hidden
       />
       <span className="text-neutral-800">{brand.name}</span>

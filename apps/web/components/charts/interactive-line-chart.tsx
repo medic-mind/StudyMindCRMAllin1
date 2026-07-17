@@ -100,8 +100,8 @@ export function InteractiveLineChart({
       >
         <defs>
           <linearGradient id={`${uid}-area`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={first?.color ?? '#9333ea'} stopOpacity={0.14} />
-            <stop offset="100%" stopColor={first?.color ?? '#9333ea'} stopOpacity={0.01} />
+            <stop offset="0%" stopColor={first?.color ?? '#2563eb'} stopOpacity={0.14} />
+            <stop offset="100%" stopColor={first?.color ?? '#2563eb'} stopOpacity={0.01} />
           </linearGradient>
         </defs>
 

@@ -12,11 +12,11 @@ export const revalidate = 0
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-neutral-50">
-      {/* Brand hero — one cohesive deep-violet gradient (on-brand with the
+      {/* Brand hero — one cohesive deep-blue gradient (on-brand with the
           primary scale), a soft top sheen for depth, intentionally text-light.
           No busy dotted grid; the calm surface reads more premium. */}
       <aside
-        className="auth-hero-gradient relative hidden w-1/2 items-center justify-center overflow-hidden bg-[#2e1065] lg:flex"
+        className="auth-hero-gradient relative hidden w-1/2 items-center justify-center overflow-hidden bg-[#172554] lg:flex"
         aria-hidden="true"
       >
         {/* Gradient + sheen live in globals.css classes (not inline `style`)

@@ -177,16 +177,15 @@ export function SidebarNav({ items }: Props) {
               const Icon = ICONS[item.href]
               return (
                 <div key={item.href} className="flex flex-col">
-                  {/* Modern active state: a filled primary pill with a soft
-                      shadow — reads unambiguously as "you are here" and matches
-                      the refreshed login + top-bar look. Inactive rows stay
-                      quiet until hover. */}
+                  {/* Active state: a clean filled primary pill — reads
+                      unambiguously as "you are here" without a coloured glow.
+                      Inactive rows stay quiet until hover. */}
                   <Link
                     href={item.href}
                     aria-current={active ? 'page' : undefined}
                     className={
                       active
-                        ? 'flex items-center gap-2.5 rounded-lg bg-primary-600 px-3 py-2 font-medium text-white shadow-sm shadow-primary-600/25'
+                        ? 'flex items-center gap-2.5 rounded-lg bg-primary-600 px-3 py-2 font-medium text-white shadow-sm'
                         : 'flex items-center gap-2.5 rounded-lg px-3 py-2 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900'
                     }
                   >
