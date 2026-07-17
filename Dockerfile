@@ -46,7 +46,31 @@ FROM base AS runner
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
-COPY --from=builder /app ./
+
+# Split the runner into layers by CHANGE FREQUENCY instead of one fat
+# `COPY --from=builder /app ./`. That single copy bundled the 1.3 GB
+# node_modules WITH the app source, so ANY code edit invalidated the whole
+# layer and Railway re-pushed 1.3 GB of unchanged dependencies on every deploy
+# — the real reason deploys "took forever".
+#
+# node_modules is copied FIRST, on its own. Its content is a function of the
+# lockfile + a deterministic `prisma generate`, NOT of app code, so on a
+# code-only deploy this layer's checksum is unchanged, BuildKit reuses the
+# cached layer, and it is never re-pushed. Only the small app/source layers
+# below (a few tens of MB, incl. .next) move per deploy.
+#
+# The boot sequence is unchanged (still `pnpm --filter web start` →
+# start-web.sh → migrate/seed/serve), so there is no runtime risk — this is
+# purely how the image is layered. CLAUDE.md §24.
+COPY --from=builder /app/node_modules ./node_modules
+# App source + build output + workspace packages + the manifests pnpm needs to
+# resolve `--filter`. Everything the runtime touches; nothing dev-only that the
+# current image lacked.
+COPY --from=builder /app/apps ./apps
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml /app/turbo.json /app/tsconfig.base.json ./
+
 USER nextjs
 EXPOSE 3000
 CMD ["pnpm", "--filter", "web", "start"]
