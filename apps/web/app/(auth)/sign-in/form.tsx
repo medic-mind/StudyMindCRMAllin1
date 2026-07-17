@@ -9,6 +9,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { Button } from '@/components/ui/button'
+import { LockIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PasswordField } from '@/components/ui/password-field'
@@ -46,6 +47,11 @@ export function SignInForm({
   const [stashed, setStashed] = useState<Values | null>(null)
   const [useRecovery, setUseRecovery] = useState(false)
   const [secondFactor, setSecondFactor] = useState('')
+  // Optional 2FA field on the credentials step. Shown collapsed by default and
+  // clearly labelled "only if you've set it up", so people WITHOUT 2FA aren't
+  // confused, while people WITH it can sign in in one step.
+  const [showCodeField, setShowCodeField] = useState(false)
+  const [upfrontCode, setUpfrontCode] = useState('')
 
   const { register, handleSubmit, formState } = useForm<Values>({
     resolver: zodResolver(Schema),
@@ -69,7 +75,8 @@ export function SignInForm({
       }
       if (res.error) {
         if (res.error === 'TOTP_REQUIRED') {
-          // Move the user to the second step. Do not surface as an error.
+          // The account has 2FA but no code was supplied — move to the focused
+          // second step. Never surfaced as an error.
           setStashed(values)
           setStep('totp')
           return
@@ -90,7 +97,7 @@ export function SignInForm({
   if (step === 'totp' && stashed) {
     return (
       <form
-        className="space-y-4"
+        className="space-y-5"
         onSubmit={(e) => {
           e.preventDefault()
           const trimmed = secondFactor.trim()
@@ -98,6 +105,19 @@ export function SignInForm({
           attempt(stashed, useRecovery ? { recoveryCode: trimmed } : { totpCode: trimmed })
         }}
       >
+        <div className="flex items-start gap-3 rounded-lg border border-primary-100 bg-primary-50/60 p-3">
+          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-700">
+            <LockIcon size={16} />
+          </span>
+          <div className="text-sm text-neutral-700">
+            <p className="font-medium text-neutral-900">Two-factor required</p>
+            <p className="mt-0.5 text-xs text-neutral-600">
+              This account has two-factor turned on. Open Google Authenticator and
+              enter the current 6-digit code for StudyMind CRM.
+            </p>
+          </div>
+        </div>
+
         {error && (
           <div
             className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
@@ -110,12 +130,14 @@ export function SignInForm({
 
         <div className="space-y-1.5">
           <Label htmlFor="second-factor">
-            {useRecovery ? 'Recovery code' : 'Six-digit code from Google Authenticator'}
+            {useRecovery ? 'Recovery code' : 'Six-digit code'}
           </Label>
           <Input
             id="second-factor"
             inputMode={useRecovery ? 'text' : 'numeric'}
             autoComplete="one-time-code"
+            placeholder={useRecovery ? 'xxxx-xxxx' : '123456'}
+            className="text-center text-lg tracking-[0.3em]"
             value={secondFactor}
             onChange={(e) => setSecondFactor(e.target.value)}
             autoFocus
@@ -157,7 +179,12 @@ export function SignInForm({
   }
 
   return (
-    <form className="space-y-4" onSubmit={handleSubmit((values) => attempt(values))}>
+    <form
+      className="space-y-5"
+      onSubmit={handleSubmit((values) =>
+        attempt(values, upfrontCode.trim() ? { totpCode: upfrontCode.trim() } : {}),
+      )}
+    >
       {error && (
         <div
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
@@ -170,12 +197,7 @@ export function SignInForm({
 
       <div className="space-y-1.5">
         <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          type="email"
-          autoComplete="email"
-          {...register('email')}
-        />
+        <Input id="email" type="email" autoComplete="email" {...register('email')} />
         {formState.errors.email && (
           <p className="text-xs text-red-600">{formState.errors.email.message}</p>
         )}
@@ -188,15 +210,46 @@ export function SignInForm({
             Forgot?
           </Link>
         </div>
-        <PasswordField
-          id="password"
-          autoComplete="current-password"
-          {...register('password')}
-        />
+        <PasswordField id="password" autoComplete="current-password" {...register('password')} />
         {formState.errors.password && (
           <p className="text-xs text-red-600">{formState.errors.password.message}</p>
         )}
       </div>
+
+      {/* Optional 2FA area — clearly labelled so people WITHOUT it aren't
+          confused. Collapsed by default; if you've set up two-factor you can
+          enter the code here and sign in in one step (otherwise leave it — the
+          app asks for it on the next screen only if your account needs it). */}
+      {showCodeField ? (
+        <div className="space-y-1.5 rounded-lg border border-neutral-200 bg-neutral-50/70 p-3">
+          <Label htmlFor="upfront-code" className="flex items-center gap-1.5">
+            <LockIcon size={13} className="text-neutral-500" />
+            Two-factor code
+          </Label>
+          <Input
+            id="upfront-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="123456"
+            className="text-center tracking-[0.3em]"
+            value={upfrontCode}
+            onChange={(e) => setUpfrontCode(e.target.value)}
+          />
+          <p className="text-[11px] text-neutral-500">
+            Only needed if you&apos;ve set up two-factor authentication. Leave blank
+            if you haven&apos;t.
+          </p>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowCodeField(true)}
+          className="flex items-center gap-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-800"
+        >
+          <LockIcon size={12} />
+          Have a two-factor code? Enter it here
+        </button>
+      )}
 
       <Button type="submit" disabled={busy} className="w-full">
         {busy ? 'Signing in…' : 'Sign in'}

@@ -225,7 +225,20 @@ export const { auth, handlers, signIn, signOut } = NextAuth({
           (user as { totpEnabledAt?: string | null }).totpEnabledAt ?? null
         token.roles = await loadRoles(user.id as string)
         token.rolesLoadedAt = Date.now()
-      } else if (trigger === 'update' || shouldRefreshRoles(token)) {
+      } else if (
+        trigger === 'update' ||
+        shouldRefreshRoles(token) ||
+        // Self-heal the enrolment glitch: the JWT cookie is only re-issued on
+        // an update trigger or the 60s role refresh, so right after a user
+        // completes 2FA setup the edge middleware keeps reading the stale
+        // `totpEnabledAt: null` cookie and — with the mandatory gate on —
+        // ping-pongs between /account/setup-2fa and /account (ERR_TOO_MANY_
+        // REDIRECTS). Refreshing whenever the token still says NOT-enrolled
+        // is a cheap PK lookup (only for un-enrolled users, who are gated to
+        // the setup page anyway) and converges the cookie on the very next
+        // node-runtime request after enrolment.
+        token.totpEnabledAt == null
+      ) {
         if (typeof token.uid === 'string') {
           token.roles = await loadRoles(token.uid)
           token.rolesLoadedAt = Date.now()

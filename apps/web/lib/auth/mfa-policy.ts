@@ -6,17 +6,20 @@
 // stays thin and the policy is unit-testable.
 //
 // Enforcement mode comes from MANDATORY_MFA_ENABLED:
-//   - 'true'           → enforced for the privileged roles (§20: CEO, Senior
-//                        Manager, Manager — the people who can move money or
-//                        manage other users)
-//   - 'all'            → enforced for EVERY staff role
-//   - unset / 'false'  → off. Enrolment stays voluntary; the sign-in TOTP
-//                        gate still applies to anyone who has enrolled.
+//   - unset / 'all'    → enforced for EVERY staff role (the DEFAULT). On first
+//                        sign-in the user is sent to /account/setup-2fa and
+//                        cannot reach the CRM until they enrol. Not completing
+//                        it never locks the account — they can sign out and are
+//                        simply prompted again next time.
+//   - 'true'           → enforced for the privileged roles only (§20: CEO,
+//                        Senior Manager, Manager — the money/user-management
+//                        roles). Other staff enrol voluntarily.
+//   - 'false' / 'off'  → paused. Enrolment is voluntary; the sign-in TOTP gate
+//                        still applies to anyone who HAS enrolled.
 //
-// Default is OFF at the operator's request (they cannot set Railway env vars
-// yet, so a default-on gate would lock the team into the setup flow with no
-// escape hatch). Flip MANDATORY_MFA_ENABLED=true (or 'all') once the env is
-// editable — the §20 target state remains mandatory for privileged roles.
+// Default is ON-for-everyone at the operator's explicit request (2026-07):
+// force 2FA setup on first login. The `false` value is the escape hatch if the
+// gate ever needs pausing without a code change.
 
 export type MfaEnforcementMode = 'privileged' | 'all' | 'off'
 
@@ -38,9 +41,10 @@ export const PRIVILEGED_ROLES: ReadonlySet<string> = new Set([
 
 export function resolveMfaEnforcementMode(envValue: string | undefined): MfaEnforcementMode {
   const v = envValue?.trim().toLowerCase()
+  if (v === 'false' || v === 'off') return 'off' // explicit escape hatch
   if (v === 'true') return 'privileged'
-  if (v === 'all') return 'all'
-  return 'off' // unset / 'false' / anything else → enforcement paused
+  // unset / 'all' / anything else → force every staff role (the default).
+  return 'all'
 }
 
 export function isPrivilegedRole(

@@ -9,10 +9,13 @@ import {
 
 describe('resolveMfaEnforcementMode', () => {
   it('defaults to OFF when unset (enforcement paused until the env is editable)', () => {
-    expect(resolveMfaEnforcementMode(undefined)).toBe('off')
-    expect(resolveMfaEnforcementMode('')).toBe('off')
+    // Default is now ON-for-everyone (force 2FA on first login); only an
+    // explicit false/off pauses it.
     expect(resolveMfaEnforcementMode('false')).toBe('off')
-    expect(resolveMfaEnforcementMode('yes')).toBe('off') // unrecognised → off
+    expect(resolveMfaEnforcementMode('OFF')).toBe('off')
+    expect(resolveMfaEnforcementMode(undefined)).toBe('all')
+    expect(resolveMfaEnforcementMode('')).toBe('all')
+    expect(resolveMfaEnforcementMode('yes')).toBe('all') // unrecognised → default (all)
   })
 
   it("'true' enforces for privileged roles; 'all' for every role", () => {

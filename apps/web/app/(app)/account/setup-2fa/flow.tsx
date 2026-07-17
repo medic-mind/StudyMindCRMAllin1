@@ -14,6 +14,7 @@
 // a standard otpauth:// URI, so other TOTP apps also work — the copy simply
 // standardises the team on Google Authenticator.
 
+import { useSession } from 'next-auth/react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import QRCode from 'qrcode'
@@ -90,10 +91,19 @@ export function Setup2faFlow() {
     onError: (e) => toast.error(e.message ?? 'Could not start setup.'),
   })
 
+  const { update: refreshSession } = useSession()
+
   const confirm = trpc.account.totp.confirmSetup.useMutation({
     onSuccess: (data) => {
       setRecoveryCodes(data.recoveryCodes)
       setStep(4)
+      // Refresh the NextAuth session cookie NOW so `totpEnabledAt` propagates
+      // to the edge middleware. Without this the mandatory-MFA gate keeps
+      // reading the stale (not-enrolled) cookie and bounces the user between
+      // /account/setup-2fa and /account (ERR_TOO_MANY_REDIRECTS) — the core
+      // "2FA is glitchy" bug. `update()` hits the node /api/auth/session route
+      // which re-issues the cookie with the enrolled value.
+      void refreshSession()
     },
     onError: (e) =>
       toast.error(

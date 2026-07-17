@@ -124,10 +124,11 @@ export default authMiddleware((req) => {
   }
 
   // Mandatory MFA enrolment gate (CLAUDE.md §20, policy in lib/auth/mfa-policy):
-  // OFF by default (enrolment stays voluntary; the sign-in TOTP gate applies
-  // to anyone enrolled). Set MANDATORY_MFA_ENABLED='true' to force the
-  // privileged roles (CEO / Senior Manager / Manager) to enrol, or 'all' for
-  // every staff role. The policy exempts the setup + change-password pages
+  // ON for every staff role by DEFAULT — on first sign-in the user is sent to
+  // /account/setup-2fa and cannot use the CRM until they enrol (not completing
+  // it never locks the account; they are simply re-prompted next sign-in). Set
+  // MANDATORY_MFA_ENABLED='true' to narrow the gate to privileged roles, or
+  // 'false' to pause it. The policy exempts the setup + change-password pages
   // and ALL /api/ paths — redirecting a JSON request to an HTML page is what
   // produced the "Unexpected token '<' … not valid JSON" sign-in error.
   if (
