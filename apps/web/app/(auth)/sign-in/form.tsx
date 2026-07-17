@@ -47,6 +47,11 @@ export function SignInForm({
   const [stashed, setStashed] = useState<Values | null>(null)
   const [useRecovery, setUseRecovery] = useState(false)
   const [secondFactor, setSecondFactor] = useState('')
+  // Always-visible optional 2FA field on the first screen (like a normal
+  // field, not a dropdown). If your account has two-factor turned on, enter
+  // the code here and sign in in one step; leave it blank otherwise. Accounts
+  // that require it but leave it blank still get the dedicated code step.
+  const [upfrontCode, setUpfrontCode] = useState('')
 
   const { register, handleSubmit, formState } = useForm<Values>({
     resolver: zodResolver(Schema),
@@ -174,7 +179,12 @@ export function SignInForm({
   }
 
   return (
-    <form className="space-y-5" onSubmit={handleSubmit((values) => attempt(values))}>
+    <form
+      className="space-y-5"
+      onSubmit={handleSubmit((values) =>
+        attempt(values, upfrontCode.trim() ? { totpCode: upfrontCode.trim() } : {}),
+      )}
+    >
       {error && (
         <div
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
@@ -206,9 +216,22 @@ export function SignInForm({
         )}
       </div>
 
-      {/* No upfront 2FA field here — if the account has two-factor turned on,
-          the sign-in moves to a dedicated code step (above). Keeps this form to
-          just email + password. */}
+      {/* Always-visible 2FA code — a normal field, not a dropdown. Optional:
+          only accounts with two-factor turned on need it. */}
+      <div className="space-y-1.5">
+        <Label htmlFor="totp-code">Two-factor code</Label>
+        <Input
+          id="totp-code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          placeholder="123456"
+          value={upfrontCode}
+          onChange={(e) => setUpfrontCode(e.target.value)}
+        />
+        <p className="text-xs text-neutral-500">
+          Only if you&apos;ve set up two-factor authentication — otherwise leave blank.
+        </p>
+      </div>
 
       <Button type="submit" disabled={busy} className="w-full">
         {busy ? 'Signing in…' : 'Sign in'}
