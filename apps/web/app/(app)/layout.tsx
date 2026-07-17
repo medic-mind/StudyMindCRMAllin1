@@ -156,10 +156,6 @@ function buildNav(role: Role): NavItem[] {
         { href: '/reports/cost', label: 'Cost' },
       ],
     },
-    // Knowledge — the in-app knowledge base was retired at the operator's
-    // request (2026-07); /protocols is now a simple gateway to the live Crib
-    // site (crib.studymind.co.uk) with the team password. Sub-pages redirect.
-    { href: '/protocols', label: 'Crib (Protocols)' },
     {
       href: '/settings',
       label: 'Settings',

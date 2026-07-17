@@ -8,7 +8,6 @@ import type { ComponentType, SVGProps } from 'react'
 
 import {
   BarChartIcon,
-  BookOpenIcon,
   BuildingIcon,
   CalendarIcon,
   CoinsIcon,
@@ -50,7 +49,6 @@ const LINKS: readonly QuickLink[] = [
   { href: '/finance', label: 'Finance', icon: CoinsIcon, financeOnly: true },
   { href: '/direct-debits', label: 'Direct Debits', icon: RepeatIcon, financeOnly: true },
   { href: '/reports', label: 'Reports', icon: BarChartIcon },
-  { href: '/protocols', label: 'Crib (Protocols)', icon: BookOpenIcon },
 ]
 
 export function QuickLinks({ role }: { role: UserRole }) {

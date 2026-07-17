@@ -13,7 +13,6 @@ import type { ComponentType, SVGProps } from 'react'
 import {
   AlertTriangleIcon,
   BarChartIcon,
-  BookOpenIcon,
   BuildingIcon,
   CalendarIcon,
   CoinsIcon,
@@ -92,8 +91,6 @@ const ICONS: Record<string, IconComp> = {
   '/finance': CoinsIcon,
   '/direct-debits': RepeatIcon,
   '/reports': BarChartIcon,
-  // Knowledge — the imported company knowledge base (ADR 0040).
-  '/protocols': BookOpenIcon,
   '/settings': SettingsIcon,
   '/account': UserCircleIcon,
 }
@@ -124,8 +121,6 @@ const SECTION: Record<string, string> = {
   '/finance': 'Operations',
   '/direct-debits': 'Operations',
   '/reports': 'Operations',
-  // Knowledge — staff-facing company knowledge, not a work queue.
-  '/protocols': 'Knowledge',
   '/settings': 'Admin',
 }
 const SECTION_ORDER = [
@@ -135,7 +130,6 @@ const SECTION_ORDER = [
   'Internal',
   'Work',
   'Operations',
-  'Knowledge',
   'Admin',
 ] as const
 
