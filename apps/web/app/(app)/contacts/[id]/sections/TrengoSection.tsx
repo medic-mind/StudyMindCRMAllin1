@@ -45,10 +45,10 @@ export function TrengoSection({ contactId, conversations }: Props): JSX.Element 
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <Link
-          href="/inbox/conversations"
+          href="/inbox"
           className="text-xs text-primary-700 hover:underline"
         >
-          Open the Trengo inbox →
+          Open Trengo →
         </Link>
         <StartTrengoConversation contactId={contactId} />
       </div>

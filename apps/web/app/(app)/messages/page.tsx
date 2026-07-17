@@ -5,5 +5,5 @@
 import { redirect } from 'next/navigation'
 
 export default function MessagesPage(): never {
-  redirect('/inbox/conversations')
+  redirect('/inbox')
 }

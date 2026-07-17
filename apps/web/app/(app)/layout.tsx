@@ -44,11 +44,9 @@ function buildNav(role: Role): NavItem[] {
     // Communications — customer channels. Trengo is the unified cross-channel
     // customer inbox (WhatsApp / SMS / web-chat / email, synced with Trengo);
     // Mail is the focused email client. Both are customer-facing.
-    {
-      href: '/inbox',
-      label: 'Trengo',
-      children: [{ href: '/inbox', label: 'Conversations' }],
-    },
+    // Trengo is worked in the real Trengo app now (the embedded cockpit was
+    // retired); /inbox is a gateway page with a big "Go to Trengo" button.
+    { href: '/inbox', label: 'Trengo' },
     { href: '/mail', label: 'Mail' },
     // Slack — its own category: the triage tray for customer mentions the AI
     // spotted in watched Slack channels (ADR 0034).
