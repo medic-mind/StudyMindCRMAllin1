@@ -38,6 +38,8 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE, listIngestChannelIds } from './client'
+import { isComplaintChannel } from './channel-rules'
+import { maybeRaiseComplaintFromSlack } from './complaints'
 import {
   resolveSlackLinkTarget,
   resolveSlackLinkTargetFromNames,
@@ -66,6 +68,9 @@ export interface SlackHistoryMessage {
   thread_ts?: string
   /** Only the thread ROOT carries this — how many replies hang off it. */
   reply_count?: number
+  /** Thread ROOT only: ts of the newest reply. Lets the pull spot fresh
+   *  replies on a thread whose root is older than the lookback window. */
+  latest_reply?: string
   /** A bot/app post (e.g. the CRM's own #callsummaries announcement) — skipped. */
   bot_id?: string
   app_id?: string
@@ -182,6 +187,49 @@ export const slackBackfillRequested = inngest.createFunction(
   },
 )
 
+/** Attempts per Slack read call. conversations.history/replies are Tier-3
+ *  rate-limited (~50/min); a workspace-wide pull WILL hit 429s, and the old
+ *  behaviour (throw on the first one) killed the whole tick. */
+const SLACK_GET_ATTEMPTS = 4
+/** Cap on a single Retry-After wait so a step never hangs on a hostile value. */
+const SLACK_GET_MAX_WAIT_S = 60
+
+/**
+ * Slack Web API GET with bounded rate-limit retries. Honours the 429
+ * `Retry-After` header (Slack's documented behaviour) and retries the
+ * `ratelimited` error body; every other error throws immediately.
+ */
+async function slackApiGet(
+  token: string,
+  endpoint: '/conversations.history' | '/conversations.replies',
+  params: URLSearchParams,
+): Promise<SlackHistoryResponse> {
+  let lastError = 'unknown'
+  for (let attempt = 0; attempt < SLACK_GET_ATTEMPTS; attempt += 1) {
+    const res = await safeFetch(`${SLACK_API_BASE}${endpoint}?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const text = await res.text()
+    let parsed: SlackHistoryResponse
+    try {
+      parsed = (text ? JSON.parse(text) : {}) as SlackHistoryResponse
+    } catch {
+      parsed = { ok: false, error: `http_${res.status}` }
+    }
+    if (parsed.ok) return parsed
+    lastError = parsed.error ?? `http_${res.status}`
+    const rateLimited = res.status === 429 || lastError === 'ratelimited'
+    if (!rateLimited) break
+    const retryAfter = Number(res.headers.get('retry-after'))
+    const waitS = Math.min(
+      Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : 10,
+      SLACK_GET_MAX_WAIT_S,
+    )
+    await new Promise((resolve) => setTimeout(resolve, waitS * 1000))
+  }
+  throw new Error(`slack ${endpoint.slice(1)} error: ${lastError}`)
+}
+
 export async function fetchHistory(
   token: string,
   channelId: string,
@@ -194,15 +242,7 @@ export async function fetchHistory(
     limit: '100',
   })
   if (cursor) params.set('cursor', cursor)
-  const res = await safeFetch(`${SLACK_API_BASE}/conversations.history?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  const text = await res.text()
-  const parsed = (text ? JSON.parse(text) : {}) as SlackHistoryResponse
-  if (!parsed.ok) {
-    throw new Error(`slack conversations.history error: ${parsed.error}`)
-  }
-  return parsed
+  return slackApiGet(token, '/conversations.history', params)
 }
 
 /**
@@ -220,6 +260,10 @@ export async function fetchReplies(
   channelId: string,
   threadTs: string,
   cursor: string | undefined,
+  /** Bound the reply walk to replies at/after this UNIX second — used by the
+   *  pull's old-thread scan so a long-lived thread isn't re-walked every tick.
+   *  Omitted (the backfill case) = the whole thread. */
+  oldest?: number,
 ): Promise<SlackHistoryResponse> {
   const params = new URLSearchParams({
     channel: channelId,
@@ -227,15 +271,8 @@ export async function fetchReplies(
     limit: '100',
   })
   if (cursor) params.set('cursor', cursor)
-  const res = await safeFetch(`${SLACK_API_BASE}/conversations.replies?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  const text = await res.text()
-  const parsed = (text ? JSON.parse(text) : {}) as SlackHistoryResponse
-  if (!parsed.ok) {
-    throw new Error(`slack conversations.replies error: ${parsed.error}`)
-  }
-  return parsed
+  if (oldest !== undefined) params.set('oldest', String(oldest))
+  return slackApiGet(token, '/conversations.replies', params)
 }
 
 /** Injectable deps for `walkThread` so the thread-walk logic (skip-root,
@@ -444,7 +481,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
           ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
           messageText: message.text ?? null,
           senderName,
-          category: 'general',
+          category: isComplaintChannel(channelName) ? 'complaint' : 'general',
           sentiment: 'neutral',
           suggestedNextAction: null,
           confidence: 1,
@@ -454,6 +491,17 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
           promptVersion: 'rules-v1',
         },
       },
+    })
+    // Channel-aware rule (ADR 0042): a complaint-channel call summary that
+    // linked to a contact also opens a Complaint. Best-effort + idempotent.
+    await maybeRaiseComplaintFromSlack({
+      contactId: rulesTarget.contactId ?? null,
+      channelId,
+      channelName,
+      slackTs: message.ts,
+      messageText: message.text,
+      aiCategory: null,
+      occurredAt: occurredAtRules,
     })
     return { matched: true }
   }
@@ -549,6 +597,15 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
         promptVersion: SLACK_SUMMARY_PROMPT_VERSION,
       },
     },
+  })
+  await maybeRaiseComplaintFromSlack({
+    contactId: target.contactId ?? null,
+    channelId,
+    channelName,
+    slackTs: message.ts,
+    messageText: message.text,
+    aiCategory: parsed.category,
+    occurredAt,
   })
   return { matched: true }
 }

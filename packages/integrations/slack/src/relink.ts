@@ -18,6 +18,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { maybeRaiseComplaintFromSlack } from './complaints'
 import { extractContactSignals, extractNameCandidates } from './extract'
 import {
   resolveSlackLinkTarget,
@@ -25,7 +26,7 @@ import {
   targetAuditTarget,
   targetForeignKey,
 } from './link-target'
-import { resolveThreadParentText } from './names'
+import { resolveSlackNames, resolveThreadParentText } from './names'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
 
@@ -216,6 +217,24 @@ export async function relinkParkedRowsOnce(
         target: targetAuditTarget(target),
         requestId: `slack-relink:${row.id}`,
         after: { interactionId, matchedVia: target.via, autoRelinked: true },
+      })
+    }
+
+    // Channel-aware rule (ADR 0042): a complaint-channel mention that finally
+    // linked to a contact also opens a Complaint. The occurredAt is the park
+    // time, so the 7-day auto-raise horizon still applies — an old backlog row
+    // linking months later doesn't reopen ancient history. Idempotent +
+    // best-effort inside.
+    if (target.contactId && row.messageText) {
+      const { channelName } = await resolveSlackNames({ channelId: row.channelId })
+      await maybeRaiseComplaintFromSlack({
+        contactId: target.contactId,
+        channelId: row.channelId,
+        channelName,
+        slackTs: row.slackTs,
+        messageText: row.messageText,
+        aiCategory: cand.category,
+        occurredAt: row.createdAt,
       })
     }
 

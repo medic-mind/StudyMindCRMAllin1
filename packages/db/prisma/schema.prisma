@@ -4424,6 +4424,10 @@ model Complaint {
   assigneeId  String?
   /// Optional link to a follow-up Task created from this complaint.
   taskId       String?   @unique
+  /// Idempotency key for system-raised complaints (ADR 0042) — e.g.
+  /// "slack:<channelId>:<ts>" for a complaint-channel call summary. Null for
+  /// human-logged complaints.
+  sourceKey    String?   @unique
   resolvedAt   DateTime?
   resolvedById String?
   resolution   String?

@@ -24,6 +24,8 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { isComplaintChannel } from './channel-rules'
+import { maybeRaiseComplaintFromSlack } from './complaints'
 import {
   resolveSlackLinkTarget,
   resolveSlackLinkTargetFromNames,
@@ -192,7 +194,7 @@ export const slackEventReceived = inngest.createFunction(
               ...(message.thread_ts ? { threadTs: message.thread_ts } : {}),
               messageText: message.text,
               senderName,
-              category: 'general',
+              category: isComplaintChannel(channelName) ? 'complaint' : 'general',
               sentiment: 'neutral',
               suggestedNextAction: null,
               confidence: 1,
@@ -214,6 +216,19 @@ export const slackEventReceived = inngest.createFunction(
           after: { interactionId: interaction.id, matchedVia: target.via, rules: true },
         })
       })
+      // Channel-aware rule (ADR 0042): a complaint-channel call summary that
+      // linked to a contact also opens a Complaint. Idempotent + best-effort.
+      await step.run('auto-complaint-rules', async () =>
+        maybeRaiseComplaintFromSlack({
+          contactId: target.contactId ?? null,
+          channelId: message.channel,
+          channelName,
+          slackTs: message.ts,
+          messageText: message.text,
+          aiCategory: null,
+          occurredAt,
+        }),
+      )
       await step.run('mark-processed', async () => {
         await db.providerEvent.update({
           where: { id: providerEventRowId },
@@ -395,6 +410,18 @@ export const slackEventReceived = inngest.createFunction(
         },
       })
     })
+
+    await step.run('auto-complaint', async () =>
+      maybeRaiseComplaintFromSlack({
+        contactId: target.contactId ?? null,
+        channelId: message.channel,
+        channelName,
+        slackTs: message.ts,
+        messageText: message.text,
+        aiCategory: parsed.category,
+        occurredAt,
+      }),
+    )
 
     await step.run('mark-processed', async () => {
       await db.providerEvent.update({

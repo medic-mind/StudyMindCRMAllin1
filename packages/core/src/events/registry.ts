@@ -366,6 +366,21 @@ export const EVENT_NAMES = [
   'slack_summary.assigned',
   'slack_summary.dismissed',
 
+  // Complaints (the /complaints queue). Registered when the Slack channel-rule
+  // auto-raise (ADR 0042) brought complaint writes into a package the
+  // registered-event-names rule lints; the complaint router uses the same
+  // names for its human-logged flow.
+  'complaint.created',
+  'complaint.updated',
+  'complaint.update_added',
+  'complaint.action_point_toggled',
+  'complaint.resolved',
+  'complaint.dismissed',
+  'complaint.reopened',
+  'complaint.task_created',
+  // Contact-timeline note events written alongside complaint transitions.
+  'complaint.raised',
+
   // System / audit
   'audit.logged',
   'system.job_completed',
