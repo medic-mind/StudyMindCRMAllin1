@@ -1,13 +1,12 @@
 // Sticky top app bar. 64px tall (matches `--shell-topbar-height` in
-// globals.css). Logo at left, command-palette trigger in the centre,
-// notifications bell + avatar menu at right. CLAUDE.md §4 (wordmark in
-// primary blue, semibold), §26 (server component, client islands as
-// leaves), §28 (skip-to-content link).
+// globals.css). Plain-text "StudyMind CRM" wordmark at left (no logo mark),
+// command-palette trigger in the centre, notifications bell + avatar menu at
+// right. CLAUDE.md §4 (wordmark in primary blue, semibold), §26 (server
+// component, client islands as leaves), §28 (skip-to-content link).
 
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 
-import { BrandLogo } from './brand-logo'
 import { NotificationsBell } from './notifications-bell'
 import { SearchTrigger } from './search-trigger'
 import { UserMenu } from './user-menu'
@@ -43,18 +42,16 @@ export function TopBar({ user, leading }: Props) {
       {/* Mobile-only nav trigger (collapses to nothing on lg+). */}
       {leading}
 
-      {/* Fixed inline SVG mark + wordmark. The wordmark hides on the narrowest
-          screens so the search field keeps room; the mark always shows. We
-          deliberately do NOT render the uploaded custom logo here — a wide/tall
-          upload kept enlarging and blowing out the bar. */}
+      {/* Plain-text wordmark — no logo mark, per brand preference. Kept
+          visible at every width; the name is short enough not to crowd the
+          search field. "StudyMind" is one word (CLAUDE.md §4). */}
       <Link
         href="/"
-        className="flex shrink-0 items-center gap-2 tracking-tight"
+        className="flex shrink-0 items-center gap-1.5 tracking-tight"
         aria-label="StudyMind CRM home"
       >
-        <BrandLogo size={26} markOnly />
-        <span className="hidden text-base font-semibold text-primary-700 sm:inline">StudyMind</span>
-        <span className="hidden text-base font-medium text-neutral-500 sm:inline">CRM</span>
+        <span className="text-base font-semibold text-primary-700">StudyMind</span>
+        <span className="text-base font-medium text-neutral-500">CRM</span>
       </Link>
 
       <div className="flex flex-1 justify-center">

@@ -14,7 +14,6 @@ import { createPortal } from 'react-dom'
 
 import { XIcon } from '@/components/ui/icon'
 
-import { BrandLogo } from '@/components/shell/brand-logo'
 import { SidebarNav, type NavItem } from './sidebar-nav'
 
 export function MobileNav({ items }: { items: NavItem[] }) {
@@ -70,7 +69,6 @@ export function MobileNav({ items }: { items: NavItem[] }) {
               >
                 <div className="mb-4 flex items-center justify-between px-1">
                   <span className="flex items-center gap-2">
-                    <BrandLogo size={22} markOnly />
                     <span className="text-sm font-semibold text-primary-700">
                       StudyMind <span className="font-medium text-neutral-400">CRM</span>
                     </span>

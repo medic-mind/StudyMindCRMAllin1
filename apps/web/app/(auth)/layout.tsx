@@ -1,10 +1,8 @@
 // (auth) segment shell — sign-in, verify, forgot, reset, accept-invite, and
 // the NextAuth error page. A modern split: an abstract gradient hero on the
-// left (brand mark only — no uploaded logo, no marketing copy), the form card
-// on the right. The hero is hidden below lg so mobile gets a clean single
-// column. ADR 0010, CLAUDE.md §4.
-
-import { BrandLogo } from '@/components/shell/brand-logo'
+// left (plain "StudyMind CRM" wordmark — no logo mark, no marketing copy), the
+// form card on the right. The hero is hidden below lg so mobile gets a clean
+// single column. ADR 0010, CLAUDE.md §4.
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -27,14 +25,11 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="absolute -left-28 -top-32 size-[26rem] rounded-full bg-white/[0.08] blur-3xl" />
         <div className="absolute -bottom-36 -right-24 size-[32rem] rounded-full bg-white/[0.06] blur-3xl" />
         <div className="auth-hero-sheen absolute inset-0" />
-        {/* Centre brand badge */}
-        <div className="relative flex flex-col items-center gap-6 text-center text-white">
-          <div className="flex size-28 items-center justify-center rounded-[1.75rem] bg-white/10 shadow-2xl shadow-black/20 ring-1 ring-white/25 backdrop-blur-md">
-            <BrandLogo size={64} markOnly />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-semibold tracking-tight">StudyMind</span>
-            <span className="text-3xl font-light text-white/80">CRM</span>
+        {/* Centre brand wordmark — plain text, no logo mark. */}
+        <div className="relative flex flex-col items-center gap-3 text-center text-white">
+          <div className="flex items-baseline gap-2.5">
+            <span className="text-5xl font-semibold tracking-tight">StudyMind</span>
+            <span className="text-5xl font-light text-white/80">CRM</span>
           </div>
         </div>
       </aside>
@@ -42,8 +37,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       {/* Form column */}
       <div className="flex w-full flex-col items-center justify-center px-4 py-12 lg:w-1/2">
         <div className="mb-8 flex items-center gap-2 lg:hidden">
-          <BrandLogo size={30} markOnly />
-          <span className="text-lg font-semibold tracking-tight text-neutral-900">
+          <span className="text-lg font-semibold tracking-tight text-primary-700">
             StudyMind <span className="font-light text-neutral-500">CRM</span>
           </span>
         </div>
