@@ -8,38 +8,24 @@ ENV PNPM_HOME=/usr/local/share/pnpm \
     PATH=/usr/local/share/pnpm:$PATH
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 
-# ---- manifests ----
-# Isolate just the workspace package.json files. This stage re-runs on every
-# source change (cheap: copy + delete), but its OUTPUT only changes when a
-# manifest changes — so the expensive `pnpm install` layer in `deps` below
-# stays cached across ordinary code-only deploys.
-#
-# (The previous layout copied all source into the SAME stage as the install:
-# the COPY layer's cache key covered every source file, so any commit
-# invalidated it and every deploy re-installed all dependencies from scratch
-# — the main reason deploys crawled.)
-FROM base AS manifests
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
-COPY turbo.json tsconfig.base.json ./
-COPY apps ./apps
-COPY packages ./packages
-RUN find apps packages -mindepth 2 -type f ! -name package.json -delete \
- && find apps packages -depth -mindepth 2 -type d -empty -delete
-
-# ---- deps ----
+# ---- deps (fetch) ----
+# `pnpm fetch` downloads every dependency into the virtual store from the
+# LOCKFILE ALONE — no package.json files, no source. So this layer's cache key
+# is just pnpm-lock.yaml: it is reused on EVERY code-only deploy and only
+# re-runs when the lockfile changes. This replaces the old two-full-installs +
+# manifest-stripping dance (deps installed once, builder installed AGAIN) that
+# made Railway re-download the whole dependency tree on ordinary deploys.
 FROM base AS deps
-# Cache key = content of the manifests-only tree, NOT the full source tree.
-COPY --from=manifests /app ./
-RUN pnpm install --frozen-lockfile || pnpm install
+COPY pnpm-lock.yaml ./
+RUN pnpm fetch
 
 # ---- builder ----
 FROM base AS builder
+# Bring in the pre-fetched store, then LINK it against the real source with
+# --offline (no network) — a fast pass, not a second download.
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Re-run install so per-package node_modules symlink farms are recreated against
-# the full source tree (the deps stage stripped non-manifest files, so the per-
-# package .bin directories were never materialised). pnpm is fast on cache hit.
-RUN pnpm install --frozen-lockfile --offline || pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --offline
 RUN pnpm --filter @studymind/db exec prisma generate
 # Build-time-only placeholder. NextAuth (Auth.js v5) reads AUTH_SECRET at
 # import time when its `auth()` is initialised; without it the build can
@@ -51,12 +37,8 @@ ENV AUTH_SECRET=build-placeholder-not-for-runtime \
 # Build ONLY the Next.js app. `pnpm build` (turbo run build) would re-run
 # `tsc --noEmit` across every workspace package — pure re-verification that
 # produces no artifact the app needs (Next transpiles workspace TS sources
-# directly) and roughly doubles-to-triples deploy time on a cold Docker
-# cache. CI on main is the verification gate (§24.1); the deploy build's
+# directly). CI on main is the verification gate (§24.1); the deploy build's
 # only job is producing .next.
-# (A BuildKit `--mount=type=cache` for Next's compiler cache was tried but
-# Railway's Metal builder rejects the cache-mount id syntax. The real deploy
-# speedup is the deps-layer caching above; this step just produces .next.)
 RUN pnpm --filter web exec next build
 
 # ---- runner (web) ----
