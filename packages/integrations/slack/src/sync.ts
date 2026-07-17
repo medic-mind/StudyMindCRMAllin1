@@ -40,15 +40,24 @@ import {
 } from './backfill'
 import { listIngestChannelIds } from './client'
 
+/** Positive finite number from an env var, else the default — `Number('')`
+ *  and `Number('abc')` would otherwise silently zero/NaN the sync window. */
+function positiveEnvNumber(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw.trim() === '') return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 /** How far back each pull looks. Overlaps the 15-min cadence many times over so
  *  a failed tick (deploy, rate-limit storm) self-heals on the next one; the
  *  overlap costs only cheap DB dedupe checks, never AI re-spend. */
-const LOOKBACK_MIN = Number(process.env['SLACK_SYNC_LOOKBACK_MINUTES'] ?? 120)
+const LOOKBACK_MIN = positiveEnvNumber('SLACK_SYNC_LOOKBACK_MINUTES', 120)
 /** Pages of history per channel per run (100 msgs/page). */
 const MAX_PAGES = 3
 /** Old-thread scan: how far back a thread ROOT may sit and still have fresh
  *  replies picked up by the pull. */
-const THREAD_SCAN_DAYS = Number(process.env['SLACK_SYNC_THREAD_SCAN_DAYS'] ?? 7)
+const THREAD_SCAN_DAYS = positiveEnvNumber('SLACK_SYNC_THREAD_SCAN_DAYS', 7)
 /** Pages of history inspected by the old-thread scan (roots only, no AI). */
 const THREAD_SCAN_PAGES = 2
 /** Old threads with fresh replies walked per channel per tick. */
@@ -244,9 +253,11 @@ export const slackSyncNow = inngest.createFunction(
   async ({ event, step, logger }) => {
     const token = process.env['SLACK_BOT_TOKEN']
     if (!token) return { skipped: true as const, reason: 'no_token' }
-    const lookbackMin = Number(
-      (event.data as { lookbackMinutes?: number } | undefined)?.lookbackMinutes ?? LOOKBACK_MIN,
+    const requested = Number(
+      (event.data as { lookbackMinutes?: number } | undefined)?.lookbackMinutes,
     )
+    const lookbackMin =
+      Number.isFinite(requested) && requested > 0 ? requested : LOOKBACK_MIN
     const sinceUnix = Math.floor((Date.now() - lookbackMin * 60_000) / 1000)
     const res = await step.run('pull', async () =>
       pullRecentSlack({ token, sinceUnix, requestId: 'slack-sync-now', logger }),

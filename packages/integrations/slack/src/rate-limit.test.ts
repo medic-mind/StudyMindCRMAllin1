@@ -5,10 +5,26 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchHistory } from './backfill'
+import { fetchHistory, retryWaitSeconds } from './backfill'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('retryWaitSeconds', () => {
+  it('falls back to the default when Retry-After is missing or empty — Number(null) is 0, which would busy-loop', () => {
+    expect(retryWaitSeconds(null)).toBe(10)
+    expect(retryWaitSeconds('')).toBe(10)
+    expect(retryWaitSeconds('  ')).toBe(10)
+    expect(retryWaitSeconds('soon')).toBe(10)
+    expect(retryWaitSeconds('-5')).toBe(10)
+  })
+
+  it('honours a real header, capped at 60s', () => {
+    expect(retryWaitSeconds('0')).toBe(0)
+    expect(retryWaitSeconds('7')).toBe(7)
+    expect(retryWaitSeconds('600')).toBe(60)
+  })
 })
 
 describe('slack read calls under rate limiting', () => {

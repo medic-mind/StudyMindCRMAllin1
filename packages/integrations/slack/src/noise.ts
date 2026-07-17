@@ -10,6 +10,8 @@
 // silent drop on the default deployment; the deterministic name matcher (or
 // the tray) now catches what passes through.
 
+import { SLACK_EMOJI_CODE_RE } from './extract'
+
 /** Proper-noun shape: capitalised segments joined by apostrophe/hyphen
  *  (Aanya, O'Brien, Anne-Marie; ALL-CAPS acronyms excluded; ≥2 chars).
  *  Mirrors extract.ts. */
@@ -44,7 +46,7 @@ export function isSkippableSlackNoise(text: string): boolean {
     // User / channel / special mentions: <@U…>, <#C…>, <!here>.
     .replace(/<[@#!][^>]+>/gu, ' ')
     // :emoji: codes.
-    .replace(/:[a-z0-9_+-]+:/giu, ' ')
+    .replace(SLACK_EMOJI_CODE_RE, ' ')
     .trim()
 
   // An email or a phone-shaped digit run is always worth parsing.

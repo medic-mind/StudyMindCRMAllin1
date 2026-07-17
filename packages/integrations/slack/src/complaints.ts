@@ -78,16 +78,14 @@ export async function maybeRaiseComplaintFromSlack(
         updatedById: null,
       },
     })
+    const noteSummary = `Complaint raised: ${draft.title}`
     await db.interaction.create({
       data: {
         id: createId(),
         type: 'note',
         contactId,
         occurredAt: input.occurredAt,
-        summary:
-          `Complaint raised: ${draft.title}`.length > 120
-            ? `Complaint raised: ${draft.title}`.slice(0, 117) + '…'
-            : `Complaint raised: ${draft.title}`,
+        summary: noteSummary.length > 120 ? `${noteSummary.slice(0, 117)}…` : noteSummary,
         payload: {
           event: 'complaint.raised',
           kind: 'complaint',

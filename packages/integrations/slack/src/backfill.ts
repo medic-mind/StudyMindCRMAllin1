@@ -45,7 +45,12 @@ import {
   resolveSlackLinkTargetFromNames,
   targetForeignKey,
 } from './link-target'
-import { extractContactSignals, extractNameCandidates, slackTextToPlain } from './extract'
+import {
+  extractContactSignals,
+  extractNameCandidates,
+  slackTextToPlain,
+  slackTsToDate,
+} from './extract'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames } from './names'
 
@@ -193,6 +198,22 @@ export const slackBackfillRequested = inngest.createFunction(
 const SLACK_GET_ATTEMPTS = 4
 /** Cap on a single Retry-After wait so a step never hangs on a hostile value. */
 const SLACK_GET_MAX_WAIT_S = 60
+/** Wait when Slack sends a 429 with no usable Retry-After header. */
+const SLACK_GET_DEFAULT_WAIT_S = 10
+
+/**
+ * Seconds to wait before retrying a rate-limited call, from the raw
+ * `Retry-After` header. A missing/empty/garbage header falls back to the
+ * default — careful: `Number(null)` and `Number('')` are BOTH 0, which would
+ * silently turn the backoff into a busy-loop, so absence is checked first.
+ * Exported for tests.
+ */
+export function retryWaitSeconds(header: string | null): number {
+  if (header === null || header.trim() === '') return SLACK_GET_DEFAULT_WAIT_S
+  const parsed = Number(header)
+  if (!Number.isFinite(parsed) || parsed < 0) return SLACK_GET_DEFAULT_WAIT_S
+  return Math.min(parsed, SLACK_GET_MAX_WAIT_S)
+}
 
 /**
  * Slack Web API GET with bounded rate-limit retries. Honours the 429
@@ -219,12 +240,10 @@ async function slackApiGet(
     if (parsed.ok) return parsed
     lastError = parsed.error ?? `http_${res.status}`
     const rateLimited = res.status === 429 || lastError === 'ratelimited'
-    if (!rateLimited) break
-    const retryAfter = Number(res.headers.get('retry-after'))
-    const waitS = Math.min(
-      Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : 10,
-      SLACK_GET_MAX_WAIT_S,
-    )
+    // Give up on a non-rate-limit error, and don't sleep after the final
+    // attempt — the wait would be pure added latency before the throw.
+    if (!rateLimited || attempt === SLACK_GET_ATTEMPTS - 1) break
+    const waitS = retryWaitSeconds(res.headers.get('retry-after'))
     await new Promise((resolve) => setTimeout(resolve, waitS * 1000))
   }
   throw new Error(`slack ${endpoint.slice(1)} error: ${lastError}`)
@@ -463,7 +482,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   }
 
   if (rulesTarget) {
-    const occurredAtRules = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
+    const occurredAtRules = slackTsToDate(message.ts)
     await db.interaction.create({
       data: {
         id: createId(),
@@ -567,7 +586,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     return { matched: false }
   }
 
-  const occurredAt = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
+  const occurredAt = slackTsToDate(message.ts)
   await db.interaction.create({
     data: {
       id: createId(),

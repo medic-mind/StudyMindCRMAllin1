@@ -8,7 +8,7 @@
 // to re-type it. Matching is by name substring so renames/new channels
 // (#b2bcomplaints, #complaint-escalations) keep working with no code change.
 
-import { slackTextToPlain } from './extract'
+import { SLACK_EMOJI_CODE_RE, slackTextToPlain } from './extract'
 
 /** Mentions older than this never auto-open a NEW complaint — the 90-day
  *  backfill and deep history pulls must not flood the Active queue with
@@ -28,6 +28,10 @@ export function isComplaintChannel(channelName: string | null | undefined): bool
   return channelName.toLowerCase().replace(/^#/u, '').includes('complaint')
 }
 
+/** Tolerated clock skew for a mention timestamped slightly in the future —
+ *  beyond this the ts is garbage and the horizon must not be bypassed. */
+const FUTURE_SKEW_TOLERANCE_MS = 24 * 60 * 60 * 1000
+
 /** Should this linked mention auto-open a Complaint? Contact-linked mentions
  *  only (an org-only mention has nobody to log the complaint against), in a
  *  complaint-flavoured channel, and recent enough to still be live. */
@@ -40,7 +44,7 @@ export function shouldAutoRaiseComplaint(input: {
   if (!isComplaintChannel(input.channelName)) return false
   if (!input.contactId) return false
   const age = input.now.getTime() - input.occurredAt.getTime()
-  return age >= 0 ? age <= COMPLAINT_AUTO_RAISE_HORIZON_MS : true
+  return age <= COMPLAINT_AUTO_RAISE_HORIZON_MS && age >= -FUTURE_SKEW_TOLERANCE_MS
 }
 
 export interface ComplaintDraft {
@@ -58,7 +62,7 @@ export function buildComplaintDraft(input: {
   aiCategory: string | null | undefined
 }): ComplaintDraft {
   const plain = slackTextToPlain(input.messageText)
-    .replace(/:[a-z0-9_+-]+:/giu, ' ')
+    .replace(SLACK_EMOJI_CODE_RE, ' ')
     .replace(/[ \t]{2,}/gu, ' ')
   const firstLine =
     plain

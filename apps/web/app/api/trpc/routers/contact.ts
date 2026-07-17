@@ -6,6 +6,7 @@ import type { Prisma } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { phoneSearchDigitRuns } from '@studymind/core/contact/phone-search'
 import { BusinessError } from '@studymind/core/errors'
 
 import {
@@ -255,6 +256,11 @@ export const contactRouter = router({
               { lastName: { contains: input.q, mode: 'insensitive' } },
               { email: { contains: input.q, mode: 'insensitive' } },
               { phoneE164: { contains: input.q } },
+              // Phone-shaped queries match by digit run so spaces, the
+              // country code, and the trunk 0 are all optional (§29).
+              ...phoneSearchDigitRuns(input.q).map((run) => ({
+                phoneE164: { contains: run },
+              })),
             ],
           }
         : {}),
@@ -760,6 +766,9 @@ export const contactRouter = router({
               { lastName: { contains: input.q, mode: 'insensitive' } },
               { email: { contains: input.q, mode: 'insensitive' } },
               { phoneE164: { contains: input.q } },
+              ...phoneSearchDigitRuns(input.q).map((run) => ({
+                phoneE164: { contains: run },
+              })),
             ],
           },
           take: input.limit,

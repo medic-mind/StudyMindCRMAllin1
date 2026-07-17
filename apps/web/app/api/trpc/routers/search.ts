@@ -7,6 +7,7 @@
 // results — the contact router's read gate is the source of truth, but
 // this surface is a list-of-suggestions so we filter at query time.
 
+import { phoneSearchDigitRuns } from '@studymind/core/contact/phone-search'
 import { z } from 'zod'
 
 import { protectedProcedure, router } from '@/lib/trpc/builders'
@@ -37,7 +38,11 @@ export const searchRouter = router({
     .input(GlobalSearchInput)
     .query(async ({ ctx, input }) => {
       const q = input.q
-      const like = `%${q}%`
+      // A phone-shaped query ("07818 953024", "+44 7818-953024") is matched by
+      // digit run so separators, the country code, and the trunk 0 are all
+      // optional — a literal contains on the raw string can never match the
+      // stored E.164 form (§29).
+      const phoneRuns = phoneSearchDigitRuns(q)
 
       // Contacts: simple ILIKE search, ranked by exact-prefix > contains.
       // Restricted contacts are excluded from the suggestion surface; if a
@@ -50,6 +55,7 @@ export const searchRouter = router({
             { lastName: { contains: q, mode: 'insensitive' } },
             { email: { contains: q, mode: 'insensitive' } },
             { phoneE164: { contains: q, mode: 'insensitive' } },
+            ...phoneRuns.map((run) => ({ phoneE164: { contains: run } })),
           ],
           safeguardingFlags: {
             none: { state: 'restricted_access' },
@@ -120,10 +126,6 @@ export const searchRouter = router({
           billingContactName: billingName,
         }
       })
-
-      // Suppress the implicit unused-var lint that a future caller may rely
-      // on the like variable for raw SQL. Keep declared for clarity.
-      void like
 
       return { contacts, families }
     }),

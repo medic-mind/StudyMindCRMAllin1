@@ -32,7 +32,12 @@ import {
   targetAuditTarget,
   targetForeignKey,
 } from './link-target'
-import { extractContactSignals, extractNameCandidates, slackTextToPlain } from './extract'
+import {
+  extractContactSignals,
+  extractNameCandidates,
+  slackTextToPlain,
+  slackTsToDate,
+} from './extract'
 import { isIngestableSlackMessage } from './message-filter'
 import { isSkippableSlackNoise } from './noise'
 import { resolveSlackNames, resolveThreadParentText } from './names'
@@ -104,7 +109,7 @@ export const slackEventReceived = inngest.createFunction(
       return { skipped: true, reason: 'noise' }
     }
 
-    const occurredAt = new Date(Number(message.ts.split('.')[0] ?? 0) * 1000)
+    const occurredAt = slackTsToDate(message.ts)
 
     // 0. Resolve the human-readable details the Events payload doesn't carry:
     //    sender display name (users.info), channel #name (conversations.info)

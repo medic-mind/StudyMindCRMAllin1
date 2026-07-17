@@ -83,6 +83,17 @@ describe('shouldAutoRaiseComplaint', () => {
       }),
     ).toBe(true)
   })
+
+  it('rejects a far-future occurredAt — a garbage ts must not bypass the horizon', () => {
+    expect(
+      shouldAutoRaiseComplaint({
+        channelName: 'complaintcallsummaries',
+        contactId: 'c1',
+        occurredAt: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000),
+        now,
+      }),
+    ).toBe(false)
+  })
 })
 
 describe('buildComplaintDraft', () => {

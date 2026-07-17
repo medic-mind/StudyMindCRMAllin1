@@ -19,7 +19,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { maybeRaiseComplaintFromSlack } from './complaints'
-import { extractContactSignals, extractNameCandidates } from './extract'
+import { extractContactSignals, extractNameCandidates, slackTsToDate } from './extract'
 import {
   resolveSlackLinkTarget,
   resolveSlackLinkTargetFromNames,
@@ -221,10 +221,11 @@ export async function relinkParkedRowsOnce(
     }
 
     // Channel-aware rule (ADR 0042): a complaint-channel mention that finally
-    // linked to a contact also opens a Complaint. The occurredAt is the park
-    // time, so the 7-day auto-raise horizon still applies — an old backlog row
-    // linking months later doesn't reopen ancient history. Idempotent +
-    // best-effort inside.
+    // linked to a contact also opens a Complaint. occurredAt is the MESSAGE
+    // time (slackTs), not the park time — a backfill parks old messages with a
+    // fresh createdAt, and the 7-day auto-raise horizon must judge when the
+    // customer actually complained, not when the row was parked. Idempotent +
+    // best-effort inside; channel-name lookups are cached per channel.
     if (target.contactId && row.messageText) {
       const { channelName } = await resolveSlackNames({ channelId: row.channelId })
       await maybeRaiseComplaintFromSlack({
@@ -234,7 +235,7 @@ export async function relinkParkedRowsOnce(
         slackTs: row.slackTs,
         messageText: row.messageText,
         aiCategory: cand.category,
-        occurredAt: row.createdAt,
+        occurredAt: slackTsToDate(row.slackTs),
       })
     }
 

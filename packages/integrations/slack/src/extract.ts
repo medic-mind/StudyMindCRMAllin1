@@ -4,6 +4,17 @@
 // carries a phone/email verbatim, so most mentions match with zero AI —
 // and keep working when the AI provider is down or over budget.
 
+/** A `:emoji:` shortcode (`:gb:`, `:large_purple_circle:`). Shared by the
+ *  noise gate and the complaint-draft builder so the two never diverge. */
+export const SLACK_EMOJI_CODE_RE = /:[a-z0-9_+-]+:/giu
+
+/** The wall-clock moment of a Slack message from its `ts` ("1784132400.477259"
+ *  — UNIX seconds + a uniqueness suffix). One canonical parse, so an archived
+ *  Interaction's occurredAt and any time-window rule always agree. */
+export function slackTsToDate(ts: string): Date {
+  return new Date(Number(ts.split('.')[0] ?? 0) * 1000)
+}
+
 /** Unwrap Slack mrkdwn entities to readable text: `<tel:x|y>`/`<mailto:x|y>`
  *  → label, `<url|label>` → label, `<url>` → url, mentions stripped. */
 export function slackTextToPlain(text: string): string {
