@@ -47,11 +47,6 @@ export function SignInForm({
   const [stashed, setStashed] = useState<Values | null>(null)
   const [useRecovery, setUseRecovery] = useState(false)
   const [secondFactor, setSecondFactor] = useState('')
-  // Optional 2FA field on the credentials step. Shown collapsed by default and
-  // clearly labelled "only if you've set it up", so people WITHOUT 2FA aren't
-  // confused, while people WITH it can sign in in one step.
-  const [showCodeField, setShowCodeField] = useState(false)
-  const [upfrontCode, setUpfrontCode] = useState('')
 
   const { register, handleSubmit, formState } = useForm<Values>({
     resolver: zodResolver(Schema),
@@ -179,12 +174,7 @@ export function SignInForm({
   }
 
   return (
-    <form
-      className="space-y-5"
-      onSubmit={handleSubmit((values) =>
-        attempt(values, upfrontCode.trim() ? { totpCode: upfrontCode.trim() } : {}),
-      )}
-    >
+    <form className="space-y-5" onSubmit={handleSubmit((values) => attempt(values))}>
       {error && (
         <div
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
@@ -216,40 +206,9 @@ export function SignInForm({
         )}
       </div>
 
-      {/* Optional 2FA area — clearly labelled so people WITHOUT it aren't
-          confused. Collapsed by default; if you've set up two-factor you can
-          enter the code here and sign in in one step (otherwise leave it — the
-          app asks for it on the next screen only if your account needs it). */}
-      {showCodeField ? (
-        <div className="space-y-1.5 rounded-lg border border-neutral-200 bg-neutral-50/70 p-3">
-          <Label htmlFor="upfront-code" className="flex items-center gap-1.5">
-            <LockIcon size={13} className="text-neutral-500" />
-            Two-factor code
-          </Label>
-          <Input
-            id="upfront-code"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="123456"
-            className="text-center tracking-[0.3em]"
-            value={upfrontCode}
-            onChange={(e) => setUpfrontCode(e.target.value)}
-          />
-          <p className="text-[11px] text-neutral-500">
-            Only needed if you&apos;ve set up two-factor authentication. Leave blank
-            if you haven&apos;t.
-          </p>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setShowCodeField(true)}
-          className="flex items-center gap-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-800"
-        >
-          <LockIcon size={12} />
-          Have a two-factor code? Enter it here
-        </button>
-      )}
+      {/* No upfront 2FA field here — if the account has two-factor turned on,
+          the sign-in moves to a dedicated code step (above). Keeps this form to
+          just email + password. */}
 
       <Button type="submit" disabled={busy} className="w-full">
         {busy ? 'Signing in…' : 'Sign in'}

@@ -649,7 +649,7 @@ literals below — they are now **tier hints**: `gpt-4o-mini` → the `mini` tie
 
 ## 20. Auth, RBAC, and access control
 
-**Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and TOTP 2FA — **standardised on Google Authenticator** (two-step sign-in with recovery codes; guided 4-step enrolment wizard at `/account/setup-2fa`, secrets KMS-encrypted; staff tutorial + ops runbook in `docs/runbooks/2fa-google-authenticator.md`). **Mandatory-enrolment policy** (`apps/web/lib/auth/mfa-policy.ts`, enforced in middleware, unit-tested): **ON for every staff role by DEFAULT** (operator request, 2026-07) — on first sign-in the user is sent to `/account/setup-2fa` and cannot use the CRM until they enrol. Not completing it never locks the account: they can sign out (a visible escape on the setup page) and are simply re-prompted next sign-in. After enrolment the wizard calls `useSession().update()` so the fresh `totpEnabledAt` propagates to the edge cookie immediately (the jwt callback also self-heals a null `totpEnabledAt`), which fixes the redirect-loop that made mandatory mode unusable. `MANDATORY_MFA_ENABLED=true` narrows the gate to `ceo`/`senior_manager`/`manager` (+ legacy aliases); `=false`/`off` pauses it (escape hatch); `=all`/unset = every staff role. The gate never redirects `/api/*` requests (a JSON caller redirected to an HTML page surfaces as "Unexpected token '<' … not valid JSON"). Sign-in offers an optional 2FA code field ("only if you've set it up") plus a focused second step for accounts that require it. No third-party identity processor — see ADR 0010.
+**Auth.** Self-hosted Auth.js v5 (`next-auth`) backed by our Postgres handles sign in, session management, password reset, email verification, and TOTP 2FA — **standardised on Google Authenticator** (two-step sign-in with recovery codes; guided 4-step enrolment wizard at `/account/setup-2fa`, secrets KMS-encrypted; staff tutorial + ops runbook in `docs/runbooks/2fa-google-authenticator.md`). **Mandatory-enrolment policy** (`apps/web/lib/auth/mfa-policy.ts`, enforced in middleware, unit-tested): **ON for every staff role by DEFAULT** (operator request, 2026-07) — on first sign-in the user is sent to `/account/setup-2fa` and cannot use the CRM until they enrol. Not completing it never locks the account: they can sign out (a visible escape on the setup page) and are simply re-prompted next sign-in. After enrolment the wizard calls `useSession().update()` so the fresh `totpEnabledAt` propagates to the edge cookie immediately (the jwt callback also self-heals a null `totpEnabledAt`), which fixes the redirect-loop that made mandatory mode unusable. `MANDATORY_MFA_ENABLED=true` narrows the gate to `ceo`/`senior_manager`/`manager` (+ legacy aliases); `=false`/`off` pauses it (escape hatch); `=all`/unset = every staff role. The gate never redirects `/api/*` requests (a JSON caller redirected to an HTML page surfaces as "Unexpected token '<' … not valid JSON"). Sign-in is a clean two-step: the first screen is just email + password (no upfront 2FA field), and accounts with two-factor turned on are taken to a dedicated code step (a `TOTP_REQUIRED` response, never an error). No third-party identity processor — see ADR 0010.
 
 **Roles.** Five canonical sales-CRM roles (ADR 0014), with friendly UI labels via `formatRoleLabel`:
 
@@ -1041,14 +1041,21 @@ We are a small team. Spend has to behave.
 
 ## 33. Engineering rituals
 
-- **Single branch: `main` IS the product.** All work lands directly on `main`
-  as soon as it is green — no pull request, no waiting for a human reviewer.
-  CI (typecheck + lint + tests + build + policy drift) is the mandatory
-  merge gate; Railway auto-deploys `main` once CI passes. When a working
-  session is forced onto a scratch branch by its harness (Claude sessions
-  create `claude/<name>` branches), the session finishes by **fast-forwarding
-  `main` itself** (`git push origin HEAD:main`) after local verification —
-  never by leaving work stranded on the branch waiting for a merge. Scratch
+- **Single branch: `main` IS the product. EVERY change ships to `main`.**
+  All work lands directly on `main` as soon as it is green — no pull request,
+  no waiting for a human reviewer. **This is non-negotiable and applies to
+  EVERY kind of change without exception: features, bug fixes, refactors, and
+  visual / design / "polish" / branding improvements alike.** A change is NOT
+  considered done while it sits only on a `claude/<name>` (or any other)
+  branch — "on a branch, not on `main`" means "not shipped". CI (typecheck +
+  lint + tests + build + policy drift) is the mandatory merge gate; Railway
+  auto-deploys `main` once CI passes. When a working session is forced onto a
+  scratch branch by its harness (Claude sessions create `claude/<name>`
+  branches), the session's **required final step** is to **fast-forward `main`
+  itself** — `git push origin HEAD:main` after the full local verification
+  (`pnpm typecheck && pnpm lint && pnpm test`) is green — never to leave work
+  stranded on the branch waiting for a merge. (Fetch `origin/main` first; if it
+  moved, rebase onto it before pushing. Never force-push `main`.) Scratch
   branches whose commits are in `main` are garbage; the **Cleanup merged
   branches** workflow (`.github/workflows/cleanup-branches.yml`, weekly +
   on-demand) deletes every branch fully contained in `main` automatically.
