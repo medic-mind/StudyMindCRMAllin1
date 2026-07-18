@@ -39,7 +39,16 @@ ENV AUTH_SECRET=build-placeholder-not-for-runtime \
 # produces no artifact the app needs (Next transpiles workspace TS sources
 # directly). CI on main is the verification gate (§24.1); the deploy build's
 # only job is producing .next.
-RUN pnpm --filter web exec next build
+#
+# Then DELETE .next/cache immediately. It is Next's build-time webpack/compiler
+# cache (~2.5 GB here) and is NOT needed to serve — `next start` uses only
+# .next/server, .next/static and the manifests, and recreates an empty runtime
+# cache dir on boot. Left in place it would be copied into the runner image AND
+# baked into the per-deploy "apps" layer, so 2.5 GB of throwaway cache got
+# re-pushed to Railway on EVERY deploy. Removing it in the same RUN keeps it out
+# of every downstream layer. (Railway does not persist this cache across builds
+# anyway — there is no cache mount — so deleting it costs nothing.) CLAUDE.md §24.
+RUN pnpm --filter web exec next build && rm -rf apps/web/.next/cache
 
 # ---- runner (web) ----
 FROM base AS runner
