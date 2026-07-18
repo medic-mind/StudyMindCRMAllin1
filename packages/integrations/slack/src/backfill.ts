@@ -127,46 +127,58 @@ export const slackBackfillRequested = inngest.createFunction(
       logger.warn({ jobId }, 'slack backfill: bot is in no channels — nothing to import')
     }
 
+    // One unreadable channel (rate-limit exhaustion, revoked access) must not
+    // abort the other channels' import — same isolation as the recurring pull
+    // (sync.ts). Failed channels are recorded and surfaced in the run result.
+    const failedChannels: string[] = []
     try {
       for (const channelId of channels) {
-        let cursor: string | undefined
-        let pageNum = 0
-        do {
-          const res = await step.run(`history-${channelId}-${pageNum}`, async () =>
-            fetchHistory(token, channelId, oldest, cursor),
-          )
-          for (const m of res.messages ?? []) {
-            try {
-              // Process the message AND, when it is a thread root, every reply
-              // hanging off it (conversations.history omits in-thread replies).
-              const result = await step.run(`msg-${channelId}-${m.ts}`, async () =>
-                processMessageWithReplies({ token, channelId, message: m, requestId: jobId }),
-              )
-              processed += result.processed
-              matched += result.matched
-              skipped += result.skipped
-            } catch (err) {
-              // One message that fails AI parsing/persist must not abort the
-              // whole channel import. Skip it and keep going.
-              processed += 1
-              skipped += 1
-              logger.warn(
-                { jobId, channelId, ts: m.ts, err },
-                'slack backfill: skipped a message that failed to import',
-              )
+        try {
+          let cursor: string | undefined
+          let pageNum = 0
+          do {
+            const res = await step.run(`history-${channelId}-${pageNum}`, async () =>
+              fetchHistory(token, channelId, oldest, cursor),
+            )
+            for (const m of res.messages ?? []) {
+              try {
+                // Process the message AND, when it is a thread root, every reply
+                // hanging off it (conversations.history omits in-thread replies).
+                const result = await step.run(`msg-${channelId}-${m.ts}`, async () =>
+                  processMessageWithReplies({ token, channelId, message: m, requestId: jobId }),
+                )
+                processed += result.processed
+                matched += result.matched
+                skipped += result.skipped
+              } catch (err) {
+                // One message that fails AI parsing/persist must not abort the
+                // whole channel import. Skip it and keep going.
+                processed += 1
+                skipped += 1
+                logger.warn(
+                  { jobId, channelId, ts: m.ts, err },
+                  'slack backfill: skipped a message that failed to import',
+                )
+              }
             }
-          }
-          await step.run(`progress-${channelId}-${pageNum}`, async () =>
-            incrementBackfillProgress(db, jobId, {
-              processed,
-              matched,
-              skipped,
-              lastEventId: res.messages?.[res.messages.length - 1]?.ts ?? null,
-            }),
+            await step.run(`progress-${channelId}-${pageNum}`, async () =>
+              incrementBackfillProgress(db, jobId, {
+                processed,
+                matched,
+                skipped,
+                lastEventId: res.messages?.[res.messages.length - 1]?.ts ?? null,
+              }),
+            )
+            cursor = res.has_more ? res.response_metadata?.next_cursor : undefined
+            pageNum += 1
+          } while (cursor)
+        } catch (err) {
+          failedChannels.push(channelId)
+          logger.warn(
+            { jobId, channelId, err },
+            'slack backfill: channel import failed — continuing with the rest',
           )
-          cursor = res.has_more ? res.response_metadata?.next_cursor : undefined
-          pageNum += 1
-        } while (cursor)
+        }
       }
 
       await step.run('mark-completed', async () =>
@@ -178,7 +190,13 @@ export const slackBackfillRequested = inngest.createFunction(
           requestId: jobId,
         }),
       )
-      return { ok: true, processed, matched, skipped }
+      if (failedChannels.length > 0) {
+        logger.warn(
+          { jobId, failedChannels },
+          'slack backfill completed with failed channels — re-run the import to retry them',
+        )
+      }
+      return { ok: true, processed, matched, skipped, failedChannels }
     } catch (err) {
       logger.error({ jobId, err }, 'slack backfill failed')
       await markBackfillFailed(
