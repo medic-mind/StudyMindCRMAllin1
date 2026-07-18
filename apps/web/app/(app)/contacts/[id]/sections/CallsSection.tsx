@@ -5,19 +5,14 @@
 
 import { useState } from 'react'
 
+import { Badge } from '@/components/ui/badge'
 import { RecordingPlayer } from '@/components/shared/recording-player'
+import { callOutcomeTone } from '@/lib/ui/status-tone'
 
 import type { CallEntry } from '@/lib/view-models/contact-channels'
 
 interface Props {
   calls: CallEntry[]
-}
-
-const OUTCOME_STYLE: Record<CallEntry['outcome'], string> = {
-  answered: 'bg-green-100 text-green-900',
-  voicemail: 'bg-amber-100 text-amber-900',
-  missed: 'bg-red-100 text-red-900',
-  unknown: 'bg-neutral-100 text-neutral-700',
 }
 
 function fmtDuration(sec: number | null): string {
@@ -33,9 +28,9 @@ function CallRow({ call }: { call: CallEntry }) {
     <li className="rounded-md border border-neutral-200 bg-white px-3 py-2">
       <div className="flex items-center justify-between gap-2 text-xs text-neutral-500">
         <span className="flex items-center gap-2">
-          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${OUTCOME_STYLE[call.outcome]}`}>
+          <Badge tone={callOutcomeTone(call.outcome)} className="uppercase">
             {call.outcome}
-          </span>
+          </Badge>
           <span>{call.direction === 'inbound' ? 'Inbound' : call.direction === 'outbound' ? 'Outbound' : 'Call'}</span>
           <span>· {fmtDuration(call.durationSec)}</span>
           {call.triageRequired && (

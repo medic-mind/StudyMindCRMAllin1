@@ -12,7 +12,9 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { riskLabel, riskTone } from '@/lib/ui/status-tone'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
@@ -52,17 +54,6 @@ interface Counts {
   low: number
   flagged: number
   total: number
-}
-
-const LEVEL_BADGE: Record<string, string> = {
-  high: 'bg-red-50 text-red-700 ring-1 ring-red-200',
-  medium: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
-  low: 'bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200',
-}
-const LEVEL_LABEL: Record<string, string> = {
-  high: 'High risk',
-  medium: 'At risk',
-  low: 'Watch',
 }
 
 const CAN_REVIEW = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
@@ -259,11 +250,9 @@ export function AtRiskDashboard({
                   </td>
                   <td className="px-3 py-2">
                     <span className="flex flex-col items-start gap-1">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${LEVEL_BADGE[c.level]}`}
-                      >
-                        {LEVEL_LABEL[c.level]}
-                      </span>
+                      <Badge tone={riskTone(c.level)} className="uppercase tracking-wide">
+                        {riskLabel(c.level)}
+                      </Badge>
                       {c.reviewStatus === 'flagged' && (
                         <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
                           Flagged

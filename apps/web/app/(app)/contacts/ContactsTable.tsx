@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { riskLabel, riskTone } from '@/lib/ui/status-tone'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useConfirm } from '@/components/ui/confirm'
@@ -77,12 +78,6 @@ interface ContactRow {
   complaintCount: number
   lastInteractionAt: Date | string | null
   createdAt: Date | string
-}
-
-const RISK_BADGE: Record<Exclude<RiskLevel, 'none'>, { label: string; cls: string }> = {
-  high: { label: 'High risk', cls: 'bg-red-50 text-red-700 ring-1 ring-red-200' },
-  medium: { label: 'At risk', cls: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200' },
-  low: { label: 'Watch', cls: 'bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200' },
 }
 
 interface Props {
@@ -586,12 +581,12 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
                           <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
                             <Badge tone={tone}>{formatKind(c.kind)}</Badge>
                             {c.riskLevel !== 'none' && (
-                              <span
-                                className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${RISK_BADGE[c.riskLevel].cls}`}
+                              <Badge
+                                tone={riskTone(c.riskLevel)}
                                 title="Hours at risk of expiring unused"
                               >
-                                {RISK_BADGE[c.riskLevel].label}
-                              </span>
+                                {riskLabel(c.riskLevel)}
+                              </Badge>
                             )}
                             {c.complaintCount > 0 && (
                               <span

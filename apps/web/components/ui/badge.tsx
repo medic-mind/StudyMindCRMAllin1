@@ -20,6 +20,8 @@ interface Props {
   children: ReactNode
   className?: string
   dot?: boolean
+  /** Optional native tooltip (e.g. an explanation of a status pill). */
+  title?: string
 }
 
 const TONES: Record<BadgeTone, string> = {
@@ -40,9 +42,10 @@ const DOTS: Record<BadgeTone, string> = {
   accent: 'bg-violet-500',
 }
 
-export function Badge({ tone = 'neutral', children, className = '', dot = false }: Props) {
+export function Badge({ tone = 'neutral', children, className = '', dot = false, title }: Props) {
   return (
     <span
+      title={title}
       className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${TONES[tone]} ${className}`}
     >
       {dot ? (

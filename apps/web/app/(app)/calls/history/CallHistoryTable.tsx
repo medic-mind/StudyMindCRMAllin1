@@ -8,7 +8,9 @@ import Link from 'next/link'
 import { useState } from 'react'
 
 import { RecordingPlayer } from '@/components/shared/recording-player'
+import { Badge } from '@/components/ui/badge'
 import { ArrowDownLeftIcon, ArrowUpRightIcon } from '@/components/ui/icon'
+import { callOutcomeTone } from '@/lib/ui/status-tone'
 
 type Direction = 'all' | 'inbound' | 'outbound'
 type Outcome = 'all' | 'answered' | 'missed' | 'voicemail'
@@ -46,12 +48,6 @@ interface Props {
   pageSize: number
   total: number
   capped: boolean
-}
-
-const OUTCOME_STYLE: Record<Item['outcome'], string> = {
-  answered: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200',
-  voicemail: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
-  missed: 'bg-rose-50 text-rose-700 ring-1 ring-rose-200',
 }
 
 const WINDOWS: ReadonlyArray<{ days: number; label: string }> = [
@@ -227,11 +223,9 @@ export function CallHistoryTable({
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ${OUTCOME_STYLE[c.outcome]}`}
-                      >
+                      <Badge tone={callOutcomeTone(c.outcome)} className="capitalize">
                         {c.outcome}
-                      </span>
+                      </Badge>
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-xs tabular-nums text-neutral-600">
                       {fmtDuration(c.durationSec)}
