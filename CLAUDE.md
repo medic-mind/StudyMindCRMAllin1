@@ -1,6 +1,80 @@
 # CLAUDE.md — StudyMind All in One CRM
 
-> Source of truth for Claude Code working on the StudyMind All in One CRM. Read fully before changes. Fix this doc in the same PR as the code.
+> Source of truth for Claude Code working on the StudyMind All in One CRM.
+> **Read §0 first, then only the sections your task touches** — this file is a
+> large reference (≈1,500 lines), not a front-to-back read. Use §37 ("where
+> things live") to jump to the right section. When you change a rule, fix this
+> doc in the same change (§39).
+
+---
+
+## 0. Read this first — the rules that actually bite
+
+This is the high-signal core. It is deliberately short; each line points at
+the section with the full story. If you only remember this section, you will
+avoid almost every mistake agents make in this codebase.
+
+### 0.1 How to work here
+- **Don't read all 1,500 lines.** Read this §0, find your task in §37's table,
+  then read only that section. Depth on demand beats a shallow full pass.
+- **When unsure, ask — don't guess.** For subjective UI/UX/product calls
+  (wording, whether a control is visible, what "done" looks like), confirm with
+  the user before building. A wrong guess costs a whole round-trip.
+- **Match the surrounding code.** Reuse the shared primitives; don't invent a
+  one-off when one already exists (§0.4).
+
+### 0.2 Shipping (workflow) — see §33
+- **Every change lands on `main`.** Features, fixes, refactors, and
+  visual/design/polish alike. Work that sits only on a `claude/*` branch is
+  **not shipped**. Sessions forced onto a scratch branch finish by
+  fast-forwarding `main` (`git push origin HEAD:main`).
+- **The gate before any push to `main` is non-negotiable:**
+  `pnpm typecheck && pnpm lint && pnpm test` — all green. CI re-runs it.
+- **Fetch `origin/main` first; rebase if it moved; never force-push `main`.**
+- Conventional commits. Update CLAUDE.md in the same change when a rule changes.
+
+### 0.3 Invariants that must never break — see §2, §19, §21
+- **Idempotency or it didn't happen** (§2/§7). Every webhook/job/external call
+  dedupes on the provider event id.
+- **Never auto-mutate** (§2/§3): no auto-merge contacts, auto-charge, auto-delete,
+  or auto-send. AI suggests; a human confirms.
+- **External APIs are the truth** (§4/§8): refetch Stripe/GoCardless; webhooks
+  are notifications, not authoritative state.
+- **Audit every sensitive write** (§20/§27): anything touching a Contact,
+  FinancialAccount, or safeguarding field calls `ctx.audit` (a lint rule
+  enforces it — see §0.4).
+- **Money is integer pence** in `*_minor` columns — never floats (§19/§29).
+- **Soft-delete** (`deletedAt`), never hard-delete outside the retention engine
+  (§19). **Migrations are forward-only; fail closed on unknown enum values** (§19/§8).
+- **Secrets never in the repo**; per-agent OAuth/Trengo tokens are KMS-encrypted
+  (§21/§44).
+
+### 0.4 Invisible tripwires that fail the build (this is why "correct-looking" code breaks here)
+- **Strict CSP: no `unsafe-inline` for styles** (§44.2). Inline `style={{…}}`
+  attributes and `<style>` blocks can be stripped at runtime — never rely on
+  them for anything load-bearing (layouts, gradients, sizing). Author real CSS
+  in `apps/web/app/globals.css` (or a stylesheet class) instead.
+- **Design tokens are the only home for colour** (§4). Never hardcode a hex in a
+  component; change `packages/ui/tokens/` and reference the token. The primary
+  brand colour is **blue** (`primary-*`); `trengo`/`gmail` accents are scoped
+  exceptions used only under `inbox/*` and `mail/*`.
+- **ESLint runs `--max-warnings=0`** with import-boundary walls
+  (`no-restricted-imports`): `packages/core` ✗→ `integrations`; `integrations`
+  ✗→ `apps/web`; `apps/web/app/**` ✗→ `@studymind/db`. An unused import fails
+  the build (§5/§20).
+- **Custom lint + drift gates:** `require-audit`, `registered-event-names`
+  (§45), `release-flag-staleness`, and `pnpm policy:check` (§20.1 matrix drift).
+- **Never call OpenAI/AI providers directly** — always go through `packages/ai`
+  (§18/§35). **No new dependencies without an ADR** (§3). **No BaaS** (§3).
+
+### 0.5 UI / design defaults — see §4, §26, §37
+- Reuse `apps/web/components/ui/` primitives: `Card`/`CardHeader`/`CardBody`,
+  `Button`, `Field`, `Toolbar`, `PhoneInput`, `CountrySelect`, `CsvExportButton`.
+  Don't hand-roll a bordered panel — use `<Card>`.
+- Lucide icons only; **no emoji in product UI, ever** (§4). Tabular numerals on
+  aligned figures. Honour `prefers-reduced-motion`; visible focus rings always.
+- RSC by default; interactive bits are `'use client'` leaves; check permissions
+  in the tRPC procedure, never in the component (§20/§26).
 
 ---
 
