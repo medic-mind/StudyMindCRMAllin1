@@ -94,6 +94,14 @@ export const EVENT_NAMES = [
   'team.restored',
   'team.member_added',
   'team.member_removed',
+
+  // Custom roles (operator-managed permission bundles, §20).
+  'role.created',
+  'role.updated',
+  'role.archived',
+  'role.restored',
+  'role.assigned',
+  'role.unassigned',
   'task.team_changed',
 
   // Internal team messaging (ADR 0022). Channel administration is audited;

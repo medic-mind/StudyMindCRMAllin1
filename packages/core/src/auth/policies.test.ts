@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ACTIONS,
+  ASSIGNABLE_ACTIONS,
+  DENY_LIST_ACTIONS,
   ROLES,
   canCreateUsers,
   canDeactivateUsers,
@@ -12,10 +14,12 @@ import {
   canManageUsers,
   canRevokeRole,
   hasAction,
+  isAssignableAction,
   isGrantableAction,
   normaliseRole,
   pickPrimaryRole,
   roleCan,
+  sanitizeRolePermissions,
   type Role,
 } from './policies'
 
@@ -197,5 +201,51 @@ describe('pickPrimaryRole', () => {
   it('defaults to virtual_assistant on empty / unknown input', () => {
     expect(pickPrimaryRole([])).toBe('virtual_assistant')
     expect(pickPrimaryRole(['intern'])).toBe('virtual_assistant')
+  })
+})
+
+describe('custom-role permissions (assignable set + sanitize)', () => {
+  const CATASTROPHIC = [
+    'secrets.rotate',
+    'tenant.config.write',
+    'user.role.grant_ceo',
+    'user.role.grant_senior_manager',
+    'user.role.revoke_senior_manager',
+    'user.deactivate',
+    'user.invite',
+    'user.grant_manage',
+    'dsar.export',
+  ] as const
+
+  it('the deny-list and assignable set partition every action', () => {
+    for (const a of DENY_LIST_ACTIONS) expect(isAssignableAction(a)).toBe(false)
+    for (const a of ASSIGNABLE_ACTIONS) expect(isAssignableAction(a)).toBe(true)
+    // Together they cover every ACTION exactly once.
+    expect(ASSIGNABLE_ACTIONS.length + DENY_LIST_ACTIONS.length).toBe(ACTIONS.length)
+  })
+
+  it('never lets a catastrophic action into a role, even if the actor holds it', () => {
+    // A CEO effectively holds every action; the deny-list is still stripped.
+    const ceoEffective = [...ACTIONS]
+    const cleaned = sanitizeRolePermissions(ceoEffective, [...CATASTROPHIC, 'charge.refund'])
+    for (const a of CATASTROPHIC) expect(cleaned).not.toContain(a)
+    expect(cleaned).toEqual(['charge.refund'])
+  })
+
+  it('forbids privilege escalation — you can only bundle what you hold', () => {
+    // A sales-exec-level actor (no refund) cannot mint a role that refunds.
+    const salesEffective = ACTIONS.filter((a) => roleCan('sales_executive', a))
+    const cleaned = sanitizeRolePermissions(salesEffective, ['charge.refund', 'contact.write'])
+    expect(cleaned).not.toContain('charge.refund')
+    expect(cleaned).toContain('contact.write')
+  })
+
+  it('hasAction honours an assignable grant from a custom role', () => {
+    // sales_executive base role cannot refund…
+    expect(hasAction('sales_executive', [], 'charge.refund')).toBe(false)
+    // …but a custom role granting charge.refund makes it pass.
+    expect(hasAction('sales_executive', ['charge.refund'], 'charge.refund')).toBe(true)
+    // A deny-list action can never be satisfied by a grant.
+    expect(hasAction('sales_executive', ['secrets.rotate'], 'secrets.rotate')).toBe(false)
   })
 })

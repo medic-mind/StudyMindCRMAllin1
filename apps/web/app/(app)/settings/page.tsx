@@ -49,6 +49,13 @@ const GROUPS: Group[] = [
         roles: 'CEO · Senior Manager',
         icon: <UsersIcon size={16} />,
       },
+      {
+        href: '/settings/roles',
+        title: 'Roles & permissions',
+        description: 'Create custom roles and assign permissions on top of the built-in roles.',
+        roles: 'CEO · Senior Manager',
+        icon: <ShieldAlertIcon size={16} />,
+      },
     ],
   },
   {

@@ -280,6 +280,11 @@ function makeCtx(role: SessionUser['role'], userId = 'actor_1') {
         return Promise.resolve({ id: where.id })
       },
     },
+    // Grant loading now unions per-user permissions with custom-role permissions
+    // (loadEffectiveGrants). No custom roles in these fixtures → empty.
+    userCustomRole: {
+      findMany: () => Promise.resolve([]),
+    },
   }
 
   const ctx: TrpcContext = {

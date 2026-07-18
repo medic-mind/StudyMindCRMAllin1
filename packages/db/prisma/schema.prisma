@@ -334,11 +334,52 @@ model User {
   oauthStates             OAuthState[]
   totpRecoveryCodes       TotpRecoveryCode[]
   permissions             UserPermission[]
+  customRoles             UserCustomRole[]
   assignedCards           Card[]                   @relation("CardAssignee")
   conversationFavorites   ConversationFavorite[]
   conversationViews       ConversationView[]
 
   @@index([email])
+}
+
+// Operator-managed custom role: a named, coloured bundle of ADDITIVE
+// permissions layered on top of a user's built-in base role (§20, ADR 0021
+// follow-on). Permissions are a subset of ASSIGNABLE_ACTIONS
+// (packages/core/src/auth/policies.ts) — the catastrophic actions can never be
+// bundled here. Validated by Zod at the tRPC boundary; stored as text[]
+// (forward-only, §19). Built-in roles stay in code and are unaffected.
+model CustomRole {
+  id          String    @id
+  name        String    @unique
+  description String?
+  color       String    @default("#2563eb")
+  permissions String[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  archivedAt  DateTime?
+
+  members UserCustomRole[]
+
+  @@index([archivedAt])
+}
+
+// Assignment of a custom role to a user (many-to-many). A user's effective
+// permissions = base-role grants ∪ every assigned custom role's permissions ∪
+// per-user UserPermission grants (loadEffectiveGrants).
+model UserCustomRole {
+  id           String   @id
+  userId       String
+  customRoleId String
+  createdAt    DateTime @default(now())
+  createdById  String?
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customRole CustomRole @relation(fields: [customRoleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, customRoleId])
+  @@index([customRoleId])
 }
 
 // Grantable per-user capabilities that sit ON TOP of the role matrix

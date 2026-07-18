@@ -74,6 +74,7 @@ import { slackChannelRouter } from './routers/slackChannel'
 import { slackSummaryRouter } from './routers/slackSummary'
 import { summerCampRouter } from './routers/summerCamp'
 import { taskRouter } from './routers/task'
+import { roleRouter } from './routers/role'
 import { teamRouter } from './routers/team'
 import { uploadedInvoiceRouter } from './routers/uploadedInvoice'
 import { webinarRouter } from './routers/webinar'
@@ -124,6 +125,7 @@ export const appRouter = router({
   summerCamp: summerCampRouter,
   task: taskRouter,
   team: teamRouter,
+  role: roleRouter,
   uploadedInvoice: uploadedInvoiceRouter,
   webinar: webinarRouter,
 })

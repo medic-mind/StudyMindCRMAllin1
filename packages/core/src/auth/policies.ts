@@ -243,10 +243,131 @@ export function isGrantableAction(value: string): value is GrantableAction {
   return (GRANTABLE_ACTIONS as readonly string[]).includes(value)
 }
 
+/* -------------------------------------------------------------------------- */
+/* Custom roles — assignable permission bundles (§20 follow-on)               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Actions that must NEVER be delegated through a custom role or a per-user
+ * grant — they stay locked to the built-in senior roles. Each maps to org
+ * takeover, data exfiltration, or a separation-of-duties boundary:
+ *  - `secrets.rotate` / `tenant.config.write` — org-wide secrets + config.
+ *  - `user.role.*` — minting/removing CEO / Senior Manager peers.
+ *  - `user.deactivate` — locking peers out.
+ *  - `user.invite` — creating accounts (CEO + Senior Manager only, ADR 0021).
+ *  - `user.grant_manage` — delegating the delegation right.
+ *  - `dsar.export` — bulk personal-data export.
+ */
+export const DENY_LIST_ACTIONS = [
+  'secrets.rotate',
+  'tenant.config.write',
+  'user.role.grant_ceo',
+  'user.role.grant_senior_manager',
+  'user.role.revoke_senior_manager',
+  'user.deactivate',
+  'user.invite',
+  'user.grant_manage',
+  'dsar.export',
+] as const satisfies readonly Action[]
+
+/**
+ * The safe subset an admin may put into a custom role (or a per-user grant):
+ * every ACTION except the catastrophic deny-list above.
+ */
+export const ASSIGNABLE_ACTIONS: readonly Action[] = ACTIONS.filter(
+  (a) => !(DENY_LIST_ACTIONS as readonly string[]).includes(a),
+)
+
+export function isAssignableAction(value: string): value is Action {
+  return (ASSIGNABLE_ACTIONS as readonly string[]).includes(value)
+}
+
+/**
+ * Sanitise a requested permission set for a custom role / grant. Enforces the
+ * two safety guarantees:
+ *  1. Only assignable actions survive — the deny-list can never be bundled.
+ *  2. No privilege escalation — an actor may only include a permission they
+ *     THEMSELVES currently hold (`actorEffective` = the actor's own effective
+ *     actions). A Manager cannot mint a role that does what a Manager cannot.
+ * Returns the deduped, sorted, allowed subset.
+ */
+export function sanitizeRolePermissions(
+  actorEffective: readonly string[],
+  requested: readonly string[],
+): Action[] {
+  const held = new Set(actorEffective)
+  const out = new Set<Action>()
+  for (const p of requested) {
+    if (isAssignableAction(p) && held.has(p)) out.add(p)
+  }
+  return [...out].sort()
+}
+
+/** Friendly label for each action — used by the permission-catalogue UI. */
+export const ACTION_LABELS: Readonly<Record<Action, string>> = {
+  'contact.read': 'View contacts',
+  'contact.read_minor': 'View minor profiles',
+  'contact.write': 'Create / edit contacts',
+  'family.merge': 'Merge families',
+  'interaction.create': 'Add notes / interactions',
+  'interaction.delete': 'Delete interactions',
+  'charge.create_link': 'Send payment links',
+  'charge.refund': 'Issue refunds',
+  'subscription.cancel': 'Cancel subscriptions',
+  'dsar.export': 'Export DSAR data',
+  'audit.read': 'Read the audit log',
+  'settings.write': 'Change settings',
+  'user.invite': 'Create accounts',
+  'user.manage': 'Edit users / reset passwords',
+  'user.grant_manage': 'Delegate user management',
+  'user.deactivate': 'Deactivate users',
+  'user.role.grant_senior_manager': 'Grant Senior Manager',
+  'user.role.grant_ceo': 'Grant CEO',
+  'user.role.revoke_senior_manager': 'Revoke Senior Manager',
+  'secrets.rotate': 'Rotate secrets',
+  'tenant.config.write': 'Write tenant config',
+}
+
+/** Grouping for the permission-catalogue + matrix UI (order matters). */
+export const ACTION_GROUPS: ReadonlyArray<{ label: string; actions: readonly Action[] }> = [
+  {
+    label: 'Contacts & timeline',
+    actions: [
+      'contact.read',
+      'contact.read_minor',
+      'contact.write',
+      'family.merge',
+      'interaction.create',
+      'interaction.delete',
+    ],
+  },
+  {
+    label: 'Finance',
+    actions: ['charge.create_link', 'charge.refund', 'subscription.cancel'],
+  },
+  { label: 'Admin & data', actions: ['audit.read', 'settings.write', 'dsar.export'] },
+  {
+    label: 'User management',
+    actions: [
+      'user.invite',
+      'user.manage',
+      'user.grant_manage',
+      'user.deactivate',
+      'user.role.grant_senior_manager',
+      'user.role.grant_ceo',
+      'user.role.revoke_senior_manager',
+      'secrets.rotate',
+      'tenant.config.write',
+    ],
+  },
+]
+
 /**
  * Effective permission check. An actor may perform `action` if their role
- * grants it OR they hold a matching grantable permission. `granted` is the
- * list of `UserPermission.permission` strings for the actor.
+ * grants it OR they hold a matching **assignable** permission (from a custom
+ * role or a per-user grant). `granted` is the actor's effective granted
+ * actions (`loadEffectiveGrants`). Deny-list actions are never assignable, so
+ * they can only ever be satisfied by the base role.
  */
 export function hasAction(
   role: Role,
@@ -254,7 +375,7 @@ export function hasAction(
   action: Action,
 ): boolean {
   if (roleCan(role, action)) return true
-  return isGrantableAction(action) && granted.includes(action)
+  return isAssignableAction(action) && granted.includes(action)
 }
 
 /**

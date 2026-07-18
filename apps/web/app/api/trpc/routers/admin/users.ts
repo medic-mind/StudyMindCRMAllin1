@@ -37,6 +37,8 @@ import {
   type Role,
 } from '@studymind/core/auth/policies'
 import { assertNotLastCeo } from '@studymind/core/auth/guards'
+
+import { loadEffectiveGrants } from '@/lib/auth/effective-grants'
 import {
   assertStrongPassword,
   generateTemporaryPassword,
@@ -84,11 +86,9 @@ type Db = AuthedTrpcContext['db']
 
 /** Load the actor's granted (non-role) permissions, e.g. `user.manage`. */
 async function loadActorGrants(db: Db, userId: string): Promise<string[]> {
-  const rows = await db.userPermission.findMany({
-    where: { userId },
-    select: { permission: true },
-  })
-  return rows.map((r) => r.permission)
+  // Per-user grants ∪ assigned custom-role permissions, so a custom role that
+  // grants `user.manage` is honoured here too (§20).
+  return loadEffectiveGrants(db, userId)
 }
 
 /** CEO + Senior Manager only. */
