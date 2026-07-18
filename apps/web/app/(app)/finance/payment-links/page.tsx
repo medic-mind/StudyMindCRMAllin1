@@ -6,7 +6,9 @@ import Link from 'next/link'
 
 import { TRPCError } from '@trpc/server'
 
+import { Badge } from '@/components/ui/badge'
 import { createServerCaller } from '@/lib/trpc/server'
+import { paymentStatusTone } from '@/lib/ui/status-tone'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,14 +18,6 @@ const STATUS_LABEL: Record<string, string> = {
   completed: 'Completed',
   expired: 'Expired',
   cancelled: 'Cancelled',
-}
-
-const STATUS_TONE: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-900',
-  created: 'bg-primary-100 text-primary-900',
-  completed: 'bg-green-100 text-green-900',
-  expired: 'bg-neutral-100 text-neutral-700',
-  cancelled: 'bg-red-100 text-red-900',
 }
 
 function formatGbp(minor: number): string {
@@ -84,13 +78,9 @@ export default async function PaymentLinksPage() {
             <li key={it.id} className="flex items-start justify-between gap-4 p-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-sm">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-                      STATUS_TONE[it.status] ?? 'bg-neutral-100 text-neutral-700'
-                    }`}
-                  >
+                  <Badge tone={paymentStatusTone(it.status)}>
                     {STATUS_LABEL[it.status] ?? it.status}
-                  </span>
+                  </Badge>
                   <span className="font-mono text-xs text-neutral-500">
                     {it.reason}
                   </span>

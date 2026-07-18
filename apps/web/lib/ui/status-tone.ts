@@ -57,3 +57,29 @@ export function callOutcomeTone(outcome: string): BadgeTone {
       return 'neutral'
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Payment / refund / payment-link status — finance tables.                    */
+/* -------------------------------------------------------------------------- */
+
+export function paymentStatusTone(status: string): BadgeTone {
+  switch (status) {
+    case 'succeeded':
+    case 'completed':
+    case 'paid':
+      return 'success'
+    case 'pending':
+    case 'pending_review':
+    case 'submitted':
+      return 'warn'
+    case 'created':
+      return 'info'
+    case 'failed':
+    case 'cancelled':
+      return 'danger'
+    case 'expired':
+      return 'neutral'
+    default:
+      return 'neutral'
+  }
+}

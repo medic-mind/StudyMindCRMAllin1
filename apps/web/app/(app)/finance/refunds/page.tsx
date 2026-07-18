@@ -4,24 +4,19 @@
 
 import Link from 'next/link'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 
 import { TRPCError } from '@trpc/server'
 
 import { createServerCaller } from '@/lib/trpc/server'
+import { paymentStatusTone } from '@/lib/ui/status-tone'
 
 interface SP {
   familyId?: string
   cursorId?: string
   cursorAt?: string
-}
-
-const STATUS_BADGE: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-900',
-  pending_review: 'bg-amber-100 text-amber-900',
-  succeeded: 'bg-green-100 text-green-900',
-  failed: 'bg-red-100 text-red-900',
 }
 
 function formatGBP(minor: number): string {
@@ -115,13 +110,7 @@ export default async function RefundsPage({ searchParams }: { searchParams: Prom
                   <Td className="font-mono tabular-nums">{formatGBP(r.amountMinor)}</Td>
                   <Td className="text-sm text-neutral-700">{r.reasonCode}</Td>
                   <Td>
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-xs ${
-                        STATUS_BADGE[r.status] ?? 'bg-neutral-100 text-neutral-900'
-                      }`}
-                    >
-                      {r.status}
-                    </span>
+                    <Badge tone={paymentStatusTone(r.status)}>{r.status}</Badge>
                   </Td>
                 </Tr>
               ))}

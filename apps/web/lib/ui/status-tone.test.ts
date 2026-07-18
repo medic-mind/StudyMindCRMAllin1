@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { callOutcomeTone, riskLabel, riskTone } from './status-tone'
+import { callOutcomeTone, paymentStatusTone, riskLabel, riskTone } from './status-tone'
 
 describe('status-tone', () => {
   it('maps hours-risk level to a shared badge tone + label', () => {
@@ -21,5 +21,16 @@ describe('status-tone', () => {
     expect(callOutcomeTone('missed')).toBe('danger')
     expect(callOutcomeTone('no_answer')).toBe('danger')
     expect(callOutcomeTone('unknown')).toBe('neutral')
+  })
+
+  it('maps finance payment/refund/link status to one shared tone', () => {
+    expect(paymentStatusTone('succeeded')).toBe('success')
+    expect(paymentStatusTone('completed')).toBe('success')
+    expect(paymentStatusTone('pending')).toBe('warn')
+    expect(paymentStatusTone('pending_review')).toBe('warn')
+    expect(paymentStatusTone('created')).toBe('info')
+    expect(paymentStatusTone('failed')).toBe('danger')
+    expect(paymentStatusTone('cancelled')).toBe('danger')
+    expect(paymentStatusTone('expired')).toBe('neutral')
   })
 })
