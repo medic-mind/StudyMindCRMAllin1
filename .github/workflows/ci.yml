@@ -54,13 +54,26 @@ jobs:
       - name: Generate Prisma client
         run: pnpm db:generate
 
-      # One turbo invocation runs the whole graph in parallel with shared
-      # caching, instead of four serial full-tree passes.
-      - name: Verify (typecheck + lint + test + build)
+      # One turbo invocation runs the static-check graph in parallel with
+      # shared caching. `test` is NOT run here: the per-package `test` scripts
+      # are placeholders (`echo`), because the real suite's fixtures resolve
+      # relative to the REPO ROOT and can't be found when vitest runs inside a
+      # package dir. The suite is run once, from the root, in the next step.
+      - name: Verify (typecheck + lint + build)
         # Turbo's local cache lives in .turbo/cache by default (restored above).
-        run: pnpm turbo run typecheck lint test build
+        run: pnpm turbo run typecheck lint build
         env:
           # Auth.js v5 (ADR 0010); placeholder secret for build only.
+          AUTH_SECRET: ci-build-placeholder
+
+      # The actual test suite (Vitest, ~1,870 unit + contract + integration
+      # tests with mocked DB/clients — no Postgres/Redis needed). Runs from the
+      # repo root so root-relative fixtures resolve. This is the real gate:
+      # previously CI only ran the per-package `test` placeholders, so nothing
+      # was actually tested. CLAUDE.md §23.
+      - name: Test suite
+        run: pnpm test
+        env:
           AUTH_SECRET: ci-build-placeholder
 
       - name: Policy matrix drift check
