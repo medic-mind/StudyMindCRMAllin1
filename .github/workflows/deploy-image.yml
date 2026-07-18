@@ -1,0 +1,95 @@
+name: Build & publish deploy image
+
+# Build-once deploy pipeline (CLAUDE.md §24).
+#
+# Instead of Railway rebuilding the whole app on every deploy (a cold ~4-min
+# `next build` on Railway's Metal builder), we build the Docker image ONCE here
+# on GitHub's runners — with reliable BuildKit layer caching (type=gha, which
+# Railway's builder cannot provide) — push it to GHCR, and have Railway just
+# PULL the finished image. The slim image (the runner ships .next WITHOUT its
+# 2.5 GB build cache) pulls in seconds.
+#
+# ROLLOUT IS STAGED so nothing breaks:
+#   Phase 1 (now): this workflow publishes images to GHCR on every push to main.
+#                  Railway KEEPS building from the Dockerfile — this is purely
+#                  additive. Confirm images appear under the repo's Packages.
+#   Phase 2 (you): point the Railway `web` service at the GHCR image and add the
+#                  two secrets below. Full steps are in docs/runbooks/deploy-build-once.md.
+#                  If anything is off, switch Railway back to the Dockerfile in
+#                  one click — the Dockerfile still works unchanged.
+#
+# The Railway redeploy step is SKIPPED until you add the RAILWAY_TOKEN secret,
+# and can never fail the image publish (continue-on-error), so Phase 1 is safe
+# to merge today.
+
+on:
+  push:
+    branches: [main]
+
+# A newer push supersedes an in-flight build of the same ref.
+concurrency:
+  group: deploy-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write # push to GHCR
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN can push packages to this repo's namespace — no PAT
+          # needed for pushing. (Railway PULLING a private image needs its own
+          # read:packages PAT — see the runbook.)
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # metadata-action lowercases the image name (GHCR requires lowercase).
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GitHub Actions cache reliably persists BuildKit layers between runs,
+          # so unchanged layers (base image, `pnpm fetch` dependency store) are
+          # reused instead of rebuilt on every deploy.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Trigger the Railway redeploy so the new image goes live. Railway caches
+      # floating-tag (:latest) digests for hours and will NOT pull a new image
+      # on its own, so this explicit redeploy is what makes push -> live work.
+      # Skipped until RAILWAY_TOKEN exists; never blocks the publish above.
+      - name: Trigger Railway redeploy
+        if: ${{ env.RAILWAY_TOKEN != '' }}
+        continue-on-error: true
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+        run: |
+          npm install -g @railway/cli
+          # RAILWAY_TOKEN (a project token) scopes the CLI to the project +
+          # environment; --service targets the web service by id.
+          railway redeploy --service "${RAILWAY_SERVICE_ID}" --yes
