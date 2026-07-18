@@ -860,6 +860,67 @@ export const adminIntegrationsRouter = router({
   }),
 
   /**
+   * Join every PUBLIC channel the bot can see but is not yet a member of
+   * (CEO / Senior Manager, audited — the operator's explicit bulk consent,
+   * replacing a manual /invite per channel; CLAUDE.md §12, ADR 0043). The #1
+   * root cause of "Slack isn't pulling" is that the token's bot is only in
+   * one or two channels while a DIFFERENT app was invited everywhere.
+   * Private channels still need a human /invite (Slack requires it).
+   */
+  slackJoinAllChannels: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    if (!TEST_ROLES.has(user.role)) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'admin only' })
+    }
+    const result = await (async (): Promise<
+      | { ok: true; joined: string[]; alreadyMember: number; failed: Array<{ channel: string; error: string }> }
+      | { ok: false; error: string }
+    > => {
+      const token = process.env['SLACK_BOT_TOKEN']
+      if (!token) {
+        return { ok: false, error: 'SLACK_BOT_TOKEN is not set — add it in Railway env vars first.' }
+      }
+      try {
+        const { createClient, SlackApiError } = await import(
+          '@studymind/integration-slack/client'
+        )
+        const client = createClient({ token })
+        const channels = await client.listChannels()
+        const joined: string[] = []
+        const failed: Array<{ channel: string; error: string }> = []
+        let alreadyMember = 0
+        for (const ch of channels) {
+          if (ch.isMember) {
+            alreadyMember += 1
+            continue
+          }
+          if (ch.isPrivate) continue // needs a human /invite
+          try {
+            await client.joinChannel(ch.id)
+            joined.push(`#${ch.name}`)
+          } catch (err) {
+            failed.push({
+              channel: `#${ch.name}`,
+              error: err instanceof SlackApiError ? err.slackError : 'unknown_error',
+            })
+          }
+        }
+        return { ok: true, joined, alreadyMember, failed }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'unknown error' }
+      }
+    })()
+    await ctx.audit({
+      action: 'slack.channels_joined',
+      target: { type: 'Integration', id: 'slack' },
+      after: result.ok
+        ? { joined: result.joined.length, failed: result.failed.length, alreadyMember: result.alreadyMember }
+        : { ok: false, error: result.error },
+    })
+    return result
+  }),
+
+  /**
    * Synthetic ping that proves the ProviderEvent persistence path is
    * healthy end-to-end. CEO / Senior Manager only and audited. Does NOT
    * call the live provider API or forge a signature — instead it inserts

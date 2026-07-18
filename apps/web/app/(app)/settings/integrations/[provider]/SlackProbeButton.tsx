@@ -46,9 +46,40 @@ export function SlackProbeButton(): JSX.Element {
     onError: (e) => toast.error(e.message ?? 'Could not start the sync'),
   })
 
+  const joinAll = trpc.admin.integrations.slackJoinAllChannels.useMutation({
+    onSuccess: (r) => {
+      if (!r.ok) {
+        toast.error(r.error)
+        return
+      }
+      if (r.joined.length === 0 && r.failed.length === 0) {
+        toast.success(`Already in every public channel (${r.alreadyMember}).`)
+      } else {
+        toast.success(
+          `Joined ${r.joined.length} channel${r.joined.length === 1 ? '' : 's'}` +
+            (r.failed.length > 0 ? ` — ${r.failed.length} failed` : '') +
+            '. Now run "Sync from Slack now" or a 90-day backfill.',
+        )
+      }
+      // Refresh the membership readout so the change is visible immediately.
+      probe.mutate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not join channels'),
+  })
+
   return (
     <div className="flex flex-col items-end gap-1.5">
       <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={joinAll.isPending}
+          onClick={() => joinAll.mutate()}
+          title="Join every public channel in the workspace as the bot, so the pull can read them all — private channels still need /invite"
+        >
+          {joinAll.isPending ? 'Joining…' : 'Join all public channels'}
+        </Button>
         <Button
           type="button"
           size="sm"

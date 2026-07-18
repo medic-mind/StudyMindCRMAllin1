@@ -45,6 +45,18 @@ async function primaryAccountForContact(contactId: string): Promise<string | nul
   return link?.accountId ?? null
 }
 
+/** Link target for a KNOWN contact id (e.g. one just auto-onboarded), with the
+ *  same school-stamping the matcher applies (§12). */
+export async function targetForContactId(contactId: string): Promise<SlackLinkTarget> {
+  const businessAccountId = await primaryAccountForContact(contactId)
+  return {
+    kind: 'contact',
+    contactId,
+    ...(businessAccountId ? { businessAccountId } : {}),
+    via: 'phone',
+  }
+}
+
 /** Resolve a candidate (name / email / phone) to a Contact (and its school, if
  *  any), else to a B2B account directly. Null when nothing resolves. */
 export async function resolveSlackLinkTarget(

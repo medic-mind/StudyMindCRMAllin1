@@ -61,6 +61,14 @@ export interface SlackClient {
    * they can always be added by id.
    */
   listChannels(): Promise<SlackConversation[]>
+  /**
+   * Join a PUBLIC channel as the bot (`conversations.join`, needs the
+   * `channels:join` scope). The programmatic twin of `/invite @bot` — used by
+   * the operator-confirmed "Join all public channels" action so the pull can
+   * read the whole workspace without a manual invite per channel. Private
+   * channels cannot be joined this way (Slack requires a human invite).
+   */
+  joinChannel(channelId: string): Promise<void>
   /** The bot identity behind the configured token (auth.test, no scope
    *  needed). Null fields when Slack doesn't return them. */
   identity(): Promise<SlackIdentity>
@@ -184,6 +192,9 @@ export function createClient(opts: CreateSlackClientOptions = {}): SlackClient {
         }
         throw err
       }
+    },
+    async joinChannel(channelId) {
+      await call('/conversations.join', { channel: channelId })
     },
     async identity() {
       const res = await call<{ user?: string; team?: string }>('/auth.test', {})

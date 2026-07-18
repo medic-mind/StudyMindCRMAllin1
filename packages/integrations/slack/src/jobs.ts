@@ -24,8 +24,10 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isComplaintChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
+import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
   resolveSlackLinkTarget,
   resolveSlackLinkTargetFromNames,
@@ -143,11 +145,17 @@ export const slackEventReceived = inngest.createFunction(
     //    provider is down, unconfigured, or over budget. The thread root is
     //    checked too, so a reply inherits the customer named upthread.
     const plainText = slackTextToPlain(message.text)
+    // Own-brand tokens ("Medic Mind" trailing every summary, info@… emails)
+    // are filtered out of the candidates so they can never hijack a match
+    // (ADR 0043). Not a step: the result carries a Set (not JSON-safe) and the
+    // loader is process-cached anyway.
+    const brands = await loadOwnBrands()
     const signals = extractContactSignals(message.text)
     const parentSignals = threadParentText
       ? extractContactSignals(threadParentText)
       : { email: null, phone: null }
-    const matchEmail = signals.email ?? parentSignals.email
+    const usableEmail = (e: string | null) => (e && !isOwnBrandEmail(e, brands) ? e : null)
+    const matchEmail = usableEmail(signals.email) ?? usableEmail(parentSignals.email)
     const matchPhone = signals.phone ?? parentSignals.phone
     let rulesTarget =
       matchEmail || matchPhone
@@ -161,10 +169,12 @@ export const slackEventReceived = inngest.createFunction(
     // and never linked at all when no provider key was configured. The
     // unambiguous-only matcher (take:2, §3) is the safety: a non-name token
     // matches nobody, two same-named contacts park for a human.
-    const nameCandidates = extractNameCandidates(message.text)
-    const parentNameCandidates = threadParentText
-      ? extractNameCandidates(threadParentText)
-      : []
+    const nameCandidates = extractNameCandidates(message.text).filter(
+      (n) => !isOwnBrandName(n, brands),
+    )
+    const parentNameCandidates = (
+      threadParentText ? extractNameCandidates(threadParentText) : []
+    ).filter((n) => !isOwnBrandName(n, brands))
     if (!rulesTarget && (nameCandidates.length > 0 || parentNameCandidates.length > 0)) {
       rulesTarget = await step.run('match-target-names', async () => {
         const own = await resolveSlackLinkTargetFromNames(nameCandidates)
@@ -173,6 +183,21 @@ export const slackEventReceived = inngest.createFunction(
           ? resolveSlackLinkTargetFromNames(parentNameCandidates)
           : null
       })
+    }
+
+    // Auto-onboard (ADR 0043): a phone-bearing call log that matched nobody
+    // creates the customer — the call-channel standard (§10/§16). Only the
+    // MESSAGE's own phone counts; shared lines return null and park (§41.1).
+    if (!rulesTarget && signals.phone) {
+      rulesTarget = await step.run('auto-onboard', async () =>
+        autoOnboardContactForSlackMessage({
+          messageText: message.text,
+          phone: signals.phone,
+          email: usableEmail(signals.email),
+          nameCandidates,
+          requestId: eventId,
+        }),
+      )
     }
     if (rulesTarget) {
       const target = rulesTarget

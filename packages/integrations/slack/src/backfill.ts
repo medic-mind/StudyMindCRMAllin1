@@ -38,8 +38,10 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE, listIngestChannelIds } from './client'
+import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isComplaintChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
+import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
   resolveSlackLinkTarget,
   resolveSlackLinkTargetFromNames,
@@ -137,39 +139,73 @@ export const slackBackfillRequested = inngest.createFunction(
           let cursor: string | undefined
           let pageNum = 0
           do {
-            const res = await step.run(`history-${channelId}-${pageNum}`, async () =>
-              fetchHistory(token, channelId, oldest, cursor),
-            )
-            for (const m of res.messages ?? []) {
-              try {
-                // Process the message AND, when it is a thread root, every reply
-                // hanging off it (conversations.history omits in-thread replies).
-                const result = await step.run(`msg-${channelId}-${m.ts}`, async () =>
-                  processMessageWithReplies({ token, channelId, message: m, requestId: jobId }),
-                )
-                processed += result.processed
-                matched += result.matched
-                skipped += result.skipped
-              } catch (err) {
-                // One message that fails AI parsing/persist must not abort the
-                // whole channel import. Skip it and keep going.
-                processed += 1
-                skipped += 1
-                logger.warn(
-                  { jobId, channelId, ts: m.ts, err },
-                  'slack backfill: skipped a message that failed to import',
-                )
+            // ONE step per PAGE (not per message): Inngest caps steps per run,
+            // and a full-workspace 90-day import is thousands of messages — a
+            // per-message step blew the budget and killed the job partway.
+            // Progress is flushed as DELTAS every 10 messages inside the step
+            // so the banner moves while a page (AI-heavy) is being worked.
+            const currentCursor = cursor
+            const page = await step.run(`page-${channelId}-${pageNum}`, async () => {
+              const res = await fetchHistory(token, channelId, oldest, currentCursor)
+              let pProcessed = 0
+              let pMatched = 0
+              let pSkipped = 0
+              let flushedProcessed = 0
+              let flushedMatched = 0
+              let flushedSkipped = 0
+              const flush = async (lastTs: string | null) => {
+                await incrementBackfillProgress(db, jobId, {
+                  processed: pProcessed - flushedProcessed,
+                  matched: pMatched - flushedMatched,
+                  skipped: pSkipped - flushedSkipped,
+                  lastEventId: lastTs,
+                })
+                flushedProcessed = pProcessed
+                flushedMatched = pMatched
+                flushedSkipped = pSkipped
               }
-            }
-            await step.run(`progress-${channelId}-${pageNum}`, async () =>
-              incrementBackfillProgress(db, jobId, {
-                processed,
-                matched,
-                skipped,
-                lastEventId: res.messages?.[res.messages.length - 1]?.ts ?? null,
-              }),
-            )
-            cursor = res.has_more ? res.response_metadata?.next_cursor : undefined
+              let sinceFlush = 0
+              for (const m of res.messages ?? []) {
+                try {
+                  // Process the message AND, when it is a thread root, every
+                  // reply hanging off it (history omits in-thread replies).
+                  const result = await processMessageWithReplies({
+                    token,
+                    channelId,
+                    message: m,
+                    requestId: jobId,
+                  })
+                  pProcessed += result.processed
+                  pMatched += result.matched
+                  pSkipped += result.skipped
+                } catch (err) {
+                  // One message that fails AI parsing/persist must not abort
+                  // the whole channel import. Skip it and keep going.
+                  pProcessed += 1
+                  pSkipped += 1
+                  logger.warn(
+                    { jobId, channelId, ts: m.ts, err },
+                    'slack backfill: skipped a message that failed to import',
+                  )
+                }
+                sinceFlush += 1
+                if (sinceFlush >= 10) {
+                  sinceFlush = 0
+                  await flush(m.ts)
+                }
+              }
+              await flush(res.messages?.[res.messages.length - 1]?.ts ?? null)
+              return {
+                processed: pProcessed,
+                matched: pMatched,
+                skipped: pSkipped,
+                nextCursor: (res.has_more ? res.response_metadata?.next_cursor : null) ?? null,
+              }
+            })
+            processed += page.processed
+            matched += page.matched
+            skipped += page.skipped
+            cursor = page.nextCursor ?? undefined
             pageNum += 1
           } while (cursor)
         } catch (err) {
@@ -469,12 +505,16 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   // backfill archives those mentions with zero AI spend — and still works
   // when no AI provider is configured at all. A threaded reply that names no
   // customer of its own inherits the phone/email named in the thread root
-  // (threadParentText) — same rule as the live handler.
+  // (threadParentText) — same rule as the live handler. Own-brand tokens
+  // ("Medic Mind" trailing every summary, info@medicmind.co.uk in bodies) are
+  // filtered out of the candidates so they can never hijack a match (ADR 0043).
+  const brands = await loadOwnBrands()
   const signals = extractContactSignals(message.text)
   const parentSignals = input.threadParentText
     ? extractContactSignals(input.threadParentText)
     : { email: null, phone: null }
-  const matchEmail = signals.email ?? parentSignals.email
+  const usableEmail = (e: string | null) => (e && !isOwnBrandEmail(e, brands) ? e : null)
+  const matchEmail = usableEmail(signals.email) ?? usableEmail(parentSignals.email)
   const matchPhone = signals.phone ?? parentSignals.phone
   let rulesTarget =
     matchEmail || matchPhone
@@ -487,16 +527,33 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   // extractNameCandidates + the unambiguous-only matcher resolve it for free;
   // a reply that names nobody inherits the thread root's names, mirroring the
   // email/phone inheritance above.
-  const nameCandidates = extractNameCandidates(message.text)
-  const parentNameCandidates = input.threadParentText
-    ? extractNameCandidates(input.threadParentText)
-    : []
+  const nameCandidates = extractNameCandidates(message.text).filter(
+    (n) => !isOwnBrandName(n, brands),
+  )
+  const parentNameCandidates = (
+    input.threadParentText ? extractNameCandidates(input.threadParentText) : []
+  ).filter((n) => !isOwnBrandName(n, brands))
   if (!rulesTarget) {
     rulesTarget =
       (await resolveSlackLinkTargetFromNames(nameCandidates)) ??
       (parentNameCandidates.length > 0
         ? await resolveSlackLinkTargetFromNames(parentNameCandidates)
         : null)
+  }
+
+  // Auto-onboard (ADR 0043): a phone-bearing call log that matched nobody
+  // creates the customer — the call-channel standard (§10/§16). The phone must
+  // be the MESSAGE's own (a reply inheriting the root's phone links via the
+  // rules path once the root's contact exists). Shared lines return null and
+  // park for a human (§41.1).
+  if (!rulesTarget && signals.phone) {
+    rulesTarget = await autoOnboardContactForSlackMessage({
+      messageText: message.text,
+      phone: signals.phone,
+      email: usableEmail(signals.email),
+      nameCandidates,
+      requestId: input.requestId,
+    })
   }
 
   if (rulesTarget) {

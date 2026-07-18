@@ -18,6 +18,7 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { extractContactSignals, extractNameCandidates, slackTsToDate } from './extract'
 import {
@@ -169,6 +170,26 @@ export async function relinkParkedRowsOnce(
         ) {
           target = await resolveSlackLinkTarget(withParent)
         }
+      }
+    }
+
+    // Auto-onboard (ADR 0043): a parked phone-bearing call log whose number
+    // STILL matches nobody creates the customer — the same call-channel
+    // standard as Aircall (§10) — so the tray backlog drains into real
+    // contact records instead of waiting forever. Shared lines stay parked.
+    if (!target && row.messageText) {
+      const phone = candidate.phone ?? fromText.phone
+      if (phone) {
+        target = await autoOnboardContactForSlackMessage({
+          messageText: row.messageText,
+          phone,
+          email: candidate.email,
+          nameCandidates: [
+            ...(candidate.name ? [candidate.name] : []),
+            ...extractNameCandidates(row.messageText),
+          ],
+          requestId: `slack-relink:${row.id}`,
+        })
       }
     }
 
