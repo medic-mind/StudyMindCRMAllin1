@@ -128,10 +128,29 @@ export {
 } from './dd-cases'
 // Direct Debit recovery-comms templates (ADR 0038, Phase 3) — pure rendering.
 export {
+  buildRecoveryVars,
+  formatGbpMinor,
+  formatUkDate,
   renderRecoveryTemplate,
   RECOVERY_TEMPLATE_TOKENS,
+  type BuildRecoveryVarsInput,
   type RecoveryTemplateVars,
 } from './dd-comms'
+// Direct Debit recovery letter PDF (ADR 0045 amendment) — pure render.
+export { renderRecoveryLetterPdf, type RecoveryLetterInput } from './dd-letter-pdf'
+// CCJ / letter-before-claim cost estimate (ADR 0045 amendment) — pure.
+export {
+  COURT_ISSUE_FEE_BANDS,
+  courtIssueFeeMinor,
+  DEBT_LETTER_RESPONSE_DAYS,
+  DEFAULT_DD_LATE_FEE_MINOR,
+  estimateCcjCosts,
+  resolveDdLateFeeMinor,
+  STATUTORY_INTEREST_ANNUAL_PERCENT,
+  type CcjEstimate,
+  type CcjEstimateInput,
+  type CourtFeeBand,
+} from './ccj-costs'
 // Automated Direct Debit chasing (ADR 0045) — pure engine decisions.
 export {
   chaseAutoResolved,

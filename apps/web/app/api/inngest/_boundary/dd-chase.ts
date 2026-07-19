@@ -24,23 +24,20 @@ import {
   decideChaseTick,
   nextChaseAt,
   renderRecoveryTemplate,
+  renderRecoveryLetterPdf,
   type ChaseTemplateRef,
-  type RecoveryTemplateVars,
 } from '@studymind/core/finance'
 import { inngest } from '@studymind/jobs'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 import { outbound as trengoOutbound } from '@studymind/integration-trengo'
 
 import { db } from '@/lib/db'
+import { buildCaseRecoveryVars } from '@/lib/finance/recovery-vars'
 
 /** Cases examined per tick — a huge backlog drains over a few ticks. */
 const CHASE_BATCH = 100
 
 const OPEN_STATUSES = ['new', 'chasing', 'escalated'] as const
-
-function formatPence(minor: number): string {
-  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(minor / 100)
-}
 
 export const ddChaseTick = inngest.createFunction(
   {
@@ -70,6 +67,7 @@ export const ddChaseTick = inngest.createFunction(
       select: {
         id: true,
         channel: true,
+        kind: true,
         subject: true,
         body: true,
         pdfFileName: true,
@@ -77,6 +75,11 @@ export const ddChaseTick = inngest.createFunction(
         pdfData: true,
       },
     })
+    // Legal-escalation email templates (stern / CCJ) go out with a PDF copy of
+    // the letter generated from the personalised body; gentle reminders don't.
+    const legalTemplateIds = new Set(
+      templates.filter((t) => t.kind === 'legal_escalation').map((t) => t.id),
+    )
     const emailTemplates: ChaseTemplateRef[] = templates
       .filter((t) => t.channel === 'email')
       .map((t) => ({ id: t.id, channel: 'email', subject: t.subject, body: t.body }))
@@ -203,22 +206,21 @@ export const ddChaseTick = inngest.createFunction(
             select: { firstName: true, lastName: true },
           })
         : null
-      // Name: the linked contact wins; else the standalone case's own name
-      // (ADR 0045 amendment — most chased people predate the CRM).
-      const contactFull = [contact?.firstName, contact?.lastName].filter(Boolean).join(' ')
-      const fullName = contactFull || c.personName || null
-      const firstName = contact?.firstName ?? (c.personName ? c.personName.split(/\s+/u)[0]! : null)
-      const lastName =
-        contact?.lastName ??
-        (c.personName ? c.personName.split(/\s+/u).slice(1).join(' ') || null : null)
-      const vars: RecoveryTemplateVars = {
-        first_name: firstName,
-        last_name: lastName,
-        full_name: fullName,
-        customer_name: fullName,
-        amount_due: formatPence(Math.max(0, c.openingShortfallMinor - c.recoveredMinor)),
-        setup_link: c.setupLinkUrl,
-      }
+      // Full token set incl. the calculated CCJ court fee + statutory interest.
+      // Only the stern / CCJ templates reference those, so the gentle reminders
+      // stay gentle. Name: the linked contact wins, else the standalone case's
+      // own name (ADR 0045 amendment — most chased people predate the CRM).
+      const { vars } = buildCaseRecoveryVars(
+        {
+          personName: c.personName,
+          contactFirstName: contact?.firstName ?? null,
+          contactLastName: contact?.lastName ?? null,
+          outstandingMinor: Math.max(0, c.openingShortfallMinor - c.recoveredMinor),
+          setupLinkUrl: c.setupLinkUrl,
+          createdAt: c.createdAt,
+        },
+        now,
+      )
 
       const sentChannels: string[] = []
       for (const s of decision.sends) {
@@ -242,13 +244,25 @@ export const ddChaseTick = inngest.createFunction(
         let error: string | null = null
         try {
           if (s.channel === 'email') {
-            const pdf = pdfByTemplateId.get(s.template.id)
+            const attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = []
+            // A PDF copy of the letter itself for the serious steps.
+            if (legalTemplateIds.has(s.template.id)) {
+              attachments.push({
+                filename: 'Medic-Mind-letter.pdf',
+                content: renderRecoveryLetterPdf({ subject, body }),
+                contentType: 'application/pdf',
+              })
+            }
+            // Any fixed document staff attached to the template (e.g. the
+            // Pre-Action Protocol information sheet / reply form).
+            const staticPdf = pdfByTemplateId.get(s.template.id)
+            if (staticPdf) attachments.push(staticPdf)
             const r = await sendSystemEmail({
               to: s.to,
               subject,
               text: body,
               requestId: `dd-chase:${c.id}:${c.escalationStep}:email`,
-              ...(pdf ? { attachments: [pdf] } : {}),
+              ...(attachments.length > 0 ? { attachments } : {}),
             })
             if (r.status !== 'sent') {
               status = 'failed'

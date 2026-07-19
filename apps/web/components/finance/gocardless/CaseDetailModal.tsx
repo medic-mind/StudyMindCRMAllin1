@@ -6,13 +6,13 @@
 // message (email or Trengo SMS) from a template, and arm/adjust the automatic
 // recovery. Manager+ writes are server-enforced; all staff can read.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
 // Pure template helper via the subpath (NOT the finance barrel, which pulls in
 // node:crypto and breaks the client bundle) — same as SendRecoveryDialog.
-import { renderRecoveryTemplate, type RecoveryTemplateVars } from '@studymind/core/finance/dd-comms'
+import { renderRecoveryTemplate } from '@studymind/core/finance/dd-comms'
 
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -129,19 +129,6 @@ function HeaderRow({ detail: d }: { detail: Detail }) {
 // Send a message now (manual, human-confirmed).
 // -----------------------------------------------------------------------------
 
-function buildVars(d: Detail): RecoveryTemplateVars {
-  const full = d.name
-  const parts = full.split(/\s+/u)
-  return {
-    first_name: parts[0] ?? '',
-    last_name: parts.slice(1).join(' '),
-    full_name: full,
-    customer_name: full,
-    amount_due: formatMoneyMinor(d.outstandingMinor),
-    setup_link: d.setupLinkUrl ?? '',
-  }
-}
-
 function SendPanel({ detail: d, onSent }: { detail: Detail; onSent: () => void }) {
   const [channel, setChannel] = useState<Channel>('email')
   const [templateId, setTemplateId] = useState('')
@@ -159,8 +146,18 @@ function SendPanel({ detail: d, onSent }: { detail: Detail; onSent: () => void }
     },
     onError: (e) => toast.error(e.message),
   })
+  const refine = trpc.finance.directDebit.cases.draftMessage.useMutation({
+    onSuccess: (r) => {
+      setBody(r.text)
+      toast.success('Personalised with AI — please review before sending.')
+    },
+    onError: (e) => toast.error(e.message),
+  })
 
-  const vars = useMemo(() => buildVars(d), [d])
+  // Server-computed token values — name, amount, re-signup link, and the
+  // calculated CCJ court fee + interest — the SAME set the automated engine
+  // uses, so the preview matches what actually goes out.
+  const vars = d.templateVars
   const visible = (templates.data ?? []).filter((t) =>
     channel === 'email' ? t.channel === 'email' : t.channel === 'sms' || t.channel === 'trengo',
   )
@@ -207,6 +204,18 @@ function SendPanel({ detail: d, onSent }: { detail: Detail; onSent: () => void }
       <p className="mt-0.5 text-xs text-neutral-500">
         Pick a template, review and edit, then send. Goes out from the system mailbox (email) or
         Trengo (SMS){d.contactId ? ' and is logged on their timeline' : ''}.
+      </p>
+      <p className="mt-1 rounded bg-neutral-50 px-2 py-1 text-[11px] text-neutral-600">
+        If it goes to court, the CCJ templates auto-fill: court fee{' '}
+        <span className="font-medium">{formatMoneyMinor(d.ccj.courtFeeMinor)}</span> + interest{' '}
+        <span className="font-medium">{formatMoneyMinor(d.ccj.interestMinor)}</span>
+        {d.ccj.lateFeeMinor > 0 ? (
+          <>
+            {' '}
+            + late fee <span className="font-medium">{formatMoneyMinor(d.ccj.lateFeeMinor)}</span>
+          </>
+        ) : null}{' '}
+        → total owed <span className="font-medium">{formatMoneyMinor(d.ccj.totalMinor)}</span>.
       </p>
 
       <div className="mt-2 inline-flex rounded-md border border-neutral-200 p-0.5 text-sm">
@@ -271,12 +280,32 @@ function SendPanel({ detail: d, onSent }: { detail: Detail; onSent: () => void }
               onChange={(e) => setBody(e.target.value)}
             />
           </Field>
-          {channel === 'email' && chosen?.pdfFileName ? (
+          {channel === 'email' && chosen?.kind === 'legal_escalation' ? (
+            <p className="text-xs text-neutral-600">
+              A PDF copy of this letter is attached automatically
+              {chosen.pdfFileName ? (
+                <>
+                  , plus <span className="font-medium">{chosen.pdfFileName}</span>
+                </>
+              ) : null}
+              .
+            </p>
+          ) : channel === 'email' && chosen?.pdfFileName ? (
             <p className="text-xs text-neutral-600">
               Attaches <span className="font-medium">{chosen.pdfFileName}</span> to this email.
             </p>
           ) : null}
-          <div className="flex justify-end">
+          <div className="flex items-center justify-between gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={refine.isPending || send.isPending || !body.trim()}
+              onClick={() => refine.mutate({ caseId: d.id, channel, body })}
+              title="Personalise this draft for the customer, keeping all figures and links"
+            >
+              {refine.isPending ? 'Refining…' : 'Refine with AI'}
+            </Button>
             <Button type="button" size="sm" onClick={submit} disabled={send.isPending}>
               {send.isPending ? 'Sending…' : channel === 'email' ? 'Send email' : 'Send SMS'}
             </Button>

@@ -107,6 +107,13 @@ export {
   type ReplyDraftPromptInput,
 } from './prompts/reply-draft'
 export {
+  buildDdRecoveryDraftPrompt,
+  ddRecoveryDraftShape,
+  VERSION as DD_RECOVERY_DRAFT_PROMPT_VERSION,
+  type DdRecoveryChannel,
+  type DdRecoveryDraftPromptInput,
+} from './prompts/dd-recovery-draft'
+export {
   buildCallSummaryDraftPrompt,
   buildCallSummaryScaffold,
   CallSummaryDraftShape,

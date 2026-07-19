@@ -2018,8 +2018,8 @@ model DirectDebitCase {
   /// The GoCardless / Stripe re-signup link staff paste in. The engine sends
   /// NOTHING until this is set — the "asks staff to input a link" step.
   setupLinkUrl     String?
-  /// Days between escalation steps.
-  cadenceDays      Int       @default(3)
+  /// Days between escalation steps (protocol default: 7, ADR 0045 amendment).
+  cadenceDays      Int       @default(7)
   /// How many chase messages have gone out (index into the template sequence
   /// — copy gets more serious each step).
   escalationStep   Int       @default(0)

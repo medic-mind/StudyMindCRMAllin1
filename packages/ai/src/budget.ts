@@ -28,6 +28,7 @@ export type AiTaskCategory =
   | 'knowledge_qa'
   | 'knowledge_edit'
   | 'contact_name_extraction'
+  | 'dd_recovery_draft'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -73,6 +74,10 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   // the free routes (Trengo contact record, rule-based message extraction)
   // both fail. Mini-tier, import-time only.
   contact_name_extraction: { daily: 2, monthly: 40 },
+  // Optional "refine with AI" on a Direct Debit recovery message (ADR 0045
+  // amendment): personalises an already-filled, staff-authored template. Human
+  // reviews before sending; the deterministic template is the backbone.
+  dd_recovery_draft: { daily: 10, monthly: 200 },
 }
 
 interface UsageBucket {

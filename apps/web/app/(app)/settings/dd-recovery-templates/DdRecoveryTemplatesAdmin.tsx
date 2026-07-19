@@ -267,7 +267,7 @@ export function DdRecoveryTemplatesAdmin() {
                           </>
                         ) : (
                           <label className="cursor-pointer text-neutral-500 hover:underline">
-                            Attach PDF (letter)
+                            Attach accompanying PDF
                             <input
                               type="file"
                               accept="application/pdf"

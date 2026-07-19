@@ -21,6 +21,7 @@ import {
   listUnresolvedStripePayments,
   recordRecovery,
   RECOVERY_METHODS,
+  renderRecoveryLetterPdf,
   resolveDdIssueCutoff,
   setCaseNotes,
   setCaseStatus,
@@ -44,6 +45,7 @@ import {
   router,
   type SessionUser,
 } from '@/lib/trpc/builders'
+import { buildCaseRecoveryVars } from '@/lib/finance/recovery-vars'
 
 // Refunds + allocation review + reconciliation are restricted to roles that
 // can move money. ADR 0014 — ceo, senior_manager, manager. Sales Executive
@@ -690,7 +692,7 @@ export const financeRouter = router({
             sendTexts: z.boolean().default(false),
             chaseEmail: z.string().trim().email().max(200).nullish(),
             chasePhoneE164: z.string().trim().max(20).nullish(),
-            cadenceDays: z.number().int().min(1).max(30).default(3),
+            cadenceDays: z.number().int().min(1).max(30).default(7),
             notes: z.string().max(5000).nullish(),
           }),
         )
@@ -936,6 +938,21 @@ export const financeRouter = router({
           const contactName = contact
             ? [contact.firstName, contact.lastName].filter(Boolean).join(' ') || null
             : null
+          const outstandingMinor = Math.max(0, c.openingShortfallMinor - c.recoveredMinor)
+          // The token values (name, amount, re-signup link, calculated CCJ
+          // court fee + statutory interest) the send preview renders with — the
+          // SAME set the automated engine uses, so the customer sees one figure.
+          const { vars, ccj } = buildCaseRecoveryVars(
+            {
+              personName: c.personName,
+              contactFirstName: contact?.firstName ?? null,
+              contactLastName: contact?.lastName ?? null,
+              outstandingMinor,
+              setupLinkUrl: c.setupLinkUrl,
+              createdAt: c.createdAt,
+            },
+            new Date(),
+          )
           return {
             id: c.id,
             status: c.status,
@@ -946,7 +963,7 @@ export const financeRouter = router({
             personName: c.personName,
             chaseEmail: c.chaseEmail ?? contact?.email ?? null,
             chasePhoneE164: c.chasePhoneE164 ?? contact?.phoneE164 ?? null,
-            outstandingMinor: Math.max(0, c.openingShortfallMinor - c.recoveredMinor),
+            outstandingMinor,
             openingShortfallMinor: c.openingShortfallMinor,
             recoveredMinor: c.recoveredMinor,
             autoChase: c.autoChase,
@@ -963,6 +980,15 @@ export const financeRouter = router({
             recoveredAt: c.recoveredAt,
             recoveryMethod: c.recoveryMethod,
             createdAt: c.createdAt,
+            // Token values for the send preview + a CCJ breakdown for the agent.
+            templateVars: vars,
+            ccj: {
+              courtFeeMinor: ccj.courtFeeMinor,
+              interestMinor: ccj.interestMinor,
+              lateFeeMinor: ccj.lateFeeMinor,
+              totalMinor: ccj.totalMinor,
+              daysOverdue: ccj.daysOverdue,
+            },
             messages: c.messages.map((m) => ({
               id: m.id,
               channel: m.channel,
@@ -1027,21 +1053,30 @@ export const financeRouter = router({
               throw new TRPCError({ code: 'BAD_REQUEST', message: 'A subject is required.' })
             }
             toAddress = to
-            // The escalation "letter" PDF, when the picked template carries one.
-            let attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = []
-            if (input.includePdf && input.templateId) {
-              const tpl = await ctx.db.ddRecoveryTemplate.findUnique({
-                where: { id: input.templateId },
-                select: { pdfData: true, pdfFileName: true, pdfContentType: true },
-              })
+            const attachments: Array<{ filename: string; content: Buffer; contentType?: string }> =
+              []
+            const tpl = input.templateId
+              ? await ctx.db.ddRecoveryTemplate.findUnique({
+                  where: { id: input.templateId },
+                  select: { kind: true, pdfData: true, pdfFileName: true, pdfContentType: true },
+                })
+              : null
+            if (input.includePdf) {
+              // A PDF copy of the letter (from the final edited body) for the
+              // serious steps; and any fixed document staff attached.
+              if (tpl?.kind === 'legal_escalation') {
+                attachments.push({
+                  filename: 'Medic-Mind-letter.pdf',
+                  content: renderRecoveryLetterPdf({ subject, body: input.body }),
+                  contentType: 'application/pdf',
+                })
+              }
               if (tpl?.pdfData) {
-                attachments = [
-                  {
-                    filename: tpl.pdfFileName ?? 'document.pdf',
-                    content: Buffer.from(tpl.pdfData),
-                    contentType: tpl.pdfContentType ?? 'application/pdf',
-                  },
-                ]
+                attachments.push({
+                  filename: tpl.pdfFileName ?? 'document.pdf',
+                  content: Buffer.from(tpl.pdfData),
+                  contentType: tpl.pdfContentType ?? 'application/pdf',
+                })
               }
             }
             const result = await sendSystemEmail({
@@ -1179,6 +1214,65 @@ export const financeRouter = router({
             after: { channel: input.channel, to: toAddress, manual: true },
           })
           return { status: 'sent' as const }
+        }),
+
+      /** Optional "refine with AI" (ADR 0045 amendment, §3/§18): lightly
+       *  personalises an already-filled recovery draft for this customer while
+       *  keeping every figure, link, date and legal statement verbatim. The
+       *  agent reviews + edits + sends — nothing sends from here. */
+      draftMessage: protectedProcedure
+        .input(
+          z.object({
+            caseId: z.string().min(1),
+            channel: z.enum(['email', 'sms']),
+            body: z.string().trim().min(1).max(10_000),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const c = await ctx.db.directDebitCase.findFirst({
+            where: { id: input.caseId, deletedAt: null },
+            select: { id: true, contactId: true, personName: true },
+          })
+          if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+          const contact = c.contactId
+            ? await ctx.db.contact.findUnique({
+                where: { id: c.contactId },
+                select: { firstName: true },
+              })
+            : null
+          const { buildDdRecoveryDraftPrompt, ddRecoveryDraftShape, DD_RECOVERY_DRAFT_PROMPT_VERSION } =
+            await import('@studymind/ai')
+          const { runDraft } = await import('@studymind/ai')
+          const firstName =
+            contact?.firstName ?? (c.personName ? c.personName.split(/\s+/u)[0] : null) ?? null
+          const prompt = buildDdRecoveryDraftPrompt({
+            channel: input.channel,
+            draft: input.body,
+            firstName,
+          })
+          const result = await runDraft({
+            task: 'dd_recovery_draft',
+            promptVersion: prompt.promptVersion,
+            system: prompt.system,
+            user: prompt.user,
+            model: 'gpt-4o',
+            contentShape: ddRecoveryDraftShape(input.channel),
+            contactId: c.contactId ?? undefined,
+            ctx: { caseId: c.id, agentId: user.id },
+          })
+          await ctx.audit({
+            action: 'ai.draft_generated',
+            target: { type: 'DirectDebitCase', id: c.id },
+            purpose: 'dd-recovery-draft',
+            after: {
+              channel: input.channel,
+              promptVersion: DD_RECOVERY_DRAFT_PROMPT_VERSION,
+              length: result.text.length,
+            },
+          })
+          return { text: result.text }
         }),
 
       // Send a human-confirmed recovery email (reminder / legal escalation) from
