@@ -20,7 +20,7 @@ import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
-import { riskLabel, riskTone } from '@/lib/ui/status-tone'
+import { contactKindTone, riskLabel, riskTone } from '@/lib/ui/status-tone'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useConfirm } from '@/components/ui/confirm'
@@ -94,12 +94,6 @@ interface Props {
   role: string
 }
 
-const KIND_TONE: Record<string, BadgeTone> = {
-  parent: 'info',
-  student: 'accent',
-  tutor: 'success',
-  other: 'neutral',
-}
 const KIND_RING: Record<string, string> = {
   parent: 'ring-primary-100',
   student: 'ring-violet-100',
@@ -542,7 +536,7 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {rows.map((c) => {
-                const tone = KIND_TONE[c.kind] ?? 'neutral'
+                const tone = contactKindTone(c.kind)
                 const ring = KIND_RING[c.kind] ?? 'ring-neutral-100'
                 const isSelected = selected.has(c.id)
                 const status = BOOKING_STATUS[c.bookingStatus]

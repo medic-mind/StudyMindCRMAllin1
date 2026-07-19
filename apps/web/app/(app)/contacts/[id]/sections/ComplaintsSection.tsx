@@ -9,23 +9,18 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
-import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { SuggestInput } from '@/components/ui/suggest-input'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
+import { complaintStatusTone } from '@/lib/ui/status-tone'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 
 type Severity = 'low' | 'medium' | 'high'
 
-const STATUS_TONE: Record<string, BadgeTone> = {
-  open: 'danger',
-  in_progress: 'info',
-  resolved: 'success',
-  dismissed: 'neutral',
-}
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
   in_progress: 'In progress',
@@ -232,7 +227,7 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
                   >
                     {c.severity}
                   </span>
-                  <Badge tone={STATUS_TONE[c.status] ?? 'neutral'}>
+                  <Badge tone={complaintStatusTone(c.status)}>
                     {STATUS_LABEL[c.status] ?? c.status}
                   </Badge>
                 </span>

@@ -10,11 +10,12 @@ import Link from 'next/link'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
-import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { getCurrentUser } from '@/lib/auth/server'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
+import { complaintStatusTone } from '@/lib/ui/status-tone'
 
 import { NewComplaintDialog } from './NewComplaintDialog'
 
@@ -27,12 +28,6 @@ const FILTERS: ReadonlyArray<{ value: Filter; label: string }> = [
   { value: 'all', label: 'All' },
 ]
 
-const STATUS_TONE: Record<string, BadgeTone> = {
-  open: 'danger',
-  in_progress: 'info',
-  resolved: 'success',
-  dismissed: 'neutral',
-}
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open',
   in_progress: 'In progress',
@@ -186,7 +181,7 @@ export default async function ComplaintsPage({
                   >
                     {c.severity}
                   </span>
-                  <Badge tone={STATUS_TONE[c.status] ?? 'neutral'}>
+                  <Badge tone={complaintStatusTone(c.status)}>
                     {STATUS_LABEL[c.status] ?? c.status}
                   </Badge>
                 </span>

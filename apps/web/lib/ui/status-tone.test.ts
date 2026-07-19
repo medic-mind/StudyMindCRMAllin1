@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { callOutcomeTone, paymentStatusTone, riskLabel, riskTone } from './status-tone'
+import {
+  callOutcomeTone,
+  complaintStatusTone,
+  contactKindTone,
+  paymentStatusTone,
+  riskLabel,
+  riskTone,
+} from './status-tone'
 
 describe('status-tone', () => {
   it('maps hours-risk level to a shared badge tone + label', () => {
@@ -32,5 +39,17 @@ describe('status-tone', () => {
     expect(paymentStatusTone('failed')).toBe('danger')
     expect(paymentStatusTone('cancelled')).toBe('danger')
     expect(paymentStatusTone('expired')).toBe('neutral')
+  })
+
+  it('maps contact kind + complaint status consistently', () => {
+    expect(contactKindTone('parent')).toBe('info')
+    expect(contactKindTone('student')).toBe('accent')
+    expect(contactKindTone('tutor')).toBe('success')
+    expect(contactKindTone('other')).toBe('neutral')
+
+    expect(complaintStatusTone('open')).toBe('danger')
+    expect(complaintStatusTone('in_progress')).toBe('info')
+    expect(complaintStatusTone('resolved')).toBe('success')
+    expect(complaintStatusTone('dismissed')).toBe('neutral')
   })
 })

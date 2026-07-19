@@ -83,3 +83,37 @@ export function paymentStatusTone(status: string): BadgeTone {
       return 'neutral'
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Contact kind — contacts table + contact header.                            */
+/* -------------------------------------------------------------------------- */
+
+export function contactKindTone(kind: string): BadgeTone {
+  switch (kind) {
+    case 'parent':
+      return 'info'
+    case 'student':
+      return 'accent'
+    case 'tutor':
+      return 'success'
+    default:
+      return 'neutral'
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Complaint status — complaints queue + contact complaints section.           */
+/* -------------------------------------------------------------------------- */
+
+export function complaintStatusTone(status: string): BadgeTone {
+  switch (status) {
+    case 'open':
+      return 'danger'
+    case 'in_progress':
+      return 'info'
+    case 'resolved':
+      return 'success'
+    default:
+      return 'neutral'
+  }
+}

@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
+import { contactKindTone } from '@/lib/ui/status-tone'
 
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { ContactDirectDebitPanel } from '@/components/finance/gocardless/ContactDirectDebitPanel'
@@ -18,7 +19,7 @@ import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { ComposeEmailButton } from '@/components/mail/compose-email'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { Avatar } from '@/components/ui/avatar'
-import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import {
   ActivityIcon,
@@ -57,13 +58,6 @@ import { MailchimpPushButton } from './sections/MailchimpPushButton'
 import { SlackSection } from './sections/SlackSection'
 import { TasksSection } from './sections/TasksSection'
 import { TrengoSection } from './sections/TrengoSection'
-
-const KIND_TONE: Record<string, BadgeTone> = {
-  parent: 'info',
-  student: 'accent',
-  tutor: 'success',
-  other: 'neutral',
-}
 
 function formatKind(kind: string): string {
   if (kind === 'la_caseworker') return 'LA caseworker'
@@ -169,7 +163,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     caller.contact.booking.lessons({ contactId: id, limit: 20 }),
   ])
 
-  const kindTone = KIND_TONE[contact.kind] ?? 'neutral'
+  const kindTone = contactKindTone(contact.kind)
 
   // Light "jump to section" nav — keeps the full page, just makes it navigable
   // (every section still renders below). Anchors land below the sticky bar via
