@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -50,7 +49,6 @@ function CompanyEditor({
   row: CompanyRow
   onClose: () => void
 }) {
-  const router = useRouter()
   const [name, setName] = useState(row.name)
   const [slug, setSlug] = useState(row.slug)
   const [color, setColor] = useState<string>(row.color ?? COLOR_PRESETS[0]!)
@@ -66,7 +64,6 @@ function CompanyEditor({
       utils.company.list.invalidate(),
       utils.company.pickList.invalidate(),
     ])
-    router.refresh()
   }
 
   async function save() {
@@ -163,7 +160,6 @@ function CompanyEditor({
 }
 
 export function CompaniesAdmin() {
-  const router = useRouter()
   const companies = trpc.company.list.useQuery({ includeArchived: true })
   const create = trpc.company.create.useMutation()
   const utils = trpc.useUtils()
@@ -179,7 +175,6 @@ export function CompaniesAdmin() {
       utils.company.list.invalidate(),
       utils.company.pickList.invalidate(),
     ])
-    router.refresh()
   }
 
   async function onCreate(e: React.FormEvent) {

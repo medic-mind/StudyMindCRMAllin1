@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
@@ -17,7 +16,7 @@ import { trpc } from '@/lib/trpc/client'
 const COLOR_PRESETS = ['#9333ea', '#2563eb', '#059669', '#d97706', '#dc2626', '#0891b2']
 
 function TeamRow({ teamId }: { teamId: string }) {
-  const router = useRouter()
+  const utils = trpc.useUtils()
   const team = trpc.team.get.useQuery({ id: teamId })
   const users = trpc.task.assignableUsers.useQuery({})
   const addMember = trpc.team.addMember.useMutation()
@@ -40,7 +39,7 @@ function TeamRow({ teamId }: { teamId: string }) {
       await addMember.mutateAsync({ teamId, userId: adding })
       setAdding('')
       await team.refetch()
-      router.refresh()
+      void utils.team.list.invalidate()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not add')
     }
@@ -50,7 +49,7 @@ function TeamRow({ teamId }: { teamId: string }) {
     try {
       await removeMember.mutateAsync({ teamId, userId })
       await team.refetch()
-      router.refresh()
+      void utils.team.list.invalidate()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not remove')
     }
@@ -68,7 +67,7 @@ function TeamRow({ teamId }: { teamId: string }) {
         toast.success('Team archived')
       }
       await team.refetch()
-      router.refresh()
+      void utils.team.list.invalidate()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not change')
     }
@@ -133,7 +132,6 @@ function TeamRow({ teamId }: { teamId: string }) {
 }
 
 export function TeamsAdmin() {
-  const router = useRouter()
   const teams = trpc.team.list.useQuery({ includeArchived: true })
   const create = trpc.team.create.useMutation()
   const [name, setName] = useState('')
@@ -155,7 +153,6 @@ export function TeamsAdmin() {
       setDescription('')
       setExpanded(result.id)
       await teams.refetch()
-      router.refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not create team')
     }
