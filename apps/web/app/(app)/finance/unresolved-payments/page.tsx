@@ -8,6 +8,7 @@ import { TRPCError } from '@trpc/server'
 import { UnresolvedPaymentRow } from '@/components/finance/UnresolvedPaymentRow'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -63,7 +64,7 @@ export default async function UnresolvedPaymentsPage(): Promise<JSX.Element> {
       />
       <PageBody>
         {items.length === 0 ? (
-          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
+          <Card className="p-10 text-center">
             <p className="text-sm font-medium text-emerald-700">
               No unresolved payments — every Stripe charge is matched to a family.
             </p>
@@ -71,9 +72,9 @@ export default async function UnresolvedPaymentsPage(): Promise<JSX.Element> {
               Charges for an unknown Stripe customer will appear here for finance
               to link or dismiss.
             </p>
-          </div>
+          </Card>
         ) : (
-          <div className="rounded-lg border border-neutral-200 bg-white shadow-card">
+          <Card className="overflow-hidden">
             <Table>
               <Thead>
                 <Tr>
@@ -90,7 +91,7 @@ export default async function UnresolvedPaymentsPage(): Promise<JSX.Element> {
                 ))}
               </Tbody>
             </Table>
-          </div>
+          </Card>
         )}
       </PageBody>
     </>

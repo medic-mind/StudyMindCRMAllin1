@@ -9,6 +9,7 @@ import { DiscrepancyActions } from '@/components/finance/DiscrepancyActions'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -139,7 +140,7 @@ export default async function FinancePage() {
       />
       <PageBody>
         {items.length === 0 ? (
-          <div className="rounded-lg border border-neutral-200 bg-white p-10 text-center shadow-card">
+          <Card className="p-10 text-center">
             <p className="text-sm font-medium text-emerald-700">
               No open discrepancies — reconciliation is clean.
             </p>
@@ -147,7 +148,7 @@ export default async function FinancePage() {
               The nightly reconcile runs at 02:00 UTC; anything that needs a
               human decision will appear here.
             </p>
-          </div>
+          </Card>
         ) : (
           <div className="space-y-8">
             {Array.from(groups.entries()).map(([category, group]) => (
@@ -158,7 +159,8 @@ export default async function FinancePage() {
                     {group.length}
                   </Badge>
                 </h2>
-                <ul className="mt-3 divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white shadow-card">
+                <Card className="mt-3 overflow-hidden">
+                  <ul className="divide-y divide-neutral-100">
                   {group.map((d) => (
                     <li key={d.id} className="flex flex-col gap-2 p-3">
                       <div className="flex items-start justify-between gap-4">
@@ -190,7 +192,8 @@ export default async function FinancePage() {
                       />
                     </li>
                   ))}
-                </ul>
+                  </ul>
+                </Card>
               </section>
             ))}
           </div>
