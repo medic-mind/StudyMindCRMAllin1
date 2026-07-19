@@ -7,11 +7,7 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
-import {
-  DEBT_LETTER_RESPONSE_DAYS,
-  DEFAULT_DD_LATE_FEE_MINOR,
-  resolveDdLateFeeMinor,
-} from '@studymind/core/finance'
+import { DEBT_LETTER_RESPONSE_DAYS, resolveDdLateFeeMinor } from '@studymind/core/finance'
 
 type DbClient = PrismaClient | Prisma.TransactionClient
 
@@ -27,7 +23,10 @@ export interface EffectiveRecoverySettings {
 /** Fallback when the settings row hasn't been seeded yet (env, then defaults). */
 export function fallbackRecoverySettings(): EffectiveRecoverySettings {
   return {
-    lateFeeMinor: resolveDdLateFeeMinor(process.env.DD_LATE_FEE_GBP) || DEFAULT_DD_LATE_FEE_MINOR,
+    // resolveDdLateFeeMinor already returns the default for missing/invalid
+    // input; a configured "0" is a legitimate £0 fee, so no `|| default` here
+    // (that would clobber 0 back to £12).
+    lateFeeMinor: resolveDdLateFeeMinor(process.env.DD_LATE_FEE_GBP),
     defaultCadenceDays: 7,
     responseDays: DEBT_LETTER_RESPONSE_DAYS,
     financePhone: process.env.DD_FINANCE_PHONE ?? '020 3305 9593',
