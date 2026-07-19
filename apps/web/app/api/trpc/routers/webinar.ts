@@ -736,7 +736,7 @@ const classRouter = router({
       if (!cls) throw new TRPCError({ code: 'NOT_FOUND' })
       const settings = await ctx.db.webinarSettings.findUnique({
         where: { id: 'webinar' },
-        select: { senderMailboxUserId: true },
+        select: { senderMailboxUserId: true, senderAddress: true },
       })
       const enrollments = await ctx.db.webinarEnrollment.findMany({
         where: { classId: cls.id, status: 'active', deletedAt: null },
@@ -765,6 +765,7 @@ const classRouter = router({
               text: body,
               html,
               fromAgentId: settings?.senderMailboxUserId ?? undefined,
+              fromAddress: settings?.senderAddress ?? undefined,
               requestId: `${ctx.requestId}:${c.id}`,
             })
             if (r.status === 'sent') sent += 1
@@ -1672,6 +1673,7 @@ const settingsRouter = router({
     const row = await ctx.db.webinarSettings.findUnique({ where: { id: 'webinar' } })
     return {
       senderMailboxUserId: row?.senderMailboxUserId ?? null,
+      senderAddress: row?.senderAddress ?? null,
       defaultSendDaysOfWeek: row?.defaultSendDaysOfWeek ?? [0, 1],
       defaultSendHourLocal: row?.defaultSendHourLocal ?? 9,
       defaultZoomRotateEveryWeeks: row?.defaultZoomRotateEveryWeeks ?? 4,
@@ -1687,10 +1689,30 @@ const settingsRouter = router({
     }
   }),
 
+  /** Connected Gmail mailbox addresses staff can pick as the "send from"
+   *  identity, plus the system default. Powers the sender picker in Settings. */
+  senderOptions: protectedProcedure.query(async ({ ctx }) => {
+    const systemDefault = process.env.SYSTEM_GMAIL_EMAIL || 'info@studymind.co.uk'
+    const mailboxes = await ctx.db.gmailMailbox.findMany({
+      where: { refreshTokenCipherId: { not: null } },
+      orderBy: { address: 'asc' },
+      select: { address: true, agentId: true, isDefault: true },
+    })
+    return {
+      systemDefault,
+      mailboxes: mailboxes.map((m) => ({
+        address: m.address,
+        userId: m.agentId,
+        isDefault: m.isDefault,
+      })),
+    }
+  }),
+
   update: auditedProcedure
     .input(
       z.object({
         senderMailboxUserId: z.string().nullish(),
+        senderAddress: z.string().trim().max(200).nullish(),
         defaultSendDaysOfWeek: z.array(z.number().int().min(0).max(6)).max(7).optional(),
         defaultSendHourLocal: z.number().int().min(0).max(23).optional(),
         defaultZoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
@@ -1715,6 +1737,7 @@ const settingsRouter = router({
         create: {
           id: 'webinar',
           senderMailboxUserId: input.senderMailboxUserId ?? null,
+          senderAddress: input.senderAddress ?? null,
           defaultSendDaysOfWeek: sendDays ?? [0, 1],
           defaultSendHourLocal: input.defaultSendHourLocal ?? 9,
           defaultZoomRotateEveryWeeks: input.defaultZoomRotateEveryWeeks ?? 4,
@@ -1732,6 +1755,7 @@ const settingsRouter = router({
           ...(input.senderMailboxUserId !== undefined
             ? { senderMailboxUserId: input.senderMailboxUserId }
             : {}),
+          ...(input.senderAddress !== undefined ? { senderAddress: input.senderAddress } : {}),
           ...(sendDays !== undefined ? { defaultSendDaysOfWeek: sendDays } : {}),
           ...(input.defaultSendHourLocal !== undefined
             ? { defaultSendHourLocal: input.defaultSendHourLocal }

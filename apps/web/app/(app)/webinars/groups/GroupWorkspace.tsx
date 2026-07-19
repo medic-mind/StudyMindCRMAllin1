@@ -505,9 +505,17 @@ function SyllabusCard({ detail, canManage }: { detail: Detail; canManage: boolea
   )
 }
 
+function minuteToTime(startMinute: number): string {
+  const h = Math.floor(startMinute / 60)
+  const m = startMinute % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
 function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolean }) {
   const utils = trpc.useUtils()
   const router = useRouter()
+  const [day, setDay] = useState(detail.dayOfWeek)
+  const [time, setTime] = useState(minuteToTime(detail.startMinute))
   const [rotate, setRotate] = useState(detail.zoomRotateEveryWeeks)
   const [active, setActive] = useState(detail.active)
   const update = trpc.webinar.class.update.useMutation({
@@ -524,17 +532,36 @@ function SettingsCard({ detail, canManage }: { detail: Detail; canManage: boolea
       <CardBody>
         <h2 className="mb-1 text-sm font-semibold text-neutral-900">Group settings</h2>
         <p className="mb-3 text-xs text-neutral-500">
-          The slot, day, Zoom rotation and status. The reminder email and term dates are further
-          down this page.
+          When the class meets, the Zoom rotation and status. The reminder email and term dates are
+          further down this page.
         </p>
         <form
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault()
-            update.mutate({ id: detail.id, zoomRotateEveryWeeks: rotate, active })
+            const [h, m] = time.split(':').map(Number)
+            update.mutate({
+              id: detail.id,
+              dayOfWeek: day,
+              startMinute: (h ?? 0) * 60 + (m ?? 0),
+              zoomRotateEveryWeeks: rotate,
+              active,
+            })
           }}
         >
           <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Meets on" htmlFor="meets-day">
+              <Select id="meets-day" value={day} onChange={(e) => setDay(Number(e.target.value))}>
+                {WEEKDAY_NAMES.map((d, i) => (
+                  <option key={d} value={i}>
+                    {d}s
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Start time" htmlFor="meets-time">
+              <Input id="meets-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            </Field>
             <Field label="Rotate Zoom link every (weeks)" htmlFor="rotate">
               <Input
                 id="rotate"

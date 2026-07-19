@@ -54,9 +54,10 @@ export async function dispatchDueWebinarEmails(
   }
   const globalSettings = await db.webinarSettings.findUnique({
     where: { id: 'webinar' },
-    select: { senderMailboxUserId: true },
+    select: { senderMailboxUserId: true, senderAddress: true },
   })
   const senderMailboxUserId = globalSettings?.senderMailboxUserId ?? null
+  const senderAddress = globalSettings?.senderAddress ?? null
 
   const classes = await db.webinarClass.findMany({
     where: { active: true, deletedAt: null, cohort: { status: 'active' } },
@@ -175,6 +176,7 @@ export async function dispatchDueWebinarEmails(
             ? [{ filename: pdf.filename, content: pdf.content, contentType: 'application/pdf' }]
             : undefined,
           fromAgentId: senderMailboxUserId ?? undefined,
+          fromAddress: senderAddress ?? undefined,
           requestId,
         })
         await db.webinarEmailDispatch.update({

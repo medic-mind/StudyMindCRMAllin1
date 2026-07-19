@@ -37,6 +37,7 @@ interface SettingsRow {
   zoomTrashAfterSend: boolean
   fromName: string | null
   senderMailboxUserId: string | null
+  senderAddress: string | null
 }
 
 const EMPTY: Omit<RecordingsResult, 'enabled'> = {
@@ -55,6 +56,7 @@ async function loadSettings(db: PrismaClient): Promise<SettingsRow | null> {
       zoomTrashAfterSend: true,
       fromName: true,
       senderMailboxUserId: true,
+      senderAddress: true,
     },
   })
 }
@@ -130,6 +132,7 @@ async function sendForClass(
         fromName,
       ].join('\n'),
       fromAgentId: settings.senderMailboxUserId ?? undefined,
+      fromAddress: settings.senderAddress ?? undefined,
       requestId,
     })
     if (send.status === 'sent') recipientCount += 1

@@ -40,6 +40,10 @@ export interface SendSystemEmailInput {
   attachments?: SystemEmailAttachment[]
   /** Override the sending mailbox (defaults to the configured system mailbox). */
   fromAgentId?: string
+  /** Send AS this specific connected mailbox address (e.g. info@studymind.co.uk).
+   *  Uses that mailbox's own OAuth token; falls back to the agent's default
+   *  mailbox if the address isn't connected. Null/undefined = system default. */
+  fromAddress?: string
   /** OpenTelemetry trace id for the decrypt audit; defaults to a fresh id. */
   requestId?: string
 }
@@ -225,6 +229,7 @@ export async function sendSystemEmail(input: SendSystemEmailInput): Promise<Syst
   try {
     const client = await createClientForAgent({
       agentId,
+      ...(input.fromAddress ? { address: input.fromAddress } : {}),
       purpose: 'gmail.system_send',
       requestId,
     })

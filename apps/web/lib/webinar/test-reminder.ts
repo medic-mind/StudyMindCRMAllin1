@@ -88,6 +88,13 @@ export async function sendTestReminderForClass(
     htmlTemplate,
   )
 
+  // Send the test FROM the same mailbox the real reminders use, so what staff
+  // preview matches what students receive.
+  const sender = await db.webinarSettings.findUnique({
+    where: { id: 'webinar' },
+    select: { senderMailboxUserId: true, senderAddress: true },
+  })
+
   const pdf = buildClassSchedulePdf(schedule)
   const res = await sendSystemEmail({
     to: toEmail,
@@ -95,6 +102,8 @@ export async function sendTestReminderForClass(
     text: rendered.text,
     html: rendered.html,
     attachments: [{ filename: 'class-schedule.pdf', content: pdf, contentType: 'application/pdf' }],
+    fromAgentId: sender?.senderMailboxUserId ?? undefined,
+    fromAddress: sender?.senderAddress ?? undefined,
     requestId,
   })
   return { status: res.status === 'sent' ? 'sent' : 'error', detail: res.detail ?? undefined }

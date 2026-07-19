@@ -4409,6 +4409,10 @@ model WebinarSettings {
   /// User.id whose connected Gmail sends the weekly emails. Null = resolve the
   /// system mailbox (SYSTEM_GMAIL_EMAIL) at send time.
   senderMailboxUserId         String?
+  /// Connected Gmail mailbox ADDRESS to send weekly + class emails AS (e.g.
+  /// info@studymind.co.uk). Selects that mailbox's own OAuth token at send time
+  /// (createClientForAgent `address`). Null = the system default mailbox.
+  senderAddress               String?
   /// Default reminder send days (0=Mon..6=Sun) and local send hour.
   defaultSendDaysOfWeek       Int[]   @default([0, 1])
   defaultSendHourLocal        Int     @default(9)
