@@ -73,7 +73,8 @@ export type LeadAction =
   | 'onboarded'
   | 'reenquiry_card'
   | 'reenquiry_annotated'
-  | 'needs_triage'
+  /** Junk with no name/email/phone — auto-dismissed (ADR 0044). */
+  | 'discarded'
   | 'skipped'
 
 export interface ProcessLeadResult {
@@ -368,19 +369,46 @@ export async function processLead(
           ],
         }
       : null
+  // Candidates are ordered most-recently-active first: when several contacts
+  // share the email/phone the router attaches to the head of the list
+  // (ADR 0044 auto-resolution) — so the order IS the pick.
   const [byEmail, byPhone] = await Promise.all([
     email
       ? db.contact.findMany({
           where: { email: { equals: email, mode: 'insensitive' }, deletedAt: null },
           select: { id: true },
+          orderBy: { updatedAt: 'desc' },
           take: 5,
         })
       : Promise.resolve([] as { id: string }[]),
     phoneWhere
-      ? db.contact.findMany({ where: phoneWhere, select: { id: true }, take: 5 })
+      ? db.contact.findMany({
+          where: phoneWhere,
+          select: { id: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 5,
+        })
       : Promise.resolve([] as { id: string }[]),
   ])
-  const match = chooseContactMatch({ email, phoneE164, byEmail, byPhone })
+  // Name-only submissions (no email, no phone): a UNIQUE exact-name match
+  // attaches the enquiry; anything else onboards a fresh contact — we never
+  // guess between two same-named people (§41.1).
+  const byName =
+    !email && !phoneE164 && normalised.firstName
+      ? await db.contact.findMany({
+          where: {
+            deletedAt: null,
+            firstName: { equals: normalised.firstName, mode: 'insensitive' },
+            ...(normalised.lastName
+              ? { lastName: { equals: normalised.lastName, mode: 'insensitive' } }
+              : { lastName: null }),
+          },
+          select: { id: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 2,
+        })
+      : ([] as { id: string }[])
+  const match = chooseContactMatch({ email, phoneE164, byEmail, byPhone, byName })
 
   let lastEnquiryAt: Date | null = null
   if (match.contactId) {
@@ -394,6 +422,7 @@ export async function processLead(
 
   const plan = planLeadRouting({
     hasContactInfo: Boolean(email || phoneE164),
+    hasName: Boolean(normalised.firstName || normalised.lastName),
     match,
     lastEnquiryAt,
     now,
@@ -419,22 +448,24 @@ export async function processLead(
   // digits to be a number at all).
   const normalisedResolved: NormalisedLead = { ...normalised, phoneE164 }
 
-  // 7. Execute the plan atomically.
-  if (plan.kind === 'needs_triage') {
+  // 7. Execute the plan atomically. Nothing parks for a human any more
+  // (ADR 0044): a submission with no name, email OR phone is junk we cannot
+  // act on — auto-dismissed, kept on the Lead log for the audit trail.
+  if (plan.kind === 'discard') {
     await db.$transaction(async (tx) => {
       await tx.lead.update({
         where: { id: lead.id },
-        data: { ...baseLeadUpdate, status: 'needs_triage' },
+        data: { ...baseLeadUpdate, status: 'dismissed' },
       })
       await writeAuditLogEntry(tx, {
         actorId: ACTOR_ID,
         requestId: lead.id,
-        action: 'lead.classified',
+        action: 'lead.dismissed',
         target: { type: 'Lead', id: lead.id },
-        after: { status: 'needs_triage', reason: plan.reason, score: classification.score },
+        after: { auto: true, reason: plan.reason, score: classification.score },
       })
     })
-    return { leadId, action: 'needs_triage', status: 'needs_triage', contactId: null, cardId: null }
+    return { leadId, action: 'discarded', status: 'dismissed', contactId: null, cardId: null }
   }
 
   const destination = await resolveLeadDestination(db, classification.destination)
@@ -542,6 +573,11 @@ export async function processLead(
             event: 'lead.reenquiry_recorded',
             leadId: lead.id,
             reenquiry: true,
+            // The match was a shared email/phone auto-resolved to the most
+            // recently active contact (ADR 0044) — visible on the timeline so
+            // a wrong pick is spottable and correctable.
+            matchAmbiguousResolved: plan.ambiguousResolved,
+            matchReason: match.reason,
             createdCard: wantCard,
             categories: classification.categories,
             productTags: classification.productTags,
@@ -589,7 +625,12 @@ export async function processLead(
         requestId: lead.id,
         action: 'lead.reenquiry_recorded',
         target: { type: 'Lead', id: lead.id },
-        after: { contactId, createdCard: wantCard, withinWindow: !plan.createCard },
+        after: {
+          contactId,
+          createdCard: wantCard,
+          withinWindow: !plan.createCard,
+          ambiguousResolved: plan.ambiguousResolved,
+        },
       })
     })
 

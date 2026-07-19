@@ -24,6 +24,7 @@ import {
   applyQuickAction,
   archiveBoard,
   archiveCard,
+  clearBoardCards,
   deleteCard,
   BoardCreateInput,
   BoardQuickActionsInput,
@@ -1247,6 +1248,26 @@ const cardRouter = router({
       mapBusinessError(err)
     }
   }),
+
+  // Clear the whole board: soft-archive every live card in one audited
+  // operation (reversible mechanics; contacts + history untouched). Manager+
+  // — same tier as card.delete; the UI confirms before calling (§3).
+  clearBoard: auditedProcedure
+    .input(z.object({ boardId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCardDelete(user.role)
+      try {
+        const res = await clearBoardCards(ctx.db, input.boardId, {
+          actorId: user.id,
+          requestId: ctx.requestId,
+        })
+        ctx.audit.called = true
+        return { ok: true, archived: res.archived }
+      } catch (err) {
+        mapBusinessError(err)
+      }
+    }),
 
   // Hard-delete a card. Irreversible — CLAUDE.md §3 (no silent data
   // mutation; UI must confirm). Cascades labels + subtasks; preserves the

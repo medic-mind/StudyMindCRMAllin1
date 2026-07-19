@@ -68,7 +68,7 @@ function buildNav(role: Role): NavItem[] {
     // Team chat removed from the nav at the operator's request (2026-07) —
     // /messages now redirects to the inbox; the chat backend is retained
     // (forward-only, §19) should it ever come back.
-    { href: '/leads', label: 'Leads Triage' },
+    { href: '/leads', label: 'Web Enquiries' },
     {
       href: '/contacts',
       label: 'B2C Customers',

@@ -291,3 +291,60 @@ export const leadClassifyRequested = inngest.createFunction(
     return result
   },
 )
+
+/** Rows per reprocess tick — a backlog drains over a few ticks rather than
+ *  one giant run (the classify fan-out is AI-capped at 3 anyway). */
+const REPROCESS_BATCH = 200
+
+/**
+ * Self-healing sweep (ADR 0044): re-runs the classifier over anything not yet
+ * resolved — submissions stuck in `received` (an Inngest hiccup at ingest
+ * time) and legacy `needs_triage` rows from before routing became fully
+ * automatic. With the automated router nothing re-parks, so this drains the
+ * historic tray backlog by itself and keeps the pipeline zero-touch.
+ */
+export const leadReprocessUnresolved = inngest.createFunction(
+  {
+    id: 'lead/reprocess-unresolved',
+    name: 'Lead: re-run classification over unresolved rows',
+    concurrency: { limit: 1 },
+    retries: 2,
+  },
+  { cron: '*/30 * * * *' },
+  async ({ step, logger }) => {
+    const cutoff = new Date(Date.now() - 15 * 60_000)
+    const rows = await step.run('find-unresolved', async () =>
+      db.lead.findMany({
+        where: {
+          deletedAt: null,
+          softDeletedAt: null,
+          OR: [
+            { status: 'needs_triage' },
+            // Ingested but never classified — the classify event was lost.
+            { status: 'received', classifiedAt: null, createdAt: { lt: cutoff } },
+          ],
+        },
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+        take: REPROCESS_BATCH,
+      }),
+    )
+    if (rows.length === 0) return { reprocessed: 0 }
+
+    await step.run('clear-classified-at', async () => {
+      // processLead's idempotency gate is classifiedAt — clear it so the
+      // re-run actually routes (same move as the manual lead.reclassify).
+      await db.lead.updateMany({
+        where: { id: { in: rows.map((r) => r.id) } },
+        data: { classifiedAt: null },
+      })
+    })
+    await step.run('enqueue', async () => {
+      await inngest.send(
+        rows.map((r) => ({ name: 'lead/classify.requested' as const, data: { leadId: r.id } })),
+      )
+    })
+    logger.info({ reprocessed: rows.length }, 'lead.reprocess_unresolved')
+    return { reprocessed: rows.length }
+  },
+)

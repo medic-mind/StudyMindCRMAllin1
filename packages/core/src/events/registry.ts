@@ -391,6 +391,9 @@ export const EVENT_NAMES = [
   // Contact-timeline note events written alongside complaint transitions.
   'complaint.raised',
 
+  // Board cleared in full — every live card bulk-archived (one audit row).
+  'board.cleared',
+
   // System / audit
   'audit.logged',
   'system.job_completed',

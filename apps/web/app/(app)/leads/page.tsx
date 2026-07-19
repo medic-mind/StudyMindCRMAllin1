@@ -24,8 +24,8 @@ export default async function LeadsPage() {
   return (
     <>
       <PageHeader
-        title="Lead triage"
-        subtitle="New web enquiries are saved as contacts automatically and dropped onto the New leads pipeline. This is where the few that can't be matched wait for a human."
+        title="Web enquiries"
+        subtitle="Every enquiry is handled automatically — saved as a customer (or added to the existing one) and dropped onto the pipeline. This page is the log of what happened."
       />
       <PageBody>
         <LeadsTray initialStats={stats} canWrite={Boolean(me && WRITE_ROLES.has(me.role))} />

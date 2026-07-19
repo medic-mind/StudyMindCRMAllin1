@@ -1,9 +1,16 @@
-// Contact matching + re-enquiry dedupe decisions (ADR 0023).
+// Contact matching + re-enquiry dedupe decisions (ADR 0023, automated in
+// ADR 0044).
 //
 // Pure: the job runs the DB queries and feeds the candidates in; this decides
-// what to do. Conservative by design — we never auto-merge (CLAUDE.md §41.1),
-// so an email shared by several contacts, or a phone on a shared family line,
-// is treated as "no confident match" rather than a guess.
+// what to do. The operator's direction (2026-07) is FULL automation — no lead
+// waits for a human:
+//   - several contacts sharing the email/phone → attach the enquiry to the
+//     most recently active one (the caller passes candidates most-recent
+//     first), stamped `ambiguousResolved` so the guess is visible + auditable.
+//     This annotates a contact — it never merges records (CLAUDE.md §41.1).
+//   - no email/phone but a name → onboard (or attach on a UNIQUE name match).
+//   - nothing at all to key on (no name, no email, no phone) → discard as
+//     junk; there is nobody to contact, so a tray row would be a dead end.
 
 const HOUR_MS = 60 * 60 * 1000
 
@@ -14,37 +21,50 @@ export interface ContactCandidate {
 export interface MatchDecision {
   contactId: string | null
   reason: string
-  /** True when we found candidates but could not safely pick one. */
-  ambiguous: boolean
+  /** True when several contacts matched and we attached to the most recently
+   *  active one instead of parking (ADR 0044). Recorded on the enquiry so the
+   *  auto-pick is reviewable. */
+  ambiguousResolved: boolean
 }
 
 export function chooseContactMatch(input: {
   email: string | null
   phoneE164: string | null
+  /** Candidates MUST be ordered most-recently-active first — the auto-pick
+   *  takes the head of the list. */
   byEmail: ContactCandidate[]
   byPhone: ContactCandidate[]
+  /** Exact-name candidates, consulted only when email/phone found nothing.
+   *  A unique name attaches; two same-named people never auto-attach. */
+  byName?: ContactCandidate[]
 }): MatchDecision {
   if (input.email && input.byEmail.length === 1) {
-    return { contactId: input.byEmail[0]!.id, reason: 'matched by email', ambiguous: false }
+    return { contactId: input.byEmail[0]!.id, reason: 'matched by email', ambiguousResolved: false }
   }
   if (input.email && input.byEmail.length > 1) {
     return {
-      contactId: null,
-      reason: 'multiple contacts share this email — needs human triage',
-      ambiguous: true,
+      contactId: input.byEmail[0]!.id,
+      reason: 'several contacts share this email — attached to the most recently active',
+      ambiguousResolved: true,
     }
   }
   if (input.phoneE164 && input.byPhone.length === 1) {
-    return { contactId: input.byPhone[0]!.id, reason: 'matched by phone', ambiguous: false }
+    return { contactId: input.byPhone[0]!.id, reason: 'matched by phone', ambiguousResolved: false }
   }
   if (input.phoneE164 && input.byPhone.length > 1) {
     return {
-      contactId: null,
-      reason: 'phone shared across contacts (shared family line)',
-      ambiguous: true,
+      contactId: input.byPhone[0]!.id,
+      reason: 'phone shared across contacts — attached to the most recently active',
+      ambiguousResolved: true,
     }
   }
-  return { contactId: null, reason: 'no existing contact matched', ambiguous: false }
+  const byName = input.byName ?? []
+  if (byName.length === 1) {
+    return { contactId: byName[0]!.id, reason: 'matched by name', ambiguousResolved: false }
+  }
+  // Two same-named contacts: a fresh contact is reversible; a wrong attach
+  // puts a customer's enquiry on a stranger's timeline. Create, don't guess.
+  return { contactId: null, reason: 'no existing contact matched', ambiguousResolved: false }
 }
 
 /**
@@ -64,38 +84,39 @@ export function shouldCreateCardOnReenquiry(
 }
 
 /**
- * The whole routing decision for a classified web lead (the user's spec):
- * - no email AND no phone → can't match or onboard safely → tray.
- * - ambiguous match (shared email/line) → tray (never auto-merge, §41.1).
- * - existing contact → re-enquiry; drop a fresh card only if >24h since the
- *   last enquiry, otherwise just annotate the contact.
- * - otherwise → onboard a new contact + card.
- * Pure so the dedupe behaviour is locked by a unit test.
+ * The whole routing decision for a classified web lead (ADR 0044 — fully
+ * automatic, nothing waits for a human):
+ * - existing contact (incl. an auto-resolved shared email/phone, or a unique
+ *   name match) → re-enquiry; fresh card only if >24h since the last enquiry.
+ * - anything identifiable (email, phone, or just a name) → onboard.
+ * - nothing to key on at all → discard as junk (auto-dismissed, kept on the
+ *   Lead log; never a tray dead-end).
+ * Pure so the behaviour is locked by unit tests.
  */
 export type LeadRoutingPlan =
   | { kind: 'onboard' }
-  | { kind: 'reenquiry'; contactId: string; createCard: boolean }
-  | { kind: 'needs_triage'; reason: string }
+  | { kind: 'reenquiry'; contactId: string; createCard: boolean; ambiguousResolved: boolean }
+  | { kind: 'discard'; reason: string }
 
 export function planLeadRouting(input: {
   hasContactInfo: boolean
+  /** The form carried a usable person name — enough to onboard on its own. */
+  hasName: boolean
   match: MatchDecision
   lastEnquiryAt: Date | null
   now: Date
   windowHours?: number
 }): LeadRoutingPlan {
-  if (!input.hasContactInfo) {
-    return { kind: 'needs_triage', reason: 'no email or phone to match or onboard on' }
-  }
-  if (input.match.ambiguous) {
-    return { kind: 'needs_triage', reason: input.match.reason }
-  }
   if (input.match.contactId) {
     return {
       kind: 'reenquiry',
       contactId: input.match.contactId,
       createCard: shouldCreateCardOnReenquiry(input.lastEnquiryAt, input.now, input.windowHours),
+      ambiguousResolved: input.match.ambiguousResolved,
     }
   }
-  return { kind: 'onboard' }
+  if (input.hasContactInfo || input.hasName) {
+    return { kind: 'onboard' }
+  }
+  return { kind: 'discard', reason: 'no name, email or phone — nothing to contact or key on' }
 }

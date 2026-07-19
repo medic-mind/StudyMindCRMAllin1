@@ -16,6 +16,7 @@ import { createServerCaller } from '@/lib/trpc/server'
 
 import { AddCardButton } from './AddCardButton'
 import { BoardDnd } from './BoardDnd'
+import { ClearBoardButton } from './ClearBoardButton'
 import { BoardListView } from './BoardListView'
 import { BoardSwitcher } from './BoardSwitcher'
 import { BoardViewToggle } from './BoardViewToggle'
@@ -145,7 +146,14 @@ export default async function BoardPage({ params, searchParams }: PageProps) {
             Settings
           </Link>
         ) : null}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {canDeleteCard ? (
+            <ClearBoardButton
+              boardId={board.id}
+              boardName={board.name}
+              cardCount={cards.length}
+            />
+          ) : null}
           <BoardViewToggle view={view} />
         </div>
       </div>

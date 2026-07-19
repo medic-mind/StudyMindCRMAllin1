@@ -405,6 +405,39 @@ export async function archiveCard(db: Db, id: string, ctx: ActorCtx): Promise<vo
 }
 
 /**
+ * Clear a whole board in one operation: soft-archive EVERY live card on it
+ * (same reversible `archivedAt` mechanics as archiveCard, mirroring the
+ * stage-archive precedent — board.stages.archive already bulk-archives a
+ * stage's cards this way). Backing Contacts and their timeline history are
+ * untouched. One audit row with the count — never per-card spam. The caller
+ * must confirm with the user (§3).
+ */
+export async function clearBoardCards(
+  db: Db,
+  boardId: string,
+  ctx: ActorCtx,
+): Promise<{ archived: number }> {
+  const board = await db.board.findFirst({
+    where: { id: boardId, archivedAt: null },
+    select: { id: true, name: true },
+  })
+  if (!board) throw new BusinessError('BOARD_NOT_FOUND', 'Board not found')
+  const now = new Date()
+  const res = await db.card.updateMany({
+    where: { boardId, archivedAt: null },
+    data: { archivedAt: now },
+  })
+  await writeAuditLogEntry(db, {
+    actorId: ctx.actorId,
+    requestId: ctx.requestId,
+    action: 'board.cleared',
+    target: { type: 'Board', id: boardId },
+    after: { boardName: board.name, archivedCards: res.count, archivedAt: now.toISOString() },
+  })
+  return { archived: res.count }
+}
+
+/**
  * Permanently delete a card and its dependents (labels, subtasks). Distinct
  * from archive — this is irreversible. The backing Contact and any
  * Interactions written against it (card_moved, card_comment, etc) are

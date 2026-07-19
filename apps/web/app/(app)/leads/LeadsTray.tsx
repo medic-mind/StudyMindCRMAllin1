@@ -19,16 +19,32 @@ type StatusKey =
   | 'reenquiry'
   | 'dismissed'
 
-// Triage first — that is the only set a human must act on. The rest are an
-// audit view over what auto-onboarded, with "All" last.
+// Since ADR 0044 every enquiry is handled automatically, so this page is an
+// activity LOG, not a work queue: "All activity" leads, the outcome views
+// follow. "Needs attention" appears only while legacy pre-automation rows
+// remain (the reprocess cron drains them) — new enquiries can never park.
 const STATUS_TABS: { key: StatusKey; label: string }[] = [
-  { key: 'needs_triage', label: 'Needs triage' },
-  { key: 'onboarded', label: 'Auto-saved' },
-  { key: 'reenquiry', label: 'Re-enquiry' },
-  { key: 'received', label: 'New' },
-  { key: 'dismissed', label: 'Dismissed' },
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'All activity' },
+  { key: 'onboarded', label: 'New customers' },
+  { key: 'reenquiry', label: 'Repeat enquiries' },
+  { key: 'dismissed', label: 'Ignored (junk)' },
 ]
+
+/** Plain-English outcome for a lead row — raw statuses read like plumbing. */
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'onboarded':
+      return 'Saved — new customer'
+    case 'reenquiry':
+      return 'Added to existing customer'
+    case 'dismissed':
+      return 'Ignored — nothing to contact'
+    case 'needs_triage':
+      return 'Needs attention'
+    default:
+      return 'Processing…'
+  }
+}
 
 interface Props {
   initialStats: { total: number; byStatus: Record<string, number> }
@@ -99,7 +115,7 @@ function BoardChip({ board }: { board: string | null }) {
 }
 
 export function LeadsTray({ initialStats, canWrite }: Props) {
-  const [status, setStatus] = useState<StatusKey>('needs_triage')
+  const [status, setStatus] = useState<StatusKey>('all')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -141,30 +157,37 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* How leads flow — kills the "why is there a separate leads area?"
-          confusion. Most enquiries never stop here. */}
+      {/* This page is a LOG of the automation, not a to-do list. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
         <span>
-          New enquiries are saved as{' '}
+          Every enquiry is handled automatically the moment it arrives: saved as a{' '}
           <Link href="/contacts" className="font-medium text-primary-700 hover:underline">
-            Contacts
+            customer
           </Link>{' '}
-          and dropped onto{' '}
+          (or added to the existing one) and dropped onto the{' '}
           <Link href="/pipeline" className="font-medium text-primary-700 hover:underline">
-            New leads
-          </Link>{' '}
-          automatically. Duplicates within 24h are merged onto one contact; a later re-enquiry adds
-          a fresh card (no duplicate contact).
+            pipeline
+          </Link>
+          . Repeat enquiries within 24h stay on one card; junk with nothing to contact is ignored.
+          This page is the log of what happened.
         </span>
         <span className="ml-auto whitespace-nowrap font-medium text-neutral-700">
-          {triageCount} to triage · {onboardedCount} auto-saved
+          {onboardedCount} customers created
         </span>
       </div>
+
+      {triageCount > 0 ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <span className="font-semibold">{triageCount} older enquir{triageCount === 1 ? 'y' : 'ies'}</span>{' '}
+          from before full automation still need a decision — they re-process automatically every 30
+          minutes, or open the <button type="button" className="font-semibold underline" onClick={() => setStatus('needs_triage')}>Needs attention</button> view now.
+        </div>
+      ) : null}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1">
-          {STATUS_TABS.map((t) => {
+          {[...STATUS_TABS, ...(triageCount > 0 ? [{ key: 'needs_triage' as StatusKey, label: 'Needs attention' }] : [])].map((t) => {
             const active = status === t.key
             const count = t.key === 'all' ? stats.data?.total : stats.data?.byStatus[t.key]
             return (
@@ -201,12 +224,12 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
           {items.length === 0 ? (
             <p className="p-6 text-sm text-neutral-600">
               {list.isLoading
-                ? 'Loading leads…'
+                ? 'Loading enquiries…'
                 : status === 'needs_triage'
-                  ? 'Nothing to triage. Every recent enquiry was matched and saved as a contact on the New leads pipeline — there is nothing here that needs a human.'
+                  ? 'Nothing needs attention — every enquiry has been handled automatically.'
                   : status === 'all'
-                    ? 'No leads yet. Paste your /api/leads webhook URL into Contact Form 7 (Settings → Integrations → Lead webhook) and submit a test enquiry.'
-                    : 'Nothing with this status right now.'}
+                    ? 'No enquiries yet. Paste your /api/leads webhook URL into Contact Form 7 (Settings → Integrations → Lead webhook) and submit a test enquiry.'
+                    : 'Nothing in this view right now.'}
             </p>
           ) : (
             <Table>
@@ -262,7 +285,7 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
                       <Badge tone={scoreTone(l.score)}>{l.score ?? '—'}</Badge>
                     </Td>
                     <Td>
-                      <Badge tone={statusTone(l.status)}>{l.status.replace('_', ' ')}</Badge>
+                      <Badge tone={statusTone(l.status)}>{statusLabel(l.status)}</Badge>
                     </Td>
                     <Td className="whitespace-nowrap text-xs text-neutral-500">
                       {timeAgo(l.createdAt)}

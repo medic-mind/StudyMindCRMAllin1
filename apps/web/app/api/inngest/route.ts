@@ -28,7 +28,11 @@ import { costSummaryWeekly } from './_boundary/cost-summary'
 import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
 import { flagDdDefaultersNightly } from './_boundary/flag-dd-defaulters'
 import { gocardlessSetupLinkMaintenance } from './_boundary/gocardless-setup-links'
-import { leadBackfillCountries, leadClassifyRequested } from './_boundary/process-lead'
+import {
+  leadBackfillCountries,
+  leadClassifyRequested,
+  leadReprocessUnresolved,
+} from './_boundary/process-lead'
 import { uebaWeekly } from './_boundary/ueba'
 import { WEBINAR_BOUNDARY_FUNCTIONS } from './_boundary/webinar'
 
@@ -45,6 +49,7 @@ const BOUNDARY_FUNCTIONS = [
   gocardlessSetupLinkMaintenance,
   leadBackfillCountries,
   leadClassifyRequested,
+  leadReprocessUnresolved,
   uebaWeekly,
   ...WEBINAR_BOUNDARY_FUNCTIONS,
 ]
