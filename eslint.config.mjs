@@ -10,12 +10,14 @@ const require = createRequire(import.meta.url)
 const requireAuditRule = require('./tools/eslint-rules/require-audit.js')
 const registeredEventNamesRule = require('./tools/eslint-rules/registered-event-names.js')
 const releaseFlagStalenessRule = require('./tools/eslint-rules/release-flag-staleness.js')
+const preferCardSurfaceRule = require('./tools/eslint-rules/prefer-card-surface.js')
 
 const studymindPlugin = {
   rules: {
     'require-audit': requireAuditRule,
     'registered-event-names': registeredEventNamesRule,
     'release-flag-staleness': releaseFlagStalenessRule,
+    'prefer-card-surface': preferCardSurfaceRule,
   },
 }
 
@@ -142,6 +144,18 @@ export default [
     plugins: { studymind: studymindPlugin },
     rules: {
       'studymind/release-flag-staleness': 'warn',
+    },
+  },
+  {
+    // CLAUDE.md §0.5 / §4: the app UI uses ONE surface primitive — <Card>.
+    // Flag any newly hand-rolled bordered-white panel so the card sweep can't
+    // rot. Scoped to the authenticated app shell (where <Card> is the norm);
+    // the shared primitive itself and non-panel controls are excluded by the
+    // rule's own heuristics.
+    files: ['apps/web/app/(app)/**/*.{ts,tsx}'],
+    plugins: { studymind: studymindPlugin },
+    rules: {
+      'studymind/prefer-card-surface': 'error',
     },
   },
 ]

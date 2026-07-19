@@ -63,14 +63,17 @@ avoid almost every mistake agents make in this codebase.
   ✗→ `apps/web`; `apps/web/app/**` ✗→ `@studymind/db`. An unused import fails
   the build (§5/§20).
 - **Custom lint + drift gates:** `require-audit`, `registered-event-names`
-  (§45), `release-flag-staleness`, and `pnpm policy:check` (§20.1 matrix drift).
+  (§45), `release-flag-staleness`, `prefer-card-surface` (a hand-rolled
+  bordered-white panel under `apps/web/app/(app)/**` fails the build — use
+  `<Card>`, §0.5), and `pnpm policy:check` (§20.1 matrix drift).
 - **Never call OpenAI/AI providers directly** — always go through `packages/ai`
   (§18/§35). **No new dependencies without an ADR** (§3). **No BaaS** (§3).
 
 ### 0.5 UI / design defaults — see §4, §26, §37
 - Reuse `apps/web/components/ui/` primitives: `Card`/`CardHeader`/`CardBody`,
   `Button`, `Field`, `Toolbar`, `PhoneInput`, `CountrySelect`, `CsvExportButton`.
-  Don't hand-roll a bordered panel — use `<Card>`.
+  Don't hand-roll a bordered panel — use `<Card>` (lint-enforced by
+  `studymind/prefer-card-surface`; `tools/eslint-rules/prefer-card-surface.js`).
 - Lucide icons only; **no emoji in product UI, ever** (§4). Tabular numerals on
   aligned figures. Honour `prefers-reduced-motion`; visible focus rings always.
 - RSC by default; interactive bits are `'use client'` leaves; check permissions
