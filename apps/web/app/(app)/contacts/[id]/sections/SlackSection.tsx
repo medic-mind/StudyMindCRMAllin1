@@ -1,17 +1,13 @@
 // Slack mentions section. RSC — purely presentational.
 
+import { Badge } from '@/components/ui/badge'
 import type { SlackMention } from '@/lib/view-models/contact-channels'
+import { sentimentTone } from '@/lib/ui/status-tone'
 
 interface Props {
   mentions: SlackMention[]
   /** Override the empty-state copy (e.g. for a B2B account vs a contact). */
   emptyHint?: string
-}
-
-const SENTIMENT_STYLE: Record<string, string> = {
-  positive: 'bg-green-100 text-green-900',
-  neutral: 'bg-neutral-100 text-neutral-700',
-  negative: 'bg-red-100 text-red-900',
 }
 
 export function SlackSection({ mentions, emptyHint }: Props): JSX.Element {
@@ -37,13 +33,9 @@ export function SlackSection({ mentions, emptyHint }: Props): JSX.Element {
                 </span>
               )}
               {m.sentiment && (
-                <span
-                  className={`ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
-                    SENTIMENT_STYLE[m.sentiment] ?? SENTIMENT_STYLE['neutral']
-                  }`}
-                >
+                <Badge tone={sentimentTone(m.sentiment)} className="ml-2 uppercase">
                   {m.sentiment}
-                </span>
+                </Badge>
               )}
             </span>
             <time dateTime={new Date(m.occurredAt).toISOString()}>

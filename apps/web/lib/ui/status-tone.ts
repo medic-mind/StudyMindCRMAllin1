@@ -117,3 +117,69 @@ export function complaintStatusTone(status: string): BadgeTone {
       return 'neutral'
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Sentiment — Slack mentions.                                                 */
+/* -------------------------------------------------------------------------- */
+
+export function sentimentTone(sentiment: string): BadgeTone {
+  switch (sentiment) {
+    case 'positive':
+      return 'success'
+    case 'negative':
+      return 'danger'
+    default:
+      return 'neutral'
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Booking lesson status — contact Booking section.                            */
+/* -------------------------------------------------------------------------- */
+
+export function lessonStatusTone(status: string): BadgeTone {
+  switch (status) {
+    case 'active':
+    case 'completed':
+    case 'delivered':
+      return 'success'
+    case 'cancelled':
+      return 'danger'
+    case 'no_show':
+      return 'warn'
+    default:
+      return 'neutral'
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* B2B account status — accounts list + account header.                        */
+/* -------------------------------------------------------------------------- */
+
+export function accountStatusTone(status: string): BadgeTone {
+  switch (status) {
+    case 'active':
+      return 'success'
+    case 'prospect':
+      return 'warn'
+    case 'churned':
+      return 'danger'
+    default:
+      return 'neutral'
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Summer-camp instalment state.                                               */
+/* -------------------------------------------------------------------------- */
+
+export function instalmentStateTone(state: string): BadgeTone {
+  switch (state) {
+    case 'paid':
+      return 'success'
+    case 'deposit_paid':
+      return 'warn'
+    default:
+      return 'danger'
+  }
+}

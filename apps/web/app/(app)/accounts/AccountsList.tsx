@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useConfirm } from '@/components/ui/confirm'
@@ -32,6 +33,7 @@ import { cn } from '@/lib/cn'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
+import { accountStatusTone } from '@/lib/ui/status-tone'
 
 import { AccountCreateForm } from './AccountCreateForm'
 
@@ -86,12 +88,6 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: Status; label: string }> = [
 
 const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
 
-const STATUS_TONE: Record<Status, string> = {
-  prospect: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
-  active: 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
-  paused: 'bg-neutral-100 text-neutral-700 ring-1 ring-neutral-200',
-  churned: 'bg-red-50 text-red-700 ring-1 ring-red-200',
-}
 
 type SortKey =
   | 'name'
@@ -582,11 +578,9 @@ export function AccountsList({
                         <span className="truncate font-medium text-neutral-900 group-hover:text-primary-700">
                           {a.name}
                         </span>
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_TONE[a.status]}`}
-                        >
+                        <Badge tone={accountStatusTone(a.status)} className="shrink-0 uppercase tracking-wide">
                           {a.status}
-                        </span>
+                        </Badge>
                       </span>
                       <span className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-neutral-500">
                         {a.city && <span>{[a.city, a.country].filter(Boolean).join(', ')}</span>}
@@ -740,9 +734,6 @@ function SortableTh({
   )
 }
 
-export function describeStatusToneClass(status: Status): string {
-  return STATUS_TONE[status]
-}
 
 /** A dropdown button for the bulk toolbar — a labelled secondary-button trigger
  *  that opens a menu of choices. Mirrors the FacetedFilter chevron affordance. */

@@ -6,9 +6,11 @@ import { notFound } from 'next/navigation'
 
 import { AccountInvoicingPanel } from '@/components/invoicing/AccountInvoicingPanel'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
+import { Badge } from '@/components/ui/badge'
 import { getCurrentUser } from '@/lib/auth/server'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
+import { accountStatusTone } from '@/lib/ui/status-tone'
 
 import { SlackSection } from '../../contacts/[id]/sections/SlackSection'
 
@@ -26,12 +28,6 @@ interface Props {
   params: Promise<{ id: string }>
 }
 
-const STATUS_TONE: Record<string, string> = {
-  prospect: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
-  active: 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
-  paused: 'bg-neutral-100 text-neutral-700 ring-1 ring-neutral-200',
-  churned: 'bg-red-50 text-red-700 ring-1 ring-red-200',
-}
 
 const INVOICING_WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
 const INVOICING_MARK_PAID_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
@@ -78,11 +74,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
       />
       <div className="space-y-5">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span
-            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${STATUS_TONE[account.status] ?? ''}`}
-          >
+          <Badge tone={accountStatusTone(account.status)} className="uppercase tracking-wide">
             {account.status}
-          </span>
+          </Badge>
           <span className="text-xs uppercase tracking-wide text-neutral-500">{account.kind}</span>
           {account.archived && (
             <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-600">

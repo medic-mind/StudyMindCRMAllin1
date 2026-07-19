@@ -7,18 +7,15 @@
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
+import { instalmentStateTone } from '@/lib/ui/status-tone'
 
 type Cohort = 'all' | 'instalments' | 'outstanding'
 
-const STATE_BADGE: Record<string, string> = {
-  paid: 'bg-emerald-100 text-emerald-800',
-  deposit_paid: 'bg-amber-100 text-amber-800',
-  unpaid: 'bg-red-100 text-red-800',
-}
 const STATE_LABEL: Record<string, string> = {
   paid: 'Paid',
   deposit_paid: 'Deposit paid',
@@ -258,11 +255,9 @@ export function InstalmentsWorkspace({ canWrite }: { canWrite: boolean }) {
                     {formatMoneyMinor(b.remainingMinor)}
                   </td>
                   <td className="px-3 py-2">
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${STATE_BADGE[b.state] ?? STATE_BADGE['unpaid']}`}
-                    >
+                    <Badge tone={instalmentStateTone(b.state)} className="uppercase">
                       {STATE_LABEL[b.state] ?? b.state}
-                    </span>
+                    </Badge>
                   </td>
                   {canWrite ? (
                     <td className="px-3 py-2 text-right">

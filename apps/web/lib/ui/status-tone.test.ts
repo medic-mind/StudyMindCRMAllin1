@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  accountStatusTone,
   callOutcomeTone,
   complaintStatusTone,
   contactKindTone,
+  instalmentStateTone,
+  lessonStatusTone,
   paymentStatusTone,
   riskLabel,
   riskTone,
+  sentimentTone,
 } from './status-tone'
 
 describe('status-tone', () => {
@@ -51,5 +55,24 @@ describe('status-tone', () => {
     expect(complaintStatusTone('in_progress')).toBe('info')
     expect(complaintStatusTone('resolved')).toBe('success')
     expect(complaintStatusTone('dismissed')).toBe('neutral')
+  })
+
+  it('maps the remaining domain statuses to shared tones', () => {
+    expect(sentimentTone('positive')).toBe('success')
+    expect(sentimentTone('negative')).toBe('danger')
+    expect(sentimentTone('neutral')).toBe('neutral')
+
+    expect(lessonStatusTone('delivered')).toBe('success')
+    expect(lessonStatusTone('cancelled')).toBe('danger')
+    expect(lessonStatusTone('no_show')).toBe('warn')
+
+    expect(accountStatusTone('active')).toBe('success')
+    expect(accountStatusTone('prospect')).toBe('warn')
+    expect(accountStatusTone('churned')).toBe('danger')
+    expect(accountStatusTone('paused')).toBe('neutral')
+
+    expect(instalmentStateTone('paid')).toBe('success')
+    expect(instalmentStateTone('deposit_paid')).toBe('warn')
+    expect(instalmentStateTone('unpaid')).toBe('danger')
   })
 })

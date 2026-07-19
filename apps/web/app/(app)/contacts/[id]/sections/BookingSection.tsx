@@ -6,6 +6,7 @@
 
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { formatMoneyMinor } from '@/lib/format/money'
+import { lessonStatusTone } from '@/lib/ui/status-tone'
 
 interface Lesson {
   id: string
@@ -53,13 +54,6 @@ const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   registered_with_hours: { label: 'Registered · has hours', tone: 'success' },
 }
 
-const LESSON_STATUS_TONE: Record<string, string> = {
-  active: 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
-  completed: 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
-  delivered: 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
-  cancelled: 'bg-red-50 text-red-700 ring-1 ring-red-200',
-  no_show: 'bg-amber-50 text-amber-800 ring-1 ring-amber-200',
-}
 
 function fmtDate(d: Date | string | null | undefined, withTime = false): string {
   if (!d) return '—'
@@ -175,14 +169,9 @@ export function BookingSection({ summary, lessons }: { summary: Summary; lessons
                     {l.payment ? ` · ${l.payment}` : ''}
                   </span>
                 </span>
-                <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                    LESSON_STATUS_TONE[l.status] ??
-                    'bg-neutral-100 text-neutral-600 ring-1 ring-neutral-200'
-                  }`}
-                >
+                <Badge tone={lessonStatusTone(l.status)} className="shrink-0">
                   {l.status}
-                </span>
+                </Badge>
               </li>
             ))}
           </ul>
