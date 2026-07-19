@@ -46,6 +46,7 @@ import {
   router,
   type UserRole,
 } from '@/lib/trpc/builders'
+import { splitDisplayName } from '@studymind/core/contact/from-call'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 import { outbound as trengoOutbound } from '@studymind/integration-trengo'
 import { client as zoomClient } from '@studymind/integration-zoom'
@@ -1575,22 +1576,69 @@ const enrollmentRouter = router({
 
   create: auditedProcedure
     .input(
-      z.object({
-        classId: z.string(),
-        contactId: z.string(),
-        status: z.enum(['active', 'pending_review']).default('active'),
-      }),
+      z
+        .object({
+          classId: z.string(),
+          /** Pick an existing CRM contact… */
+          contactId: z.string().optional(),
+          /** …or add by EMAIL when the person isn't in the CRM (or you only
+           *  have their address). Matches an existing contact by email first
+           *  (most recently active — ADR 0044 convention), else creates a
+           *  lightweight one so the weekly send + timeline work as normal. */
+          email: z.string().trim().email().max(200).optional(),
+          name: z.string().trim().max(200).optional(),
+          status: z.enum(['active', 'pending_review']).default('active'),
+        })
+        .refine((v) => Boolean(v.contactId || v.email), {
+          message: 'Pick a contact or enter an email address',
+        }),
     )
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       assertCanManage(user.role)
+
+      let contactId = input.contactId ?? null
+      let createdContact = false
+      if (!contactId) {
+        const email = input.email!.toLowerCase()
+        const existing = await ctx.db.contact.findFirst({
+          where: { email: { equals: email, mode: 'insensitive' }, deletedAt: null },
+          orderBy: { updatedAt: 'desc' },
+          select: { id: true },
+        })
+        if (existing) {
+          contactId = existing.id
+        } else {
+          const { firstName, lastName } = splitDisplayName(input.name ?? '')
+          contactId = createId()
+          await ctx.db.contact.create({
+            data: {
+              id: contactId,
+              kind: 'unclassified',
+              firstName: firstName || null,
+              lastName,
+              email,
+              referralSource: 'Webinar enrolment',
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+          await ctx.audit({
+            action: 'contact.created',
+            target: { type: 'Contact', id: contactId },
+            after: { email, name: input.name ?? null, source: 'webinar_enrollment' },
+          })
+          createdContact = true
+        }
+      }
+
       const id = createId()
       try {
         await ctx.db.webinarEnrollment.create({
           data: {
             id,
             classId: input.classId,
-            contactId: input.contactId,
+            contactId,
             status: input.status,
             source: 'manual',
             enrolledAt: input.status === 'active' ? new Date() : null,
@@ -1602,7 +1650,9 @@ const enrollmentRouter = router({
         if (err instanceof Error && /Unique/i.test(err.message)) {
           throw new TRPCError({
             code: 'CONFLICT',
-            message: 'That contact is already enrolled in this class.',
+            message: createdContact
+              ? 'That person is already enrolled in this class.'
+              : 'That contact is already enrolled in this class.',
           })
         }
         throw err
@@ -1610,7 +1660,13 @@ const enrollmentRouter = router({
       await ctx.audit({
         action: 'webinar.enrollment_created',
         target: { type: 'WebinarEnrollment', id },
-        after: { classId: input.classId, contactId: input.contactId, status: input.status },
+        after: {
+          classId: input.classId,
+          contactId,
+          status: input.status,
+          viaEmail: Boolean(input.email && !input.contactId),
+          createdContact,
+        },
       })
       return { id }
     }),

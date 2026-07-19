@@ -956,8 +956,11 @@ function ImportScheduleCard({ classId, cohortId }: { classId: string; cohortId: 
   )
 }
 
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/u
+
 function AddToList({ classId, onAdded }: { classId: string; onAdded: () => void }) {
   const [term, setTerm] = useState('')
+  const [name, setName] = useState('')
   const search = trpc.webinar.enrollment.contactSearch.useQuery(
     { term },
     { enabled: term.trim().length >= 2 },
@@ -966,19 +969,21 @@ function AddToList({ classId, onAdded }: { classId: string; onAdded: () => void 
     onSuccess: () => {
       toast.success('Added to the mailing list')
       setTerm('')
+      setName('')
       onAdded()
     },
     onError: (e) => toast.error(e.message),
   })
   const results = search.data ?? []
+  const typedEmail = EMAIL_SHAPE.test(term.trim()) ? term.trim().toLowerCase() : null
   return (
     <div className="mb-3">
       <Input
-        placeholder="Add a contact by name or email…"
+        placeholder="Add by name, or type any email address…"
         value={term}
         onChange={(e) => setTerm(e.target.value)}
       />
-      {term.trim().length >= 2 && results.length > 0 ? (
+      {term.trim().length >= 2 && (results.length > 0 || typedEmail) ? (
         <div className="mt-1 divide-y divide-neutral-100 rounded-md border border-neutral-200 bg-white">
           {results.map((c) => (
             <button
@@ -994,6 +999,37 @@ function AddToList({ classId, onAdded }: { classId: string; onAdded: () => void 
               <span className="text-xs text-primary-700">Add →</span>
             </button>
           ))}
+          {/* Anyone by email — no CRM record needed; one is created (or the
+              existing one matched) behind the scenes so the weekly send and
+              timeline work as normal. */}
+          {typedEmail && !results.some((c) => c.email?.toLowerCase() === typedEmail) ? (
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+              <span className="text-sm text-neutral-700">
+                Add <span className="font-medium">{typedEmail}</span> to the list
+              </span>
+              <Input
+                placeholder="Name (optional)"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="h-8 w-44 text-xs"
+              />
+              <Button
+                type="button"
+                size="sm"
+                disabled={create.isPending}
+                onClick={() =>
+                  create.mutate({
+                    classId,
+                    email: typedEmail,
+                    name: name.trim() || undefined,
+                    status: 'active',
+                  })
+                }
+              >
+                {create.isPending ? 'Adding…' : 'Add email →'}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
