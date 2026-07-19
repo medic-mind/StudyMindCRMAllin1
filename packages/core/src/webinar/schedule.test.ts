@@ -3,13 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   computeSessions,
   currentWeekInfo,
-  dueSessions,
   isHoliday,
   localCalendar,
   reminderDayNow,
-  sendAtFor,
   sessionForLocalWeek,
-  sessionStartInstant,
   zonedWallTimeToUtc,
   zoomRotationDue,
 } from './schedule'
@@ -68,31 +65,6 @@ describe('zonedWallTimeToUtc', () => {
     // 6 Jan 2027 18:00 Europe/London = 18:00 UTC (GMT).
     const utc = zonedWallTimeToUtc(2027, 1, 6, 18 * 60, 'Europe/London')
     expect(utc.toISOString()).toBe('2027-01-06T18:00:00.000Z')
-  })
-})
-
-describe('dueSessions', () => {
-  const sessions = computeSessions(d('2026-09-01'), d('2026-09-15'), 1) // Tuesdays
-  const tz = 'Europe/London'
-  const startMinute = 18 * 60
-
-  it('returns a session when the send window has just opened', () => {
-    const firstStart = sessionStartInstant(sessions[0]!, startMinute, tz)
-    const sendAt = sendAtFor(firstStart, 24)
-    // now == sendAt exactly
-    const due = dueSessions(sessions, startMinute, tz, 24, sendAt)
-    expect(due).toHaveLength(1)
-    expect(due[0]!.session.weekNumber).toBe(1)
-  })
-
-  it('does not send before the window or after the session started', () => {
-    const firstStart = sessionStartInstant(sessions[0]!, startMinute, tz)
-    const sendAt = sendAtFor(firstStart, 24)
-    const beforeWindow = new Date(sendAt.getTime() - 60 * 60 * 1000)
-    expect(dueSessions(sessions, startMinute, tz, 24, beforeWindow)).toHaveLength(0)
-    const afterStart = new Date(firstStart.getTime() + 60 * 1000)
-    // The first session is past; the look-back is short, so nothing is due.
-    expect(dueSessions(sessions, startMinute, tz, 24, afterStart)).toHaveLength(0)
   })
 })
 

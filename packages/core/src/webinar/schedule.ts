@@ -126,61 +126,6 @@ export function sessionStartInstant(
   )
 }
 
-/** When the weekly email for a session should go out. */
-export function sendAtFor(sessionStart: Date, sendOffsetHours: number): Date {
-  return new Date(sessionStart.getTime() - sendOffsetHours * 60 * 60 * 1000)
-}
-
-export interface DueSession {
-  session: WebinarSession
-  startsAt: Date
-  sendAt: Date
-}
-
-/**
- * Sessions whose send time has arrived but whose start is still in the future,
- * within a look-back window (so a missed cron run still catches them). Used by
- * the dispatcher to decide what to email now.
- */
-export function dueSessions(
-  sessions: WebinarSession[],
-  startMinute: number,
-  timeZone: string,
-  sendOffsetHours: number,
-  now: Date,
-  lookBackHours = 6,
-): DueSession[] {
-  const out: DueSession[] = []
-  const lookBackMs = lookBackHours * 60 * 60 * 1000
-  for (const session of sessions) {
-    const startsAt = sessionStartInstant(session, startMinute, timeZone)
-    if (startsAt.getTime() < now.getTime()) continue // session already started/past
-    const sendAt = sendAtFor(startsAt, sendOffsetHours)
-    if (sendAt.getTime() <= now.getTime() && sendAt.getTime() >= now.getTime() - lookBackMs) {
-      out.push({ session, startsAt, sendAt })
-    }
-  }
-  return out
-}
-
-/** The next upcoming session relative to `now`, or null. */
-export function nextSession(
-  sessions: WebinarSession[],
-  startMinute: number,
-  timeZone: string,
-  now: Date,
-): DueSession | null {
-  let best: DueSession | null = null
-  for (const session of sessions) {
-    const startsAt = sessionStartInstant(session, startMinute, timeZone)
-    if (startsAt.getTime() < now.getTime()) continue
-    if (!best || startsAt.getTime() < best.startsAt.getTime()) {
-      best = { session, startsAt, sendAt: startsAt }
-    }
-  }
-  return best
-}
-
 /* -------------------------------------------------------------------------- */
 /* Reminder send-day model (Mon/Tue by default, fully configurable)            */
 /* -------------------------------------------------------------------------- */

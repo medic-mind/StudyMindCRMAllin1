@@ -248,7 +248,7 @@ function ThisWeekCard({ detail }: { detail: Detail }) {
             </p>
           </div>
           <a
-            href={`/webinars/classes/${detail.id}/schedule.pdf`}
+            href={`/webinars/groups/${detail.id}/schedule.pdf`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-primary-700 hover:underline"
@@ -298,7 +298,7 @@ function ZoomCard({ detail, canManage }: { detail: Detail; canManage: boolean })
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-neutral-900">Zoom link</h2>
           <a
-            href={`/webinars/classes/${detail.id}/schedule.pdf`}
+            href={`/webinars/groups/${detail.id}/schedule.pdf`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-primary-700 hover:underline"

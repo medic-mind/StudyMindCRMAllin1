@@ -117,7 +117,7 @@ export function NewClassForm({
         utils.webinar.level.pickList.invalidate(),
       ])
       if (onCreated) onCreated(res.id)
-      else router.push(`/webinars/classes/${res.id}`)
+      else router.push(`/webinars/groups/${res.id}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not create the class')
     } finally {

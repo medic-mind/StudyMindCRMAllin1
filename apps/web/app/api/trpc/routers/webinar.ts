@@ -13,16 +13,12 @@ import {
   buildTimetablePlan,
   computeSessions,
   currentWeekInfo,
-  DEFAULT_EMAIL_BODY_TEMPLATE,
-  DEFAULT_EMAIL_SUBJECT_TEMPLATE,
   formatSessionDateShort,
   formatSessionTime,
   levelLabel,
   parseTabularTimetable,
-  renderTemplate,
   sessionStartInstant,
   subjectLabel,
-  type WebinarEmailVars,
   webinarLevelSchema,
   webinarSubjectSchema,
   WEEKDAY_LABEL,
@@ -77,24 +73,6 @@ const dateSchema = z
   .transform((s) => new Date(`${s}T00:00:00.000Z`))
 
 const MAX_PDF_BYTES = 8 * 1024 * 1024
-
-/** Sample values used to render an email preview / test send. */
-function sampleEmailVars(fromName?: string): WebinarEmailVars {
-  return {
-    studentName: 'Sam',
-    className: 'Biology A-Level',
-    subject: 'Biology',
-    level: 'A-Level',
-    cohortName: '2026/2027',
-    weekday: 'Saturday',
-    dateLabel: 'Saturday 13 September 2026',
-    timeLabel: '18:00 BST',
-    zoomLink: 'https://zoom.us/j/123456789',
-    weekNumber: 3,
-    weekTopic: 'Cell division',
-    fromName: fromName?.trim() || 'The StudyMind team',
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /* Cohorts + holidays                                                          */
@@ -212,29 +190,6 @@ const cohortRouter = router({
       return { id }
     }),
 
-  setStatus: auditedProcedure
-    .input(z.object({ id: z.string(), status: z.enum(['planning', 'active', 'archived']) }))
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      const before = await ctx.db.webinarCohort.findUnique({
-        where: { id: input.id },
-        select: { status: true },
-      })
-      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
-      await ctx.db.webinarCohort.update({
-        where: { id: input.id },
-        data: { status: input.status, updatedById: user.id },
-      })
-      await ctx.audit({
-        action: 'webinar.cohort_status_changed',
-        target: { type: 'WebinarCohort', id: input.id },
-        before,
-        after: { status: input.status },
-      })
-      return { id: input.id }
-    }),
-
   /** Per-cohort email template + reminder schedule (CLAUDE.md §47). */
   update: auditedProcedure
     .input(
@@ -291,36 +246,6 @@ const cohortRouter = router({
         after: { emails: input.emailSubjectTemplate !== undefined || input.emailBodyTemplate !== undefined },
       })
       return { id: input.id }
-    }),
-
-  /** Send the draft weekly email (with sample data) to the acting user. */
-  sendTestEmail: protectedProcedure
-    .input(
-      z.object({
-        subjectTemplate: z.string().trim().max(300),
-        bodyText: z.string().max(20_000),
-        bodyHtml: z.string().max(40_000).optional(),
-        fromName: z.string().trim().max(120).optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanManage(user.role)
-      if (!user.email) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Your account has no email address.' })
-      }
-      const vars = sampleEmailVars(input.fromName)
-      const subject = renderTemplate(input.subjectTemplate || DEFAULT_EMAIL_SUBJECT_TEMPLATE, vars)
-      const text = renderTemplate(input.bodyText || DEFAULT_EMAIL_BODY_TEMPLATE, vars)
-      const html = input.bodyHtml ? renderTemplate(input.bodyHtml, vars) : undefined
-      const res = await sendSystemEmail({
-        to: user.email,
-        subject: `[Test] ${subject}`,
-        text,
-        html,
-        requestId: ctx.requestId,
-      })
-      return { status: res.status, to: user.email, detail: res.detail ?? null }
     }),
 
   addHoliday: auditedProcedure

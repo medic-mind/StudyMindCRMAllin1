@@ -23,11 +23,7 @@ import {
 } from '@studymind/core/webinar'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 
-import {
-  buildClassSchedulePdf,
-  loadClassSchedule,
-  type ClassWithSchedule,
-} from './schedule-helpers'
+import { loadClassPdf, loadClassSchedule, type ClassWithSchedule } from './schedule-helpers'
 
 export interface DispatchResult {
   classesChecked: number
@@ -204,27 +200,15 @@ export async function dispatchDueWebinarEmails(
   return result
 }
 
-/** The PDF attachment for a class: uploaded syllabus if present, else generated. */
+/** The PDF attachment for a class: uploaded syllabus if present, else
+ *  generated — via the shared `loadClassPdf` so the reminder attaches exactly
+ *  what the preview route shows. */
 async function classAttachment(
   db: PrismaClient,
   classId: string,
   schedule: ClassWithSchedule,
 ): Promise<{ filename: string; content: Buffer } | null> {
-  const uploaded = await db.webinarClass.findUnique({
-    where: { id: classId },
-    select: { syllabusPdfData: true, syllabusPdfFileName: true },
-  })
-  if (uploaded?.syllabusPdfData) {
-    return {
-      filename: uploaded.syllabusPdfFileName || 'syllabus.pdf',
-      content: Buffer.from(uploaded.syllabusPdfData),
-    }
-  }
-  try {
-    return { filename: 'class-schedule.pdf', content: buildClassSchedulePdf(schedule) }
-  } catch {
-    return null
-  }
+  return loadClassPdf(db, classId, schedule)
 }
 
 /**

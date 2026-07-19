@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server'
 
 import { getCurrentUser } from '@/lib/auth/server'
 import { db } from '@/lib/db'
-import { buildClassSchedulePdf, loadClassSchedule } from '@/lib/webinar/schedule-helpers'
+import { loadClassPdf } from '@/lib/webinar/schedule-helpers'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -16,23 +16,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!me) return new NextResponse('Unauthorized', { status: 401 })
   const { id } = await params
 
-  const uploaded = await db.webinarClass.findFirst({
-    where: { id, deletedAt: null },
-    select: { syllabusPdfData: true, syllabusPdfFileName: true },
-  })
-  if (!uploaded) return new NextResponse('Not found', { status: 404 })
-
-  let body: Buffer
-  let filename: string
-  if (uploaded.syllabusPdfData) {
-    body = Buffer.from(uploaded.syllabusPdfData)
-    filename = uploaded.syllabusPdfFileName || 'syllabus.pdf'
-  } else {
-    const schedule = await loadClassSchedule(db, id)
-    if (!schedule) return new NextResponse('Not found', { status: 404 })
-    body = buildClassSchedulePdf(schedule)
-    filename = 'class-schedule.pdf'
-  }
+  // Shared with the weekly-reminder attachment (loadClassPdf) — the preview is
+  // byte-identical to what families receive.
+  const pdf = await loadClassPdf(db, id)
+  if (!pdf) return new NextResponse('Not found', { status: 404 })
+  const { filename, content: body } = pdf
 
   return new NextResponse(body as unknown as BodyInit, {
     headers: {

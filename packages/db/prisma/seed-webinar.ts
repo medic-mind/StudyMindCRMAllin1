@@ -154,7 +154,6 @@ export async function seedWebinar(): Promise<{ cohortId: string; classes: number
         startMinute: c.minute,
         durationMins: 60,
         timezone: 'Europe/London',
-        sendOffsetHours: 24,
         zoomRotateEveryWeeks: 4,
       },
       update: {},

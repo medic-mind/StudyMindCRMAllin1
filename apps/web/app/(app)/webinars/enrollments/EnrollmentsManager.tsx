@@ -182,7 +182,7 @@ export function EnrollmentsManager({
 
       <p className="text-xs text-neutral-400">
         Manage a specific class&apos;s roster from{' '}
-        <Link href="/webinars/classes" className="underline">
+        <Link href="/webinars/groups" className="underline">
           Classes
         </Link>
         .

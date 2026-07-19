@@ -110,3 +110,35 @@ export function buildClassSchedulePdf(schedule: ClassWithSchedule): Buffer {
     rows: scheduleRows(schedule),
   })
 }
+
+/**
+ * The class's schedule artefact: the uploaded syllabus PDF when one exists,
+ * else the generated branded term schedule. ONE selection rule shared by the
+ * weekly-reminder attachment and the preview/download route, so staff always
+ * preview exactly what families receive. Null when the class doesn't exist or
+ * a schedule can't be built.
+ */
+export async function loadClassPdf(
+  db: PrismaClient,
+  classId: string,
+  preloadedSchedule?: ClassWithSchedule | null,
+): Promise<{ filename: string; content: Buffer } | null> {
+  const uploaded = await db.webinarClass.findFirst({
+    where: { id: classId, deletedAt: null },
+    select: { syllabusPdfData: true, syllabusPdfFileName: true },
+  })
+  if (!uploaded) return null
+  if (uploaded.syllabusPdfData) {
+    return {
+      filename: uploaded.syllabusPdfFileName || 'syllabus.pdf',
+      content: Buffer.from(uploaded.syllabusPdfData),
+    }
+  }
+  const schedule = preloadedSchedule ?? (await loadClassSchedule(db, classId))
+  if (!schedule) return null
+  try {
+    return { filename: 'class-schedule.pdf', content: buildClassSchedulePdf(schedule) }
+  } catch {
+    return null
+  }
+}
