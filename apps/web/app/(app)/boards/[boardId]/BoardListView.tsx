@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { PhoneIcon } from '@/components/ui/icon'
 import { formatLondon } from '@/lib/format/london-time'
 import { formatRelativeTime } from '@/lib/format/relative-time'
@@ -167,10 +168,7 @@ export function BoardListView({
         const stageCards = byStage.get(stage.id) ?? []
         const dot = resolveStageColor(stage.color)
         return (
-          <section
-            key={stage.id}
-            className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card"
-          >
+          <Card key={stage.id} className="overflow-hidden">
             <header className="flex items-center gap-2 border-b border-neutral-100 px-4 py-2">
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -358,7 +356,7 @@ export function BoardListView({
                 </tbody>
               </table>
             </div>
-          </section>
+          </Card>
         )
       })}
 
