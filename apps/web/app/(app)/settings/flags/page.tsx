@@ -5,6 +5,7 @@ import { legacyAuth as auth } from '@/lib/auth/server'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -57,7 +58,7 @@ export default async function FlagsSettingsPage() {
         </div>
       ) : null}
 
-      <div className="mt-6 rounded-md border border-neutral-200 bg-white shadow-card">
+      <Card className="mt-6 overflow-hidden">
         <Table>
           <Thead>
             <Tr>
@@ -116,7 +117,7 @@ export default async function FlagsSettingsPage() {
             ))}
           </Tbody>
         </Table>
-      </div>
+      </Card>
       </PageBody>
     </>
   )

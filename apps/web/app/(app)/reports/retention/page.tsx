@@ -5,6 +5,7 @@ import { StackedBarChart } from '@/components/charts/stacked-bar-chart'
 import { CHART_PALETTE } from '@/components/charts/types'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -111,7 +112,7 @@ export default async function RetentionReportPage({
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Per-state breakdown
             </h2>
-            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-card">
+            <Card className="mt-2 overflow-hidden">
               <Table>
                 <Thead>
                   <Tr>
@@ -128,7 +129,7 @@ export default async function RetentionReportPage({
                   ))}
                 </Tbody>
               </Table>
-            </div>
+            </Card>
           </section>
         </div>
       </PageBody>

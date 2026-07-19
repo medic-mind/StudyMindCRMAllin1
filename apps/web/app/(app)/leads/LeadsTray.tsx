@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { trpc } from '@/lib/trpc/client'
@@ -220,7 +221,7 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         {/* List */}
-        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+        <Card className="overflow-hidden">
           {items.length === 0 ? (
             <p className="p-6 text-sm text-neutral-600">
               {list.isLoading
@@ -295,10 +296,10 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
               </Tbody>
             </Table>
           )}
-        </div>
+        </Card>
 
         {/* Detail */}
-        <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+        <Card className="p-4">
           {!selectedId ? (
             <p className="text-sm text-neutral-500">
               Select a lead to see its classification, landing context and raw payload.
@@ -474,7 +475,7 @@ export function LeadsTray({ initialStats, canWrite }: Props) {
               </div>
             </div>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   )

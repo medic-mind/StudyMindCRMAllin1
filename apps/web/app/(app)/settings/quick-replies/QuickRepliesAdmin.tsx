@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { trpc } from '@/lib/trpc/client'
 
@@ -91,7 +92,7 @@ export function QuickRepliesAdmin() {
       </div>
 
       {editing ? (
-        <div className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+        <Card className="space-y-3 p-4">
           <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-xs text-neutral-600">Title</span>
@@ -143,10 +144,10 @@ export function QuickRepliesAdmin() {
               Cancel
             </button>
           </div>
-        </div>
+        </Card>
       ) : null}
 
-      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+      <Card className="overflow-hidden">
         {items.length === 0 ? (
           <p className="p-6 text-sm text-neutral-600">
             No quick replies yet. Create one — agents will see it in the reply
@@ -208,7 +209,7 @@ export function QuickRepliesAdmin() {
             ))}
           </ul>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

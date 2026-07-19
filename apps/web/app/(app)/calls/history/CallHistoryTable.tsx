@@ -9,6 +9,7 @@ import { useState } from 'react'
 
 import { RecordingPlayer } from '@/components/shared/recording-player'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { ArrowDownLeftIcon, ArrowUpRightIcon } from '@/components/ui/icon'
 import { callOutcomeTone } from '@/lib/ui/status-tone'
 
@@ -133,7 +134,7 @@ export function CallHistoryTable({
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+      <Card className="space-y-3 p-4">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <FilterRow label="Window">
             {WINDOWS.map((w) => (
@@ -165,10 +166,10 @@ export function CallHistoryTable({
           out · {counts.answered} answered · {counts.missed} missed · {counts.voicemail} voicemail
           {capped ? ' · showing the most recent 20,000' : ''}
         </p>
-      </div>
+      </Card>
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+      <Card className="overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-neutral-100 text-left text-[11px] uppercase tracking-wide text-neutral-500">
@@ -258,7 +259,7 @@ export function CallHistoryTable({
             )}
           </tbody>
         </table>
-      </div>
+      </Card>
 
       {/* Pagination */}
       {total > pageSize ? (

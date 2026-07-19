@@ -9,6 +9,7 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { FacetedFilter } from '@/components/ui/faceted-filter'
 import { ToggleFilter } from '@/components/ui/filter-bar'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
@@ -203,7 +204,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
           ) : null}
         </div>
 
-        <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+        <Card className="mt-4 overflow-hidden">
           {data.items.length === 0 ? (
             <div className="p-10 text-center">
               <p className="text-sm font-medium text-neutral-700">
@@ -327,7 +328,7 @@ export default async function TasksPage({ searchParams }: { searchParams: Promis
               </Tbody>
             </Table>
           )}
-        </div>
+        </Card>
       </PageBody>
     </>
   )

@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { trpc } from '@/lib/trpc/client'
@@ -159,7 +160,7 @@ export function LeadIngestionPanel() {
           </Button>
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+        <Card className="mt-3 overflow-hidden">
           <Table>
             <Thead>
               <Tr>
@@ -219,7 +220,7 @@ export function LeadIngestionPanel() {
               ) : null}
             </Tbody>
           </Table>
-        </div>
+        </Card>
       </div>
     </section>
   )
