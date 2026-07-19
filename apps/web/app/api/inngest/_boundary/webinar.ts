@@ -56,8 +56,10 @@ export const webinarExpireEnrollments = inngest.createFunction(
 
 export const webinarZoomRotationReminder = inngest.createFunction(
   {
+    // id kept stable across the auto-rotation upgrade (ADR 0035 amendment) so
+    // Inngest treats it as the same function.
     id: 'webinar/zoom-rotation-reminder',
-    name: 'Webinar: remind the team to rotate Zoom links',
+    name: 'Webinar: rotate stale Zoom links (auto), remind where off/failed',
     concurrency: { limit: 1 },
     retries: 2,
   },

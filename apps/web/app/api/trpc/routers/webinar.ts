@@ -44,6 +44,13 @@ import {
 } from '@/lib/trpc/builders'
 import { splitDisplayName } from '@studymind/core/contact/from-call'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
+import {
+  clearZoomCredentials,
+  loadZoomConfig,
+  saveZoomCredentials,
+  zoomConnectionStatus,
+} from '@/lib/webinar/zoom-config'
+import { rotateClassZoomLink, ZoomNotConfiguredError } from '@/lib/webinar/zoom-service'
 import { outbound as trengoOutbound } from '@studymind/integration-trengo'
 import { client as zoomClient } from '@studymind/integration-zoom'
 
@@ -412,6 +419,7 @@ const classRouter = router({
       zoomLink: cl.zoomLink,
       zoomLinkUpdatedAt: cl.zoomLinkUpdatedAt,
       zoomRotateEveryWeeks: cl.zoomRotateEveryWeeks,
+      zoomAutoRotate: cl.zoomAutoRotate,
       sendDaysOfWeek: cl.sendDaysOfWeek,
       sendHourLocal: cl.sendHourLocal,
       emailSubjectTemplate: cl.emailSubjectTemplate,
@@ -482,10 +490,11 @@ const classRouter = router({
         after: { subject: input.subject, level: input.level, title: input.title },
       })
 
-      // Auto-generate the Zoom meeting when the operator has opted in and a Zoom
-      // app is configured (best effort — never fails class creation).
+      // Auto-generate the Zoom meeting when the operator has opted in and Zoom
+      // is connected (Settings row or env — best effort; never fails creation).
       let zoomGenerated = false
-      if (!input.zoomLink && zoomClient.isConfigured()) {
+      const zoomCfg = input.zoomLink ? null : await loadZoomConfig(ctx.db)
+      if (!input.zoomLink && zoomCfg) {
         const settings = await ctx.db.webinarSettings.findUnique({
           where: { id: 'webinar' },
           select: { zoomAutoCreate: true, zoomHostEmail: true },
@@ -496,11 +505,14 @@ const classRouter = router({
               where: { id: input.cohortId },
               select: { name: true },
             })
-            const meeting = await zoomClient.createRecurringMeeting({
-              hostEmail: settings.zoomHostEmail || undefined,
-              topic: `${subjectLabel(input.subject)} ${levelLabel(input.level)} — ${cohort?.name ?? ''}`,
-              timezone: input.timezone,
-            })
+            const meeting = await zoomClient.createRecurringMeeting(
+              {
+                hostEmail: settings.zoomHostEmail || undefined,
+                topic: `${subjectLabel(input.subject)} ${levelLabel(input.level)} — ${cohort?.name ?? ''}`,
+                timezone: input.timezone,
+              },
+              zoomCfg,
+            )
             await ctx.db.webinarClass.update({
               where: { id },
               data: {
@@ -536,6 +548,8 @@ const classRouter = router({
         sendDaysOfWeek: z.array(z.number().int().min(0).max(6)).max(7).optional(),
         sendHourLocal: z.number().int().min(0).max(23).optional(),
         zoomRotateEveryWeeks: z.number().int().min(0).max(52).optional(),
+        /** Rotate the Zoom link automatically when due (ADR 0035 amendment). */
+        zoomAutoRotate: z.boolean().optional(),
         emailSubjectTemplate: z.string().trim().max(300).nullish(),
         emailBodyTemplate: z.string().trim().max(8000).nullish(),
         emailBodyHtml: z.string().trim().max(40_000).nullish(),
@@ -612,71 +626,27 @@ const classRouter = router({
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
       assertCanManage(user.role)
-      if (!zoomClient.isConfigured()) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'Zoom is not connected. Add the Server-to-Server credentials first.',
-        })
-      }
-      const cls = await ctx.db.webinarClass.findFirst({
-        where: { id: input.id, deletedAt: null },
-        include: { cohort: { select: { name: true } } },
-      })
-      if (!cls) throw new TRPCError({ code: 'NOT_FOUND' })
-      const settings = await ctx.db.webinarSettings.findUnique({
-        where: { id: 'webinar' },
-        select: { zoomHostEmail: true },
-      })
-      const host = cls.zoomHostEmail || settings?.zoomHostEmail || undefined
-      const topic = `${subjectLabel(cls.subject)} ${levelLabel(cls.level)} — ${cls.cohort.name}`
-      let meeting
+      // Shared service — the same rotation the weekly auto-rotate job runs
+      // (create new open-to-all meeting, kill the old link, stamp + audit).
       try {
-        meeting = await zoomClient.createRecurringMeeting({
-          hostEmail: host,
-          topic,
-          timezone: cls.timezone,
+        const res = await rotateClassZoomLink(ctx.db, input.id, {
+          actorId: user.id,
+          requestId: ctx.requestId,
         })
+        ctx.audit.called = true
+        return { id: res.id, joinUrl: res.joinUrl }
       } catch (err) {
+        if (err instanceof ZoomNotConfiguredError) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: err.message })
+        }
+        if (err instanceof Error && err.message === 'Class not found') {
+          throw new TRPCError({ code: 'NOT_FOUND' })
+        }
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: err instanceof Error ? `Zoom: ${err.message}` : 'Zoom meeting creation failed',
         })
       }
-      // Regenerating: delete the OLD meeting so its join link stops working
-      // (the whole point of rotation — a lapsed member can't reuse it).
-      if (cls.zoomMeetingId && cls.zoomMeetingId !== String(meeting.id)) {
-        try {
-          await zoomClient.deleteMeeting(cls.zoomMeetingId)
-          await ctx.audit({
-            action: 'webinar.zoom_meeting_deleted',
-            target: { type: 'WebinarClass', id: input.id },
-            before: { zoomMeetingId: cls.zoomMeetingId },
-          })
-        } catch {
-          // Best effort — the new link is already live.
-        }
-      }
-      await ctx.db.webinarClass.update({
-        where: { id: input.id },
-        data: {
-          zoomLink: meeting.join_url,
-          zoomMeetingId: String(meeting.id),
-          zoomHostEmail: host ?? null,
-          zoomLinkUpdatedAt: new Date(),
-          updatedById: user.id,
-        },
-      })
-      const taskTitle = `[Webinar] Update Zoom link — ${subjectLabel(cls.subject)} ${levelLabel(cls.level)}`
-      await ctx.db.task.updateMany({
-        where: { title: taskTitle, status: { in: ['open', 'in_progress'] } },
-        data: { status: 'done' },
-      })
-      await ctx.audit({
-        action: 'webinar.zoom_meeting_created',
-        target: { type: 'WebinarClass', id: input.id },
-        after: { zoomMeetingId: String(meeting.id) },
-      })
-      return { id: input.id, joinUrl: meeting.join_url }
     }),
 
   /** Send a real reminder (rendered email + the schedule PDF) to the acting
@@ -812,9 +782,10 @@ const classRouter = router({
         data: { deletedAt: new Date(), active: false, updatedById: user.id },
       })
       // Clean up the Zoom meeting so its link dies with the class.
-      if (before.zoomMeetingId && zoomClient.isConfigured()) {
+      const zoomCfgArchive = before.zoomMeetingId ? await loadZoomConfig(ctx.db) : null
+      if (before.zoomMeetingId && zoomCfgArchive) {
         try {
-          await zoomClient.deleteMeeting(before.zoomMeetingId)
+          await zoomClient.deleteMeeting(before.zoomMeetingId, zoomCfgArchive)
         } catch {
           // Best effort.
         }
@@ -843,9 +814,10 @@ const classRouter = router({
         select: { id: true, subject: true, level: true, title: true, zoomMeetingId: true },
       })
       if (!cls) throw new TRPCError({ code: 'NOT_FOUND' })
-      if (cls.zoomMeetingId && zoomClient.isConfigured()) {
+      const zoomCfgDelete = cls.zoomMeetingId ? await loadZoomConfig(ctx.db) : null
+      if (cls.zoomMeetingId && zoomCfgDelete) {
         try {
-          await zoomClient.deleteMeeting(cls.zoomMeetingId)
+          await zoomClient.deleteMeeting(cls.zoomMeetingId, zoomCfgDelete)
         } catch {
           // Best effort — deleting the group proceeds regardless.
         }
@@ -1680,8 +1652,8 @@ const settingsRouter = router({
       emailSubjectTemplate: row?.emailSubjectTemplate ?? '',
       emailBodyTemplate: row?.emailBodyTemplate ?? '',
       fromName: row?.fromName ?? '',
-      // Zoom integration (ADR 0035).
-      zoomConnected: zoomClient.isConfigured(),
+      // Zoom integration (ADR 0035; Settings-stored credentials or env).
+      zoomConnected: (await loadZoomConfig(ctx.db)) !== null,
       zoomAutoCreate: row?.zoomAutoCreate ?? false,
       zoomSendRecordings: row?.zoomSendRecordings ?? false,
       zoomTrashAfterSend: row?.zoomTrashAfterSend ?? false,
@@ -1795,15 +1767,64 @@ const settingsRouter = router({
 /* -------------------------------------------------------------------------- */
 
 const zoomRouter = router({
-  /** Verify the configured Zoom credentials by fetching the connected user. */
+  /** Where the working Zoom credentials come from (settings / env / none). */
+  status: protectedProcedure.query(async ({ ctx }) => {
+    requireUser(ctx)
+    return zoomConnectionStatus(ctx.db)
+  }),
+
+  /** Connect Zoom from the UI: paste the Server-to-Server OAuth app's three
+   *  values (marketplace.zoom.us → Develop → Build App → Server-to-Server
+   *  OAuth). Secret is envelope-encrypted (§21); verified live before saving
+   *  so a typo never half-connects. Manager+. */
+  connect: auditedProcedure
+    .input(
+      z.object({
+        accountId: z.string().trim().min(4).max(120),
+        clientId: z.string().trim().min(4).max(120),
+        clientSecret: z.string().trim().min(8).max(200),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertCanManage(user.role)
+      // Prove the credentials work BEFORE storing them.
+      try {
+        await zoomClient.getMe(input)
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            err instanceof Error
+              ? `Zoom rejected those credentials: ${err.message}`
+              : 'Zoom rejected those credentials',
+        })
+      }
+      await saveZoomCredentials(ctx.db, input, { actorId: user.id, requestId: ctx.requestId })
+      ctx.audit.called = true
+      const me = await zoomClient.getMe(input).catch(() => null)
+      return { ok: true as const, email: me?.email ?? null }
+    }),
+
+  /** Remove the stored credentials (ZOOM_* env vars, if set, still apply). */
+  disconnect: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertCanManage(user.role)
+    await clearZoomCredentials(ctx.db, { actorId: user.id, requestId: ctx.requestId })
+    ctx.audit.called = true
+    return { ok: true as const }
+  }),
+
+  /** Verify the effective Zoom credentials by fetching the connected user. */
   testConnection: protectedProcedure.mutation(async ({ ctx }) => {
     const user = requireUser(ctx)
     assertCanManage(user.role)
-    if (!zoomClient.isConfigured()) {
-      return { ok: false as const, error: 'Zoom credentials are not set.' }
+    const cfg = await loadZoomConfig(ctx.db)
+    if (!cfg) {
+      return { ok: false as const, error: 'Zoom is not connected yet.' }
     }
     try {
-      const me = await zoomClient.getMe()
+      const me = await zoomClient.getMe(cfg)
       return { ok: true as const, email: me.email }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : 'Zoom request failed' }

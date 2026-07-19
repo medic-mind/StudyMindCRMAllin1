@@ -27,6 +27,16 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
   const senderOptions = senderOptionsQ.data
   const selectedMailbox = senderOptions?.mailboxes.find((m) => m.address === senderAddress)
 
+  // Zoom connect-from-Settings (ADR 0035 amendment): paste the three
+  // Server-to-Server app values; verified live and stored encrypted.
+  const [zAccountId, setZAccountId] = useState('')
+  const [zClientId, setZClientId] = useState('')
+  const [zClientSecret, setZClientSecret] = useState('')
+
+  const utils = trpc.useUtils()
+  const zoomStatus = trpc.webinar.zoom.status.useQuery()
+  const zoomConfigured = zoomStatus.data?.configured ?? initial.zoomConnected
+
   const save = trpc.webinar.settings.update.useMutation({
     onSuccess: () => toast.success('Settings saved'),
     onError: (e) => toast.error(e.message),
@@ -35,6 +45,23 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
     onSuccess: (r) => {
       if (r.ok) toast.success(`Zoom connected as ${r.email}`)
       else toast.error(r.error)
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const connectZoom = trpc.webinar.zoom.connect.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Zoom connected${r.email ? ` as ${r.email}` : ''}`)
+      setZClientSecret('')
+      void utils.webinar.zoom.status.invalidate()
+      void utils.webinar.settings.get.invalidate()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const disconnectZoom = trpc.webinar.zoom.disconnect.useMutation({
+    onSuccess: () => {
+      toast.success('Zoom disconnected')
+      void utils.webinar.zoom.status.invalidate()
+      void utils.webinar.settings.get.invalidate()
     },
     onError: (e) => toast.error(e.message),
   })
@@ -122,14 +149,16 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
             <span
               className={
                 'rounded px-2 py-0.5 text-xs ' +
-                (initial.zoomConnected
+                (zoomConfigured
                   ? 'bg-emerald-50 text-emerald-700'
                   : 'bg-neutral-100 text-neutral-500')
               }
             >
-              {initial.zoomConnected ? 'Connected' : 'Not connected'}
+              {zoomConfigured
+                ? `Connected${zoomStatus.data?.source === 'settings' ? ` (${zoomStatus.data.accountIdMasked})` : zoomStatus.data?.source === 'env' ? ' (via env vars)' : ''}`
+                : 'Not connected'}
             </span>
-            {initial.zoomConnected && canManage ? (
+            {zoomConfigured && canManage ? (
               <Button
                 type="button"
                 size="xs"
@@ -140,12 +169,85 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
                 {testZoom.isPending ? 'Testing…' : 'Test connection'}
               </Button>
             ) : null}
+            {zoomStatus.data?.source === 'settings' && canManage ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
+                disabled={disconnectZoom.isPending}
+                onClick={() => disconnectZoom.mutate()}
+              >
+                Disconnect
+              </Button>
+            ) : null}
           </div>
           <p className="text-xs text-neutral-500">
-            {initial.zoomConnected
-              ? 'Generate join links per class (open to all + cloud auto-recording) from each class page.'
-              : 'Add a Zoom Server-to-Server OAuth app (ZOOM_ACCOUNT_ID / ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET) to enable link generation and recordings.'}
+            {zoomConfigured
+              ? 'Join links are generated per group (open to all + cloud auto-recording) and rotate automatically every 4 weeks unless a group opts out.'
+              : 'Connect your Zoom account below — one-time, no server access needed.'}
           </p>
+          {!zoomConfigured ? (
+            <div className="space-y-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+              <p className="text-xs text-neutral-600">
+                One-time setup (~2 min): sign in at{' '}
+                <a
+                  href="https://marketplace.zoom.us/develop/create"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-primary-700 hover:underline"
+                >
+                  marketplace.zoom.us
+                </a>{' '}
+                → <span className="font-medium">Develop → Build App → Server-to-Server OAuth</span>.
+                Give it scopes <code className="rounded bg-white px-1">meeting:write:admin</code>,{' '}
+                <code className="rounded bg-white px-1">cloud_recording:read:admin</code>,{' '}
+                <code className="rounded bg-white px-1">cloud_recording:write:admin</code> and{' '}
+                <code className="rounded bg-white px-1">user:read:admin</code>, activate it, then
+                copy the three values here. They’re checked live and stored encrypted.
+              </p>
+              <div className="grid gap-2 md:grid-cols-3">
+                <Input
+                  placeholder="Account ID"
+                  value={zAccountId}
+                  onChange={(e) => setZAccountId(e.target.value)}
+                  disabled={!canManage}
+                />
+                <Input
+                  placeholder="Client ID"
+                  value={zClientId}
+                  onChange={(e) => setZClientId(e.target.value)}
+                  disabled={!canManage}
+                />
+                <Input
+                  placeholder="Client Secret"
+                  type="password"
+                  value={zClientSecret}
+                  onChange={(e) => setZClientSecret(e.target.value)}
+                  disabled={!canManage}
+                />
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  !canManage ||
+                  connectZoom.isPending ||
+                  !zAccountId.trim() ||
+                  !zClientId.trim() ||
+                  !zClientSecret.trim()
+                }
+                onClick={() =>
+                  connectZoom.mutate({
+                    accountId: zAccountId.trim(),
+                    clientId: zClientId.trim(),
+                    clientSecret: zClientSecret.trim(),
+                  })
+                }
+              >
+                {connectZoom.isPending ? 'Connecting…' : 'Connect Zoom'}
+              </Button>
+            </div>
+          ) : null}
           <div className="grid gap-3 md:grid-cols-2">
             <Field
               label="Default Zoom host email"

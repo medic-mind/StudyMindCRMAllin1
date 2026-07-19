@@ -13,8 +13,10 @@ import { createId } from '@paralleldrive/cuid2'
 import type { PrismaClient } from '@prisma/client'
 
 import { writeAuditLogEntry } from '@studymind/audit'
-import { client as zoomClient } from '@studymind/integration-zoom'
+import { client as zoomClient, type ZoomConfig } from '@studymind/integration-zoom'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
+
+import { loadZoomConfig } from './zoom-config'
 
 export interface RecordingsResult {
   enabled: boolean
@@ -68,6 +70,7 @@ async function sendForClass(
   settings: SettingsRow,
   requestId: string,
   result: RecordingsResult,
+  zoomCfg: ZoomConfig,
 ): Promise<void> {
   result.classesChecked += 1
   if (!cls.zoomMeetingId) {
@@ -76,7 +79,7 @@ async function sendForClass(
   }
   let recordings
   try {
-    recordings = await zoomClient.getMeetingRecordings(cls.zoomMeetingId)
+    recordings = await zoomClient.getMeetingRecordings(cls.zoomMeetingId, zoomCfg)
   } catch (err) {
     result.errors.push(`Class ${cls.id}: ${err instanceof Error ? err.message : 'recordings fetch failed'}`)
     return
@@ -153,7 +156,7 @@ async function sendForClass(
 
   if (settings.zoomTrashAfterSend && recipientCount > 0) {
     try {
-      await zoomClient.trashMeetingRecordings(cls.zoomMeetingId, { permanent: false })
+      await zoomClient.trashMeetingRecordings(cls.zoomMeetingId, { permanent: false }, zoomCfg)
       await db.webinarRecordingDispatch.update({
         where: { id: dispatchId },
         data: { status: 'trashed', trashedAt: new Date() },
@@ -179,7 +182,8 @@ export async function sendDueRecordings(
   requestId: string,
 ): Promise<RecordingsResult> {
   const result: RecordingsResult = { enabled: false, ...EMPTY, errors: [] }
-  if (!zoomClient.isConfigured()) return result
+  const zoomCfg = await loadZoomConfig(db)
+  if (!zoomCfg) return result
   const settings = await loadSettings(db)
   if (!settings?.zoomSendRecordings) return result
   result.enabled = true
@@ -188,7 +192,7 @@ export async function sendDueRecordings(
     where: { active: true, deletedAt: null, cohort: { status: 'active' }, zoomMeetingId: { not: null } },
     select: { id: true, subject: true, level: true, zoomMeetingId: true },
   })
-  for (const cls of classes) await sendForClass(db, cls, settings, requestId, result)
+  for (const cls of classes) await sendForClass(db, cls, settings, requestId, result, zoomCfg)
   return result
 }
 
@@ -200,7 +204,8 @@ export async function sendRecordingsForClassId(
   opts: { force?: boolean } = {},
 ): Promise<RecordingsResult> {
   const result: RecordingsResult = { enabled: false, ...EMPTY, errors: [] }
-  if (!zoomClient.isConfigured()) {
+  const zoomCfg = await loadZoomConfig(db)
+  if (!zoomCfg) {
     result.errors.push('Zoom is not configured.')
     return result
   }
@@ -219,7 +224,7 @@ export async function sendRecordingsForClassId(
     result.errors.push('Class not found.')
     return result
   }
-  await sendForClass(db, cls, settings, requestId, result)
+  await sendForClass(db, cls, settings, requestId, result, zoomCfg)
   return result
 }
 
@@ -230,7 +235,8 @@ export async function sendRecordingsForMeetingId(
   requestId: string,
 ): Promise<RecordingsResult> {
   const result: RecordingsResult = { enabled: false, ...EMPTY, errors: [] }
-  if (!zoomClient.isConfigured()) return result
+  const zoomCfg = await loadZoomConfig(db)
+  if (!zoomCfg) return result
   const settings = await loadSettings(db)
   if (!settings?.zoomSendRecordings) return result
   result.enabled = true
@@ -242,6 +248,6 @@ export async function sendRecordingsForMeetingId(
     result.skipped += 1
     return result
   }
-  await sendForClass(db, cls, settings, requestId, result)
+  await sendForClass(db, cls, settings, requestId, result, zoomCfg)
   return result
 }

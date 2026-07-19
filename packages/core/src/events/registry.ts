@@ -402,6 +402,10 @@ export const EVENT_NAMES = [
   // Board cleared in full — every live card bulk-archived (one audit row).
   'board.cleared',
 
+  // Zoom connect-from-Settings (ADR 0035 amendment).
+  'webinar.zoom_connected',
+  'webinar.zoom_disconnected',
+
   // System / audit
   'audit.logged',
   'system.job_completed',

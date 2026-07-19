@@ -2,3 +2,4 @@
 // webinar system to generate join links and distribute recordings.
 
 export * as client from './client'
+export { readZoomConfig, type ZoomConfig } from './client'

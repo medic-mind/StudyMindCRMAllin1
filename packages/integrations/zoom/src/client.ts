@@ -46,6 +46,9 @@ export class ZoomApiError extends Error {
 interface CachedToken {
   token: string
   expiresAt: number
+  /** Which credentials minted it — a token must never outlive a credential
+   *  swap now that they are editable at runtime (Settings connect). */
+  key: string
 }
 let cached: CachedToken | null = null
 
@@ -53,7 +56,8 @@ let cached: CachedToken | null = null
 export async function getAccessToken(config?: ZoomConfig, now = Date.now()): Promise<string> {
   const cfg = config ?? readZoomConfig()
   if (!cfg) throw new ZoomApiError(0, 'Zoom is not configured (set ZOOM_ACCOUNT_ID/CLIENT_ID/SECRET).')
-  if (cached && cached.expiresAt > now + 60_000) return cached.token
+  const key = `${cfg.accountId}:${cfg.clientId}`
+  if (cached && cached.key === key && cached.expiresAt > now + 60_000) return cached.token
 
   const basic = Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString('base64')
   const url = `${TOKEN_URL}?grant_type=account_credentials&account_id=${encodeURIComponent(cfg.accountId)}`
@@ -64,7 +68,7 @@ export async function getAccessToken(config?: ZoomConfig, now = Date.now()): Pro
   const text = await res.text()
   if (!res.ok) throw new ZoomApiError(res.status, text)
   const json = JSON.parse(text) as { access_token: string; expires_in: number }
-  cached = { token: json.access_token, expiresAt: now + json.expires_in * 1000 }
+  cached = { token: json.access_token, expiresAt: now + json.expires_in * 1000, key }
   return cached.token
 }
 

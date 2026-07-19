@@ -291,6 +291,14 @@ function ZoomCard({ detail, canManage }: { detail: Detail; canManage: boolean })
     },
     onError: (e) => toast.error(e.message),
   })
+  const autoRotate = trpc.webinar.class.update.useMutation({
+    onSuccess: () => {
+      toast.success('Saved')
+      void utils.webinar.class.get.invalidate({ id: detail.id })
+      router.refresh()
+    },
+    onError: (e) => toast.error(e.message),
+  })
   const updated = detail.zoomLinkUpdatedAt ? new Date(detail.zoomLinkUpdatedAt) : null
   return (
     <Card>
@@ -307,9 +315,23 @@ function ZoomCard({ detail, canManage }: { detail: Detail; canManage: boolean })
           </a>
         </div>
         <p className="mt-1 text-xs text-neutral-500">
-          Sent in every weekly email. Rotates every {detail.zoomRotateEveryWeeks} weeks
+          Sent in every weekly email.{' '}
+          {detail.zoomAutoRotate
+            ? `A fresh link is generated automatically every ${detail.zoomRotateEveryWeeks} weeks (the old one stops working)`
+            : `Rotation reminders every ${detail.zoomRotateEveryWeeks} weeks (automatic rotation is off)`}
           {updated ? ` · last updated ${updated.toLocaleDateString('en-GB')}` : ' · never set'}.
         </p>
+        {canManage ? (
+          <label className="mt-2 flex items-center gap-2 text-xs text-neutral-600">
+            <input
+              type="checkbox"
+              checked={detail.zoomAutoRotate}
+              onChange={(e) => autoRotate.mutate({ id: detail.id, zoomAutoRotate: e.target.checked })}
+              disabled={autoRotate.isPending}
+            />
+            Rotate the link automatically when due
+          </label>
+        ) : null}
         {canManage ? (
           <form
             className="mt-3 flex gap-2"

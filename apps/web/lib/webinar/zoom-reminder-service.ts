@@ -1,25 +1,32 @@
-// Zoom-link rotation reminder. Every active class whose link is older than its
-// rotation interval (default 4 weeks) gets a Task asking the team to refresh it.
-// Idempotent: we never open a second reminder while one is still open for the
-// same class.
+// Zoom-link rotation (ADR 0035 amendment). Every active class whose link is
+// older than its rotation interval (default 4 weeks) is ROTATED AUTOMATICALLY —
+// a fresh open-to-all meeting is created, the old link dies, and the next
+// weekly reminder email naturally carries the new one. A class with the
+// per-class `zoomAutoRotate` toggle off — or a rotation that fails, or no Zoom
+// credentials — falls back to the original behaviour: a reminder Task for a
+// human. Idempotent: one open task per class, and rotation stamps
+// zoomLinkUpdatedAt so a re-run is a no-op until the next interval.
 
-import { createId } from '@paralleldrive/cuid2'
 import type { PrismaClient } from '@prisma/client'
+import { createId } from '@paralleldrive/cuid2'
 
-import { subjectLabel, levelLabel, zoomRotationDue } from '@studymind/core/webinar'
+import { zoomRotationDue } from '@studymind/core/webinar'
 
-export interface ZoomReminderResult {
+import { loadZoomConfig } from './zoom-config'
+import { openRotationTask, rotateClassZoomLink } from './zoom-service'
+
+export interface ZoomRotationResult {
   classesChecked: number
+  rotated: number
   tasksCreated: number
+  failures: number
 }
 
-const TASK_PREFIX = '[Webinar] Update Zoom link'
-
-/** Create rotation-reminder Tasks for classes whose link is stale. */
-export async function createZoomRotationTasks(
+/** Rotate stale class links automatically; open a Task where we can't. */
+export async function rotateDueZoomLinks(
   db: PrismaClient,
   now: Date,
-): Promise<ZoomReminderResult> {
+): Promise<ZoomRotationResult> {
   const classes = await db.webinarClass.findMany({
     where: { active: true, deletedAt: null, cohort: { status: 'active' } },
     select: {
@@ -27,37 +34,48 @@ export async function createZoomRotationTasks(
       title: true,
       subject: true,
       level: true,
+      zoomLink: true,
       zoomLinkUpdatedAt: true,
       zoomRotateEveryWeeks: true,
+      zoomAutoRotate: true,
     },
   })
 
-  let tasksCreated = 0
+  const zoomConfigured = (await loadZoomConfig(db)) !== null
+  const result: ZoomRotationResult = {
+    classesChecked: classes.length,
+    rotated: 0,
+    tasksCreated: 0,
+    failures: 0,
+  }
+
   for (const cls of classes) {
     if (!zoomRotationDue(cls.zoomLinkUpdatedAt, cls.zoomRotateEveryWeeks, now)) continue
 
-    const title = `${TASK_PREFIX} — ${subjectLabel(cls.subject)} ${levelLabel(cls.level)}`
-    // Skip if an open reminder for this class already exists.
-    const existing = await db.task.findFirst({
-      where: { title, status: { in: ['open', 'in_progress'] } },
-      select: { id: true },
-    })
-    if (existing) continue
+    // Auto-rotation needs the toggle on, credentials, and an existing link to
+    // replace (a class that never had one is a setup decision for a human).
+    if (cls.zoomAutoRotate && zoomConfigured && cls.zoomLink) {
+      try {
+        await rotateClassZoomLink(db, cls.id, {
+          actorId: null,
+          requestId: `zoom-rotate:${cls.id}:${createId()}`,
+        })
+        result.rotated += 1
+        continue
+      } catch {
+        result.failures += 1
+        if (await openRotationTask(db, cls, now, 'Automatic rotation FAILED — rotate it manually from the group page.')) {
+          result.tasksCreated += 1
+        }
+        continue
+      }
+    }
 
-    await db.task.create({
-      data: {
-        id: createId(),
-        title,
-        description:
-          `The Zoom link for "${cls.title}" is due for rotation ` +
-          `(every ${cls.zoomRotateEveryWeeks} weeks). Update it in Webinars → ` +
-          `Classes so next week's email carries the new link.`,
-        status: 'open',
-        dueAt: now,
-      },
-    })
-    tasksCreated += 1
+    if (await openRotationTask(db, cls, now)) result.tasksCreated += 1
   }
 
-  return { classesChecked: classes.length, tasksCreated }
+  return result
 }
+
+/** Back-compat alias for the boundary registration. */
+export const createZoomRotationTasks = rotateDueZoomLinks
