@@ -132,6 +132,16 @@ export {
   RECOVERY_TEMPLATE_TOKENS,
   type RecoveryTemplateVars,
 } from './dd-comms'
+// Automated Direct Debit chasing (ADR 0045) — pure engine decisions.
+export {
+  chaseAutoResolved,
+  decideChaseTick,
+  nextChaseAt,
+  type ChaseCaseState,
+  type ChaseChannel,
+  type ChaseTemplateRef,
+  type ChaseTickDecision,
+} from './dd-chase'
 // Direct Debit plan shortfalls (ADR 0038) — cancelled-part-way / underpaid plans
 // and active plans behind their collection schedule.
 export {

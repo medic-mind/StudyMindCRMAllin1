@@ -15,6 +15,9 @@ export interface RecoveryTemplateVars {
   amount_due?: string | null
   collected?: string | null
   plan_total?: string | null
+  /** The person's individual re-signup URL (GoCardless / Stripe) — pasted by
+   *  staff onto the case; substituted into every automated chase (ADR 0045). */
+  setup_link?: string | null
 }
 
 export const RECOVERY_TEMPLATE_TOKENS: Array<keyof RecoveryTemplateVars> = [
@@ -26,6 +29,7 @@ export const RECOVERY_TEMPLATE_TOKENS: Array<keyof RecoveryTemplateVars> = [
   'amount_due',
   'collected',
   'plan_total',
+  'setup_link',
 ]
 
 /**

@@ -1989,7 +1989,9 @@ model GcSubscription {
 /// FKs — same pattern as the GC mirror) so it never trips on import ordering.
 model DirectDebitCase {
   id               String                @id
-  gcSubscriptionId String                @unique
+  /// The cancelled/underpaid plan this case tracks. NULL for a manually-opened
+  /// person-level case (ADR 0045) — someone staff added by hand.
+  gcSubscriptionId String?               @unique
   gcCustomerId     String?
   contactId        String?
   familyId         String?
@@ -1998,6 +2000,28 @@ model DirectDebitCase {
   /// Shortfall (pence) captured when the case was opened — a stable record even
   /// as later collections change the live figure.
   openingShortfallMinor Int               @default(0)
+
+  // --- Automated chasing (ADR 0045) ---------------------------------------
+  /// Master per-person switch: false = never auto-send for this case.
+  autoChase        Boolean   @default(true)
+  /// Per-person channel flags — "do we email them / do we text them".
+  sendEmails       Boolean   @default(true)
+  sendTexts        Boolean   @default(false)
+  /// Where the messages go — prefilled from the Contact, editable per case.
+  chaseEmail       String?
+  chasePhoneE164   String?
+  /// The GoCardless / Stripe re-signup link staff paste in. The engine sends
+  /// NOTHING until this is set — the "asks staff to input a link" step.
+  setupLinkUrl     String?
+  /// Days between escalation steps.
+  cadenceDays      Int       @default(3)
+  /// How many chase messages have gone out (index into the template sequence
+  /// — copy gets more serious each step).
+  escalationStep   Int       @default(0)
+  lastAutoMessageAt DateTime?
+  /// When the next automated message is due; null = not scheduled (no link
+  /// yet, autoChase off, or sequence exhausted).
+  nextAutoMessageAt DateTime?
   /// Recovery. Phase 2 links the actual invoicing/Stripe payment; Phase 1 keeps
   /// the agent's manual record.
   recoveredMinor   Int                   @default(0)
@@ -2014,10 +2038,38 @@ model DirectDebitCase {
   updatedById String?
   deletedAt   DateTime?
 
+  messages DdCaseMessage[]
+
   @@index([status])
   @@index([ownerUserId])
   @@index([contactId])
   @@index([familyId])
+  @@index([nextAutoMessageAt])
+}
+
+/// One automated (or attempted) chase message on a Direct Debit case
+/// (ADR 0045) — the per-person history behind "it gets more serious each
+/// time", and the idempotency/debug record for the hourly engine.
+model DdCaseMessage {
+  id         String   @id
+  caseId     String
+  /// email | sms
+  channel    String
+  templateId String?
+  /// Escalation step this send represents (0-based).
+  step       Int
+  toAddress  String
+  subject    String?
+  body       String
+  /// sent | failed
+  status     String   @default("sent")
+  error      String?
+
+  createdAt DateTime @default(now())
+
+  case DirectDebitCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
 }
 
 /// Direct Debit recovery-comms template (ADR 0038, Phase 3). A staff-authored

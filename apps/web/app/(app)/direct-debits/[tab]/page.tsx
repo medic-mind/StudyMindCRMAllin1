@@ -10,7 +10,15 @@ import { DirectDebitsPage } from '../workspace-page'
 
 export const dynamic = 'force-dynamic'
 
-const TABS = new Set<DdTab>(['plans', 'payments', 'customers', 'payouts', 'activity', 'issues'])
+const TABS = new Set<DdTab>([
+  'plans',
+  'payments',
+  'customers',
+  'payouts',
+  'activity',
+  'chasing',
+  'issues',
+])
 
 export default async function Page({
   params,

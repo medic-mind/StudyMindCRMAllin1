@@ -60,7 +60,8 @@ export function isClosedStatus(status: DirectDebitCaseStatusValue): boolean {
 
 export interface DirectDebitCaseRow {
   id: string
-  gcSubscriptionId: string
+  /** Null for a manually-opened person-level case (ADR 0045). */
+  gcSubscriptionId: string | null
   gcCustomerId: string | null
   contactId: string | null
   familyId: string | null
@@ -259,6 +260,9 @@ export async function getCasesForSubscriptions(
     where: { gcSubscriptionId: { in: ids }, deletedAt: null },
   })
   const map = new Map<string, DirectDebitCaseRow>()
-  for (const r of rows) map.set(r.gcSubscriptionId, r as unknown as DirectDebitCaseRow)
+  for (const r of rows) {
+    // Manual person-level cases (ADR 0045) have no plan key — not this view.
+    if (r.gcSubscriptionId) map.set(r.gcSubscriptionId, r as unknown as DirectDebitCaseRow)
+  }
   return map
 }

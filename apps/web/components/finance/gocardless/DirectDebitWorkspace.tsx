@@ -15,6 +15,7 @@ import { Table, Tbody, Th, Thead, Tr } from '@/components/ui/table'
 import { trpc } from '@/lib/trpc/client'
 
 import { ActivityTab } from './ActivityTab'
+import { ChasingTab } from './ChasingTab'
 import { CustomersTab } from './CustomersTab'
 import { OverviewTab } from './OverviewTab'
 import { PaymentsTab } from './PaymentsTab'
@@ -29,12 +30,22 @@ export const DD_TABS = [
   { value: 'customers', label: 'Customers & mandates', href: '/direct-debits/customers' },
   { value: 'payouts', label: 'Payouts', href: '/direct-debits/payouts' },
   { value: 'activity', label: 'Activity', href: '/direct-debits/activity' },
+  { value: 'chasing', label: 'Chasing', href: '/direct-debits/chasing' },
   { value: 'issues', label: 'Issues', href: '/direct-debits/issues' },
 ] as const
 
 export type DdTab = (typeof DD_TABS)[number]['value']
 
-export function DirectDebitWorkspace({ tab, canImport }: { tab: DdTab; canImport: boolean }) {
+export function DirectDebitWorkspace({
+  tab,
+  canImport,
+  canChase = false,
+}: {
+  tab: DdTab
+  canImport: boolean
+  /** Manager+ — may add/edit/resolve chase cases (ADR 0045). */
+  canChase?: boolean
+}) {
   const importStatus = trpc.gocardless.import.status.useQuery(undefined, {
     refetchInterval: (query) => {
       const status = query.state.data?.job?.status
@@ -104,6 +115,7 @@ export function DirectDebitWorkspace({ tab, canImport }: { tab: DdTab; canImport
       {tab === 'customers' ? <CustomersTab /> : null}
       {tab === 'payouts' ? <PayoutsTab /> : null}
       {tab === 'activity' ? <ActivityTab /> : null}
+      {tab === 'chasing' ? <ChasingTab canWrite={canChase} /> : null}
       {tab === 'issues' ? <IssuesTab /> : null}
     </div>
   )

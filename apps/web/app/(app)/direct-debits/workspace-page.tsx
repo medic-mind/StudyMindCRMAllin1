@@ -26,6 +26,8 @@ const SUBTITLES: Record<DdTab, string> = {
     'Bank transfers of collected funds to StudyMind, with the customer payments inside each one.',
   activity:
     'Every GoCardless event the moment it happens — payments, mandates, plans and payouts, newest first.',
+  chasing:
+    'Automated chasing for cancelled Direct Debits with money outstanding. Escalating emails/texts carry each person’s re-signup link until they set up again — detected automatically — or a human marks them up to date.',
   issues:
     'Families that have defaulted on a Direct Debit, sorted by outstanding balance. Nothing here is auto-chased.',
 }
@@ -51,7 +53,11 @@ export async function DirectDebitsPage({ tab }: { tab: DdTab }): Promise<JSX.Ele
     <>
       <PageHeader title="Direct Debits" subtitle={SUBTITLES[tab]} />
       <PageBody>
-        <DirectDebitWorkspace tab={tab} canImport={IMPORT_ROLES.has(role)} />
+        <DirectDebitWorkspace
+          tab={tab}
+          canImport={IMPORT_ROLES.has(role)}
+          canChase={FINANCE_ROLES.has(role)}
+        />
       </PageBody>
     </>
   )

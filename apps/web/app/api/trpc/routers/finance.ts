@@ -585,6 +585,262 @@ export const financeRouter = router({
           return { status: updated.status, recoveredMinor: updated.recoveredMinor }
         }),
 
+      // ---- Automated chasing (ADR 0045) -----------------------------------
+
+      /** The chase workspace: cases with their automation state. Reads open to
+       *  all staff; the money-adjacent writes below stay Manager+. */
+      chaseList: protectedProcedure
+        .input(
+          z
+            .object({ view: z.enum(['open', 'needs_link', 'resolved', 'all']).default('open') })
+            .default({ view: 'open' }),
+        )
+        .query(async ({ ctx, input }) => {
+          requireUser(ctx)
+          const OPEN = ['new', 'chasing', 'escalated'] as const
+          const where =
+            input.view === 'open'
+              ? { status: { in: [...OPEN] } }
+              : input.view === 'needs_link'
+                ? { status: { in: [...OPEN] }, setupLinkUrl: null }
+                : input.view === 'resolved'
+                  ? { status: { in: ['recovered', 'written_off'] as ('recovered' | 'written_off')[] } }
+                  : {}
+          const rows = await ctx.db.directDebitCase.findMany({
+            where: { deletedAt: null, ...where },
+            orderBy: [{ createdAt: 'desc' }],
+            take: 200,
+            include: { _count: { select: { messages: true } } },
+          })
+          const contactIds = [
+            ...new Set(rows.map((r) => r.contactId).filter((id): id is string => id !== null)),
+          ]
+          const contacts =
+            contactIds.length > 0
+              ? await ctx.db.contact.findMany({
+                  where: { id: { in: contactIds } },
+                  select: { id: true, firstName: true, lastName: true, email: true, phoneE164: true },
+                })
+              : []
+          const contactById = new Map(contacts.map((c) => [c.id, c]))
+          return rows.map((r) => {
+            const c = r.contactId ? contactById.get(r.contactId) : null
+            return {
+              id: r.id,
+              status: r.status,
+              contactId: r.contactId,
+              contactName: c
+                ? [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.phoneE164
+                : null,
+              gcSubscriptionId: r.gcSubscriptionId,
+              outstandingMinor: Math.max(0, r.openingShortfallMinor - r.recoveredMinor),
+              autoChase: r.autoChase,
+              sendEmails: r.sendEmails,
+              sendTexts: r.sendTexts,
+              chaseEmail: r.chaseEmail,
+              chasePhoneE164: r.chasePhoneE164,
+              setupLinkUrl: r.setupLinkUrl,
+              cadenceDays: r.cadenceDays,
+              escalationStep: r.escalationStep,
+              lastAutoMessageAt: r.lastAutoMessageAt,
+              nextAutoMessageAt: r.nextAutoMessageAt,
+              messageCount: r._count.messages,
+              createdAt: r.createdAt,
+              recoveredAt: r.recoveredAt,
+              recoveryMethod: r.recoveryMethod,
+            }
+          })
+        }),
+
+      /** Manually add a customer to the chase system — e.g. a cancelled DD
+       *  with an outstanding amount that the scan can't see (ADR 0045). */
+      openManualChase: protectedProcedure
+        .input(
+          z.object({
+            contactId: z.string().min(1),
+            outstandingMinor: z.number().int().nonnegative().default(0),
+            setupLinkUrl: z.string().trim().url().max(600).nullish(),
+            sendEmails: z.boolean().default(true),
+            sendTexts: z.boolean().default(false),
+            chaseEmail: z.string().trim().email().max(200).nullish(),
+            chasePhoneE164: z.string().trim().max(20).nullish(),
+            cadenceDays: z.number().int().min(1).max(30).default(3),
+            notes: z.string().max(5000).nullish(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const contact = await ctx.db.contact.findFirst({
+            where: { id: input.contactId, deletedAt: null },
+            select: { id: true, email: true, phoneE164: true },
+          })
+          if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'contact not found' })
+          // Link the GC customer when the contact is already in the mirror, so
+          // the engine's auto-resolve (fresh active mandate) works.
+          const gcCustomer = await ctx.db.gcCustomer.findFirst({
+            where: { contactId: contact.id },
+            select: { gcCustomerId: true },
+          })
+          const id = createId()
+          await ctx.db.directDebitCase.create({
+            data: {
+              id,
+              gcSubscriptionId: null,
+              gcCustomerId: gcCustomer?.gcCustomerId ?? null,
+              contactId: contact.id,
+              status: 'new',
+              openingShortfallMinor: input.outstandingMinor,
+              sendEmails: input.sendEmails,
+              sendTexts: input.sendTexts,
+              chaseEmail: input.chaseEmail ?? contact.email,
+              chasePhoneE164: input.chasePhoneE164 ?? contact.phoneE164,
+              setupLinkUrl: input.setupLinkUrl ?? null,
+              cadenceDays: input.cadenceDays,
+              // Armed the moment a link exists; otherwise waits in "needs link".
+              nextAutoMessageAt: input.setupLinkUrl ? new Date() : null,
+              ownerUserId: user.id,
+              notes: input.notes ?? null,
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+          await ctx.audit({
+            action: 'direct_debit.case_opened',
+            target: { type: 'DirectDebitCase', id },
+            after: { manual: true, contactId: contact.id, outstandingMinor: input.outstandingMinor },
+          })
+          return { id }
+        }),
+
+      /** Edit a case's chase settings: contact details, channel flags, the
+       *  re-signup link, cadence, or the master auto-chase switch. */
+      updateChase: protectedProcedure
+        .input(
+          z.object({
+            caseId: z.string().min(1),
+            autoChase: z.boolean().optional(),
+            sendEmails: z.boolean().optional(),
+            sendTexts: z.boolean().optional(),
+            chaseEmail: z.string().trim().email().max(200).nullish(),
+            chasePhoneE164: z.string().trim().max(20).nullish(),
+            setupLinkUrl: z.string().trim().url().max(600).nullish(),
+            cadenceDays: z.number().int().min(1).max(30).optional(),
+            outstandingMinor: z.number().int().nonnegative().optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const existing = await ctx.db.directDebitCase.findFirst({
+            where: { id: input.caseId, deletedAt: null },
+          })
+          if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+          const patch: Record<string, unknown> = { updatedById: user.id }
+          for (const k of [
+            'autoChase',
+            'sendEmails',
+            'sendTexts',
+            'cadenceDays',
+          ] as const) {
+            if (input[k] !== undefined) patch[k] = input[k]
+          }
+          for (const k of ['chaseEmail', 'chasePhoneE164', 'setupLinkUrl'] as const) {
+            if (input[k] !== undefined) patch[k] = input[k]
+          }
+          if (input.outstandingMinor !== undefined) {
+            patch['openingShortfallMinor'] = input.outstandingMinor
+          }
+          // Arm the engine when a link appears (or auto-chase is switched back
+          // on with a link present) and nothing is scheduled yet.
+          const linkAfter = input.setupLinkUrl !== undefined ? input.setupLinkUrl : existing.setupLinkUrl
+          const autoAfter = input.autoChase !== undefined ? input.autoChase : existing.autoChase
+          if (linkAfter && autoAfter && !existing.nextAutoMessageAt) {
+            patch['nextAutoMessageAt'] = new Date()
+          }
+          if (!autoAfter) patch['nextAutoMessageAt'] = null
+          await ctx.db.directDebitCase.update({ where: { id: existing.id }, data: patch })
+          await ctx.audit({
+            action: 'direct_debit.case_chase_updated',
+            target: { type: 'DirectDebitCase', id: existing.id },
+            after: { ...input },
+          })
+          return { ok: true }
+        }),
+
+      /** The manual "they're up to date" tick — closes the case and stops all
+       *  automated messages immediately (ADR 0045). */
+      markUpToDate: protectedProcedure
+        .input(z.object({ caseId: z.string().min(1), note: z.string().max(1000).nullish() }))
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const existing = await ctx.db.directDebitCase.findFirst({
+            where: { id: input.caseId, deletedAt: null },
+            select: { id: true, contactId: true, status: true },
+          })
+          if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+          await ctx.db.directDebitCase.update({
+            where: { id: existing.id },
+            data: {
+              status: 'recovered',
+              recoveredAt: new Date(),
+              recoveryMethod: 'manual',
+              recoveryRef: input.note ?? null,
+              autoChase: false,
+              nextAutoMessageAt: null,
+              updatedById: user.id,
+            },
+          })
+          if (existing.contactId) {
+            await ctx.db.interaction.create({
+              data: {
+                id: createId(),
+                type: 'note',
+                contactId: existing.contactId,
+                occurredAt: new Date(),
+                summary: 'Marked up to date — Direct Debit chasing stopped',
+                payload: {
+                  event: 'direct_debit.case_marked_up_to_date',
+                  caseId: existing.id,
+                  note: input.note ?? null,
+                  authorId: user.id,
+                },
+                createdById: user.id,
+              },
+            })
+          }
+          await ctx.audit({
+            action: 'direct_debit.case_marked_up_to_date',
+            target: { type: 'DirectDebitCase', id: existing.id },
+            after: { note: input.note ?? null },
+          })
+          return { ok: true }
+        }),
+
+      /** Per-case automated message history — what went out, when, how serious. */
+      chaseMessages: protectedProcedure
+        .input(z.object({ caseId: z.string().min(1) }))
+        .query(async ({ ctx, input }) => {
+          requireUser(ctx)
+          return ctx.db.ddCaseMessage.findMany({
+            where: { caseId: input.caseId },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+            select: {
+              id: true,
+              channel: true,
+              step: true,
+              toAddress: true,
+              subject: true,
+              body: true,
+              status: true,
+              error: true,
+              createdAt: true,
+            },
+          })
+        }),
+
       // Send a human-confirmed recovery email (reminder / legal escalation) from
       // a case (Phase 3b). The agent has already reviewed/edited the final
       // subject + body in the dialog — this just sends it via the system mailbox,
