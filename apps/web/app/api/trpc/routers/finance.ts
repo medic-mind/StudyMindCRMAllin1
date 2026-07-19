@@ -10,6 +10,7 @@ import {
   assignCase,
   CaseTransitionError,
   DD_CASE_STATUSES,
+  ddIssueMeetsCutoff,
   defaulterDetail,
   dismissUnresolvedStripePayment,
   getCasesForSubscriptions,
@@ -20,6 +21,7 @@ import {
   listUnresolvedStripePayments,
   recordRecovery,
   RECOVERY_METHODS,
+  resolveDdIssueCutoff,
   setCaseNotes,
   setCaseStatus,
   paymentsForFamily,
@@ -324,17 +326,22 @@ export const financeRouter = router({
   // auto-duns (CLAUDE.md §3). Financial data: every read is audited.
   directDebit: router({
     listDefaulters: protectedProcedure
-      .input(z.object({}).optional())
-      .query(async ({ ctx }) => {
+      .input(z.object({ includeHistoric: z.boolean().default(false) }).optional())
+      .query(async ({ ctx, input }) => {
         assertFinanceRole(requireUser(ctx))
-        const items = await listDefaulters(ctx.db)
+        const all = await listDefaulters(ctx.db)
+        // Hide pre-go-live historic issues unless explicitly shown (ADR 0045).
+        const cutoff = resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE)
+        const items = input?.includeHistoric
+          ? all
+          : all.filter((d) => ddIssueMeetsCutoff(d.issueDate, cutoff))
         await ctx.audit({
           action: 'finance.dd_defaulters_viewed',
           target: { type: 'System', id: 'direct-debit-defaulters' },
           purpose: 'view_dd_defaulters',
           after: { count: items.length },
         })
-        return { items }
+        return { items, hiddenHistoric: all.length - items.length }
       }),
 
     detail: protectedProcedure
@@ -357,34 +364,42 @@ export const financeRouter = router({
     // who quietly stopped a fixed-length plan early without ever failing a
     // Direct Debit. Read-only; audited like every finance read.
     listPlanShortfalls: protectedProcedure
-      .input(z.object({}).optional())
-      .query(async ({ ctx }) => {
+      .input(z.object({ includeHistoric: z.boolean().default(false) }).optional())
+      .query(async ({ ctx, input }) => {
         assertFinanceRole(requireUser(ctx))
-        const items = await listPlanShortfalls(ctx.db)
+        const all = await listPlanShortfalls(ctx.db)
+        const cutoff = resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE)
+        const items = input?.includeHistoric
+          ? all
+          : all.filter((s) => ddIssueMeetsCutoff(s.issueDate, cutoff))
         await ctx.audit({
           action: 'finance.dd_defaulters_viewed',
           target: { type: 'System', id: 'direct-debit-plan-shortfalls' },
           purpose: 'view_dd_plan_shortfalls',
           after: { count: items.length },
         })
-        return { items }
+        return { items, hiddenHistoric: all.length - items.length }
       }),
 
     // Active plans that have fallen behind their expected collection schedule
     // (ADR 0038) — money leaking before anyone cancels the plan. Estimate only
     // (GoCardless owns the real calendar); read-only and audited.
     listActivePlanArrears: protectedProcedure
-      .input(z.object({}).optional())
-      .query(async ({ ctx }) => {
+      .input(z.object({ includeHistoric: z.boolean().default(false) }).optional())
+      .query(async ({ ctx, input }) => {
         assertFinanceRole(requireUser(ctx))
-        const items = await listActivePlanArrears(ctx.db)
+        const all = await listActivePlanArrears(ctx.db)
+        const cutoff = resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE)
+        const items = input?.includeHistoric
+          ? all
+          : all.filter((a) => ddIssueMeetsCutoff(a.issueDate, cutoff))
         await ctx.audit({
           action: 'finance.dd_defaulters_viewed',
           target: { type: 'System', id: 'direct-debit-active-arrears' },
           purpose: 'view_dd_active_arrears',
           after: { count: items.length },
         })
-        return { items }
+        return { items, hiddenHistoric: all.length - items.length }
       }),
 
     // Direct Debit recovery cases (ADR 0038, seventh amendment): the agent
@@ -625,13 +640,20 @@ export const financeRouter = router({
           const contactById = new Map(contacts.map((c) => [c.id, c]))
           return rows.map((r) => {
             const c = r.contactId ? contactById.get(r.contactId) : null
+            const contactName = c
+              ? [c.firstName, c.lastName].filter(Boolean).join(' ') || null
+              : null
+            // Display name: linked contact wins, then the standalone case's own
+            // name (ADR 0045 amendment), then whichever identifier we have.
+            const name =
+              contactName || r.personName || r.chaseEmail || r.chasePhoneE164 || 'Unknown'
             return {
               id: r.id,
               status: r.status,
               contactId: r.contactId,
-              contactName: c
-                ? [c.firstName, c.lastName].filter(Boolean).join(' ') || c.email || c.phoneE164
-                : null,
+              contactName,
+              personName: r.personName,
+              name,
               gcSubscriptionId: r.gcSubscriptionId,
               outstandingMinor: Math.max(0, r.openingShortfallMinor - r.recoveredMinor),
               autoChase: r.autoChase,
@@ -657,7 +679,11 @@ export const financeRouter = router({
       openManualChase: protectedProcedure
         .input(
           z.object({
-            contactId: z.string().min(1),
+            // A case can be a STANDALONE person (ADR 0045 amendment) — most
+            // defaulters predate the CRM — so contactId is optional; give a
+            // personName instead. One of contactId / personName is required.
+            contactId: z.string().min(1).nullish(),
+            personName: z.string().trim().max(200).nullish(),
             outstandingMinor: z.number().int().nonnegative().default(0),
             setupLinkUrl: z.string().trim().url().max(600).nullish(),
             sendEmails: z.boolean().default(true),
@@ -671,30 +697,65 @@ export const financeRouter = router({
         .mutation(async ({ ctx, input }) => {
           const user = requireUser(ctx)
           assertFinanceRole(user)
-          const contact = await ctx.db.contact.findFirst({
-            where: { id: input.contactId, deletedAt: null },
-            select: { id: true, email: true, phoneE164: true },
-          })
-          if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'contact not found' })
-          // Link the GC customer when the contact is already in the mirror, so
-          // the engine's auto-resolve (fresh active mandate) works.
-          const gcCustomer = await ctx.db.gcCustomer.findFirst({
-            where: { contactId: contact.id },
-            select: { gcCustomerId: true },
-          })
+
+          let contactId: string | null = null
+          let chaseEmail = input.chaseEmail ?? null
+          let chasePhoneE164 = input.chasePhoneE164 ?? null
+          let gcCustomerId: string | null = null
+          let personName = input.personName?.trim() || null
+
+          if (input.contactId) {
+            const contact = await ctx.db.contact.findFirst({
+              where: { id: input.contactId, deletedAt: null },
+              select: { id: true, email: true, phoneE164: true },
+            })
+            if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'contact not found' })
+            contactId = contact.id
+            chaseEmail = chaseEmail ?? contact.email
+            chasePhoneE164 = chasePhoneE164 ?? contact.phoneE164
+            // Link the GC customer when the contact is already in the mirror, so
+            // the engine's auto-resolve (fresh active mandate) works.
+            const gcCustomer = await ctx.db.gcCustomer.findFirst({
+              where: { contactId: contact.id },
+              select: { gcCustomerId: true },
+            })
+            gcCustomerId = gcCustomer?.gcCustomerId ?? null
+            personName = null // the linked contact's name wins
+          } else if (!personName) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Add a name or pick a contact.',
+            })
+          }
+
+          // Must be able to reach them on any channel they've enabled.
+          if (input.sendEmails && !chaseEmail) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Add an email address, or turn off email chasing.',
+            })
+          }
+          if (input.sendTexts && !(chasePhoneE164 && chasePhoneE164.trim().startsWith('+'))) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Add an E.164 phone (+…), or turn off text chasing.',
+            })
+          }
+
           const id = createId()
           await ctx.db.directDebitCase.create({
             data: {
               id,
               gcSubscriptionId: null,
-              gcCustomerId: gcCustomer?.gcCustomerId ?? null,
-              contactId: contact.id,
+              gcCustomerId,
+              contactId,
+              personName,
               status: 'new',
               openingShortfallMinor: input.outstandingMinor,
               sendEmails: input.sendEmails,
               sendTexts: input.sendTexts,
-              chaseEmail: input.chaseEmail ?? contact.email,
-              chasePhoneE164: input.chasePhoneE164 ?? contact.phoneE164,
+              chaseEmail,
+              chasePhoneE164,
               setupLinkUrl: input.setupLinkUrl ?? null,
               cadenceDays: input.cadenceDays,
               // Armed the moment a link exists; otherwise waits in "needs link".
@@ -708,7 +769,12 @@ export const financeRouter = router({
           await ctx.audit({
             action: 'direct_debit.case_opened',
             target: { type: 'DirectDebitCase', id },
-            after: { manual: true, contactId: contact.id, outstandingMinor: input.outstandingMinor },
+            after: {
+              manual: true,
+              contactId,
+              personName,
+              outstandingMinor: input.outstandingMinor,
+            },
           })
           return { id }
         }),
@@ -839,6 +905,280 @@ export const financeRouter = router({
               createdAt: true,
             },
           })
+        }),
+
+      /** Full detail for one recovery case — identity, chase settings, owner and
+       *  the complete communication history — for the collections detail view
+       *  (ADR 0045 amendment). Works for standalone (no contact) cases. */
+      caseDetail: protectedProcedure
+        .input(z.object({ caseId: z.string().min(1) }))
+        .query(async ({ ctx, input }) => {
+          requireUser(ctx)
+          const c = await ctx.db.directDebitCase.findFirst({
+            where: { id: input.caseId, deletedAt: null },
+            include: {
+              messages: { orderBy: { createdAt: 'desc' }, take: 100 },
+            },
+          })
+          if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+          const contact = c.contactId
+            ? await ctx.db.contact.findUnique({
+                where: { id: c.contactId },
+                select: { id: true, firstName: true, lastName: true, email: true, phoneE164: true },
+              })
+            : null
+          const owner = c.ownerUserId
+            ? await ctx.db.user.findUnique({
+                where: { id: c.ownerUserId },
+                select: { id: true, name: true, email: true },
+              })
+            : null
+          const contactName = contact
+            ? [contact.firstName, contact.lastName].filter(Boolean).join(' ') || null
+            : null
+          return {
+            id: c.id,
+            status: c.status,
+            contactId: c.contactId,
+            gcCustomerId: c.gcCustomerId,
+            gcSubscriptionId: c.gcSubscriptionId,
+            name: contactName || c.personName || c.chaseEmail || c.chasePhoneE164 || 'Unknown',
+            personName: c.personName,
+            chaseEmail: c.chaseEmail ?? contact?.email ?? null,
+            chasePhoneE164: c.chasePhoneE164 ?? contact?.phoneE164 ?? null,
+            outstandingMinor: Math.max(0, c.openingShortfallMinor - c.recoveredMinor),
+            openingShortfallMinor: c.openingShortfallMinor,
+            recoveredMinor: c.recoveredMinor,
+            autoChase: c.autoChase,
+            sendEmails: c.sendEmails,
+            sendTexts: c.sendTexts,
+            setupLinkUrl: c.setupLinkUrl,
+            cadenceDays: c.cadenceDays,
+            escalationStep: c.escalationStep,
+            lastAutoMessageAt: c.lastAutoMessageAt,
+            nextAutoMessageAt: c.nextAutoMessageAt,
+            ownerUserId: c.ownerUserId,
+            ownerName: owner?.name ?? owner?.email ?? null,
+            notes: c.notes,
+            recoveredAt: c.recoveredAt,
+            recoveryMethod: c.recoveryMethod,
+            createdAt: c.createdAt,
+            messages: c.messages.map((m) => ({
+              id: m.id,
+              channel: m.channel,
+              step: m.step,
+              toAddress: m.toAddress,
+              subject: m.subject,
+              body: m.body,
+              status: m.status,
+              error: m.error,
+              createdAt: m.createdAt,
+            })),
+          }
+        }),
+
+      /** Send a human-confirmed manual recovery message from a case by caseId
+       *  (ADR 0045 amendment) — the collections-CRM path that also works for a
+       *  STANDALONE person (no CRM contact). The agent has already reviewed the
+       *  final subject/body; this sends it (email via system Gmail, SMS via
+       *  Trengo under the agent's own token, §11), optionally attaches the
+       *  chosen template's PDF, records it in the case history (DdCaseMessage)
+       *  and — when a contact is linked — on their timeline. CLAUDE.md §3, §14. */
+      sendCaseMessage: protectedProcedure
+        .input(
+          z.object({
+            caseId: z.string().min(1),
+            channel: z.enum(['email', 'sms']),
+            templateId: z.string().nullish(),
+            subject: z.string().trim().max(300).optional(),
+            body: z.string().trim().min(1).max(10_000),
+            /** Attach the chosen template's PDF (email only). Default on. */
+            includePdf: z.boolean().default(true),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+          const c = await ctx.db.directDebitCase.findFirst({
+            where: { id: input.caseId, deletedAt: null },
+          })
+          if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+          const contact = c.contactId
+            ? await ctx.db.contact.findUnique({
+                where: { id: c.contactId },
+                select: { id: true, email: true, phoneE164: true },
+              })
+            : null
+
+          let status: 'sent' | 'failed' = 'sent'
+          let error: string | null = null
+          let toAddress = ''
+
+          if (input.channel === 'email') {
+            const to = (c.chaseEmail ?? contact?.email ?? '').trim()
+            if (!to) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: 'No email address on this case — add one first.',
+              })
+            }
+            const subject = input.subject?.trim()
+            if (!subject) {
+              throw new TRPCError({ code: 'BAD_REQUEST', message: 'A subject is required.' })
+            }
+            toAddress = to
+            // The escalation "letter" PDF, when the picked template carries one.
+            let attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = []
+            if (input.includePdf && input.templateId) {
+              const tpl = await ctx.db.ddRecoveryTemplate.findUnique({
+                where: { id: input.templateId },
+                select: { pdfData: true, pdfFileName: true, pdfContentType: true },
+              })
+              if (tpl?.pdfData) {
+                attachments = [
+                  {
+                    filename: tpl.pdfFileName ?? 'document.pdf',
+                    content: Buffer.from(tpl.pdfData),
+                    contentType: tpl.pdfContentType ?? 'application/pdf',
+                  },
+                ]
+              }
+            }
+            const result = await sendSystemEmail({
+              to,
+              subject,
+              text: input.body,
+              requestId: ctx.requestId,
+              ...(attachments.length > 0 ? { attachments } : {}),
+            })
+            if (result.status !== 'sent') {
+              status = 'failed'
+              error =
+                result.detail ??
+                (result.status === 'skipped'
+                  ? 'No system mailbox connected — connect Gmail in Settings.'
+                  : 'The email could not be sent.')
+            } else if (contact) {
+              // Reflect on the linked customer's timeline.
+              await ctx.db.interaction.create({
+                data: {
+                  id: createId(),
+                  type: 'email_sent',
+                  contactId: contact.id,
+                  occurredAt: new Date(),
+                  summary: `Direct Debit recovery email: ${subject}`.slice(0, 140),
+                  payload: {
+                    kind: 'dd_recovery',
+                    subject,
+                    body: input.body,
+                    to,
+                    caseId: c.id,
+                    templateId: input.templateId ?? null,
+                    gmailId: result.id,
+                    authorId: user.id,
+                  },
+                  createdById: user.id,
+                  updatedById: user.id,
+                },
+              })
+            }
+          } else {
+            // SMS via Trengo.
+            const phone = (c.chasePhoneE164 ?? contact?.phoneE164 ?? '').trim()
+            if (!phone || !phone.startsWith('+')) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: 'No usable phone number on this case for SMS.',
+              })
+            }
+            toAddress = phone
+            try {
+              if (contact) {
+                // Linked contact → reflect on their timeline (existing thread or
+                // a new one). The Trengo outbound writes its own Interaction.
+                const { resolveActiveTrengoConversation } = await import(
+                  '@studymind/integration-trengo/conversations'
+                )
+                const { sendMessage, startConversation } = await import(
+                  '@studymind/integration-trengo/outbound'
+                )
+                const conv = await resolveActiveTrengoConversation(ctx.db, contact.id, 'sms')
+                if (conv) {
+                  await sendMessage({
+                    contactId: contact.id,
+                    agentId: user.id,
+                    ticketId: conv.ticketId,
+                    channel: 'sms',
+                    body: input.body,
+                    requestId: ctx.requestId,
+                  })
+                } else {
+                  await startConversation({
+                    contactId: contact.id,
+                    agentId: user.id,
+                    channel: 'sms',
+                    recipient: phone,
+                    body: input.body,
+                    requestId: ctx.requestId,
+                  })
+                }
+              } else {
+                // Standalone person — raw send, the DdCaseMessage below is the record.
+                const { sendStandaloneMessage } = await import(
+                  '@studymind/integration-trengo/outbound'
+                )
+                await sendStandaloneMessage({
+                  agentId: user.id,
+                  channel: 'sms',
+                  recipient: phone,
+                  body: input.body,
+                  requestId: ctx.requestId,
+                  auditTarget: { type: 'DirectDebitCase', id: c.id },
+                })
+              }
+            } catch (err) {
+              status = 'failed'
+              error = err instanceof Error ? err.message : 'send failed'
+            }
+          }
+
+          // Record on the case history (auto + manual sends share this log).
+          await ctx.db.ddCaseMessage.create({
+            data: {
+              id: createId(),
+              caseId: c.id,
+              channel: input.channel,
+              templateId: input.templateId ?? null,
+              step: c.escalationStep,
+              toAddress,
+              subject: input.channel === 'email' ? (input.subject?.trim() ?? null) : null,
+              body: input.body,
+              status,
+              error,
+            },
+          })
+
+          if (status === 'failed') {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: error ?? 'The message could not be sent.',
+            })
+          }
+
+          // Nudge a brand-new case into `chasing` once the first message goes out.
+          if (c.status === 'new') {
+            await ctx.db.directDebitCase.update({
+              where: { id: c.id },
+              data: { status: 'chasing', updatedById: user.id },
+            })
+          }
+
+          await ctx.audit({
+            action: 'direct_debit.recovery_sent',
+            target: { type: 'DirectDebitCase', id: c.id },
+            after: { channel: input.channel, to: toAddress, manual: true },
+          })
+          return { status: 'sent' as const }
         }),
 
       // Send a human-confirmed recovery email (reminder / legal escalation) from

@@ -1995,6 +1995,11 @@ model DirectDebitCase {
   gcCustomerId     String?
   contactId        String?
   familyId         String?
+  /// Display name for a STANDALONE case — someone being chased who is not a CRM
+  /// Contact (ADR 0045 amendment). Most defaulters predate the CRM, so a case
+  /// must work with just a name + email + phone and no `contactId`. When a
+  /// contact IS linked its name wins; this is the fallback.
+  personName       String?
   status           DirectDebitCaseStatus @default(new)
   ownerUserId      String?
   /// Shortfall (pence) captured when the case was opened — a stable record even
@@ -2088,6 +2093,17 @@ model DdRecoveryTemplate {
   body      String                 @default("")
   /// Step ordering within a kind (reminder 1, 2, … then escalation).
   sortOrder Int                    @default(0)
+
+  // Optional attached PDF — the "letter before action" / escalation document
+  // the team already sends (ADR 0045 amendment). Same inline byte-storage as
+  // CallSummaryTemplate / InfoPackDocument (keeps self-hosted deploys S3-free);
+  // the four fields are written together, null when there's no attachment.
+  // Email sends attach it; SMS ignores it.
+  pdfFileName    String?
+  pdfContentType String?
+  pdfByteSize    Int?
+  pdfData        Bytes?
+
   archivedAt DateTime?
 
   createdAt   DateTime  @default(now())
@@ -2287,6 +2303,12 @@ model ReconciliationDiscrepancy {
   summary      String
   payload      Json
   contextHash  String
+  /// The representative date of the UNDERLYING financial event (last DD
+  /// failure, plan end, latest collection) — distinct from `createdAt` (when
+  /// the nightly job first flagged it). Lets the dashboard "Needs attention"
+  /// queue hide historic pre-go-live issues (default cutoff 1 Jul 2026) without
+  /// re-walking the detectors. Null on legacy rows until re-flagged. (§9, ADR 0045.)
+  issueDate    DateTime?
   resolvedAt   DateTime?
   resolvedById String?
 
@@ -2301,6 +2323,7 @@ model ReconciliationDiscrepancy {
   @@index([familyId])
   @@index([category])
   @@index([resolvedAt])
+  @@index([issueDate])
 }
 
 enum UnresolvedPaymentStatus {

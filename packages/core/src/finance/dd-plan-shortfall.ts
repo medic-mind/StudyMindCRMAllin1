@@ -78,6 +78,9 @@ export interface PlanShortfall {
   cancelledPartway: boolean
   endDate: Date | null
   lastCollectedAt: Date | null
+  /** Representative date for the go-live cutoff (ADR 0045): when the plan ended,
+   *  else its last collection. */
+  issueDate: Date | null
   gcCustomerId: string | null
   reasons: PlanShortfallReason[]
 }
@@ -125,6 +128,7 @@ export function classifyPlanShortfall(facts: PlanFacts): PlanShortfall | null {
     cancelledPartway: facts.status === 'cancelled' && endedEarly,
     endDate: facts.endDate,
     lastCollectedAt: facts.lastCollectedAt,
+    issueDate: facts.endDate ?? facts.lastCollectedAt,
     gcCustomerId: facts.gcCustomerId,
     reasons,
   }
@@ -365,6 +369,9 @@ export interface ActivePlanArrears {
   totalPaymentCount: number | null
   nextChargeAt: Date | null
   lastCollectedAt: Date | null
+  /** Representative date for the go-live cutoff (ADR 0045): the latest signal of
+   *  activity — last collection, else next scheduled charge, else plan start. */
+  issueDate: Date | null
   gcCustomerId: string | null
 }
 
@@ -399,6 +406,7 @@ export function classifyActivePlanArrears(
     totalPaymentCount: facts.totalPaymentCount,
     nextChargeAt: facts.nextChargeAt,
     lastCollectedAt: facts.lastCollectedAt,
+    issueDate: facts.lastCollectedAt ?? facts.nextChargeAt ?? (facts.startDate as Date),
     gcCustomerId: facts.gcCustomerId,
   }
 }

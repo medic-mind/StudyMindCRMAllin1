@@ -142,6 +142,12 @@ export {
   type ChaseTemplateRef,
   type ChaseTickDecision,
 } from './dd-chase'
+// Direct Debit "issues" go-live cutoff (ADR 0045 amendment) — pure policy.
+export {
+  DEFAULT_DD_ISSUE_CUTOFF,
+  ddIssueMeetsCutoff,
+  resolveDdIssueCutoff,
+} from './dd-issue-cutoff'
 // Direct Debit plan shortfalls (ADR 0038) — cancelled-part-way / underpaid plans
 // and active plans behind their collection schedule.
 export {

@@ -365,6 +365,62 @@ export async function startConversation(
 }
 
 // -----------------------------------------------------------------------------
+// Standalone send — a message to a raw recipient (E.164 phone / email) with NO
+// CRM Contact behind it (ADR 0045 amendment: the Direct Debit collections
+// system chases people who predate the CRM, so a case can have just a name +
+// phone). We still go through the per-agent token (§11) and audit the send, but
+// write no contact-scoped Interaction or Conversation head — the caller (a
+// DdCaseMessage row) owns the record. Prefer `startConversation` whenever a
+// contactId exists, so the message reflects on that customer's timeline.
+// -----------------------------------------------------------------------------
+
+export interface SendStandaloneMessageInput {
+  agentId: string
+  channel: TrengoChannel
+  /** E.164 phone (sms/whatsapp) or email address (email). */
+  recipient: string
+  body: string
+  requestId: string
+  /** Exact Trengo channel (sender line) to send from. */
+  trengoChannelId?: number
+  /** Audit target — defaults to a DirectDebitCase keyed on the recipient. */
+  auditTarget?: { type: string; id: string }
+}
+
+export interface SendStandaloneMessageResult {
+  ticketId: number | null
+  trengoMessageId: number | null
+}
+
+export async function sendStandaloneMessage(
+  input: SendStandaloneMessageInput,
+): Promise<SendStandaloneMessageResult> {
+  const client = await createClientForAgent({
+    agentId: input.agentId,
+    requestId: input.requestId,
+    purpose: 'trengo.start_conversation',
+  })
+  const result = await client.createConversation({
+    channel: input.channel,
+    recipient: input.recipient,
+    body: input.body,
+    customFields: { agentId: input.agentId },
+    ...(input.trengoChannelId ? { channelId: input.trengoChannelId } : {}),
+  })
+  if (!result.ticketId) {
+    throw new TrengoApiError(502, '/messages', { reason: 'no ticket id returned' })
+  }
+  await writeAuditLogEntry(db, {
+    actorId: input.agentId,
+    action: 'trengo.message_sent',
+    target: input.auditTarget ?? { type: 'DirectDebitCase', id: input.recipient },
+    requestId: input.requestId,
+    after: { ticketId: result.ticketId, channel: input.channel, standalone: true },
+  })
+  return { ticketId: result.ticketId, trengoMessageId: result.messageId }
+}
+
+// -----------------------------------------------------------------------------
 // WhatsApp (HSM) templates — list + send.
 //
 // The approved templates live in Trengo (they carry the info-pack links the

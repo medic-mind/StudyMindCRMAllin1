@@ -21,7 +21,7 @@ import {
   type MissedCallReviewRow,
 } from '@studymind/core/calls'
 import { deriveHoursRisk, type HoursRiskLevel } from '@studymind/core/contact'
-import { listUnresolvedStripePayments } from '@studymind/core/finance'
+import { listUnresolvedStripePayments, resolveDdIssueCutoff } from '@studymind/core/finance'
 
 import {
   buildQueueCards,
@@ -325,7 +325,18 @@ export const dashboardRouter = router({
           : Promise.resolve(0),
         isFinance
           ? db.reconciliationDiscrepancy.count({
-              where: { resolvedAt: null, category: { in: [...DD_CATEGORIES] } },
+              where: {
+                resolvedAt: null,
+                category: { in: [...DD_CATEGORIES] },
+                // Hide historic pre-go-live issues (ADR 0045 amendment). The
+                // nightly scan sets issueDate + resolves pre-cutoff rows; until
+                // it re-runs, legacy null rows still show (never worse than
+                // before), then converge.
+                OR: [
+                  { issueDate: null },
+                  { issueDate: { gte: resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE) } },
+                ],
+              },
             })
           : Promise.resolve(0),
         isFinance ? loadUnresolvedPaymentCount(db) : Promise.resolve(0),

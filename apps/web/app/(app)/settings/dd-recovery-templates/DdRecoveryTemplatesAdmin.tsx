@@ -33,6 +33,8 @@ interface Template {
   body: string
   sortOrder: number
   archivedAt: Date | string | null
+  pdfFileName: string | null
+  pdfByteSize: number | null
 }
 
 const EMPTY = {
@@ -72,6 +74,32 @@ export function DdRecoveryTemplatesAdmin() {
   })
   const archive = trpc.ddRecoveryTemplate.archive.useMutation({ onSuccess: invalidate, onError: onErr })
   const restore = trpc.ddRecoveryTemplate.restore.useMutation({ onSuccess: invalidate, onError: onErr })
+  const attachPdf = trpc.ddRecoveryTemplate.attachPdf.useMutation({
+    onSuccess: async () => {
+      await invalidate()
+      toast.success('PDF attached')
+    },
+    onError: onErr,
+  })
+  const removePdf = trpc.ddRecoveryTemplate.removePdf.useMutation({
+    onSuccess: async () => {
+      await invalidate()
+      toast.success('PDF removed')
+    },
+    onError: onErr,
+  })
+
+  async function onPickPdf(id: string, file: File) {
+    if (file.type !== 'application/pdf') {
+      toast.error('Please choose a PDF file.')
+      return
+    }
+    const buf = await file.arrayBuffer()
+    let binary = ''
+    const bytes = new Uint8Array(buf)
+    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]!)
+    attachPdf.mutate({ id, fileName: file.name, dataBase64: btoa(binary) })
+  }
 
   const busy = create.isPending || update.isPending
 
@@ -152,7 +180,7 @@ export function DdRecoveryTemplatesAdmin() {
           <Field
             label="Body"
             htmlFor="t-body"
-            hint="Your copy. Tokens: {{first_name}} {{full_name}} {{customer_name}} {{plan_name}} {{amount_due}} {{collected}} {{plan_total}}."
+            hint="Your copy. Tokens: {{first_name}} {{full_name}} {{customer_name}} {{plan_name}} {{amount_due}} {{collected}} {{plan_total}} {{setup_link}}."
           >
             <textarea
               id="t-body"
@@ -160,6 +188,19 @@ export function DdRecoveryTemplatesAdmin() {
               value={form.body}
               onChange={(e) => setForm({ ...form, body: e.target.value })}
               placeholder="Write your reminder / legal-escalation wording here…"
+            />
+          </Field>
+          <Field
+            label="Escalation order"
+            htmlFor="t-sort"
+            hint="Lower goes out first. The automatic chase walks the sequence, each step more serious."
+          >
+            <Input
+              id="t-sort"
+              type="number"
+              value={String(form.sortOrder)}
+              onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) || 0 })}
+              className="w-24"
             />
           </Field>
           <div className="flex justify-end gap-2">
@@ -204,6 +245,43 @@ export function DdRecoveryTemplatesAdmin() {
                     <p className="mt-0.5 line-clamp-2 text-xs text-neutral-500">
                       {t.body || <span className="italic">No copy yet — click Edit to write it.</span>}
                     </p>
+                    {t.channel === 'email' ? (
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                        {t.pdfFileName ? (
+                          <>
+                            <a
+                              href={`/api/dd-recovery-templates/${t.id}/pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-medium text-primary-700 hover:underline"
+                            >
+                              {t.pdfFileName}
+                            </a>
+                            <button
+                              type="button"
+                              className="text-neutral-500 hover:underline"
+                              onClick={() => removePdf.mutate({ id: t.id })}
+                            >
+                              remove PDF
+                            </button>
+                          </>
+                        ) : (
+                          <label className="cursor-pointer text-neutral-500 hover:underline">
+                            Attach PDF (letter)
+                            <input
+                              type="file"
+                              accept="application/pdf"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0]
+                                if (f) void onPickPdf(t.id, f)
+                                e.target.value = ''
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <Button

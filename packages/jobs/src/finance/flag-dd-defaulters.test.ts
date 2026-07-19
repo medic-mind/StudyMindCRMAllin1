@@ -8,6 +8,10 @@ import type { PrismaClient } from '@studymind/db'
 import { defaulterContextHash, flagDefaulters, flagPlanIssues } from './flag-dd-defaulters'
 
 const NOW = new Date('2026-05-26T12:00:00Z')
+// These tests exercise the raise/resolve logic independent of the go-live
+// cutoff (ADR 0045 amendment), so pass a cutoff far in the past. The cutoff
+// behaviour itself is covered by its own describe block below.
+const CUTOFF = new Date('2000-01-01T00:00:00Z')
 const D = (iso: string) => new Date(iso)
 
 interface CreatedRow {
@@ -108,7 +112,7 @@ describe('flagDefaulters', () => {
         mandateState: 'failed',
       },
     })
-    const result = await flagDefaulters(db, NOW)
+    const result = await flagDefaulters(db, NOW, CUTOFF)
     expect(result.scanned).toBe(1)
     expect(result.newlyDefaulted).toHaveLength(1)
     expect(result.newlyDefaulted[0]?.familyId).toBe('fam_1')
@@ -127,6 +131,7 @@ describe('flagDefaulters', () => {
       totalPaidMinor: 1000,
       totalOwedMinor: 10000,
       outstandingMinor: 9000,
+      issueDate: null,
       reasons: ['mandate_inactive_with_balance' as const],
     }
     const hash = defaulterContextHash(row)
@@ -141,7 +146,7 @@ describe('flagDefaulters', () => {
         { familyId: 'fam_1', category: 'direct_debit_default', contextHash: hash },
       ],
     })
-    const result = await flagDefaulters(db, NOW)
+    const result = await flagDefaulters(db, NOW, CUTOFF)
     expect(result.scanned).toBe(1)
     expect(result.newlyDefaulted).toHaveLength(0)
     expect(created).toHaveLength(0)
@@ -156,7 +161,7 @@ describe('flagDefaulters', () => {
         mandateState: 'active',
       },
     })
-    const result = await flagDefaulters(db, NOW)
+    const result = await flagDefaulters(db, NOW, CUTOFF)
     expect(result.newlyDefaulted).toHaveLength(0)
     expect(created).toHaveLength(0)
   })
@@ -173,7 +178,7 @@ describe('flagDefaulters', () => {
       },
       openDefaulters: [{ id: 'disc_recovered', familyId: 'fam_gone' }],
     })
-    const result = await flagDefaulters(db, NOW)
+    const result = await flagDefaulters(db, NOW, CUTOFF)
     expect(result.resolved).toBe(1)
     expect(resolvedIds).toEqual(['disc_recovered'])
   })
@@ -188,7 +193,7 @@ describe('flagDefaulters', () => {
       },
       openDefaulters: [{ id: 'disc_keep', familyId: 'fam_1' }],
     })
-    const result = await flagDefaulters(db, NOW)
+    const result = await flagDefaulters(db, NOW, CUTOFF)
     expect(result.resolved).toBe(0)
     expect(resolvedIds).toEqual([])
   })
@@ -203,10 +208,30 @@ describe('flagDefaulters', () => {
       totalPaidMinor: 0,
       totalOwedMinor: 0,
       outstandingMinor: 0,
+      issueDate: null,
       reasons: ['a', 'b'] as unknown as never,
     }
     const reordered = { ...base, reasons: ['b', 'a'] as unknown as never }
     expect(defaulterContextHash(base)).toBe(defaulterContextHash(reordered))
+  })
+
+  it('does NOT flag a defaulter whose only activity predates the go-live cutoff', () => {
+    // The mock fixture's payments are dated 2026-04, before the default
+    // 2026-07-01 cutoff, so the family is held off the dashboard (ADR 0045).
+    return (async () => {
+      const { db, created } = makeDb({
+        defaulterFamily: {
+          familyId: 'fam_old',
+          billingName: 'Historic Debt',
+          invoicedMinor: 10000,
+          mandateState: 'failed',
+        },
+      })
+      // Default cutoff (no third arg) = go-live 2026-07-01.
+      const result = await flagDefaulters(db, NOW)
+      expect(result.newlyDefaulted).toHaveLength(0)
+      expect(created).toHaveLength(0)
+    })()
   })
 })
 
@@ -331,7 +356,7 @@ describe('flagPlanIssues', () => {
       },
       customers: [{ gcCustomerId: 'CU1', familyId: 'fam_1', givenName: 'Pat' }],
     })
-    const result = await flagPlanIssues(db, NOW)
+    const result = await flagPlanIssues(db, NOW, CUTOFF)
     expect(result.newlyFlagged).toHaveLength(1)
     expect(result.newlyFlagged[0]?.kind).toBe('shortfall')
     expect(created).toHaveLength(1)
@@ -356,7 +381,7 @@ describe('flagPlanIssues', () => {
       paymentsBySub: { SB1: [] },
       customers: [{ gcCustomerId: 'CU1', familyId: null }],
     })
-    const result = await flagPlanIssues(db, NOW)
+    const result = await flagPlanIssues(db, NOW, CUTOFF)
     expect(result.newlyFlagged).toHaveLength(0)
     expect(created).toHaveLength(0)
   })
@@ -382,7 +407,7 @@ describe('flagPlanIssues', () => {
       },
       customers: [{ gcCustomerId: 'CU2', familyId: 'fam_2' }],
     })
-    const result = await flagPlanIssues(db, NOW)
+    const result = await flagPlanIssues(db, NOW, CUTOFF)
     expect(result.newlyFlagged.some((p) => p.kind === 'arrears')).toBe(true)
     expect(created.some((c) => c.category === 'direct_debit_plan_arrears')).toBe(true)
   })
@@ -410,7 +435,7 @@ describe('flagPlanIssues', () => {
       customers: [{ gcCustomerId: 'CU3', familyId: 'fam_3' }],
       open: [{ id: 'disc_old', category: 'direct_debit_plan_arrears', gcSubscriptionId: 'SB_OLD' }],
     })
-    const result = await flagPlanIssues(db, NOW)
+    const result = await flagPlanIssues(db, NOW, CUTOFF)
     expect(result.resolved).toBe(1)
     expect(resolvedIds).toEqual(['disc_old'])
     // The recovered plan's open case is auto-cleared in the same pass.
@@ -436,7 +461,7 @@ describe('flagPlanIssues', () => {
       customers: [{ gcCustomerId: 'CU4', familyId: 'fam_4' }],
       open: [{ id: 'disc_keep', category: 'direct_debit_plan_arrears', gcSubscriptionId: 'SB_BAD' }],
     })
-    const result = await flagPlanIssues(db, NOW)
+    const result = await flagPlanIssues(db, NOW, CUTOFF)
     expect(result.resolved).toBe(0)
     expect(resolvedIds).toEqual([])
   })

@@ -168,8 +168,8 @@ function CustomerCell({
   return <span className="font-medium text-neutral-700">{label}</span>
 }
 
-export function PlanShortfallsSection() {
-  const query = trpc.finance.directDebit.listPlanShortfalls.useQuery({})
+export function PlanShortfallsSection({ includeHistoric = false }: { includeHistoric?: boolean }) {
+  const query = trpc.finance.directDebit.listPlanShortfalls.useQuery({ includeHistoric })
   const items = (query.data?.items ?? []) as Shortfall[]
   const [sort, setSort] = useState<{ key: keyof Shortfall; dir: SortDir }>({
     key: 'shortfallMinor',
@@ -392,8 +392,12 @@ interface Arrears {
   familyId: string | null
 }
 
-export function ActivePlanArrearsSection() {
-  const query = trpc.finance.directDebit.listActivePlanArrears.useQuery({})
+export function ActivePlanArrearsSection({
+  includeHistoric = false,
+}: {
+  includeHistoric?: boolean
+}) {
+  const query = trpc.finance.directDebit.listActivePlanArrears.useQuery({ includeHistoric })
   const items = (query.data?.items ?? []) as Arrears[]
   const [sort, setSort] = useState<{ key: keyof Arrears; dir: SortDir }>({
     key: 'estimatedArrearsMinor',

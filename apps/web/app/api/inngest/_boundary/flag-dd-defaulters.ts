@@ -10,6 +10,7 @@
 // Runs after `finance/reconcile-all-families` completes (§17.3) so the
 // invoice/payment state it reads is consistent.
 
+import { resolveDdIssueCutoff } from '@studymind/core/finance'
 import { resolveTopicChannelId } from '@studymind/core/slack'
 import { flagDefaulters, flagPlanIssues } from '@studymind/jobs/finance/flag-dd-defaulters'
 import { inngest } from '@studymind/jobs'
@@ -52,8 +53,13 @@ export const flagDdDefaultersNightly = inngest.createFunction(
   // `finance/reconcile.completed`.
   { event: 'finance/reconcile.completed' },
   async ({ step, logger }) => {
-    const result = await step.run('flag-defaulters', () => flagDefaulters(db))
-    const planResult = await step.run('flag-plan-issues', () => flagPlanIssues(db))
+    // Historic pre-go-live issues (bulk GoCardless import) are held off the
+    // dashboard "Needs attention" queue via the cutoff (ADR 0045 amendment).
+    const cutoff = resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE)
+    const result = await step.run('flag-defaulters', () => flagDefaulters(db, new Date(), cutoff))
+    const planResult = await step.run('flag-plan-issues', () =>
+      flagPlanIssues(db, new Date(), cutoff),
+    )
 
     const newlyShortfall = planResult.newlyFlagged.filter((p) => p.kind === 'shortfall').length
     const newlyArrears = planResult.newlyFlagged.filter((p) => p.kind === 'arrears').length

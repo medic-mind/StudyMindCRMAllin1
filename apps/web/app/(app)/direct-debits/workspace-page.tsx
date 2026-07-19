@@ -26,10 +26,8 @@ const SUBTITLES: Record<DdTab, string> = {
     'Bank transfers of collected funds to StudyMind, with the customer payments inside each one.',
   activity:
     'Every GoCardless event the moment it happens — payments, mandates, plans and payouts, newest first.',
-  chasing:
-    'Automated chasing for cancelled Direct Debits with money outstanding. Escalating emails/texts carry each person’s re-signup link until they set up again — detected automatically — or a human marks them up to date.',
   issues:
-    'Families that have defaulted on a Direct Debit, sorted by outstanding balance. Nothing here is auto-chased.',
+    'Everyone who has underpaid or cancelled a Direct Debit before all payments were collected. Open a person to see every message, send a manual message, or start the automatic recovery — escalating emails/texts every few days until they pay or set up again. Works whether or not they’re a CRM contact.',
 }
 
 export async function DirectDebitsPage({ tab }: { tab: DdTab }): Promise<JSX.Element> {

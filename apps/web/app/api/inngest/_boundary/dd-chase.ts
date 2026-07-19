@@ -67,7 +67,15 @@ export const ddChaseTick = inngest.createFunction(
     const templates = await db.ddRecoveryTemplate.findMany({
       where: { deletedAt: null, archivedAt: null, body: { not: '' } },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      select: { id: true, channel: true, subject: true, body: true },
+      select: {
+        id: true,
+        channel: true,
+        subject: true,
+        body: true,
+        pdfFileName: true,
+        pdfContentType: true,
+        pdfData: true,
+      },
     })
     const emailTemplates: ChaseTemplateRef[] = templates
       .filter((t) => t.channel === 'email')
@@ -75,6 +83,19 @@ export const ddChaseTick = inngest.createFunction(
     const smsTemplates: ChaseTemplateRef[] = templates
       .filter((t) => t.channel === 'sms')
       .map((t) => ({ id: t.id, channel: 'sms', subject: null, body: t.body }))
+    // The escalation "letter" PDF the team already sends, attached to each
+    // email step (ADR 0045 amendment). Keyed by template id so the chosen step
+    // carries its own document.
+    const pdfByTemplateId = new Map<string, { filename: string; content: Buffer; contentType?: string }>()
+    for (const t of templates) {
+      if (t.pdfData) {
+        pdfByTemplateId.set(t.id, {
+          filename: t.pdfFileName ?? 'document.pdf',
+          content: Buffer.from(t.pdfData),
+          contentType: t.pdfContentType ?? 'application/pdf',
+        })
+      }
+    }
 
     let resolved = 0
     let sent = 0
@@ -182,19 +203,37 @@ export const ddChaseTick = inngest.createFunction(
             select: { firstName: true, lastName: true },
           })
         : null
+      // Name: the linked contact wins; else the standalone case's own name
+      // (ADR 0045 amendment — most chased people predate the CRM).
+      const contactFull = [contact?.firstName, contact?.lastName].filter(Boolean).join(' ')
+      const fullName = contactFull || c.personName || null
+      const firstName = contact?.firstName ?? (c.personName ? c.personName.split(/\s+/u)[0]! : null)
+      const lastName =
+        contact?.lastName ??
+        (c.personName ? c.personName.split(/\s+/u).slice(1).join(' ') || null : null)
       const vars: RecoveryTemplateVars = {
-        first_name: contact?.firstName ?? null,
-        last_name: contact?.lastName ?? null,
-        full_name:
-          [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || null,
-        customer_name:
-          [contact?.firstName, contact?.lastName].filter(Boolean).join(' ') || null,
+        first_name: firstName,
+        last_name: lastName,
+        full_name: fullName,
+        customer_name: fullName,
         amount_due: formatPence(Math.max(0, c.openingShortfallMinor - c.recoveredMinor)),
         setup_link: c.setupLinkUrl,
       }
 
       const sentChannels: string[] = []
       for (const s of decision.sends) {
+        // Idempotency (§2): a whole-tick retry (Inngest re-runs the function on
+        // failure) must not re-send a channel already sent at this step. The
+        // DdCaseMessage row is the durable per-send record — neither
+        // sendSystemEmail nor the standalone SMS path dedupes on requestId.
+        const already = await db.ddCaseMessage.findFirst({
+          where: { caseId: c.id, step: c.escalationStep, channel: s.channel, status: 'sent' },
+          select: { id: true },
+        })
+        if (already) {
+          sentChannels.push(s.channel)
+          continue
+        }
         const subject = s.template.subject
           ? renderRecoveryTemplate(s.template.subject, vars)
           : 'Your Direct Debit needs setting back up'
@@ -203,11 +242,13 @@ export const ddChaseTick = inngest.createFunction(
         let error: string | null = null
         try {
           if (s.channel === 'email') {
+            const pdf = pdfByTemplateId.get(s.template.id)
             const r = await sendSystemEmail({
               to: s.to,
               subject,
               text: body,
               requestId: `dd-chase:${c.id}:${c.escalationStep}:email`,
+              ...(pdf ? { attachments: [pdf] } : {}),
             })
             if (r.status !== 'sent') {
               status = 'failed'
@@ -216,15 +257,27 @@ export const ddChaseTick = inngest.createFunction(
           } else {
             const agentId = c.ownerUserId ?? c.createdById
             if (!agentId) throw new Error('no case owner for the Trengo SMS token')
-            if (!c.contactId) throw new Error('no linked contact for the SMS')
-            await trengoOutbound.startConversation({
-              contactId: c.contactId,
-              agentId,
-              channel: 'sms',
-              recipient: s.to,
-              body,
-              requestId: `dd-chase:${c.id}:${c.escalationStep}:sms`,
-            })
+            // Linked contact → reflect on their timeline; standalone person →
+            // raw send (the DdCaseMessage row below is the record).
+            if (c.contactId) {
+              await trengoOutbound.startConversation({
+                contactId: c.contactId,
+                agentId,
+                channel: 'sms',
+                recipient: s.to,
+                body,
+                requestId: `dd-chase:${c.id}:${c.escalationStep}:sms`,
+              })
+            } else {
+              await trengoOutbound.sendStandaloneMessage({
+                agentId,
+                channel: 'sms',
+                recipient: s.to,
+                body,
+                requestId: `dd-chase:${c.id}:${c.escalationStep}:sms`,
+                auditTarget: { type: 'DirectDebitCase', id: c.id },
+              })
+            }
           }
         } catch (err) {
           status = 'failed'

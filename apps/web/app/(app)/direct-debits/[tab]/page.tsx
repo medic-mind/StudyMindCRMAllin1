@@ -2,7 +2,7 @@
 // customers · issues. Real routes (not query params) so the sidebar children,
 // deep links, and back button behave. Unknown tabs 404.
 
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 
 import type { DdTab } from '@/components/finance/gocardless/DirectDebitWorkspace'
 
@@ -16,7 +16,6 @@ const TABS = new Set<DdTab>([
   'customers',
   'payouts',
   'activity',
-  'chasing',
   'issues',
 ])
 
@@ -26,6 +25,8 @@ export default async function Page({
   params: Promise<{ tab: string }>
 }): Promise<JSX.Element> {
   const { tab } = await params
+  // Chasing merged into Issues (ADR 0045 amendment) — keep old links working.
+  if (tab === 'chasing') redirect('/direct-debits/issues')
   if (!TABS.has(tab as DdTab)) notFound()
   return DirectDebitsPage({ tab: tab as DdTab })
 }

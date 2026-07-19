@@ -12,6 +12,8 @@ import { createHash } from 'node:crypto'
 import { createId } from '@paralleldrive/cuid2'
 
 import {
+  ddIssueMeetsCutoff,
+  DEFAULT_DD_ISSUE_CUTOFF,
   listActivePlanArrears,
   listDefaulters,
   listPlanShortfalls,
@@ -58,8 +60,15 @@ export interface FlagDefaultersResult {
 export async function flagDefaulters(
   db: DbClient,
   now: Date = new Date(),
+  cutoff: Date = DEFAULT_DD_ISSUE_CUTOFF,
 ): Promise<FlagDefaultersResult> {
-  const defaulters = await listDefaulters(db, { now })
+  // Only surface issues on/after the go-live cutoff (ADR 0045 amendment): a
+  // bulk historic import (ADR 0038) drags in long-settled 2020-era failures
+  // that would otherwise flood the dashboard. Pre-cutoff families drop out of
+  // the set below, so the self-heal resolves any stale discrepancy for them.
+  const defaulters = (await listDefaulters(db, { now })).filter((d) =>
+    ddIssueMeetsCutoff(d.issueDate, cutoff),
+  )
   const newlyDefaulted: NewlyDefaulted[] = []
 
   for (const row of defaulters) {
@@ -70,9 +79,19 @@ export async function flagDefaulters(
         category: 'direct_debit_default',
         contextHash,
       },
-      select: { id: true },
+      select: { id: true, issueDate: true },
     })
-    if (existing) continue
+    if (existing) {
+      // Backfill the underlying date onto a legacy row so the dashboard cutoff
+      // filter is authoritative without re-raising the discrepancy.
+      if (existing.issueDate == null && row.issueDate) {
+        await db.reconciliationDiscrepancy.update({
+          where: { id: existing.id },
+          data: { issueDate: row.issueDate },
+        })
+      }
+      continue
+    }
 
     await db.reconciliationDiscrepancy.create({
       data: {
@@ -90,6 +109,7 @@ export async function flagDefaulters(
           billingContactName: row.billingContactName,
         },
         contextHash,
+        issueDate: row.issueDate,
       },
     })
 
@@ -101,8 +121,8 @@ export async function flagDefaulters(
     })
   }
 
-  // Self-heal: resolve open defaulter discrepancies for families that have
-  // recovered (no longer in the defaulter set).
+  // Self-heal: resolve open defaulter discrepancies for families no longer in
+  // the (cutoff-filtered) defaulter set — recovered OR pre-cutoff historic.
   const defaulterFamilyIds = new Set(defaulters.map((d) => d.familyId))
   const openDefaulters = await db.reconciliationDiscrepancy.findMany({
     where: { category: 'direct_debit_default', resolvedAt: null },
@@ -168,13 +188,22 @@ const PLAN_ISSUE_CATEGORIES = [
 
 /**
  * Resolve open plan discrepancies whose subscription no longer appears in the
- * current issue set — the system heals itself (golden rule #4) when an arrears
- * plan catches up or a shortfall is otherwise cleared. Read-only on money.
+ * current post-cutoff issue set — the system heals itself (golden rule #4) when
+ * an arrears plan catches up, a shortfall clears, or a plan falls behind the
+ * go-live cutoff (ADR 0045 amendment). Read-only on money.
+ *
+ * Two sets, because "off the dashboard" and "money came in" are different:
+ *  - `postCutoffStillIssue`: still an actionable issue → keep the discrepancy.
+ *  - `fullStillIssue`: still an issue at ALL (ignoring the cutoff). A plan
+ *    excluded only by the cutoff is NOT recovered, so we must NOT auto-close its
+ *    recovery case — only genuinely-recovered plans (absent from the full set)
+ *    close their case.
  */
 async function resolveRecoveredPlanIssues(
   db: DbClient,
   now: Date,
-  stillIssue: Set<string>,
+  postCutoffStillIssue: Set<string>,
+  fullStillIssue: Set<string>,
 ): Promise<number> {
   const open = await db.reconciliationDiscrepancy.findMany({
     where: { category: { in: [...PLAN_ISSUE_CATEGORIES] }, resolvedAt: null },
@@ -185,8 +214,10 @@ async function resolveRecoveredPlanIssues(
   for (const d of open) {
     const payload = (d.payload ?? {}) as { gcSubscriptionId?: string }
     const subId = payload.gcSubscriptionId
-    if (subId && stillIssue.has(subId)) continue
-    if (subId) recoveredSubIds.add(subId)
+    if (subId && postCutoffStillIssue.has(subId)) continue
+    // Close the recovery case ONLY when the plan is genuinely recovered (gone
+    // from the full set), not when it's merely pre-cutoff.
+    if (subId && !fullStillIssue.has(subId)) recoveredSubIds.add(subId)
     await db.reconciliationDiscrepancy.update({
       where: { id: d.id },
       data: { resolvedAt: now },
@@ -217,11 +248,17 @@ async function resolveRecoveredPlanIssues(
 export async function flagPlanIssues(
   db: DbClient,
   now: Date = new Date(),
+  cutoff: Date = DEFAULT_DD_ISSUE_CUTOFF,
 ): Promise<FlagPlanIssuesResult> {
-  const [shortfalls, arrears] = await Promise.all([
+  const [allShortfalls, allArrears] = await Promise.all([
     listPlanShortfalls(db),
     listActivePlanArrears(db, { now }),
   ])
+  // Only raise/keep discrepancies for post-cutoff plans (ADR 0045 amendment).
+  // The full sets are retained so a pre-cutoff plan is not mistaken for one
+  // that recovered when we decide whether to auto-close its case.
+  const shortfalls = allShortfalls.filter((s) => ddIssueMeetsCutoff(s.issueDate, cutoff))
+  const arrears = allArrears.filter((a) => ddIssueMeetsCutoff(a.issueDate, cutoff))
   const newlyFlagged: NewlyFlaggedPlan[] = []
 
   for (const row of shortfalls) {
@@ -229,9 +266,17 @@ export async function flagPlanIssues(
     const contextHash = planShortfallContextHash(row)
     const existing = await db.reconciliationDiscrepancy.findFirst({
       where: { familyId: row.familyId, category: 'direct_debit_plan_shortfall', contextHash },
-      select: { id: true },
+      select: { id: true, issueDate: true },
     })
-    if (existing) continue
+    if (existing) {
+      if (existing.issueDate == null && row.issueDate) {
+        await db.reconciliationDiscrepancy.update({
+          where: { id: existing.id },
+          data: { issueDate: row.issueDate },
+        })
+      }
+      continue
+    }
 
     await db.reconciliationDiscrepancy.create({
       data: {
@@ -253,6 +298,7 @@ export async function flagPlanIssues(
           contactId: row.contactId,
         },
         contextHash,
+        issueDate: row.issueDate,
       },
     })
     newlyFlagged.push({
@@ -269,9 +315,17 @@ export async function flagPlanIssues(
     const contextHash = planArrearsContextHash(row)
     const existing = await db.reconciliationDiscrepancy.findFirst({
       where: { familyId: row.familyId, category: 'direct_debit_plan_arrears', contextHash },
-      select: { id: true },
+      select: { id: true, issueDate: true },
     })
-    if (existing) continue
+    if (existing) {
+      if (existing.issueDate == null && row.issueDate) {
+        await db.reconciliationDiscrepancy.update({
+          where: { id: existing.id },
+          data: { issueDate: row.issueDate },
+        })
+      }
+      continue
+    }
 
     await db.reconciliationDiscrepancy.create({
       data: {
@@ -290,6 +344,7 @@ export async function flagPlanIssues(
           contactId: row.contactId,
         },
         contextHash,
+        issueDate: row.issueDate,
       },
     })
     newlyFlagged.push({
@@ -301,12 +356,23 @@ export async function flagPlanIssues(
     })
   }
 
-  // Self-heal: resolve open plan discrepancies whose plan is no longer an issue.
-  const stillIssue = new Set<string>([
+  // Self-heal: resolve open plan discrepancies whose plan is no longer an issue
+  // (recovered or pre-cutoff), closing recovery cases only for truly-recovered
+  // plans (present in neither the post-cutoff nor the full set).
+  const postCutoffStillIssue = new Set<string>([
     ...shortfalls.map((s) => s.gcSubscriptionId),
     ...arrears.map((a) => a.gcSubscriptionId),
   ])
-  const resolved = await resolveRecoveredPlanIssues(db, now, stillIssue)
+  const fullStillIssue = new Set<string>([
+    ...allShortfalls.map((s) => s.gcSubscriptionId),
+    ...allArrears.map((a) => a.gcSubscriptionId),
+  ])
+  const resolved = await resolveRecoveredPlanIssues(
+    db,
+    now,
+    postCutoffStillIssue,
+    fullStillIssue,
+  )
 
   return {
     shortfallsScanned: shortfalls.length,

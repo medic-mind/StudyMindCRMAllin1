@@ -6,6 +6,7 @@
 // Issues. Tabs are real routes (/direct-debits/<tab>) so the sidebar
 // children, deep links, and back button all behave (CLAUDE.md §26).
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 
@@ -15,7 +16,7 @@ import { Table, Tbody, Th, Thead, Tr } from '@/components/ui/table'
 import { trpc } from '@/lib/trpc/client'
 
 import { ActivityTab } from './ActivityTab'
-import { ChasingTab } from './ChasingTab'
+import { RecoveryCasesSection } from './ChasingTab'
 import { CustomersTab } from './CustomersTab'
 import { OverviewTab } from './OverviewTab'
 import { PaymentsTab } from './PaymentsTab'
@@ -30,7 +31,6 @@ export const DD_TABS = [
   { value: 'customers', label: 'Customers & mandates', href: '/direct-debits/customers' },
   { value: 'payouts', label: 'Payouts', href: '/direct-debits/payouts' },
   { value: 'activity', label: 'Activity', href: '/direct-debits/activity' },
-  { value: 'chasing', label: 'Chasing', href: '/direct-debits/chasing' },
   { value: 'issues', label: 'Issues', href: '/direct-debits/issues' },
 ] as const
 
@@ -115,24 +115,49 @@ export function DirectDebitWorkspace({
       {tab === 'customers' ? <CustomersTab /> : null}
       {tab === 'payouts' ? <PayoutsTab /> : null}
       {tab === 'activity' ? <ActivityTab /> : null}
-      {tab === 'chasing' ? <ChasingTab canWrite={canChase} /> : null}
-      {tab === 'issues' ? <IssuesTab /> : null}
+      {tab === 'issues' ? <IssuesTab canWrite={canChase} /> : null}
     </div>
   )
 }
 
-function IssuesTab() {
+// The single Issues tab (ADR 0045 amendment): the recovery-cases worklist (the
+// CRM of people who owe money — chase, message, recover) at the top, and the
+// auto-detected sources below (defaulters + cancelled-early / underpaid plans).
+// Historic pre-go-live issues are hidden by default with a reveal toggle.
+function IssuesTab({ canWrite }: { canWrite: boolean }) {
+  const [includeHistoric, setIncludeHistoric] = useState(false)
   return (
-    <div className="space-y-6">
-      <DefaultersSection />
-      <PlanShortfallsSection />
-      <ActivePlanArrearsSection />
+    <div className="space-y-8">
+      <RecoveryCasesSection canWrite={canWrite} />
+
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 pt-4">
+          <div>
+            <h2 className="text-sm font-semibold text-neutral-900">Detected issues</h2>
+            <p className="text-xs text-neutral-500">
+              Underpayments and Direct Debits cancelled before every payment was collected. Start a
+              recovery case from any of these.
+            </p>
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-neutral-600">
+            <input
+              type="checkbox"
+              checked={includeHistoric}
+              onChange={(e) => setIncludeHistoric(e.target.checked)}
+            />
+            Show issues before July 2026
+          </label>
+        </div>
+        <DefaultersSection includeHistoric={includeHistoric} />
+        <PlanShortfallsSection includeHistoric={includeHistoric} />
+        <ActivePlanArrearsSection includeHistoric={includeHistoric} />
+      </div>
     </div>
   )
 }
 
-function DefaultersSection() {
-  const defaulters = trpc.finance.directDebit.listDefaulters.useQuery({})
+function DefaultersSection({ includeHistoric }: { includeHistoric: boolean }) {
+  const defaulters = trpc.finance.directDebit.listDefaulters.useQuery({ includeHistoric })
   const items = defaulters.data?.items ?? []
 
   return (

@@ -46,6 +46,9 @@ export interface DefaulterRow {
   totalOwedMinor: number
   /** Outstanding = owed minus paid, clamped at 0. */
   outstandingMinor: number
+  /** Representative date of the issue for the go-live cutoff (ADR 0045): the
+   *  last DD failure, else the family's latest GoCardless payment activity. */
+  issueDate: Date | null
   reasons: DefaulterReason[]
 }
 
@@ -66,6 +69,9 @@ interface FamilyPaymentFacts {
   confirmedGcPayments: Array<{ amountMinor: number; receivedAt: Date }>
   /** Worst inactive mandate state, or null when all mandates are healthy. */
   inactiveMandateState: string | null
+  /** Latest GoCardless payment activity date (confirmed or reverted) — the
+   *  cutoff fallback when there's no reverted-payment failure date. */
+  latestActivityAt?: Date | null
 }
 
 function contactName(c: {
@@ -133,6 +139,7 @@ export function classifyDefaulter(
     totalPaidMinor: facts.paidMinor,
     totalOwedMinor: facts.invoicedMinor,
     outstandingMinor,
+    issueDate: lastFailureAt ?? facts.latestActivityAt ?? null,
     reasons,
   }
 }
@@ -191,6 +198,17 @@ async function loadFamilyFacts(
     .filter((p) => p.provider === 'gocardless' && !p.reverted && p.confirmedAt)
     .map((p) => ({ amountMinor: p.amountMinor, receivedAt: p.receivedAt }))
 
+  // Latest GoCardless payment activity (confirmed receipt or reversal) — the
+  // cutoff fallback for issues (e.g. mandate-inactive-with-balance) that carry
+  // no reverted-payment failure date.
+  let latestActivityAt: Date | null = null
+  for (const p of payments) {
+    if (p.provider !== 'gocardless') continue
+    for (const at of [p.receivedAt, p.confirmedAt, p.revertedAt]) {
+      if (at && (!latestActivityAt || at > latestActivityAt)) latestActivityAt = at
+    }
+  }
+
   // Worst inactive mandate state (prefer failed > cancelled > expired ordering
   // is not meaningful; we just report one inactive state if any exists).
   const inactiveMandate =
@@ -207,6 +225,7 @@ async function loadFamilyFacts(
     revertedPayments,
     confirmedGcPayments,
     inactiveMandateState: inactiveMandate?.state ?? null,
+    latestActivityAt,
   }
 }
 

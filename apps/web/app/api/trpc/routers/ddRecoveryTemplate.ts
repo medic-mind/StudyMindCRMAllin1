@@ -21,6 +21,7 @@ const FINANCE_ROLES: ReadonlySet<UserRole> = new Set([
 
 const KINDS = ['reminder', 'legal_escalation', 'other'] as const
 const CHANNELS = ['email', 'trengo', 'sms'] as const
+const MAX_PDF_BYTES = 8 * 1024 * 1024
 
 function assertManage(role: UserRole): void {
   if (!MANAGE_ROLES.has(role)) {
@@ -51,6 +52,10 @@ const SELECT = {
   body: true,
   sortOrder: true,
   archivedAt: true,
+  // PDF metadata only (the "letter before action" the team attaches to email
+  // escalations, ADR 0045 amendment) — never the bytes over the wire.
+  pdfFileName: true,
+  pdfByteSize: true,
 } as const
 
 export const ddRecoveryTemplateRouter = router({
@@ -162,6 +167,81 @@ export const ddRecoveryTemplateRouter = router({
       await ctx.audit({
         action: 'dd_recovery_template.restored',
         target: { type: 'DdRecoveryTemplate', id: input.id },
+      })
+      return { ok: true }
+    }),
+
+  /** Attach the "letter before action" / escalation PDF to a template (ADR 0045
+   *  amendment). Email sends attach it automatically; SMS ignores it. Stored
+   *  inline, magic-number sniffed, 8 MB cap — same as CallSummaryTemplate. */
+  attachPdf: protectedProcedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        fileName: z.string().trim().min(1).max(200),
+        dataBase64: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertManage(user.role)
+      const existing = await ctx.db.ddRecoveryTemplate.findUnique({
+        where: { id: input.id },
+        select: { id: true },
+      })
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+      const data = Buffer.from(input.dataBase64, 'base64')
+      if (data.byteLength === 0) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'File is empty.' })
+      }
+      if (data.byteLength > MAX_PDF_BYTES) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'PDF must be 8 MB or smaller.' })
+      }
+      if (data.subarray(0, 5).toString('ascii') !== '%PDF-') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'File is not a PDF.' })
+      }
+      await ctx.db.ddRecoveryTemplate.update({
+        where: { id: input.id },
+        data: {
+          pdfFileName: input.fileName,
+          pdfContentType: 'application/pdf',
+          pdfByteSize: data.byteLength,
+          pdfData: data,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'dd_recovery_template.pdf_attached',
+        target: { type: 'DdRecoveryTemplate', id: input.id },
+        after: { pdfFileName: input.fileName, pdfByteSize: data.byteLength },
+      })
+      return { id: input.id, byteSize: data.byteLength }
+    }),
+
+  removePdf: protectedProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      assertManage(user.role)
+      const before = await ctx.db.ddRecoveryTemplate.findUnique({
+        where: { id: input.id },
+        select: { id: true, pdfFileName: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.ddRecoveryTemplate.update({
+        where: { id: input.id },
+        data: {
+          pdfFileName: null,
+          pdfContentType: null,
+          pdfByteSize: null,
+          pdfData: null,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'dd_recovery_template.pdf_removed',
+        target: { type: 'DdRecoveryTemplate', id: input.id },
+        before: { pdfFileName: before.pdfFileName },
       })
       return { ok: true }
     }),
