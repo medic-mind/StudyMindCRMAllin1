@@ -4,6 +4,7 @@ import { StackedBarChart } from '@/components/charts/stacked-bar-chart'
 import { CHART_PALETTE } from '@/components/charts/types'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -123,7 +124,7 @@ export default async function FinanceReportPage({
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
               By provider
             </h2>
-            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-card">
+            <Card className="mt-2 overflow-hidden">
               {Object.keys(data.byProviderMinor).length === 0 ? (
                 <p className="p-4 text-sm text-neutral-500">
                   No payments received in this period.
@@ -146,14 +147,14 @@ export default async function FinanceReportPage({
                   </Tbody>
                 </Table>
               )}
-            </div>
+            </Card>
           </section>
 
           <section>
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Open discrepancies
             </h2>
-            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-card">
+            <Card className="mt-2 overflow-hidden">
               {data.openDiscrepancies.length === 0 ? (
                 <p className="p-4 text-sm text-neutral-500">
                   No open discrepancies — reconciliation is clean.
@@ -176,7 +177,7 @@ export default async function FinanceReportPage({
                   </Tbody>
                 </Table>
               )}
-            </div>
+            </Card>
           </section>
         </div>
       </PageBody>
@@ -204,7 +205,7 @@ function Kpi({
           ? 'text-rose-700'
           : 'text-neutral-900'
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+    <Card className="p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
         {label}
       </p>
@@ -212,6 +213,6 @@ function Kpi({
         {value}
       </p>
       {hint ? <p className="mt-1 text-xs text-neutral-500">{hint}</p> : null}
-    </div>
+    </Card>
   )
 }

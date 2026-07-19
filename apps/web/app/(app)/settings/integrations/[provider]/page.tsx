@@ -14,6 +14,7 @@ import { getCurrentUser } from '@/lib/auth/server'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -494,7 +495,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
               </Link>
               .
             </p>
-            <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+            <Card className="mt-3 overflow-hidden">
               <Table>
                 <Thead>
                   <Tr>
@@ -517,7 +518,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   ))}
                 </Tbody>
               </Table>
-            </div>
+            </Card>
           </section>
 
           {detail.perAgent ? (
@@ -550,7 +551,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                     : `${detail.perAgent.length} agent${detail.perAgent.length === 1 ? '' : 's'} connected.`}
               </p>
               {detail.perAgent.length > 0 ? (
-                <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+                <Card className="mt-3 overflow-hidden">
                   <Table>
                     <Thead>
                       <Tr>
@@ -579,7 +580,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                       ))}
                     </Tbody>
                   </Table>
-                </div>
+                </Card>
               ) : null}
             </section>
           ) : null}
@@ -595,7 +596,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                 synthetic event and confirm the persistence path is healthy.
               </p>
             ) : (
-              <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+              <Card className="mt-3 overflow-hidden">
                 <Table>
                   <Thead>
                     <Tr>
@@ -618,7 +619,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                     ))}
                   </Tbody>
                 </Table>
-              </div>
+              </Card>
             )}
           </section>
 
@@ -627,7 +628,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
                 Recent cron runs
               </h2>
-              <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+              <Card className="mt-3 overflow-hidden">
                 <Table>
                   <Thead>
                     <Tr>
@@ -658,7 +659,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                     ))}
                   </Tbody>
                 </Table>
-              </div>
+              </Card>
             </section>
           ) : null}
 
@@ -686,7 +687,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   No backfill has run for {detail.label} yet.
                 </p>
               ) : (
-                <div className="mt-3 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-card">
+                <Card className="mt-3 overflow-hidden">
                   <Table>
                     <Thead>
                       <Tr>
@@ -740,7 +741,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                       ))}
                     </Tbody>
                   </Table>
-                </div>
+                </Card>
               )}
             </section>
           ) : null}

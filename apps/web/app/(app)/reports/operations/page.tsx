@@ -4,6 +4,7 @@ import { LineChart } from '@/components/charts/line-chart'
 import { CHART_PALETTE } from '@/components/charts/types'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -99,7 +100,7 @@ export default async function OperationsReportPage({
             <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
               By session state
             </h2>
-            <div className="mt-2 rounded-lg border border-neutral-200 bg-white shadow-card">
+            <Card className="mt-2 overflow-hidden">
               <Table>
                 <Thead>
                   <Tr>
@@ -130,7 +131,7 @@ export default async function OperationsReportPage({
                   </Tr>
                 </Tbody>
               </Table>
-            </div>
+            </Card>
           </section>
         </div>
       </PageBody>
@@ -154,13 +155,13 @@ function Stat({
         ? 'text-amber-700'
         : 'text-neutral-900'
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+    <Card className="p-4">
       <div className="text-xs font-medium uppercase tracking-wide text-neutral-500">
         {label}
       </div>
       <div className={`mt-1 font-mono text-2xl font-semibold tabular-nums ${accent}`}>
         {value}
       </div>
-    </div>
+    </Card>
   )
 }
