@@ -64,7 +64,7 @@ export default async function RetentionReportPage({
           <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
                 Families by lifecycle state
               </h2>
@@ -76,9 +76,9 @@ export default async function RetentionReportPage({
                 height={200}
                 width={360}
               />
-            </section>
+            </Card>
 
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-neutral-600">
                 Churn score distribution (deciles)
               </h2>
@@ -93,7 +93,7 @@ export default async function RetentionReportPage({
                 labels={histLabels}
                 warnThresholdIndex={7}
               />
-            </section>
+            </Card>
           </div>
 
           <section>

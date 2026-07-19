@@ -67,7 +67,7 @@ export default async function OperationsReportPage({
         <div className="space-y-6">
           <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
-          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Delivery by week
             </h2>
@@ -77,7 +77,7 @@ export default async function OperationsReportPage({
               xLabels={data.weekly.labels}
               series={series}
             />
-          </section>
+          </Card>
 
           <section className="grid gap-4 sm:grid-cols-3">
             <Stat label="Sessions scheduled" value={data.sessionsByState.scheduled} />

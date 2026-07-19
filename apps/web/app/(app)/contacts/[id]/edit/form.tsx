@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { CountrySelect } from '@/components/ui/country-select'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -90,7 +91,7 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+    <Card className="p-5">
       <header className="mb-4">
         <h2 className="text-sm font-semibold text-neutral-900">{title}</h2>
         {description ? (
@@ -98,7 +99,7 @@ function Section({
         ) : null}
       </header>
       {children}
-    </section>
+    </Card>
   )
 }
 

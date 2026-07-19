@@ -205,7 +205,7 @@ export function MailAccountsAdmin({ canManage, meId }: { canManage: boolean; meI
   return (
     <div className="space-y-5">
       {/* Connect personal mailbox */}
-      <div className="space-y-3 rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+      <Card className="space-y-3 p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-neutral-900">Your mailboxes</h2>
@@ -229,7 +229,7 @@ export function MailAccountsAdmin({ canManage, meId }: { canManage: boolean; meI
             </Badge>
           ))}
         </div>
-      </div>
+      </Card>
 
       {/* Add shared inbox (Manager+) */}
       {canManage ? (

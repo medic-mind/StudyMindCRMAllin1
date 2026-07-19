@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { trpc } from '@/lib/trpc/client'
 
@@ -53,7 +54,7 @@ export function AccountContacts({ account }: { account: Account }) {
   }
 
   return (
-    <div className="space-y-3 rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+    <Card className="space-y-3 p-5">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-neutral-900">Contacts</h2>
         {!picking && (
@@ -128,7 +129,7 @@ export function AccountContacts({ account }: { account: Account }) {
           ))}
         </ul>
       )}
-    </div>
+    </Card>
   )
 }
 

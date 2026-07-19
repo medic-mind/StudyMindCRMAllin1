@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Card } from '@/components/ui/card'
 import { createServerCaller } from '@/lib/trpc/server'
 
 import { ProfileForm } from './ProfileForm'
@@ -40,12 +41,12 @@ export default async function AccountPage() {
       />
       <PageBody>
         <div className="max-w-2xl space-y-6">
-      <section className="rounded-md border border-neutral-200 bg-white p-4 shadow-card">
+      <Card className="p-4">
         <ProfileForm initialName={me.name ?? null} initialEmail={me.email} />
         <p className="mt-4 border-t border-neutral-100 pt-3 text-xs text-neutral-500">
           Last sign-in: {fmt(me.lastSignInAt)}
         </p>
-      </section>
+      </Card>
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-neutral-900">Security</h2>

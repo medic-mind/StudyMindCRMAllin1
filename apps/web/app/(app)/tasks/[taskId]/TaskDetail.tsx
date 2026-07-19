@@ -13,6 +13,7 @@ import { CommentThread } from '@/components/thread/CommentThread'
 import type { ThreadComment } from '@/components/thread/comment-types'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Select } from '@/components/ui/select'
 import { trpc } from '@/lib/trpc/client'
 
@@ -110,7 +111,7 @@ export function TaskDetail({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+        <Card className="p-4">
           <div className="flex items-center gap-2">
             {canWrite ? <TaskCheckbox id={task.id} status={task.status} /> : null}
             <Badge tone={STATUS_TONE[task.status] ?? 'neutral'} dot>
@@ -125,9 +126,9 @@ export function TaskDetail({
           ) : (
             <p className="mt-3 text-sm text-neutral-500">No description.</p>
           )}
-        </section>
+        </Card>
 
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+        <Card className="p-4">
           <h3 className="mb-3 text-sm font-semibold text-neutral-900">Comments</h3>
           <CommentThread
             comments={threadComments}
@@ -139,11 +140,11 @@ export function TaskDetail({
               router.refresh()
             }}
           />
-        </section>
+        </Card>
       </div>
 
       <aside className="space-y-4">
-        <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+        <Card className="p-4">
           <h3 className="mb-3 text-sm font-semibold text-neutral-900">Details</h3>
           <dl className="space-y-3 text-sm">
             <div>
@@ -232,7 +233,7 @@ export function TaskDetail({
               </>
             )}
           </dl>
-        </section>
+        </Card>
       </aside>
     </div>
   )

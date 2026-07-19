@@ -5,6 +5,7 @@
 
 import { useState } from 'react'
 
+import { Card } from '@/components/ui/card'
 import { trpc } from '@/lib/trpc/client'
 
 interface Props {
@@ -54,7 +55,7 @@ export function ContactSearchBar({ contactId }: Props): JSX.Element {
         />
       </div>
       {q.trim().length >= 2 && (
-        <div className="mt-2 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-card">
+        <Card className="mt-2 overflow-hidden">
           {search.isLoading && (
             <p className="px-3 py-2 text-sm text-neutral-500">Searching…</p>
           )}
@@ -84,7 +85,7 @@ export function ContactSearchBar({ contactId }: Props): JSX.Element {
               </li>
             ))}
           </ol>
-        </div>
+        </Card>
       )}
     </div>
   )

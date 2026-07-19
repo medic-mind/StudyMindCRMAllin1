@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { CountrySelect } from '@/components/ui/country-select'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -115,7 +116,7 @@ export function AccountEditor({ account }: { account: Account }) {
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+    <Card className="space-y-4 p-5">
       <h2 className="text-sm font-semibold text-neutral-900">Details</h2>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -239,7 +240,7 @@ export function AccountEditor({ account }: { account: Account }) {
           {account.archived ? 'Restore' : 'Archive'}
         </button>
       </div>
-    </div>
+    </Card>
   )
 }
 

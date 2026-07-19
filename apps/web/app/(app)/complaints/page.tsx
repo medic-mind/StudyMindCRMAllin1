@@ -213,12 +213,12 @@ function Stat({
     neutral: 'text-neutral-900',
   }
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+    <Card className="p-4">
       <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">{label}</div>
       <div className={`mt-1 font-mono text-2xl font-semibold tabular-nums ${accent[tone]}`}>
         {value}
       </div>
       {hint ? <div className="mt-0.5 text-xs text-neutral-500">{hint}</div> : null}
-    </div>
+    </Card>
   )
 }

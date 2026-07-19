@@ -193,7 +193,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
           ) : null}
 
           {provider === 'aircall' && detail.importStats ? (
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
@@ -230,11 +230,11 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   </div>
                 ))}
               </dl>
-            </section>
+            </Card>
           ) : null}
 
           {provider === 'slack' && detail.slackStats ? (
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
                 Slack mention health
               </h2>
@@ -300,11 +300,11 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   <SlackProbeButton />
                 </div>
               ) : null}
-            </section>
+            </Card>
           ) : null}
 
           {provider === 'trengo' && detail.trengoStats ? (
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
@@ -362,11 +362,11 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   </div>
                 ))}
               </dl>
-            </section>
+            </Card>
           ) : null}
 
           {isBackfillable ? (
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-700">
                 Background jobs (Inngest)
               </h2>
@@ -433,7 +433,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                   </dd>
                 </div>
               </dl>
-            </section>
+            </Card>
           ) : null}
 
           {detail.status === 'not_configured' ? (

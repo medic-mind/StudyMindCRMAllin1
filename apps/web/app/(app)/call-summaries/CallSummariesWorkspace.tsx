@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { CallSummaryWizard } from '@/components/contact/call-summary-wizard'
 import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Field } from '@/components/ui/field'
 import { MailIcon, PhoneIcon, SearchIcon, UserPlusIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
@@ -50,7 +51,7 @@ export function CallSummariesWorkspace() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       {resolved ? (
-        <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+        <Card className="overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 bg-gradient-to-b from-neutral-50/70 to-white px-4 py-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <Avatar name={resolved.contactName} size={34} />
@@ -77,7 +78,7 @@ export function CallSummariesWorkspace() {
               contactName={resolved.contactName}
             />
           </div>
-        </section>
+        </Card>
       ) : (
         <IdentifyContact onResolved={setResolved} />
       )}
@@ -105,7 +106,7 @@ function IdentifyContact({ onResolved }: { onResolved: (r: Resolved) => void }) 
   const items = results.data?.items ?? []
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+    <Card className="p-5">
       <h2 className="text-sm font-semibold text-neutral-900">Log a call</h2>
       <p className="mt-0.5 text-sm text-neutral-500">
         Search the customer you spoke to, or add a new one.
@@ -207,7 +208,7 @@ function IdentifyContact({ onResolved }: { onResolved: (r: Resolved) => void }) 
           onCreated={onResolved}
         />
       )}
-    </section>
+    </Card>
   )
 }
 
@@ -369,7 +370,7 @@ function RecentSummaries() {
   const rows = query.data ?? []
 
   return (
-    <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+    <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-4 py-2.5">
         <h2 className="text-sm font-semibold text-neutral-900">Recent call summaries</h2>
         <div className="flex items-center gap-1">
@@ -429,6 +430,6 @@ function RecentSummaries() {
           ))}
         </ul>
       )}
-    </section>
+    </Card>
   )
 }

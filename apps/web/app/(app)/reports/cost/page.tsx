@@ -5,6 +5,7 @@ import { LineChart } from '@/components/charts/line-chart'
 import { CHART_PALETTE } from '@/components/charts/types'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
+import { Card } from '@/components/ui/card'
 import { createServerCaller } from '@/lib/trpc/server'
 
 export const dynamic = 'force-dynamic'
@@ -47,7 +48,7 @@ export default async function CostReportPage() {
           </p>
 
           {series.length > 0 ? (
-            <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
                 AI spend by week ($USD)
               </h2>
@@ -65,7 +66,7 @@ export default async function CostReportPage() {
                 ]}
                 axis={{ yFormat: (n) => `$${n}` }}
               />
-            </section>
+            </Card>
           ) : null}
 
           {archive.reports.length > 0 ? (

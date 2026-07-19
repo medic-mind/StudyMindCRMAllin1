@@ -4,6 +4,7 @@
 // last spoke to anyone linked to the account. Server component — pure render
 // of the pre-shaped `stats` from businessAccount.get.
 
+import { Card } from '@/components/ui/card'
 import { formatMoneyMinor } from '@/lib/format/money'
 
 interface AccountStats {
@@ -46,13 +47,13 @@ function Tile({
   const valueTone =
     tone === 'good' ? 'text-emerald-700' : tone === 'warn' ? 'text-amber-700' : 'text-neutral-900'
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2.5 shadow-card">
+    <Card className="px-3 py-2.5">
       <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
         {label}
       </div>
       <div className={`mt-0.5 font-mono text-lg tabular-nums ${valueTone}`}>{value}</div>
       {sub && <div className="mt-0.5 text-[11px] text-neutral-500">{sub}</div>}
-    </div>
+    </Card>
   )
 }
 

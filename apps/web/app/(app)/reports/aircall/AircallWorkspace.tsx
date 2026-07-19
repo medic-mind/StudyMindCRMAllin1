@@ -435,7 +435,7 @@ function ReportBody({
 
       {view === 'overview' ? (
         <div className="space-y-6">
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <SectionTitle hint="Hover (or use ←/→ when focused) for the exact counts per day.">
               Daily calls
             </SectionTitle>
@@ -450,7 +450,7 @@ function ReportBody({
                 No calls in this period.
               </p>
             )}
-          </section>
+          </Card>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <Card className="overflow-hidden">
@@ -512,19 +512,19 @@ function ReportBody({
             </div>
           ) : null}
 
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <SectionTitle hint="Each cell is a day × hour bucket (UK time). Darker = more calls; amber outline = a configured peak slot.">
               Peak times heatmap
             </SectionTitle>
             <PeakHeatmap peak={data.peak} peakCell={peakCell} />
-          </section>
+          </Card>
 
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <SectionTitle hint="Total calls per hour-of-day across the whole period (UK time).">
               Hourly throughput
             </SectionTitle>
             <HourlyBars hourly={data.hourly} />
-          </section>
+          </Card>
 
           <Card className="overflow-hidden">
             <div className="border-b border-neutral-100 bg-neutral-50/60 px-4 py-3">
@@ -591,7 +591,7 @@ function ReportBody({
             </section>
           ) : null}
 
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <div className="mb-3 flex items-baseline justify-between gap-2">
               <SectionTitle>Weekly call hours</SectionTitle>
               <span className="font-mono text-xs tabular-nums text-neutral-500">
@@ -604,14 +604,14 @@ function ReportBody({
               hours={data.weekly.hours}
               calls={data.weekly.calls}
             />
-          </section>
+          </Card>
 
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <SectionTitle hint="How long answered calls actually run.">
               Call duration distribution
             </SectionTitle>
             <DurationBars buckets={data.durationBuckets} />
-          </section>
+          </Card>
 
           <Card className="overflow-hidden">
             <div className="border-b border-neutral-100 bg-neutral-50/60 px-4 py-3">
@@ -702,7 +702,7 @@ function KpiTile({
     return good ? 'text-emerald-700' : 'text-rose-700'
   })()
   return (
-    <div className="relative overflow-hidden rounded-xl border border-neutral-200 bg-white p-4 pl-5 shadow-card transition-shadow hover:shadow-card-hover">
+    <Card className="relative overflow-hidden p-4 pl-5 transition-shadow hover:shadow-card-hover">
       <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${bar[tone]}`} />
       <p className="truncate text-[11px] font-medium uppercase tracking-wide text-neutral-500">
         {label}
@@ -714,7 +714,7 @@ function KpiTile({
         ) : null}
         {hint ? <span className="text-xs text-neutral-500">{hint}</span> : null}
       </div>
-    </div>
+    </Card>
   )
 }
 

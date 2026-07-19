@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -68,7 +69,7 @@ export function BoardQuickActionsAdmin({ boardId, allStages }: Props) {
   const actions = (listQuery.data ?? []) as QuickAction[]
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+    <Card className="p-5">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold text-neutral-900">Quick-action buttons</h2>
@@ -139,7 +140,7 @@ export function BoardQuickActionsAdmin({ boardId, allStages }: Props) {
           )}
         </ul>
       )}
-    </section>
+    </Card>
   )
 }
 

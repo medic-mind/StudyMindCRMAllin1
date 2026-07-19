@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { formatMoneyMinor } from '@/lib/format/money'
@@ -302,13 +303,13 @@ function SummaryTile({
   const bar =
     tone === 'success' ? 'bg-emerald-500' : tone === 'warn' ? 'bg-amber-500' : 'bg-neutral-300'
   return (
-    <div className="relative overflow-hidden rounded-xl border border-neutral-200 bg-white px-3 py-2.5 pl-4 shadow-card">
+    <Card className="relative overflow-hidden px-3 py-2.5 pl-4">
       <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${bar}`} />
       <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">
         {label}
       </div>
       <div className="font-mono text-xl font-semibold tabular-nums text-neutral-900">{value}</div>
       <div className="text-xs text-neutral-500">{hint ?? ' '}</div>
-    </div>
+    </Card>
   )
 }

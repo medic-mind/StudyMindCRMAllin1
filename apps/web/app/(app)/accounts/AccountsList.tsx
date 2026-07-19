@@ -456,7 +456,7 @@ export function AccountsList({
       )}
 
       {accounts.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-neutral-200 bg-white px-10 py-14 text-center shadow-card">
+        <Card className="border-dashed px-10 py-14 text-center">
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-neutral-100">
             <BuildingIcon size={18} className="text-neutral-400" />
           </div>
@@ -467,7 +467,7 @@ export function AccountsList({
             Click <em>New {kind === 'school' ? 'school' : 'B2B partner'}</em> to add one, or pull
             existing customers from the invoicing platform in <em>Settings → Invoicing</em>.
           </p>
-        </div>
+        </Card>
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full min-w-[1080px] border-collapse text-sm">

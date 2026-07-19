@@ -78,7 +78,7 @@ export default async function FinanceReportPage({
         <div className="space-y-6">
           <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
 
-          <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Money in by week
             </h2>
@@ -89,7 +89,7 @@ export default async function FinanceReportPage({
               series={series}
               axis={{ yFormat: fmtPence }}
             />
-          </section>
+          </Card>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Kpi label="Money in" value={fmtMoney(data.moneyInMinor)} tone="info" />

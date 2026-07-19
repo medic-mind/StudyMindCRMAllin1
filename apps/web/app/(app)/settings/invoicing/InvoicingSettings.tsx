@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { trpc } from '@/lib/trpc/client'
 
@@ -158,7 +159,7 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
   return (
     <div className="max-w-2xl space-y-5">
       {/* Connection status */}
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+      <Card className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-neutral-900">Connection</h2>
@@ -232,10 +233,10 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
           B2B Partner account. Safe to run more than once — it never creates duplicates. Anything it
           can’t auto-classify lands in the Unsorted tray on the Accounts page.
         </p>
-      </div>
+      </Card>
 
       {/* Credentials */}
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+      <Card className="p-5">
         <h2 className="text-sm font-semibold text-neutral-900">Credentials</h2>
         <p className="mt-1 text-sm text-neutral-500">
           Paste the API key the invoicing team minted for you (read+write) and the webhook signing
@@ -304,7 +305,7 @@ export function InvoicingSettings({ initial }: { initial: StatusShape }) {
             </Button>
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Webhook receiver hint */}
       <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-5">

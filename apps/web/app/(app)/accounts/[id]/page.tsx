@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation'
 import { AccountInvoicingPanel } from '@/components/invoicing/AccountInvoicingPanel'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { getCurrentUser } from '@/lib/auth/server'
 import { PageHeader } from '@/components/shell/page-header'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -104,7 +105,7 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
 
         <AccountStudents accountId={account.id} />
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+        <Card className="p-5">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-neutral-900">Tasks</h2>
             <NewTaskDialog
@@ -141,9 +142,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
               })}
             </ul>
           )}
-        </section>
+        </Card>
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+        <Card className="p-5">
           <h2 className="mb-3 text-sm font-semibold text-neutral-900">Notes</h2>
           <AddAccountNote accountId={account.id} />
           {notes.length > 0 ? (
@@ -161,9 +162,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
           ) : (
             <p className="mt-3 text-sm text-neutral-500">No notes yet — add the first above.</p>
           )}
-        </section>
+        </Card>
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+        <Card className="p-5">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-neutral-900">Invoicing</h2>
             <span className="text-[11px] uppercase tracking-wide text-neutral-500">
@@ -176,9 +177,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
             canMarkPaid={canInvoiceMarkPaid}
             defaultClientType={account.kind === 'school' ? 'school' : 'uk_b2b'}
           />
-        </section>
+        </Card>
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+        <Card className="p-5">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-neutral-900">Invoice files</h2>
             <span className="text-[11px] uppercase tracking-wide text-neutral-500">
@@ -186,9 +187,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
             </span>
           </div>
           <InvoicesPanel target={{ kind: 'businessAccount', businessAccountId: account.id }} />
-        </section>
+        </Card>
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+        <Card className="p-5">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-neutral-900">Slack mentions</h2>
             <span className="text-[11px] uppercase tracking-wide text-neutral-500">
@@ -199,9 +200,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
             mentions={slackMentions}
             emptyHint="No Slack mentions yet — messages from watched channels that name this school/partner (or one of its linked contacts) will appear here."
           />
-        </section>
+        </Card>
 
-        <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-card">
+        <Card className="p-5">
           <h2 className="mb-3 text-sm font-semibold text-neutral-900">Activity</h2>
           {activity.length === 0 ? (
             <p className="text-sm text-neutral-500">
@@ -222,7 +223,7 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
               ))}
             </ol>
           )}
-        </section>
+        </Card>
       </div>
     </>
   )

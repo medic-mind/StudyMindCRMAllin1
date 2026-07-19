@@ -10,6 +10,7 @@ import { CHART_PALETTE } from '@/components/charts/types'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { Avatar } from '@/components/ui/avatar'
+import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -90,7 +91,7 @@ export default async function ComplaintsReportPage({
       />
       <PageBody>
         <div className="space-y-6">
-          <div className="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="space-y-3 p-4">
             <div className="flex flex-wrap items-center gap-1.5">
               {presets.map((p) => {
                 const active = activePreset?.key === p.key
@@ -110,7 +111,7 @@ export default async function ComplaintsReportPage({
               })}
             </div>
             <PeriodForm fromIso={period.fromIso} toIso={period.toIso} />
-          </div>
+          </Card>
 
           <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat
@@ -133,7 +134,7 @@ export default async function ComplaintsReportPage({
             />
           </section>
 
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
               Complaints opened
             </h2>
@@ -149,10 +150,10 @@ export default async function ComplaintsReportPage({
                 No complaints opened in this period.
               </p>
             )}
-          </section>
+          </Card>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
                 By severity <span className="font-normal text-neutral-400">(opened in period)</span>
               </h2>
@@ -171,9 +172,9 @@ export default async function ComplaintsReportPage({
                   ))}
                 </ul>
               )}
-            </section>
+            </Card>
 
-            <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+            <Card className="p-4">
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
                 By status <span className="font-normal text-neutral-400">(opened in period)</span>
               </h2>
@@ -192,10 +193,10 @@ export default async function ComplaintsReportPage({
                   ))}
                 </ul>
               )}
-            </section>
+            </Card>
           </div>
 
-          <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+          <Card className="p-4">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-600">
               By theme <span className="font-normal text-neutral-400">(opened in period)</span>
             </h2>
@@ -221,9 +222,9 @@ export default async function ComplaintsReportPage({
                 ))}
               </ul>
             )}
-          </section>
+          </Card>
 
-          <section className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-card">
+          <Card className="overflow-hidden">
             <div className="border-b border-neutral-100 bg-rose-50/60 px-4 py-3">
               <h2 className="text-sm font-semibold text-neutral-900">
                 Customers with the most open complaints
@@ -260,7 +261,7 @@ export default async function ComplaintsReportPage({
                 </Tbody>
               </Table>
             )}
-          </section>
+          </Card>
         </div>
       </PageBody>
     </>
@@ -311,12 +312,12 @@ function Stat({
     neutral: 'text-neutral-900',
   }
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-4 shadow-card">
+    <Card className="p-4">
       <div className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">{label}</div>
       <div className={`mt-1 font-mono text-2xl font-semibold tabular-nums ${accent[tone]}`}>
         {value}
       </div>
       {hint ? <div className="mt-0.5 text-xs text-neutral-500">{hint}</div> : null}
-    </div>
+    </Card>
   )
 }
