@@ -63,13 +63,15 @@ function assertStaff(role: UserRole): void {
   }
 }
 
-// Mutating the live mailbox (read/archive/star/trash/label) is a write —
-// Virtual Assistant is read-only (§20). Sales Executive and above may act.
+// Mutating the live mailbox (read/archive/star/trash/label) is a write.
+// Sales Executive and above — and, operator decision 2026-07, Virtual
+// Assistant, who now shares the full sales capability set (§20).
 const MUTATE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanMutate(role: UserRole): void {

@@ -26,6 +26,7 @@ const APPLY_ROLES: ReadonlySet<UserRole> = new Set([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 const HEX_COLOR = z

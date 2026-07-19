@@ -174,12 +174,10 @@ describe('mail.thread.setRead', () => {
     )
   })
 
-  it('is forbidden for a Virtual Assistant', async () => {
+  it('allows a Virtual Assistant (identical to sales_executive, 2026-07)', async () => {
     const { ctx } = makeCtx({ role: 'virtual_assistant' })
-    await expect(
-      mailRouter.createCaller(ctx).thread.setRead({ conversationId: 'cv_1', read: true }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
-    expect(fakeProvider.setReadState).not.toHaveBeenCalled()
+    await mailRouter.createCaller(ctx).thread.setRead({ conversationId: 'cv_1', read: true })
+    expect(fakeProvider.setReadState).toHaveBeenCalledWith('thread_1', true)
   })
 })
 
@@ -255,17 +253,16 @@ describe('mail.compose', () => {
     )
   })
 
-  it('is forbidden for a Virtual Assistant', async () => {
+  it('allows a Virtual Assistant (identical to sales_executive, 2026-07)', async () => {
     const { ctx } = makeCtx({ role: 'virtual_assistant' })
-    await expect(
-      mailRouter.createCaller(ctx).compose({
-        mailAccountId: 'acc_1',
-        to: ['p@x.test'],
-        subject: 's',
-        body: 'b',
-      }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
-    expect(sendEmailMock).not.toHaveBeenCalled()
+    const r = await mailRouter.createCaller(ctx).compose({
+      mailAccountId: 'acc_1',
+      to: ['p@x.test'],
+      subject: 's',
+      body: 'b',
+    })
+    expect(r.threadId).toBe('thread_new')
+    expect(sendEmailMock).toHaveBeenCalled()
   })
 })
 
@@ -310,11 +307,12 @@ describe('mail.drafts', () => {
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'mail.draft_deleted' }))
   })
 
-  it('save is forbidden for a Virtual Assistant', async () => {
+  it('save allows a Virtual Assistant (identical to sales_executive, 2026-07)', async () => {
     const { ctx } = makeCtx({ role: 'virtual_assistant' })
-    await expect(
-      mailRouter.createCaller(ctx).drafts.save({ mailAccountId: 'acc_1', subject: 's', body: 'b' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const r = await mailRouter
+      .createCaller(ctx)
+      .drafts.save({ mailAccountId: 'acc_1', subject: 's', body: 'b' })
+    expect(r.draftId).toBe('d1')
   })
 })
 
@@ -373,12 +371,10 @@ describe('mail.thread.reply', () => {
     )
   })
 
-  it('is forbidden for a Virtual Assistant', async () => {
+  it('allows a Virtual Assistant (identical to sales_executive, 2026-07)', async () => {
     const { ctx } = makeCtx({ role: 'virtual_assistant' })
-    await expect(
-      mailRouter.createCaller(ctx).thread.reply({ conversationId: 'cv_1', body: 'hi' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
-    expect(sendReplyMock).not.toHaveBeenCalled()
+    await mailRouter.createCaller(ctx).thread.reply({ conversationId: 'cv_1', body: 'hi' })
+    expect(sendReplyMock).toHaveBeenCalled()
   })
 })
 

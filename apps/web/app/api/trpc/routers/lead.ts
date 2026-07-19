@@ -26,6 +26,7 @@ const LEAD_WRITE_ROLES: ReadonlySet<UserRole> = new Set([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 const SOURCE_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
 

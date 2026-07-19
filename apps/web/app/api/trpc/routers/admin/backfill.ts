@@ -47,6 +47,7 @@ const MAILBOX_IMPORT_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 const ProviderEnum = z.enum(['gmail', 'aircall', 'trengo', 'slack'])

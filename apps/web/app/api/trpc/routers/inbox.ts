@@ -1103,8 +1103,8 @@ export const inboxRouter = router({
     // (it only READS Trengo + converges our own heads).
     syncNow: auditedProcedure.mutation(async ({ ctx }) => {
       const user = requireUser(ctx)
-      if (!ALLOWED_ROLES.has(user.role) || user.role === 'virtual_assistant') {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Sales Executive+ only.' })
+      if (!ALLOWED_ROLES.has(user.role)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Staff only.' })
       }
       const { inngest } = await import('@studymind/jobs')
       await inngest.send({ name: 'trengo/reconcile-now.requested', data: { by: user.id } })

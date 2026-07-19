@@ -735,8 +735,22 @@ literals below — they are now **tier hints**: `gpt-4o-mini` → the `mini` tie
 | `ceo` | CEO | Only role that can grant or revoke `ceo` / `senior_manager`. Rotates org-wide secrets, writes tenant config. |
 | `senior_manager` | Senior Manager | Everything below CEO; manages all lower roles, runs Settings, DSAR exports. |
 | `manager` | Manager | Sales + finance ops: refunds, payment links, allocations, reconciliation. Invites Sales Executives and Virtual Assistants. |
-| `sales_executive` | Sales Executive | Full CRUD on Contacts, Families, Tasks, Interactions. Sends payment links. CANNOT issue refunds (route to Manager+). |
-| `virtual_assistant` | Virtual Assistant | Reads everything; writes notes; drafts replies. Cannot send messages, issue refunds, or change billing. |
+| `sales_executive` | Sales Executive | Full sales operations: contact/family/task/interaction CRUD, board cards, comms (email/Trengo/SMS/WhatsApp) send, payment links, **refunds**, **subscription cancellation**, and **account creation** (capped at Sales Executive / Virtual Assistant level). |
+| `virtual_assistant` | Virtual Assistant | **Identical capabilities to Sales Executive** (operator decision, 2026-07). Same CRUD, sends, refunds, subscription cancellation and account creation — the two roles differ only in name/label, not in what they can do. |
+
+> **Sales Executive ≡ Virtual Assistant (2026-07).** By operator decision the
+> two roles share one identical capability set — `SALES_ROLE_ACTIONS` in
+> `packages/core/src/auth/policies.ts` (contact read incl. minor, contact write,
+> interactions, payment links, refunds, subscription cancel, account creation).
+> Every "Sales Executive and above" gate across the routers therefore includes
+> `virtual_assistant`. Two safety boundaries hold regardless: (1) the
+> money/account actions gate on the policy actions (`charge.refund`,
+> `subscription.cancel`, `user.invite`) or the explicit role sets, never the
+> blanket finance gate — reconciliation, discrepancy resolution, GoCardless
+> plan/mandate writes and imports stay Manager+/CEO-SM; (2) account creation is
+> capped by `canCreateUserAtRole` so neither role can mint a Manager, Senior
+> Manager, or CEO, and changing an existing user's role (`assignRole`) stays
+> CEO + Senior Manager only — so this is not a privilege-escalation path.
 
 Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `dsl`, `read_only`) remain in the Postgres `UserRole` enum per CLAUDE.md §19 forward-only rule. They are bulk-mapped to canonical roles by `20260524120100_migrate_sales_roles` (`super_admin→ceo`, `admin→senior_manager`, `ops_manager/finance/dsl→manager`, `agent→sales_executive`, `read_only→virtual_assistant`). `pickPrimaryRole` in `packages/core/auth/policies.ts` normalises any straggler legacy assignment at read time, so the system remains correct if an unmigrated row appears.
 
@@ -753,18 +767,18 @@ Legacy enum values (`super_admin`, `admin`, `ops_manager`, `agent`, `finance`, `
 | Action | ceo | senior_manager | manager | sales_executive | virtual_assistant |
 |---|:-:|:-:|:-:|:-:|:-:|
 | `contact.read` (non-minor) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `contact.read` (minor) | ✓ (audited) | ✓ (audited) | ✓ (audited) | ✓ (audited) | — |
-| `contact.write` | ✓ | ✓ | ✓ | ✓ | — |
+| `contact.read` (minor) | ✓ (audited) | ✓ (audited) | ✓ (audited) | ✓ (audited) | ✓ (audited) |
+| `contact.write` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `family.merge` | ✓ | ✓ | ✓ | — | — |
 | `interaction.create` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `interaction.delete` | ✓ | ✓ | — | — | — |
-| `charge.create_link` | ✓ | ✓ | ✓ | ✓ | — |
-| `charge.refund` | ✓ | ✓ | ✓ | — | — |
-| `subscription.cancel` | ✓ | ✓ | ✓ | — | — |
+| `charge.create_link` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `charge.refund` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `subscription.cancel` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `dsar.export` | ✓ | ✓ | — | — | — |
 | `audit.read` | ✓ | ✓ | ✓ | — | — |
 | `settings.write` | ✓ | ✓ | — | — | — |
-| `user.invite` | ✓ | ✓ | — | — | — |
+| `user.invite` | ✓ | ✓ | — | ✓ | ✓ |
 | `user.manage` | ✓ | ✓ | ✓ | — | — |
 | `user.grant_manage` | ✓ | ✓ | ✓ | — | — |
 | `user.deactivate` | ✓ | ✓ | — | — | — |

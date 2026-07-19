@@ -94,12 +94,12 @@ const SEED = {
 }
 
 describe('customerRisk.setReview', () => {
-  it('rejects virtual_assistant', async () => {
-    const { ctx } = makeCtx('virtual_assistant', SEED)
+  it('allows virtual_assistant (identical to sales_executive, 2026-07)', async () => {
+    const { ctx, state, actions } = makeCtx('virtual_assistant', SEED)
     const caller = customerRiskRouter.createCaller(ctx)
-    await expect(
-      caller.setReview({ contactId: 'c1', status: 'flagged' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await caller.setReview({ contactId: 'c1', status: 'flagged' })
+    expect(state.reviews).toHaveLength(1)
+    expect(actions).toContain('contact.risk_flagged')
   })
 
   it('flags a customer and audits', async () => {
@@ -122,12 +122,12 @@ describe('customerRisk.setReview', () => {
 })
 
 describe('customerRisk.createTask', () => {
-  it('rejects virtual_assistant', async () => {
-    const { ctx } = makeCtx('virtual_assistant', SEED)
+  it('allows virtual_assistant (identical to sales_executive, 2026-07)', async () => {
+    const { ctx, state } = makeCtx('virtual_assistant', SEED)
     const caller = customerRiskRouter.createCaller(ctx)
-    await expect(
-      caller.createTask({ contactId: 'c1', title: 'Chase', assigneeId: 'u1' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const res = await caller.createTask({ contactId: 'c1', title: 'Chase', assigneeId: 'u1' })
+    expect(res.taskId).toBeTruthy()
+    expect(state.tasks).toHaveLength(1)
   })
 
   it('creates a task, flags the customer, and audits both', async () => {

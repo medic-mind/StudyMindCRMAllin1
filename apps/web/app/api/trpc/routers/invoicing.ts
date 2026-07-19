@@ -76,6 +76,7 @@ const WRITE_ROLES: ReadonlySet<UserRole> = new Set([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 const MARK_PAID_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
 

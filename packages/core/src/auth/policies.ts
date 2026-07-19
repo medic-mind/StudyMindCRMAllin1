@@ -161,23 +161,27 @@ const MANAGER_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'user.grant_manage',
 ])
 
-// Sales Executive: full CRUD on Contacts/Families/Tasks/Interactions; sends
-// payment links. NEVER issues refunds (route to Manager+).
-const SALES_EXECUTIVE_ACTIONS: ReadonlySet<Action> = new Set<Action>([
+// Sales Executive AND Virtual Assistant share an IDENTICAL capability set
+// (operator decision, 2026-07 — CLAUDE.md §20). Both get full contact CRUD,
+// interactions, payment links, account creation, refunds, and subscription
+// cancellation; the two roles differ only in name/label, not in what they can
+// do. Catastrophic actions (role grants, deactivation, secrets, tenant config,
+// DSAR, audit reads, settings) stay reserved for the senior roles via
+// ROLE_GRANTS below. Account creation is capped so neither can mint a role
+// above their own tier — see `canCreateUserAtRole`.
+const SALES_ROLE_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'contact.read',
   'contact.read_minor',
   'contact.write',
   'interaction.create',
   'charge.create_link',
+  'charge.refund',
+  'subscription.cancel',
+  'user.invite',
 ])
 
-// Virtual Assistant: read-mostly. May write Interactions (notes, drafts).
-// Cannot send messages, issue refunds, or change billing — those gates live
-// in the relevant routers (outbound send + charge.refund).
-const VIRTUAL_ASSISTANT_ACTIONS: ReadonlySet<Action> = new Set<Action>([
-  'contact.read',
-  'interaction.create',
-])
+const SALES_EXECUTIVE_ACTIONS: ReadonlySet<Action> = SALES_ROLE_ACTIONS
+const VIRTUAL_ASSISTANT_ACTIONS: ReadonlySet<Action> = SALES_ROLE_ACTIONS
 
 export const ROLE_GRANTS: Readonly<Record<Role, ReadonlySet<Action>>> = {
   ceo: new Set<Action>(ACTIONS),
@@ -379,11 +383,33 @@ export function hasAction(
 }
 
 /**
- * Who can CREATE accounts (temp-password create + link invite): CEO and
- * Senior Manager only. Not grantable to individuals. ADR 0021.
+ * Who can CREATE accounts (temp-password create + link invite): any role that
+ * holds `user.invite` — CEO, Senior Manager, and (operator decision 2026-07)
+ * Sales Executive + Virtual Assistant. Not grantable to individuals via a
+ * custom role (`user.invite` is deny-listed). ADR 0021 / CLAUDE.md §20.
  */
 export function canCreateUsers(role: Role): boolean {
   return roleCan(role, 'user.invite')
+}
+
+/**
+ * Which role an actor may assign when CREATING a new account. This is distinct
+ * from `canGrantRole`, which governs changing an EXISTING user's role and stays
+ * CEO/Senior-Manager only.
+ *
+ * - CEO / Senior Manager: anything `canGrantRole` allows.
+ * - Sales Executive / Virtual Assistant: may create accounts (they hold
+ *   `user.invite`) but ONLY at their own tier or below — `sales_executive` or
+ *   `virtual_assistant`. They can never mint a Manager, Senior Manager, or CEO,
+ *   so account creation is not a privilege-escalation path.
+ * - Everyone else: denied.
+ */
+export function canCreateUserAtRole(actorRole: Role, targetRole: Role): boolean {
+  if (canGrantRole(actorRole, targetRole)) return true
+  if (actorRole === 'sales_executive' || actorRole === 'virtual_assistant') {
+    return targetRole === 'sales_executive' || targetRole === 'virtual_assistant'
+  }
+  return false
 }
 
 /**

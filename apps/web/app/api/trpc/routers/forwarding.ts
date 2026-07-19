@@ -58,6 +58,7 @@ const SEND_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanManageRules(role: UserRole): void {

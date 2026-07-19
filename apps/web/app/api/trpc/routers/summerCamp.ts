@@ -60,6 +60,7 @@ const BOOKING_WRITE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 // Cancelling a real paid booking is money-adjacent — Manager and above.
 const BOOKING_CANCEL_ROLES: ReadonlySet<SessionUser['role']> = new Set([

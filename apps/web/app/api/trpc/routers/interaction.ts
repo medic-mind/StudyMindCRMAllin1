@@ -407,7 +407,7 @@ export const interactionRouter = router({
         // family's behalf. Virtual Assistants draft replies but cannot send.
         // ADR 0014.
         if (
-          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(user.role)
         ) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send email' })
         }
@@ -536,7 +536,7 @@ export const interactionRouter = router({
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
         if (
-          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(user.role)
         ) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send messages' })
         }
@@ -674,7 +674,7 @@ export const interactionRouter = router({
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
         if (
-          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(user.role)
         ) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send messages' })
         }
@@ -754,7 +754,7 @@ export const interactionRouter = router({
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
         if (
-          !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(user.role)
         ) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot send messages' })
         }
@@ -1128,7 +1128,7 @@ export const interactionRouter = router({
     availableLabels: protectedProcedure.query(async ({ ctx }) => {
       const user = requireUser(ctx)
       if (
-        !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)
+        !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(user.role)
       ) {
         throw new TRPCError({ code: 'FORBIDDEN' })
       }
@@ -1353,7 +1353,7 @@ function mapTrengoOutboundError(err: unknown): TRPCError {
 
 function gateTrengoStateChange(role: string): void {
   if (
-    !['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(role)
+    !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(role)
   ) {
     throw new TRPCError({
       code: 'FORBIDDEN',

@@ -507,6 +507,7 @@ const ACCOUNT_WRITE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanWriteAccount(role: UserRole): void {

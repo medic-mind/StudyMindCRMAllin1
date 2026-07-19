@@ -23,6 +23,7 @@ const TRIAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['ceo', 'senior_manager', 'manager'])

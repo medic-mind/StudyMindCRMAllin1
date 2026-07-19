@@ -4,7 +4,7 @@
 //   - board.*           CEO + Senior Manager
 //   - board.stages.*    CEO + Senior Manager (reuses pipeline stage CRUD,
 //                       scoped to a boardId)
-//   - card.* (writes)   Sales Executive and above (Virtual Assistant read-only)
+//   - card.* (writes)   Sales Executive and above (incl. Virtual Assistant — §20)
 //   - label.list/create Sales Executive and above; label.delete CEO + SM
 //   - subject.*         Sales Executive and above
 //
@@ -94,6 +94,7 @@ const CARD_WRITE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 // Hard-delete is irreversible and removes audit-adjacent state (labels +
 // subtasks cascade). Restricted to Manager+ — same tier that owns refunds

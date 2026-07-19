@@ -477,12 +477,24 @@ describe('admin.users router', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
-  it('create is refused for manager and sales_executive (creation is CEO/SM only)', async () => {
-    for (const role of ['manager', 'sales_executive'] as const) {
+  it('create is refused for a manager (no user.invite)', async () => {
+    const { ctx } = makeCtx('manager')
+    const caller = adminUsersRouter.createCaller(ctx)
+    await expect(
+      caller.create({ email: 'x@example.com', roles: ['virtual_assistant'] }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('sales_executive / virtual_assistant may create accounts, but only at their own tier (2026-07)', async () => {
+    for (const role of ['sales_executive', 'virtual_assistant'] as const) {
       const { ctx } = makeCtx(role)
       const caller = adminUsersRouter.createCaller(ctx)
+      // Allowed at their own tier (creating a Sales Executive / Virtual Assistant).
+      const r = await caller.create({ email: `new-${role}@example.com`, roles: ['virtual_assistant'] })
+      expect(r.userId).toBeTruthy()
+      // Denied at a higher tier — account creation is not an escalation path.
       await expect(
-        caller.create({ email: 'x@example.com', roles: ['virtual_assistant'] }),
+        caller.create({ email: 'boss@example.com', roles: ['manager'] }),
       ).rejects.toMatchObject({ code: 'FORBIDDEN' })
     }
   })

@@ -15,7 +15,13 @@ import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib
 
 // Task field writes (create/update/close) are Sales Executive and above;
 // Virtual Assistant is read + comment only (CLAUDE.md §20).
-const TASK_WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+const TASK_WRITE_ROLES = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 function assertTaskWrite(role: string): void {
   if (!TASK_WRITE_ROLES.has(role)) {

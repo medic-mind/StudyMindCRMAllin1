@@ -26,6 +26,7 @@ import {
   paymentSummaryForFamily,
   resolveUnresolvedStripePayment,
 } from '@studymind/core/finance'
+import { roleCan } from '@studymind/core/auth/policies'
 
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 import {
@@ -51,18 +52,30 @@ const FINANCE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'manager',
 ])
 
-// charge.create_link is allowed for everyone above virtual_assistant.
-// ADR 0014 / CLAUDE.md §20.1.
+// charge.create_link is allowed for every sales role — Sales Executive AND
+// Virtual Assistant (operator decision 2026-07, CLAUDE.md §20.1).
 const PAYMENT_LINK_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertFinanceRole(user: SessionUser): void {
   if (!FINANCE_ROLES.has(user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'finance role required' })
+  }
+}
+
+// Issuing a refund is gated on the `charge.refund` action (CLAUDE.md §20.1):
+// CEO, Senior Manager, Manager, and — operator decision 2026-07 — Sales
+// Executive + Virtual Assistant. This is deliberately narrower than the blanket
+// FINANCE_ROLES gate above: broader finance operations (reconciliation,
+// discrepancy resolution, unresolved-payment linking, payouts) stay Manager+.
+function assertCanRefund(user: SessionUser): void {
+  if (!roleCan(user.role, 'charge.refund')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'refund permission required' })
   }
 }
 
@@ -727,7 +740,7 @@ export const financeRouter = router({
   refund: router({
     create: auditedProcedure.input(RefundCreateInput).mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      assertFinanceRole(user)
+      assertCanRefund(user)
       try {
         const result = await refundCharge(ctx.db, {
           chargeId: input.chargeId,
@@ -760,7 +773,7 @@ export const financeRouter = router({
     }),
 
     list: protectedProcedure.input(RefundListInput).query(async ({ ctx, input }) => {
-      assertFinanceRole(requireUser(ctx))
+      assertCanRefund(requireUser(ctx))
       const rows = await ctx.db.refundIntent.findMany({
         where: {
           deletedAt: null,

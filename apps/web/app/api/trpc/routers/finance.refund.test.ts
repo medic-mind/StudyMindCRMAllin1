@@ -184,13 +184,19 @@ describe('finance.refund.create', () => {
     expect(second.status).toBe('succeeded')
   })
 
-  it('rejects callers without finance/admin role', async () => {
-    const { ctx } = makeCtx('sales_executive', [])
-    const caller = financeRouter.createCaller(ctx)
-
-    await expect(
-      caller.refund.create({ chargeId: 'ch_abc', reasonCode: 'duplicate' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  it('allows sales_executive and virtual_assistant to issue refunds (2026-07)', async () => {
+    for (const role of ['sales_executive', 'virtual_assistant'] as const) {
+      const payment: FakePayment = {
+        id: 'pay_1',
+        familyId: 'fam_1',
+        amountMinor: 5000,
+        externalId: 'ch_abc',
+      }
+      const { ctx } = makeCtx(role, [payment])
+      const caller = financeRouter.createCaller(ctx)
+      const result = await caller.refund.create({ chargeId: 'ch_abc', reasonCode: 'duplicate' })
+      expect(result.status).toBe('succeeded')
+    }
   })
 
   it('returns NOT_FOUND for an unknown charge', async () => {
@@ -224,9 +230,19 @@ describe('finance.refund.list', () => {
     })
   })
 
-  it('rejects non-finance callers', async () => {
-    const { ctx } = makeCtx('sales_executive', [])
-    const caller = financeRouter.createCaller(ctx)
-    await expect(caller.refund.list({ limit: 10 })).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  it('allows sales_executive and virtual_assistant to read refund intents (2026-07)', async () => {
+    for (const role of ['sales_executive', 'virtual_assistant'] as const) {
+      const payment: FakePayment = {
+        id: 'pay_1',
+        familyId: 'fam_1',
+        amountMinor: 5000,
+        externalId: 'ch_abc',
+      }
+      const { ctx } = makeCtx(role, [payment])
+      const caller = financeRouter.createCaller(ctx)
+      await caller.refund.create({ chargeId: 'ch_abc', reasonCode: 'duplicate' })
+      const list = await caller.refund.list({ limit: 10 })
+      expect(list.items).toHaveLength(1)
+    }
   })
 })

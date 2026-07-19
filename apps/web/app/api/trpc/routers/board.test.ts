@@ -164,12 +164,12 @@ describe('card.create gating', () => {
     }
   }
 
-  it('rejects virtual_assistant', async () => {
-    const { ctx } = makeCtx('virtual_assistant', seed())
+  it('allows virtual_assistant (identical to sales_executive, 2026-07)', async () => {
+    const { ctx, actions } = makeCtx('virtual_assistant', seed())
     const caller = cardRouter.createCaller(ctx)
-    await expect(
-      caller.create({ boardId: 'b1', stageId: 's1', contact: { contactId: 'c1' } }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const card = await caller.create({ boardId: 'b1', stageId: 's1', contact: { contactId: 'c1' } })
+    expect(card.contactId).toBe('c1')
+    expect(actions).toContain('card.created')
   })
 
   it('allows sales_executive and audits card.created', async () => {
@@ -182,8 +182,8 @@ describe('card.create gating', () => {
 })
 
 describe('card.move gating', () => {
-  it('rejects virtual_assistant and audits for sales_executive', async () => {
-    const seed = {
+  it('allows virtual_assistant and sales_executive to move cards, auditing card.moved', async () => {
+    const makeSeed = () => ({
       boards: [{ id: 'b1', name: 'B', position: 1, isDefault: true, archivedAt: null }],
       stages: [
         { id: 's1', name: 'Lead', boardId: 'b1', archivedAt: null },
@@ -201,13 +201,13 @@ describe('card.move gating', () => {
           archivedAt: null,
         },
       ],
-    }
-    const va = makeCtx('virtual_assistant', seed)
-    await expect(
-      cardRouter.createCaller(va.ctx).move({ cardId: 'card1', toStageId: 's2' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    })
+    const va = makeCtx('virtual_assistant', makeSeed())
+    const vaMoved = await cardRouter.createCaller(va.ctx).move({ cardId: 'card1', toStageId: 's2' })
+    expect(vaMoved.stageId).toBe('s2')
+    expect(va.actions).toContain('card.moved')
 
-    const se = makeCtx('sales_executive', seed)
+    const se = makeCtx('sales_executive', makeSeed())
     const moved = await cardRouter.createCaller(se.ctx).move({ cardId: 'card1', toStageId: 's2' })
     expect(moved.stageId).toBe('s2')
     expect(se.actions).toContain('card.moved')
@@ -230,10 +230,10 @@ describe('label.delete gating', () => {
 })
 
 describe('subject.findOrCreate gating', () => {
-  it('rejects virtual_assistant', async () => {
+  it('allows virtual_assistant (identical to sales_executive, 2026-07)', async () => {
     const { ctx } = makeCtx('virtual_assistant')
     await expect(
       subjectRouter.createCaller(ctx).findOrCreate({ name: 'Maths' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    ).resolves.toMatchObject({ name: 'Maths' })
   })
 })

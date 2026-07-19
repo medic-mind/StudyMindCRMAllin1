@@ -8,6 +8,7 @@ import {
   DENY_LIST_ACTIONS,
   ROLES,
   canCreateUsers,
+  canCreateUserAtRole,
   canDeactivateUsers,
   canGrantRole,
   canGrantUserManage,
@@ -62,22 +63,32 @@ describe('roleCan', () => {
     expect(roleCan('manager', 'interaction.delete')).toBe(false)
   })
 
-  it('sales_executive has full Contact CRUD + payment links, never refunds', () => {
+  it('sales_executive has the full sales set incl. refunds, subscription cancel + account creation (2026-07)', () => {
+    expect(roleCan('sales_executive', 'contact.read')).toBe(true)
+    expect(roleCan('sales_executive', 'contact.read_minor')).toBe(true)
     expect(roleCan('sales_executive', 'contact.write')).toBe(true)
     expect(roleCan('sales_executive', 'interaction.create')).toBe(true)
     expect(roleCan('sales_executive', 'charge.create_link')).toBe(true)
-    expect(roleCan('sales_executive', 'charge.refund')).toBe(false)
+    expect(roleCan('sales_executive', 'charge.refund')).toBe(true)
+    expect(roleCan('sales_executive', 'subscription.cancel')).toBe(true)
+    expect(roleCan('sales_executive', 'user.invite')).toBe(true)
+    // Senior-only / catastrophic actions stay denied.
     expect(roleCan('sales_executive', 'family.merge')).toBe(false)
-    expect(roleCan('sales_executive', 'user.invite')).toBe(false)
-    expect(roleCan('sales_executive', 'subscription.cancel')).toBe(false)
+    expect(roleCan('sales_executive', 'interaction.delete')).toBe(false)
+    expect(roleCan('sales_executive', 'user.manage')).toBe(false)
+    expect(roleCan('sales_executive', 'settings.write')).toBe(false)
+    expect(roleCan('sales_executive', 'dsar.export')).toBe(false)
   })
 
-  it('virtual_assistant can read + draft, no writes that move money or send messages', () => {
-    expect(roleCan('virtual_assistant', 'contact.read')).toBe(true)
-    expect(roleCan('virtual_assistant', 'interaction.create')).toBe(true)
-    expect(roleCan('virtual_assistant', 'contact.write')).toBe(false)
-    expect(roleCan('virtual_assistant', 'charge.create_link')).toBe(false)
-    expect(roleCan('virtual_assistant', 'charge.refund')).toBe(false)
+  it('virtual_assistant has an IDENTICAL capability set to sales_executive (2026-07)', () => {
+    for (const a of ACTIONS) {
+      expect(roleCan('virtual_assistant', a)).toBe(roleCan('sales_executive', a))
+    }
+    // Spot-check the newly-shared powers.
+    expect(roleCan('virtual_assistant', 'contact.write')).toBe(true)
+    expect(roleCan('virtual_assistant', 'charge.refund')).toBe(true)
+    expect(roleCan('virtual_assistant', 'subscription.cancel')).toBe(true)
+    expect(roleCan('virtual_assistant', 'user.invite')).toBe(true)
   })
 })
 
@@ -140,12 +151,28 @@ describe('normaliseRole', () => {
 })
 
 describe('user-management capabilities (ADR 0021)', () => {
-  it('only CEO and Senior Manager can create accounts', () => {
+  it('CEO, Senior Manager, Sales Executive and Virtual Assistant can create accounts; Manager cannot', () => {
     expect(canCreateUsers('ceo')).toBe(true)
     expect(canCreateUsers('senior_manager')).toBe(true)
     expect(canCreateUsers('manager')).toBe(false)
-    expect(canCreateUsers('sales_executive')).toBe(false)
-    expect(canCreateUsers('virtual_assistant')).toBe(false)
+    expect(canCreateUsers('sales_executive')).toBe(true)
+    expect(canCreateUsers('virtual_assistant')).toBe(true)
+  })
+
+  it('account creation cannot be a privilege-escalation path (canCreateUserAtRole)', () => {
+    // CEO / Senior Manager keep the canGrantRole reach.
+    expect(canCreateUserAtRole('ceo', 'ceo')).toBe(true)
+    expect(canCreateUserAtRole('senior_manager', 'manager')).toBe(true)
+    // Sales Executive + Virtual Assistant may create ONLY at their own tier.
+    for (const actor of ['sales_executive', 'virtual_assistant'] as Role[]) {
+      expect(canCreateUserAtRole(actor, 'sales_executive')).toBe(true)
+      expect(canCreateUserAtRole(actor, 'virtual_assistant')).toBe(true)
+      expect(canCreateUserAtRole(actor, 'manager')).toBe(false)
+      expect(canCreateUserAtRole(actor, 'senior_manager')).toBe(false)
+      expect(canCreateUserAtRole(actor, 'ceo')).toBe(false)
+    }
+    // Manager cannot create accounts at all (no user.invite).
+    expect(canCreateUserAtRole('manager', 'sales_executive')).toBe(false)
   })
 
   it('CEO, Senior Manager and Manager can manage users by role', () => {
@@ -166,8 +193,10 @@ describe('user-management capabilities (ADR 0021)', () => {
   it('only grantable actions can be lifted by a grant', () => {
     expect(isGrantableAction('user.manage')).toBe(true)
     expect(isGrantableAction('user.invite')).toBe(false)
-    // user.invite is never grantable — a grant string cannot create accounts.
-    expect(hasAction('sales_executive', ['user.invite'], 'user.invite')).toBe(false)
+    // user.invite is deny-listed — a per-user grant string cannot lift it. Use
+    // manager (who has no base user.invite) so the grant, not the base role, is
+    // what's under test.
+    expect(hasAction('manager', ['user.invite'], 'user.invite')).toBe(false)
   })
 
   it('CEO, Senior Manager and Manager can delegate the manage permission', () => {
@@ -233,18 +262,18 @@ describe('custom-role permissions (assignable set + sanitize)', () => {
   })
 
   it('forbids privilege escalation — you can only bundle what you hold', () => {
-    // A sales-exec-level actor (no refund) cannot mint a role that refunds.
+    // A sales-level actor (who lacks family.merge) cannot mint a role that merges.
     const salesEffective = ACTIONS.filter((a) => roleCan('sales_executive', a))
-    const cleaned = sanitizeRolePermissions(salesEffective, ['charge.refund', 'contact.write'])
-    expect(cleaned).not.toContain('charge.refund')
+    const cleaned = sanitizeRolePermissions(salesEffective, ['family.merge', 'contact.write'])
+    expect(cleaned).not.toContain('family.merge')
     expect(cleaned).toContain('contact.write')
   })
 
   it('hasAction honours an assignable grant from a custom role', () => {
-    // sales_executive base role cannot refund…
-    expect(hasAction('sales_executive', [], 'charge.refund')).toBe(false)
-    // …but a custom role granting charge.refund makes it pass.
-    expect(hasAction('sales_executive', ['charge.refund'], 'charge.refund')).toBe(true)
+    // sales_executive base role cannot merge families…
+    expect(hasAction('sales_executive', [], 'family.merge')).toBe(false)
+    // …but a custom role granting family.merge makes it pass.
+    expect(hasAction('sales_executive', ['family.merge'], 'family.merge')).toBe(true)
     // A deny-list action can never be satisfied by a grant.
     expect(hasAction('sales_executive', ['secrets.rotate'], 'secrets.rotate')).toBe(false)
   })

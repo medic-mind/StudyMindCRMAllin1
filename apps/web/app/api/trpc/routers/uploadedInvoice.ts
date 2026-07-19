@@ -30,6 +30,7 @@ const UPLOAD_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 const DELETE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([

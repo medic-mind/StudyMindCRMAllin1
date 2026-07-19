@@ -40,6 +40,7 @@ const FAMILY_MOVE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'senior_manager',
   'manager',
   'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanManage(role: UserRole): void {

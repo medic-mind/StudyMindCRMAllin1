@@ -574,10 +574,14 @@ export const contactRouter = router({
       .input(z.object({ contactId: z.string() }))
       .query(async ({ ctx, input }) => {
         const user = requireUser(ctx)
-        // Read of AI merge candidates: any role above virtual_assistant
-        // (ADR 0014). VAs can read contacts but should not see merge
-        // suggestions — that's an operational decision, not a read.
-        if (!['ceo', 'senior_manager', 'manager', 'sales_executive'].includes(user.role)) {
+        // Read of AI merge candidates: every sales role — Sales Executive AND
+        // Virtual Assistant now share the full capability set (operator
+        // decision 2026-07, §20).
+        if (
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(
+            user.role,
+          )
+        ) {
           throw new TRPCError({ code: 'FORBIDDEN' })
         }
         return findMergeCandidates(ctx.db, input.contactId)
@@ -818,12 +822,6 @@ export const contactRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
-        if (user.role === 'virtual_assistant') {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'Virtual assistants cannot upload documents',
-          })
-        }
         const data = Buffer.from(input.dataBase64, 'base64')
         try {
           const id = createId()
@@ -858,10 +856,6 @@ export const contactRouter = router({
     remove: auditedProcedure
       .input(z.object({ id: z.string() }))
       .mutation(async ({ ctx, input }) => {
-        const user = requireUser(ctx)
-        if (user.role === 'virtual_assistant') {
-          throw new TRPCError({ code: 'FORBIDDEN' })
-        }
         const before = await ctx.db.contactDocument.findUnique({
           where: { id: input.id },
           select: { contactId: true, fileName: true, contentType: true, byteSize: true },
@@ -1573,10 +1567,6 @@ export const contactRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      if (user.role === 'virtual_assistant') {
-        throw new TRPCError({ code: 'FORBIDDEN' })
-      }
       const rows = await ctx.db.contact.findMany({
         where: { id: { in: input.contactIds }, deletedAt: null },
         select: {
@@ -1637,10 +1627,6 @@ export const contactRouter = router({
     push: auditedProcedure
       .input(z.object({ contactId: z.string(), listId: z.string().optional() }))
       .mutation(async ({ ctx, input }) => {
-        const user = requireUser(ctx)
-        if (user.role === 'virtual_assistant') {
-          throw new TRPCError({ code: 'FORBIDDEN' })
-        }
         const contact = await ctx.db.contact.findFirst({
           where: { id: input.contactId, deletedAt: null },
           select: {

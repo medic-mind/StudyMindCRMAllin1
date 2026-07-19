@@ -15,6 +15,7 @@ import { TRPCError } from '@trpc/server'
 import type { GcPaymentState, GcSubscriptionState, Prisma } from '@prisma/client'
 import { z } from 'zod'
 
+import { roleCan } from '@studymind/core/auth/policies'
 import { BackfillAlreadyRunningError, startBackfill } from '@studymind/core/backfill'
 import {
   classifyPlanShortfall,
@@ -65,6 +66,20 @@ const IMPORT_ROLES: ReadonlySet<SessionUser['role']> = new Set(['ceo', 'senior_m
 function assertFinanceRole(user: SessionUser): void {
   if (!FINANCE_ROLES.has(user.role)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'finance role required' })
+  }
+}
+
+// Cancelling a subscription plan is gated on the `subscription.cancel` action
+// (CLAUDE.md §20.1): CEO, Senior Manager, Manager, and — operator decision
+// 2026-07 — Sales Executive + Virtual Assistant. Every OTHER GoCardless money
+// write (create/pause/resume plans, collect/retry payments, cancel mandates,
+// imports) stays on the blanket FINANCE_ROLES / IMPORT_ROLES gates.
+function assertCanCancelSubscription(user: SessionUser): void {
+  if (!roleCan(user.role, 'subscription.cancel')) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'subscription cancel permission required',
+    })
   }
 }
 
@@ -1722,7 +1737,7 @@ export const gocardlessRouter = router({
 
     cancel: auditedProcedure.input(SubscriptionActionInput).mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      assertFinanceRole(user)
+      assertCanCancelSubscription(user)
       try {
         const result = await cancelSubscriptionPlan(ctx.db, {
           gcSubscriptionId: input.gcSubscriptionId,

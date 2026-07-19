@@ -27,6 +27,7 @@ import { z } from 'zod'
 import {
   GRANTABLE_ACTIONS,
   canCreateUsers,
+  canCreateUserAtRole,
   canDeactivateUsers,
   canGrantRole,
   canGrantUserManage,
@@ -483,7 +484,7 @@ export const adminUsersRouter = router({
       const email = input.email.trim().toLowerCase()
 
       for (const role of input.roles) {
-        if (!canGrantRole(actor.role, role)) {
+        if (!canCreateUserAtRole(actor.role, role)) {
           throw new TRPCError({ code: 'FORBIDDEN', message: `cannot grant role: ${role}` })
         }
       }
@@ -535,7 +536,7 @@ export const adminUsersRouter = router({
       const actor = requireUser(ctx)
       assertCanCreateUsers(actor)
       for (const role of input.roles) {
-        if (!canGrantRole(actor.role, role)) {
+        if (!canCreateUserAtRole(actor.role, role)) {
           throw new TRPCError({ code: 'FORBIDDEN', message: `cannot grant role: ${role}` })
         }
       }
@@ -829,7 +830,7 @@ export const adminUsersRouter = router({
       const email = input.email.trim().toLowerCase()
 
       for (const role of input.roles) {
-        if (!canGrantRole(actor.role, role)) {
+        if (!canCreateUserAtRole(actor.role, role)) {
           throw new TRPCError({ code: 'FORBIDDEN', message: `cannot grant role: ${role}` })
         }
       }

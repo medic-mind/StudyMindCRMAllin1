@@ -173,12 +173,11 @@ describe('accountLabel.attach', () => {
     }
   }
 
-  it('rejects virtual_assistant', async () => {
-    const { ctx } = makeCtx('virtual_assistant', seed())
+  it('allows virtual_assistant to apply labels (identical to sales_executive, 2026-07)', async () => {
+    const { ctx, state } = makeCtx('virtual_assistant', seed())
     const caller = accountLabelRouter.createCaller(ctx)
-    await expect(caller.attach({ accountId: 'a1', labelId: 'l1' })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    })
+    await caller.attach({ accountId: 'a1', labelId: 'l1' })
+    expect(state.links).toHaveLength(1)
   })
 
   it('is idempotent — applying twice yields one link row', async () => {
@@ -250,12 +249,11 @@ describe('accountLabel customer (Contact) labelling', () => {
     }
   }
 
-  it('attachContact rejects virtual_assistant', async () => {
-    const { ctx } = makeCtx('virtual_assistant', seed())
+  it('attachContact allows virtual_assistant (identical to sales_executive, 2026-07)', async () => {
+    const { ctx, state } = makeCtx('virtual_assistant', seed())
     const caller = accountLabelRouter.createCaller(ctx)
-    await expect(
-      caller.attachContact({ contactId: 'c1', labelId: 'l1' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    await caller.attachContact({ contactId: 'c1', labelId: 'l1' })
+    expect(state.contactLinks).toHaveLength(1)
   })
 
   it('attachContact is idempotent', async () => {

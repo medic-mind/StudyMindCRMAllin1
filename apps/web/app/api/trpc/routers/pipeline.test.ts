@@ -300,15 +300,15 @@ describe('pipeline.stages.archive', () => {
 })
 
 describe('pipeline.family.move', () => {
-  it('rejects virtual_assistant', async () => {
-    const { ctx } = makeCtx('virtual_assistant', {
+  it('allows virtual_assistant (identical to sales_executive, 2026-07)', async () => {
+    const { ctx, families } = makeCtx('virtual_assistant', {
       stages: seedStages(),
       families: [{ id: 'f1', stageId: 's_lead', state: 'lead', deletedAt: null }],
     })
     const caller = pipelineRouter.createCaller(ctx)
-    await expect(
-      caller.family.move({ familyId: 'f1', stageId: 's_active' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const r = await caller.family.move({ familyId: 'f1', stageId: 's_active' })
+    expect(r?.toStageId).toBe('s_active')
+    expect(families[0]!.stageId).toBe('s_active')
   })
 
   it('allows sales_executive and writes interaction + audit row', async () => {
