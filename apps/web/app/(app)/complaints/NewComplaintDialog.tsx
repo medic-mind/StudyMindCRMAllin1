@@ -33,7 +33,12 @@ export function NewComplaintDialog() {
   const [withTask, setWithTask] = useState(false)
   const [taskAssigneeId, setTaskAssigneeId] = useState('')
   const [taskDue, setTaskDue] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<{
+    customer?: string
+    title?: string
+    task?: string
+    form?: string
+  }>({})
   const titleRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
@@ -58,13 +63,13 @@ export function NewComplaintDialog() {
       setTaskDue('')
       setContactQuery('')
       setPickedContactId(null)
-      setError(null)
+      setErrors({})
       toast.success(result.taskId ? 'Complaint logged and task assigned' : 'Complaint logged')
       await utils.complaint.activeCount.invalidate()
       router.refresh()
     },
     onError: (e) => {
-      setError(e.message)
+      setErrors({ form: e.message })
       toast.error(e.message ?? 'Could not log the complaint')
     },
   })
@@ -85,19 +90,18 @@ export function NewComplaintDialog() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!pickedContactId) {
-      setError('Pick the customer the complaint is about.')
-      return
-    }
-    if (title.trim().length < 2) {
-      setError('Give the complaint a short title.')
-      return
-    }
+    const next: { customer?: string; title?: string; task?: string } = {}
+    if (!pickedContactId) next.customer = 'Pick the customer the complaint is about.'
+    if (title.trim().length < 2) next.title = 'Give the complaint a short title.'
     if (withTask && !taskAssigneeId) {
-      setError('Pick who the follow-up task is for, or untick the task option.')
+      next.task = 'Pick who the follow-up task is for, or untick the task option.'
+    }
+    if (next.customer || next.title || next.task || !pickedContactId) {
+      setErrors(next)
+      if (next.title && !next.customer) titleRef.current?.focus()
       return
     }
-    setError(null)
+    setErrors({})
     create.mutate({
       contactId: pickedContactId,
       title: title.trim(),
@@ -144,7 +148,7 @@ export function NewComplaintDialog() {
               </button>
             </header>
             <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
-              <Field label="Customer" required>
+              <Field label="Customer" required error={errors.customer}>
                 {pickedContactId ? (
                   <div className="flex items-center justify-between rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-800">
                     <span className="truncate">{contactQuery}</span>
@@ -175,6 +179,7 @@ export function NewComplaintDialog() {
                               onClick={() => {
                                 setPickedContactId(c.id)
                                 setContactQuery(c.displayName)
+                                if (errors.customer) setErrors((p) => ({ ...p, customer: undefined }))
                                 setTimeout(() => titleRef.current?.focus(), 0)
                               }}
                               className="block w-full px-3 py-1.5 text-left text-sm hover:bg-primary-50 hover:text-primary-800"
@@ -192,12 +197,15 @@ export function NewComplaintDialog() {
                 )}
               </Field>
 
-              <Field label="Title" required>
+              <Field label="Title" required error={errors.title}>
                 <Input
                   ref={titleRef}
                   required
                   value={title}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    setTitle(e.target.value)
+                    if (errors.title) setErrors((p) => ({ ...p, title: undefined }))
+                  }}
                   maxLength={200}
                   placeholder="What is the complaint? (short title)"
                 />
@@ -249,7 +257,10 @@ export function NewComplaintDialog() {
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <Select
                       value={taskAssigneeId}
-                      onChange={(e) => setTaskAssigneeId(e.target.value)}
+                      onChange={(e) => {
+                        setTaskAssigneeId(e.target.value)
+                        if (errors.task) setErrors((p) => ({ ...p, task: undefined }))
+                      }}
                       aria-label="Task assignee"
                     >
                       <option value="">Who is it for?</option>
@@ -269,11 +280,16 @@ export function NewComplaintDialog() {
                     <span className="text-xs text-neutral-500">Due date optional</span>
                   </div>
                 )}
+                {errors.task ? (
+                  <p role="alert" className="mt-1.5 text-xs font-medium text-red-700">
+                    {errors.task}
+                  </p>
+                ) : null}
               </div>
 
-              {error && (
+              {errors.form && (
                 <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {error}
+                  {errors.form}
                 </p>
               )}
 
@@ -296,10 +312,12 @@ export function NewComplaintDialog() {
 function Field({
   label,
   required,
+  error,
   children,
 }: {
   label: string
   required?: boolean
+  error?: string | null
   children: React.ReactNode
 }) {
   return (
@@ -309,6 +327,11 @@ function Field({
         {required ? <span className="text-red-600"> *</span> : null}
       </label>
       <div className="mt-1">{children}</div>
+      {error ? (
+        <p role="alert" className="mt-1 text-xs font-medium text-red-700">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }

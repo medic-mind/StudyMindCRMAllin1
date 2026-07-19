@@ -47,7 +47,7 @@ export function NewTaskDialog({
   const [assigneeId, setAssigneeId] = useState('')
   const [teamId, setTeamId] = useState('')
   const [dueAt, setDueAt] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<{ title?: string; assignee?: string; form?: string }>({})
   const titleRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
@@ -71,12 +71,12 @@ export function NewTaskDialog({
       setDueAt('')
       setContactQuery('')
       setPickedContactId(contactId ?? null)
-      setError(null)
+      setErrors({})
       toast.success('Task created')
       router.refresh()
     },
     onError: (e) => {
-      setError(e.message)
+      setErrors({ form: e.message })
       toast.error(e.message ?? 'Could not create task')
     },
   })
@@ -105,15 +105,18 @@ export function NewTaskDialog({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (title.trim().length === 0) {
-      setError('A title is required.')
-      return
-    }
     // A task is for a person, a whole team, or both — at least one.
+    const next: { title?: string; assignee?: string } = {}
+    if (title.trim().length === 0) next.title = 'A title is required.'
     if (assigneeId.trim().length === 0 && teamId.trim().length === 0) {
-      setError('Pick a person or a team for the task.')
+      next.assignee = 'Pick a person or a team for the task.'
+    }
+    if (next.title || next.assignee) {
+      setErrors(next)
+      if (next.title) titleRef.current?.focus()
       return
     }
+    setErrors({})
     create.mutate({
       title: title.trim(),
       description: description.trim() || undefined,
@@ -163,12 +166,15 @@ export function NewTaskDialog({
               </button>
             </header>
             <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
-              <Field label="Title" required>
+              <Field label="Title" required error={errors.title}>
                 <Input
                   ref={titleRef}
                   required
                   value={title}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    setTitle(e.target.value)
+                    if (errors.title) setErrors((p) => ({ ...p, title: undefined }))
+                  }}
                   maxLength={280}
                   placeholder="What needs doing?"
                 />
@@ -185,8 +191,14 @@ export function NewTaskDialog({
               </Field>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="Assignee (person)">
-                  <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+                <Field label="Assignee (person)" error={errors.assignee}>
+                  <Select
+                    value={assigneeId}
+                    onChange={(e) => {
+                      setAssigneeId(e.target.value)
+                      if (errors.assignee) setErrors((p) => ({ ...p, assignee: undefined }))
+                    }}
+                  >
                     <option value="">— No individual —</option>
                     {(usersQuery.data ?? []).map((u) => (
                       <option key={u.id} value={u.id}>
@@ -197,7 +209,13 @@ export function NewTaskDialog({
                 </Field>
 
                 <Field label="Team">
-                  <Select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+                  <Select
+                    value={teamId}
+                    onChange={(e) => {
+                      setTeamId(e.target.value)
+                      if (errors.assignee) setErrors((p) => ({ ...p, assignee: undefined }))
+                    }}
+                  >
                     <option value="">— No team —</option>
                     {(teamsQuery.data ?? []).map((t) => (
                       <option key={t.id} value={t.id}>
@@ -272,9 +290,9 @@ export function NewTaskDialog({
                 )}
               </Field>
 
-              {error && (
+              {errors.form && (
                 <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {error}
+                  {errors.form}
                 </p>
               )}
 
@@ -302,10 +320,12 @@ export function NewTaskDialog({
 function Field({
   label,
   required,
+  error,
   children,
 }: {
   label: string
   required?: boolean
+  error?: string | null
   children: React.ReactNode
 }) {
   return (
@@ -315,6 +335,11 @@ function Field({
         {required ? <span className="text-red-600"> *</span> : null}
       </label>
       <div className="mt-1">{children}</div>
+      {error ? (
+        <p role="alert" className="mt-1 text-xs font-medium text-red-700">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }
