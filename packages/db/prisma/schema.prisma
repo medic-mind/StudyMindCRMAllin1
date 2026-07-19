@@ -2117,6 +2117,31 @@ model DdRecoveryTemplate {
   @@index([archivedAt])
 }
 
+/// Customisable Direct Debit recovery settings (ADR 0045 amendment). Singleton
+/// (`id = "dd_recovery"`). The recovery figures that used to be hardcoded /
+/// env-only — so the whole chase flow is customisable from Settings, not just
+/// the copy. The calculated CCJ court fee + statutory interest are fixed by law
+/// and stay in code. Money in integer pence (§19).
+model DdRecoverySettings {
+  id String @id
+  /// Our own late fee (pence) applied to an overdue balance. Not a court cost.
+  lateFeeMinor Int @default(1200)
+  /// Default days between escalation steps for a NEW case.
+  defaultCadenceDays Int @default(7)
+  /// Days a debtor is given to respond (Pre-Action Protocol for Debt Claims).
+  responseDays Int @default(30)
+  /// Finance contact number shown in the letters.
+  financePhone String @default("020 3305 9593")
+  /// Letterhead on the generated PDF copy of a letter.
+  companyName String @default("Medic Mind")
+  companyAddress String @default("16 Tottenhall Rd, London N13 6HX")
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+}
+
 /// Complete mirror of a GoCardless payment (ADR 0038). Wider population than
 /// the reconciliation-facing `Payment` table: every payment at the provider
 /// lands here regardless of whether its customer is linked to a Family.

@@ -34,8 +34,8 @@ export default async function DdRecoveryTemplatesSettingsPage() {
   return (
     <>
       <PageHeader
-        title="Direct Debit recovery templates"
-        subtitle="Reminder and legal-escalation copy for chasing a cancelled/underpaid plan. Nothing sends from here — these are drafted, reviewed and sent by a person from a recovery case. Tokens: {{first_name}} {{full_name}} {{customer_name}} {{plan_name}} {{amount_due}} {{collected}} {{plan_total}}."
+        title="Direct Debit recovery"
+        subtitle="The escalating email + text sequence used to chase an unpaid Direct Debit, and the settings behind it (late fee, cadence, response window, letterhead). The court fee and 8% statutory interest are calculated automatically per person. Everything here is customisable."
         breadcrumbs={BREADCRUMBS}
       />
       <PageBody>

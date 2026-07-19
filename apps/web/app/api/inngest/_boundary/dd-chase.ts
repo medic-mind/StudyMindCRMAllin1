@@ -33,6 +33,7 @@ import { outbound as trengoOutbound } from '@studymind/integration-trengo'
 
 import { db } from '@/lib/db'
 import { buildCaseRecoveryVars } from '@/lib/finance/recovery-vars'
+import { companyLetterhead, loadDdRecoverySettings } from '@/lib/finance/recovery-settings'
 
 /** Cases examined per tick — a huge backlog drains over a few ticks. */
 const CHASE_BATCH = 100
@@ -99,6 +100,11 @@ export const ddChaseTick = inngest.createFunction(
         })
       }
     }
+
+    // Customisable recovery settings (late fee, response window, phone,
+    // letterhead) — loaded once per tick.
+    const settings = await loadDdRecoverySettings(db)
+    const letterhead = companyLetterhead(settings)
 
     let resolved = 0
     let sent = 0
@@ -220,6 +226,7 @@ export const ddChaseTick = inngest.createFunction(
           createdAt: c.createdAt,
         },
         now,
+        settings,
       )
 
       const sentChannels: string[] = []
@@ -248,8 +255,8 @@ export const ddChaseTick = inngest.createFunction(
             // A PDF copy of the letter itself for the serious steps.
             if (legalTemplateIds.has(s.template.id)) {
               attachments.push({
-                filename: 'Medic-Mind-letter.pdf',
-                content: renderRecoveryLetterPdf({ subject, body }),
+                filename: 'letter.pdf',
+                content: renderRecoveryLetterPdf({ subject, body, ...letterhead }),
                 contentType: 'application/pdf',
               })
             }

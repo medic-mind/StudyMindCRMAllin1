@@ -108,11 +108,11 @@ const GROUPS: Group[] = [
       },
       {
         href: '/settings/dd-recovery-templates',
-        title: 'Direct Debit recovery templates',
+        title: 'Direct Debit recovery',
         description:
-          'Reminder and legal-escalation copy for chasing a cancelled/underpaid Direct Debit plan. Drafted and sent by a person from a recovery case.',
+          'The escalating email + text sequence for chasing an unpaid Direct Debit, plus the late fee, cadence and letterhead. Court fee + interest are calculated automatically.',
         roles: 'Manager+',
-        icon: <MailIcon size={16} />,
+        icon: <CoinsIcon size={16} />,
       },
       {
         href: '/settings/slack-channels',

@@ -46,6 +46,7 @@ import {
   type SessionUser,
 } from '@/lib/trpc/builders'
 import { buildCaseRecoveryVars } from '@/lib/finance/recovery-vars'
+import { companyLetterhead, loadDdRecoverySettings } from '@/lib/finance/recovery-settings'
 
 // Refunds + allocation review + reconciliation are restricted to roles that
 // can move money. ADR 0014 — ceo, senior_manager, manager. Sales Executive
@@ -692,13 +693,16 @@ export const financeRouter = router({
             sendTexts: z.boolean().default(false),
             chaseEmail: z.string().trim().email().max(200).nullish(),
             chasePhoneE164: z.string().trim().max(20).nullish(),
-            cadenceDays: z.number().int().min(1).max(30).default(7),
+            // Omit to use the configurable default cadence (Settings → DD recovery).
+            cadenceDays: z.number().int().min(1).max(30).optional(),
             notes: z.string().max(5000).nullish(),
           }),
         )
         .mutation(async ({ ctx, input }) => {
           const user = requireUser(ctx)
           assertFinanceRole(user)
+          const cadenceDays =
+            input.cadenceDays ?? (await loadDdRecoverySettings(ctx.db)).defaultCadenceDays
 
           let contactId: string | null = null
           let chaseEmail = input.chaseEmail ?? null
@@ -759,7 +763,7 @@ export const financeRouter = router({
               chaseEmail,
               chasePhoneE164,
               setupLinkUrl: input.setupLinkUrl ?? null,
-              cadenceDays: input.cadenceDays,
+              cadenceDays,
               // Armed the moment a link exists; otherwise waits in "needs link".
               nextAutoMessageAt: input.setupLinkUrl ? new Date() : null,
               ownerUserId: user.id,
@@ -939,6 +943,7 @@ export const financeRouter = router({
             ? [contact.firstName, contact.lastName].filter(Boolean).join(' ') || null
             : null
           const outstandingMinor = Math.max(0, c.openingShortfallMinor - c.recoveredMinor)
+          const recoverySettings = await loadDdRecoverySettings(ctx.db)
           // The token values (name, amount, re-signup link, calculated CCJ
           // court fee + statutory interest) the send preview renders with — the
           // SAME set the automated engine uses, so the customer sees one figure.
@@ -952,6 +957,7 @@ export const financeRouter = router({
               createdAt: c.createdAt,
             },
             new Date(),
+            recoverySettings,
           )
           return {
             id: c.id,
@@ -1065,9 +1071,10 @@ export const financeRouter = router({
               // A PDF copy of the letter (from the final edited body) for the
               // serious steps; and any fixed document staff attached.
               if (tpl?.kind === 'legal_escalation') {
+                const letterhead = companyLetterhead(await loadDdRecoverySettings(ctx.db))
                 attachments.push({
-                  filename: 'Medic-Mind-letter.pdf',
-                  content: renderRecoveryLetterPdf({ subject, body: input.body }),
+                  filename: 'letter.pdf',
+                  content: renderRecoveryLetterPdf({ subject, body: input.body, ...letterhead }),
                   contentType: 'application/pdf',
                 })
               }

@@ -5,19 +5,18 @@
 //
 // The CCJ figures are always computed and passed; only templates that reference
 // {{court_fee}} / {{interest}} / {{total_with_costs}} (the stern / CCJ steps)
-// actually show them, so the gentle reminders stay gentle.
+// actually show them, so the gentle reminders stay gentle. The policy figures
+// (late fee, response window, finance phone) come from the customisable
+// recovery settings (Settings → DD recovery), not hardcoded.
 
 import {
   buildRecoveryVars,
-  DEBT_LETTER_RESPONSE_DAYS,
   estimateCcjCosts,
-  resolveDdLateFeeMinor,
   type CcjEstimate,
   type RecoveryTemplateVars,
 } from '@studymind/core/finance'
 
-/** StudyMind finance contact number shown in the letters. Overridable. */
-const FINANCE_PHONE = process.env.DD_FINANCE_PHONE ?? '020 3305 9593'
+import type { EffectiveRecoverySettings } from './recovery-settings'
 
 export interface CaseVarsInput {
   personName: string | null
@@ -35,22 +34,25 @@ export interface CaseRecoveryVars {
   responseDeadline: Date
 }
 
-export function buildCaseRecoveryVars(c: CaseVarsInput, now: Date): CaseRecoveryVars {
+export function buildCaseRecoveryVars(
+  c: CaseVarsInput,
+  now: Date,
+  settings: EffectiveRecoverySettings,
+): CaseRecoveryVars {
   const fullName =
     [c.contactFirstName, c.contactLastName].filter(Boolean).join(' ').trim() || c.personName || null
-  const lateFeeMinor = resolveDdLateFeeMinor(process.env.DD_LATE_FEE_GBP)
   const ccj = estimateCcjCosts({
     outstandingMinor: c.outstandingMinor,
-    lateFeeMinor,
+    lateFeeMinor: settings.lateFeeMinor,
     overdueSince: c.createdAt,
     now,
   })
-  const responseDeadline = new Date(now.getTime() + DEBT_LETTER_RESPONSE_DAYS * 86_400_000)
+  const responseDeadline = new Date(now.getTime() + settings.responseDays * 86_400_000)
   const vars = buildRecoveryVars({
     fullName,
     outstandingMinor: c.outstandingMinor,
     setupLinkUrl: c.setupLinkUrl,
-    phone: FINANCE_PHONE,
+    phone: settings.financePhone,
     ccj,
     responseDeadline,
   })
