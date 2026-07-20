@@ -43,7 +43,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     links: [
       {
         href: '/settings/users',
-        title: 'Users & roles',
+        title: 'Users',
         navLabel: 'Users',
         description:
           'Create accounts, reset or reissue logins, delete/erase, per-user permissions, avatars. Audited.',
