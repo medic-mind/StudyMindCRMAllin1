@@ -148,7 +148,7 @@ function IssuesTab({ canWrite }: { canWrite: boolean }) {
             Show issues before July 2026
           </label>
         </div>
-        <DefaultersSection includeHistoric={includeHistoric} />
+        <DefaultersSection includeHistoric={includeHistoric} canWrite={canWrite} />
         <PlanShortfallsSection includeHistoric={includeHistoric} />
         <ActivePlanArrearsSection includeHistoric={includeHistoric} />
       </div>
@@ -156,7 +156,13 @@ function IssuesTab({ canWrite }: { canWrite: boolean }) {
   )
 }
 
-function DefaultersSection({ includeHistoric }: { includeHistoric: boolean }) {
+function DefaultersSection({
+  includeHistoric,
+  canWrite,
+}: {
+  includeHistoric: boolean
+  canWrite: boolean
+}) {
   const defaulters = trpc.finance.directDebit.listDefaulters.useQuery({ includeHistoric })
   const items = defaulters.data?.items ?? []
 
@@ -203,7 +209,7 @@ function DefaultersSection({ includeHistoric }: { includeHistoric: boolean }) {
             </Thead>
             <Tbody>
               {items.map((d) => (
-                <DefaulterRow key={d.familyId} defaulter={d} />
+                <DefaulterRow key={d.familyId} defaulter={d} canWrite={canWrite} />
               ))}
             </Tbody>
           </Table>

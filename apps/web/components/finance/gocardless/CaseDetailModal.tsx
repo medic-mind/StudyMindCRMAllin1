@@ -65,8 +65,21 @@ export function CaseDetailModal({
 
   return (
     <Modal open onClose={onClose} size="xl" title={d ? d.name : 'Recovery case'}>
-      {detail.isLoading || !d ? (
+      {detail.isLoading ? (
         <p className="py-8 text-center text-sm text-neutral-500">Loading…</p>
+      ) : detail.isError || !d ? (
+        <div className="py-8 text-center">
+          <p className="text-sm text-red-700">
+            {detail.error?.message ?? 'Could not load this recovery case.'}
+          </p>
+          <button
+            type="button"
+            className="mt-3 text-sm font-medium text-primary-700 hover:underline"
+            onClick={() => void detail.refetch()}
+          >
+            Try again
+          </button>
+        </div>
       ) : (
         <div className="space-y-5">
           <HeaderRow detail={d} />

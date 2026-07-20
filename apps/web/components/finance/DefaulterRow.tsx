@@ -1,12 +1,14 @@
 // One Direct Debit defaulter row (Slice B). Client island: expands to a
-// drill-down showing the payment/instalment timeline plus a jump to the family
-// to send a reminder. CLAUDE.md §3 — we never auto-charge or auto-dun; every
-// action below requires a person to confirm.
+// drill-down showing the payment/instalment timeline, and opens the full
+// recovery case (comms history, pause/resume, send) via CaseDetailModal.
+// CLAUDE.md §3 — we never auto-charge or auto-dun; every action below requires
+// a person to confirm.
 
 'use client'
 
 import Link from 'next/link'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +16,8 @@ import { Td, Tr } from '@/components/ui/table'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
+
+import { CaseDetailModal } from './gocardless/CaseDetailModal'
 
 const REASON_LABEL: Record<string, string> = {
   mandate_inactive_with_balance: 'Inactive mandate + balance',
@@ -39,12 +43,23 @@ interface Defaulter {
   reasons: string[]
 }
 
-export function DefaulterRow({ defaulter: d }: { defaulter: Defaulter }): JSX.Element {
+export function DefaulterRow({
+  defaulter: d,
+  canWrite = false,
+}: {
+  defaulter: Defaulter
+  canWrite?: boolean
+}): JSX.Element {
   const [open, setOpen] = useState(false)
+  const [openCaseId, setOpenCaseId] = useState<string | null>(null)
   const detail = trpc.finance.directDebit.detail.useQuery(
     { familyId: d.familyId },
     { enabled: open },
   )
+  const openCase = trpc.finance.directDebit.cases.openCaseForFamily.useMutation({
+    onSuccess: (res) => setOpenCaseId(res.id),
+    onError: (e) => toast.error(e.message ?? 'Could not open the recovery case'),
+  })
 
   return (
     <>
@@ -87,14 +102,26 @@ export function DefaulterRow({ defaulter: d }: { defaulter: Defaulter }): JSX.El
           </div>
         </Td>
         <Td className="text-right">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-          >
-            {open ? 'Hide' : 'Open'}
-          </Button>
+          <div className="flex items-center justify-end gap-1">
+            {canWrite ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={openCase.isPending}
+                onClick={() => openCase.mutate({ familyId: d.familyId, outstandingMinor: d.outstandingMinor })}
+              >
+                {openCase.isPending ? 'Opening…' : 'Recovery case'}
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+            >
+              {open ? 'Hide' : 'History'}
+            </Button>
+          </div>
         </Td>
       </Tr>
 
@@ -128,6 +155,14 @@ export function DefaulterRow({ defaulter: d }: { defaulter: Defaulter }): JSX.El
             </div>
           </Td>
         </Tr>
+      ) : null}
+
+      {openCaseId ? (
+        <CaseDetailModal
+          caseId={openCaseId}
+          canWrite={canWrite}
+          onClose={() => setOpenCaseId(null)}
+        />
       ) : null}
     </>
   )

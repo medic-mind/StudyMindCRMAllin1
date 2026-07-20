@@ -785,6 +785,88 @@ export const financeRouter = router({
           return { id }
         }),
 
+      /**
+       * Open the full recovery case for a detected defaulter FAMILY — find an
+       * existing open case for the family's billing contact, else create one
+       * seeded from the defaulter figures. Lets the Issues-tab defaulter list
+       * expand into the same rich case view (comms history, pause/resume, send)
+       * as the recovery worklist, instead of being a dead-end drill-down.
+       * Returns the case id for the client to open in the modal.
+       */
+      openCaseForFamily: protectedProcedure
+        .input(
+          z.object({
+            familyId: z.string().min(1),
+            outstandingMinor: z.number().int().nonnegative().default(0),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+
+          const family = await ctx.db.family.findFirst({
+            where: { id: input.familyId, deletedAt: null },
+            select: { id: true, billingContactId: true },
+          })
+          if (!family?.billingContactId) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'This family has no billing contact to open a case for.',
+            })
+          }
+          const contactId = family.billingContactId
+
+          // Reuse an existing in-flight case for this contact — never spawn a
+          // duplicate case each time the row is opened.
+          const existing = await ctx.db.directDebitCase.findFirst({
+            where: { contactId, status: { notIn: ['recovered', 'written_off'] } },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true },
+          })
+          if (existing) return { id: existing.id, created: false }
+
+          const contact = await ctx.db.contact.findFirst({
+            where: { id: contactId, deletedAt: null },
+            select: { email: true, phoneE164: true },
+          })
+          const gcCustomer = await ctx.db.gcCustomer.findFirst({
+            where: { contactId },
+            select: { gcCustomerId: true },
+          })
+          const cadenceDays = (await loadDdRecoverySettings(ctx.db)).defaultCadenceDays
+
+          const id = createId()
+          await ctx.db.directDebitCase.create({
+            data: {
+              id,
+              gcSubscriptionId: null,
+              gcCustomerId: gcCustomer?.gcCustomerId ?? null,
+              contactId,
+              personName: null,
+              status: 'new',
+              openingShortfallMinor: input.outstandingMinor,
+              // Start with auto-send OFF: the case is created just to review /
+              // work it; the human arms channels + link in the modal (§3).
+              sendEmails: false,
+              sendTexts: false,
+              chaseEmail: contact?.email ?? null,
+              chasePhoneE164: contact?.phoneE164 ?? null,
+              setupLinkUrl: null,
+              cadenceDays,
+              nextAutoMessageAt: null,
+              ownerUserId: user.id,
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+          await ctx.audit({
+            action: 'direct_debit.case_opened',
+            target: { type: 'DirectDebitCase', id },
+            after: { fromDefaulter: true, familyId: input.familyId, contactId, outstandingMinor: input.outstandingMinor },
+          })
+          return { id, created: true }
+        }),
+
       /** Edit a case's chase settings: contact details, channel flags, the
        *  re-signup link, cadence, or the master auto-chase switch. */
       updateChase: protectedProcedure
