@@ -219,6 +219,90 @@ async function ensurePipelineCard(
   return card.id
 }
 
+/** Season year for a booking: start_date → first booked week → camp-record
+ *  creation date. Null only when nothing carries a parseable date. */
+export function deriveCampYear(b: BookingResource): number | null {
+  const weekDates = Array.isArray(b.booked_weeks)
+    ? b.booked_weeks.map((w) =>
+        w && typeof w === 'object' && 'start_date' in w
+          ? ((w as { start_date?: unknown }).start_date as string | null)
+          : null,
+      )
+    : []
+  for (const candidate of [b.start_date, b.end_date, ...weekDates, b.created_at]) {
+    if (typeof candidate === 'string' && candidate) {
+      const d = new Date(candidate)
+      if (!Number.isNaN(d.getTime())) return d.getUTCFullYear()
+    }
+  }
+  return null
+}
+
+function toDate(value: string | null | undefined): Date | null {
+  if (!value) return null
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * The CRM's own on-record copy of the booking (CampBookingRecord) — upserted
+ * by EVERY sync path so the central record survives camp-app downtime. Keyed
+ * on the camp's booking uuid; idempotent.
+ */
+async function upsertBookingRecord(
+  db: PrismaClient,
+  b: BookingResource,
+  links: { studentContactId: string | null; guardianContactId: string | null },
+  syncSource: string,
+): Promise<void> {
+  const data = {
+    status: b.status ?? null,
+    bookingType: b.booking_type ?? null,
+    subject: b.subject ?? null,
+    programmeType: b.programme_type ?? null,
+    campId: b.camp_id ?? null,
+    campName: b.camp_name ?? null,
+    campYear: deriveCampYear(b),
+    enrolledCampIds: (b.enrolled_camp_ids ?? (b.camp_id ? [b.camp_id] : [])) as string[],
+    weekNumber: b.week_number ?? null,
+    weekLabel: b.week_label ?? null,
+    startDate: toDate(b.start_date),
+    endDate: toDate(b.end_date),
+    daysBooked: b.days_booked ?? null,
+    multipleWeeks: b.multiple_weeks ?? false,
+    bookedWeeks: (b.booked_weeks ?? []) as object[],
+    withAccommodation: b.with_accommodation ?? false,
+    withTransfer: b.with_transfer ?? false,
+    totalMinor: b.payment?.total_minor ?? null,
+    paidMinor: b.payment?.paid_minor ?? null,
+    paymentType: b.payment?.type ?? null,
+    paymentReference: b.payment?.reference ?? null,
+    agentName: b.agent_name ?? null,
+    campNotes: b.notes ?? null,
+    notesLog: (b.notes_log ?? []) as object[],
+    campStudentId: b.student_id ?? null,
+    studentName: [b.student?.first_name, b.student?.last_name].filter(Boolean).join(' ') || null,
+    studentEmail: b.student?.email ?? null,
+    guardianName: b.guardian?.name ?? null,
+    guardianEmail: b.guardian?.email ?? null,
+    guardianPhone: b.guardian?.mobile ?? null,
+    dietaryRequirements: b.student?.dietary_requirements ?? null,
+    emergencyContactName: b.student?.emergency_contact_name ?? null,
+    emergencyContactPhone: b.student?.emergency_contact_phone ?? null,
+    studentContactId: links.studentContactId,
+    guardianContactId: links.guardianContactId,
+    sourceCreatedAt: toDate(b.created_at),
+    sourceUpdatedAt: toDate(b.updated_at),
+    lastSyncedAt: new Date(),
+    lastSyncSource: syncSource,
+  }
+  await db.campBookingRecord.upsert({
+    where: { externalBookingId: b.id },
+    create: { id: createId(), externalBookingId: b.id, ...data },
+    update: data,
+  })
+}
+
 function buildSummary(b: BookingResource): string {
   const parts = [
     b.camp_name ?? 'Summer camp',
@@ -347,6 +431,8 @@ export interface ApplyOptions {
    * single summary audit per run instead (CLAUDE.md §17 backfill convention).
    */
   audit?: boolean
+  /** Stamped onto CampBookingRecord.lastSyncSource: webhook | backfill | sync | crm_create. */
+  syncSource?: string
 }
 
 /**
@@ -373,6 +459,9 @@ export async function applyBookingEvent(
   const hasStudent = Boolean(student.firstName || student.lastName || studentEmail || studentPhone)
 
   if (!hasGuardian && !hasStudent) {
+    // Still keep the central record — a booking with no identifiable person is
+    // rare but must not vanish from the CRM's on-record copy.
+    await upsertBookingRecord(db, b, { studentContactId: null, guardianContactId: null }, opts.syncSource ?? 'webhook')
     return { primaryContactId: null, guardianContactId: null, studentContactId: null, cardId: null, action: 'skipped', reason: 'no_identifiable_person' }
   }
 
@@ -413,6 +502,9 @@ export async function applyBookingEvent(
   for (const contactId of targets) {
     await writeBookingInteraction(db, contactId, envelope)
   }
+
+  // The durable central record (what the bookings workspace lists).
+  await upsertBookingRecord(db, b, { studentContactId, guardianContactId }, opts.syncSource ?? 'webhook')
 
   // Mirror camp notes onto the primary (customer) timeline.
   if (primaryContactId) {

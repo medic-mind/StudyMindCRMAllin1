@@ -10,6 +10,7 @@ import {
   productClassificationSchema,
   runStructured,
 } from '@studymind/ai'
+import { detectCampPurchase } from '@studymind/core/camp'
 import {
   classifyProductFromText,
   recomputeAtRiskForFamily,
@@ -115,6 +116,7 @@ export const stripeEventReceived = inngest.createFunction(
           currency: string
           created: number
           invoice: string | { id: string } | null
+          payment_intent?: string | { id: string } | null
           description?: string | null
           statement_descriptor?: string | null
           metadata?: Record<string, string> | null
@@ -138,16 +140,24 @@ export const stripeEventReceived = inngest.createFunction(
           chargeProductText(charge),
           await loadProductCatalogue(),
         )
+        const productText = chargeProductText(charge)
         return {
           kind: 'payment' as const,
           stripeId: charge.id,
           stripeCustomerId: customerId,
+          stripePaymentIntentId:
+            typeof charge.payment_intent === 'string'
+              ? charge.payment_intent
+              : (charge.payment_intent?.id ?? null),
           amountMinor: charge.amount,
           currency: charge.currency.toUpperCase(),
           receivedAt: new Date(charge.created * 1000),
           customerEmail: charge.billing_details?.email ?? null,
           customerName: charge.billing_details?.name ?? null,
           description: charge.description ?? null,
+          productText,
+          // Summer Camp / Work Experience purchase detection (CLAUDE.md §37).
+          campPurchase: detectCampPurchase(productText),
           classification,
           ...result,
         }
@@ -420,7 +430,32 @@ export const stripeEventReceived = inngest.createFunction(
       })
     }
 
-    // 6. Mark the ProviderEvent row processed.
+    // 6. Summer Camp / Work Experience purchase → hand off to the summer-camp
+    //    pipeline, which records a CampStripePurchase and auto-creates the
+    //    camp booking through the CRM (idempotent on the charge id there).
+    if (
+      persisted.kind === 'payment' &&
+      'campPurchase' in persisted &&
+      persisted.campPurchase?.matched &&
+      persisted.campPurchase.keyword
+    ) {
+      await step.sendEvent('camp-purchase-detected', {
+        name: 'summer-camp/purchase.detected',
+        data: {
+          stripeChargeId: persisted.stripeId,
+          stripePaymentIntentId: persisted.stripePaymentIntentId ?? null,
+          amountMinor: persisted.amountMinor,
+          currency: persisted.currency,
+          customerName: persisted.customerName ?? null,
+          customerEmail: persisted.customerEmail ?? null,
+          productText: persisted.productText ?? null,
+          matchedKeyword: persisted.campPurchase.keyword,
+          occurredAt: persisted.receivedAt,
+        },
+      })
+    }
+
+    // 7. Mark the ProviderEvent row processed.
     await step.run('mark-processed', async () => {
       await db.providerEvent.update({
         where: { id: data.providerEventRowId },
@@ -432,4 +467,72 @@ export const stripeEventReceived = inngest.createFunction(
   },
 )
 
-export const FUNCTIONS = [stripeEventReceived] as const
+/**
+ * Historic scan: walk recent Stripe charges (default 365 days) and emit a
+ * `summer-camp/purchase.detected` event for every succeeded, unrefunded charge
+ * whose product text matches "summer camp" / "work experience". Idempotent
+ * downstream (the purchase row is keyed on the charge id), so re-running is
+ * safe. Admin-triggered from the CRM's Stripe purchases tray.
+ */
+export const stripeScanCampPurchases = inngest.createFunction(
+  {
+    id: 'stripe/scan-camp-purchases',
+    name: 'Scan Stripe charges for Summer Camp / Work Experience purchases',
+    concurrency: { limit: 1 },
+    retries: 3,
+  },
+  { event: 'summer-camp/scan-purchases.requested' },
+  async ({ event, step, logger }) => {
+    const days = typeof event.data?.['days'] === 'number' ? Math.min(Math.max(event.data['days'], 1), 730) : 365
+    const since = Math.floor(Date.now() / 1000) - days * 86_400
+
+    const matches = await step.run('scan', async () => {
+      const stripe = createClient()
+      const found: Array<{
+        stripeChargeId: string
+        stripePaymentIntentId: string | null
+        amountMinor: number
+        currency: string
+        customerName: string | null
+        customerEmail: string | null
+        productText: string | null
+        matchedKeyword: string
+        occurredAt: string
+      }> = []
+      let scanned = 0
+      for await (const charge of stripe.charges.list({ limit: 100, created: { gte: since } })) {
+        scanned += 1
+        if (!charge.paid || charge.refunded) continue
+        const text = chargeProductText(charge)
+        const detection = detectCampPurchase(text)
+        if (!detection.matched || !detection.keyword) continue
+        found.push({
+          stripeChargeId: charge.id,
+          stripePaymentIntentId:
+            typeof charge.payment_intent === 'string'
+              ? charge.payment_intent
+              : (charge.payment_intent?.id ?? null),
+          amountMinor: charge.amount,
+          currency: charge.currency.toUpperCase(),
+          customerName: charge.billing_details?.name ?? null,
+          customerEmail: charge.billing_details?.email ?? null,
+          productText: text || null,
+          matchedKeyword: detection.keyword,
+          occurredAt: new Date(charge.created * 1000).toISOString(),
+        })
+      }
+      logger.info({ scanned, matched: found.length, days }, 'stripe.camp_purchase_scan')
+      return found
+    })
+
+    if (matches.length > 0) {
+      await step.sendEvent(
+        'emit-detections',
+        matches.map((m) => ({ name: 'summer-camp/purchase.detected' as const, data: m })),
+      )
+    }
+    return { matched: matches.length, days }
+  },
+)
+
+export const FUNCTIONS = [stripeEventReceived, stripeScanCampPurchases] as const

@@ -80,11 +80,24 @@ echo them; feed notes carry `source:'crm'` so we skip our own round-trip.
   `student_enrolments`), `pushNoteForBooking` (returns the camp's note id, our
   feed-dedupe key).
 
-tRPC surface: `summerCamp.bookings.{list,update,assignCamps,addNote}` —
-list pulls the live feed (bounded keyset walk) and filters via the pure
-`bookings-filter.ts`; writes are Sales Executive+ (cancellation Manager+,
-notes any staff) and each fires `summer-camp/sync-bookings.requested` so the
-mirror converges within seconds rather than the 15-min cron.
+tRPC surface: `summerCamp.bookings.{list,syncNow,update,assignCamps,addNote}`
++ `summerCamp.purchases.{list,retry,dismiss,scanStripe}` — `bookings.list`
+reads the local `CampBookingRecord` mirror (every sync path upserts it via
+`apply.ts`, so the workspace survives camp-app downtime); writes are Sales
+Executive+ (cancellation Manager+, notes any staff) and each converges the
+mirror + fires `summer-camp/sync-bookings.requested`.
+
+## Stripe purchases → camp bookings
+
+The stripe integration's `charge.succeeded` job detects "summer camp" /
+"work experience" product text (`detectCampPurchase`, `@studymind/core/camp`)
+and fires `summer-camp/purchase.detected`. The worker here records a
+`CampStripePurchase` (idempotent on the charge id) and auto-creates the camp
+booking via `client.createBooking` (`POST /api/external/bookings`, idempotent
+on `payment.reference` = the charge id), then applies the response locally.
+Unactionable rows stay `pending` for the `/camps/purchases` tray;
+`summer-camp/scan-purchases.requested` (handled in the stripe package) walks
+historic charges.
 
 ## Env
 

@@ -11,7 +11,6 @@
     "./jobs": "./src/jobs.ts",
     "./apply": "./src/apply.ts",
     "./writeback": "./src/writeback.ts",
-    "./bookings-filter": "./src/bookings-filter.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {

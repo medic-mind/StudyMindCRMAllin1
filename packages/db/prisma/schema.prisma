@@ -670,6 +670,13 @@ model Contact {
   /// Durable Direct Debit sign-up links issued to this contact.
   mandateSetupLinks MandateSetupLink[]
 
+  /// Summer Camp booking records where this contact is the attendee /
+  /// the paying guardian (the CRM's own on-record copy of camp bookings).
+  campBookingsAsStudent  CampBookingRecord[] @relation("CampBookingStudent")
+  campBookingsAsGuardian CampBookingRecord[] @relation("CampBookingGuardian")
+  /// Stripe purchases detected as Summer Camp / Work Experience for this contact.
+  campStripePurchases    CampStripePurchase[]
+
   @@index([email])
   @@index([phoneE164])
   @@index([kind])
@@ -4558,4 +4565,127 @@ model SummerCampBooking {
   @@index([paymentType])
   @@index([status])
   @@index([deletedAt])
+}
+
+/// The CRM's own on-record copy of every Summer Camp booking (the camp app at
+/// camp.studymind.co.uk remains the operational store; this row is the durable
+/// central record + what the bookings workspace lists — it survives camp-app
+/// downtime and is linked to the customer Contacts). Upserted by every sync
+/// path (webhook, backfill, 15-min reconcile, CRM-originated create) keyed on
+/// the camp's booking id. Money integer pence (§19).
+model CampBookingRecord {
+  id                String  @id
+  /// The camp app's booking uuid — the sync + write-back key.
+  externalBookingId String  @unique
+
+  status      String?
+  bookingType String?
+  subject     String?
+  programmeType String?
+
+  campId          String?
+  campName        String?
+  /// Season year, derived start_date → first booked week → source created-at.
+  campYear        Int?
+  /// Full multi-camp assignment (primary first) — mirrors student_enrolments.
+  enrolledCampIds Json    @default("[]")
+
+  weekNumber        Int?
+  weekLabel         String?
+  startDate         DateTime?
+  endDate           DateTime?
+  daysBooked        Int?
+  multipleWeeks     Boolean @default(false)
+  bookedWeeks       Json    @default("[]")
+  withAccommodation Boolean @default(false)
+  withTransfer      Boolean @default(false)
+
+  totalMinor       Int?
+  paidMinor        Int?
+  paymentType      String?
+  paymentReference String?
+
+  agentName String?
+  campNotes String?
+  /// The camp-side notes log (id/author/body/created_at/source), mirrored.
+  notesLog  Json    @default("[]")
+
+  /// The camp app's students-row id for the attendee.
+  campStudentId String?
+  studentName   String?
+  studentEmail  String?
+  guardianName  String?
+  guardianEmail String?
+  guardianPhone String?
+  dietaryRequirements   String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+
+  studentContactId  String?
+  guardianContactId String?
+  studentContact  Contact? @relation("CampBookingStudent", fields: [studentContactId], references: [id], onDelete: SetNull)
+  guardianContact Contact? @relation("CampBookingGuardian", fields: [guardianContactId], references: [id], onDelete: SetNull)
+
+  sourceCreatedAt DateTime?
+  sourceUpdatedAt DateTime?
+  lastSyncedAt    DateTime  @default(now())
+  lastSyncSource  String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  stripePurchases CampStripePurchase[]
+
+  @@index([status])
+  @@index([campId])
+  @@index([campYear])
+  @@index([weekNumber])
+  @@index([studentContactId])
+  @@index([guardianContactId])
+  @@index([sourceCreatedAt(sort: Desc)])
+}
+
+/// A Stripe payment detected as a Summer Camp / Work Experience purchase
+/// (product text matched off the charge.succeeded pipeline). The CRM turns it
+/// into a camp booking automatically via POST /api/external/bookings on the
+/// camp app; rows that could not be auto-created (camp not connected, missing
+/// name) stay `pending` in the review tray for a human to complete. Idempotent
+/// on the Stripe charge id.
+model CampStripePurchase {
+  id                    String  @id
+  stripeChargeId        String  @unique
+  stripePaymentIntentId String?
+
+  amountMinor  Int
+  currency     String  @default("gbp")
+  customerName  String?
+  customerEmail String?
+  /// The charge's product text (description + statement descriptor + metadata).
+  productText  String?
+  /// Which keyword family matched: summer_camp | work_experience.
+  matchedKeyword String
+
+  /// pending → booking_created | failed | dismissed.
+  status String  @default("pending")
+  error  String?
+
+  /// Set once the camp booking exists (auto or via the tray's Create action).
+  externalBookingId String?
+  campBookingRecord CampBookingRecord? @relation(fields: [externalBookingId], references: [externalBookingId], onDelete: SetNull)
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// When the charge happened at Stripe.
+  occurredAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
 }

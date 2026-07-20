@@ -42,6 +42,8 @@ export interface WeekMeta {
 
 export interface CampsFeed {
   year: number
+  /** Every year with at least one dated camp (+ current year) — year tabs. */
+  available_years?: number[]
   camps: CampSummary[]
   weeks: WeekMeta[]
   subjects: string[]
@@ -132,9 +134,12 @@ export class SummerCampClient {
     return this.get<CampsFeed>(`/api/external/camps${q}`)
   }
 
-  getTimetable(campId?: string | null): Promise<TimetableFeed> {
-    const q = campId ? `?camp_id=${encodeURIComponent(campId)}` : ''
-    return this.get<TimetableFeed>(`/api/external/timetable${q}`)
+  getTimetable(campId?: string | null, year?: number | null): Promise<TimetableFeed> {
+    const p = new URLSearchParams()
+    if (campId) p.set('camp_id', campId)
+    if (year) p.set('year', String(year))
+    const qs = p.toString()
+    return this.get<TimetableFeed>(`/api/external/timetable${qs ? `?${qs}` : ''}`)
   }
 
   /** One keyset page of bookings for the CRM's backfill + periodic sync. */
@@ -200,6 +205,49 @@ export class SummerCampClient {
       camp_ids: campIds,
     })
   }
+
+  /** Create a booking on the camp app (the Stripe payment → CRM → camp entry
+   *  flow). Idempotent on `payment.reference` — the camp returns the existing
+   *  booking (`deduped: true`) for a repeat reference. Returns the normalised
+   *  booking payload (same shape as the feed/webhook) for local mirroring. */
+  async createBooking(input: CreateBookingInput): Promise<CreateBookingResult> {
+    const out = await this.write('/api/external/bookings', 'POST', input)
+    if (out && typeof out === 'object' && 'booking' in out) {
+      const o = out as { deduped?: unknown; booking?: unknown }
+      return { deduped: o.deduped === true, booking: o.booking ?? null }
+    }
+    return { deduped: false, booking: null }
+  }
+}
+
+/** Body for POST /api/external/bookings. Money in integer minor units (pence)
+ *  — the camp app converts to its NUMERIC pounds columns. */
+export interface CreateBookingInput {
+  student: { first_name: string; last_name: string; email?: string | null; mobile?: string | null }
+  guardian?: { name?: string | null; email?: string | null; mobile?: string | null }
+  subject?: string | null
+  booking_type?: 'b2c' | 'b2b' | 'agent'
+  status?: 'pending' | 'confirmed' | 'cancelled' | 'waitlist'
+  week_number?: number | null
+  week_label?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  days_booked?: number | null
+  camp_id?: string | null
+  payment?: {
+    total_minor?: number | null
+    paid_minor?: number | null
+    type?: string | null
+    reference?: string | null
+  }
+  agent_name?: string | null
+  notes?: string | null
+}
+
+export interface CreateBookingResult {
+  deduped: boolean
+  /** The normalised booking payload (parse with BookingResource), or null. */
+  booking: unknown
 }
 
 /** Build a client from env, or null when the integration is not configured. */

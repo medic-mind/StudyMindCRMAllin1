@@ -588,6 +588,14 @@ export const EVENT_NAMES = [
   'summer_camp.booking_cancelled_from_crm',
   'summer_camp.booking_camps_assigned',
   'summer_camp.booking_note_added',
+  // Stripe purchase pipeline: a charge matched "summer camp"/"work experience"
+  // → CampStripePurchase row → camp booking auto-created through the CRM.
+  // Dismiss/scan are the human controls on the review tray.
+  'summer_camp.purchase_detected',
+  'summer_camp.booking_created_from_stripe',
+  'summer_camp.purchase_retried',
+  'summer_camp.purchase_dismissed',
+  'summer_camp.purchases_scan_requested',
 
   // Protocols & Policies knowledge base (ADR 0040): in-app edits to the
   // imported Crib content. AI proposes patches, CEO / Senior Manager
@@ -691,6 +699,12 @@ export const INNGEST_EVENT_NAMES = [
   // recurring safety-net sync that re-pulls recent changes.
   'summer-camp/backfill-bookings.requested',
   'summer-camp/sync-bookings.requested',
+  // A Stripe charge whose product text matched "summer camp" / "work
+  // experience" (detected on the charge.succeeded pipeline) → recorded as a
+  // CampStripePurchase and auto-created as a camp booking through the CRM.
+  'summer-camp/purchase.detected',
+  // Admin-triggered historic scan of recent Stripe charges for camp purchases.
+  'summer-camp/scan-purchases.requested',
 ] as const
 
 export type InngestEventName = (typeof INNGEST_EVENT_NAMES)[number]

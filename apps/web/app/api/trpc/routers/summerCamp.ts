@@ -16,9 +16,7 @@ import {
   remainingMinor,
   summariseInstalments,
 } from '@studymind/core/camp'
-import { filterBookings } from '@studymind/integration-summer-camp/bookings-filter'
 import { createClientFromConfig } from '@studymind/integration-summer-camp/client'
-import { BookingResource } from '@studymind/integration-summer-camp/types'
 import {
   pushBookingFields,
   pushCampAssignment,
@@ -76,26 +74,6 @@ function assertCanWriteBookings(role: SessionUser['role']): void {
       message: 'Only Sales Executive or above can change camp bookings',
     })
   }
-}
-
-/** Live-feed page walk shared by the bookings workspace. Bounded so a huge
- *  season can't make one request unbounded (10 × 500 = 5k bookings). */
-const BOOKINGS_PAGE_SIZE = 500
-const BOOKINGS_MAX_PAGES = 10
-
-async function pullAllBookings(client: NonNullable<ReturnType<typeof createClientFromConfig>>) {
-  const bookings: BookingResource[] = []
-  let cursor: string | null = null
-  for (let page = 0; page < BOOKINGS_MAX_PAGES; page += 1) {
-    const res = await client.getBookings({ cursor, limit: BOOKINGS_PAGE_SIZE })
-    for (const raw of res.bookings) {
-      const parsed = BookingResource.safeParse(raw)
-      if (parsed.success) bookings.push(parsed.data)
-    }
-    if (!res.nextCursor) break
-    cursor = res.nextCursor
-  }
-  return bookings
 }
 
 /** CRM contacts linked to a set of camp bookings, keyed by external booking
@@ -195,13 +173,20 @@ export const summerCampRouter = router({
     }),
 
   timetable: protectedProcedure
-    .input(z.object({ campId: z.string().optional() }).optional())
+    .input(
+      z
+        .object({
+          campId: z.string().optional(),
+          year: z.number().int().min(2000).max(2100).optional(),
+        })
+        .optional(),
+    )
     .query(async ({ ctx, input }) => {
       requireUser(ctx)
       const client = createClientFromConfig()
       if (!client) return { connected: false as const, feed: null }
       try {
-        const feed = await client.getTimetable(input?.campId ?? null)
+        const feed = await client.getTimetable(input?.campId ?? null, input?.year ?? null)
         return { connected: true as const, feed }
       } catch (err) {
         throw new TRPCError({
@@ -237,7 +222,12 @@ export const summerCampRouter = router({
   // writes go to the camp app first and only then reflect locally + audit.
   // ---------------------------------------------------------------------------
   bookings: router({
-    /** Live bookings list with search + facet filters. */
+    /**
+     * The CRM's on-record bookings list. Reads the local CampBookingRecord
+     * mirror — the durable central record every sync path upserts — so the
+     * workspace stays fast and available even when the camp app is down.
+     * The webhook + 15-min sync keep it current; `syncNow` forces it.
+     */
     list: protectedProcedure
       .input(
         z
@@ -245,6 +235,7 @@ export const summerCampRouter = router({
             search: z.string().trim().max(120).optional(),
             status: z.enum(['pending', 'confirmed', 'cancelled', 'waitlist']).optional(),
             campId: z.string().trim().min(1).optional(),
+            year: z.number().int().min(2000).max(2100).optional(),
             weekNumber: z.number().int().min(0).max(60).optional(),
             unassigned: z.boolean().optional(),
           })
@@ -252,80 +243,157 @@ export const summerCampRouter = router({
       )
       .query(async ({ ctx, input }) => {
         requireUser(ctx)
-        const client = createClientFromConfig()
-        if (!client) return { connected: false as const, items: [], total: 0 }
-        let all: BookingResource[]
-        try {
-          all = await pullAllBookings(client)
-        } catch (err) {
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: err instanceof Error ? err.message : 'summer camp bookings feed unavailable',
+        const notCancelled: Prisma.CampBookingRecordWhereInput = {
+          OR: [{ status: null }, { status: { not: 'cancelled' } }],
+        }
+        const and: Prisma.CampBookingRecordWhereInput[] = [{ deletedAt: null }]
+        if (input.status) and.push({ status: input.status })
+        if (input.year) and.push({ campYear: input.year })
+        if (input.campId) {
+          and.push({
+            OR: [{ campId: input.campId }, { enrolledCampIds: { array_contains: input.campId } }],
           })
         }
-        const filtered = filterBookings(all, {
-          search: input.search ?? null,
-          status: input.status ?? null,
-          campId: input.campId ?? null,
-          weekNumber: input.weekNumber ?? null,
-          unassigned: input.unassigned ?? false,
-        })
-        // Newest first, capped for the client.
-        filtered.sort((a, b) => {
-          const at = a.created_at ? new Date(a.created_at).getTime() : 0
-          const bt = b.created_at ? new Date(b.created_at).getTime() : 0
-          return bt - at
-        })
-        const page = filtered.slice(0, 400)
-        const links = await loadBookingContactLinks(
-          ctx.db,
-          page.map((b) => b.id),
-        )
+        if (input.weekNumber !== undefined) {
+          and.push({
+            OR: [
+              { weekNumber: input.weekNumber },
+              { bookedWeeks: { array_contains: [{ week_number: input.weekNumber }] } },
+            ],
+          })
+        }
+        if (input.unassigned) and.push({ campId: null }, notCancelled)
+        if (input.search) {
+          const q = input.search
+          and.push({
+            OR: [
+              { studentName: { contains: q, mode: 'insensitive' } },
+              { studentEmail: { contains: q, mode: 'insensitive' } },
+              { guardianName: { contains: q, mode: 'insensitive' } },
+              { guardianEmail: { contains: q, mode: 'insensitive' } },
+              { campName: { contains: q, mode: 'insensitive' } },
+              { subject: { contains: q, mode: 'insensitive' } },
+              { agentName: { contains: q, mode: 'insensitive' } },
+              { paymentReference: { contains: q, mode: 'insensitive' } },
+            ],
+          })
+        }
+        const where: Prisma.CampBookingRecordWhereInput = { AND: and }
+        const contactSelect = {
+          select: { id: true, kind: true, firstName: true, lastName: true },
+        } as const
+
+        const [rows, total, statusGroups, yearGroups, money, unassignedCount, mirrorCount] =
+          await Promise.all([
+            ctx.db.campBookingRecord.findMany({
+              where,
+              orderBy: [{ sourceCreatedAt: 'desc' }, { createdAt: 'desc' }],
+              take: 400,
+              include: { studentContact: contactSelect, guardianContact: contactSelect },
+            }),
+            ctx.db.campBookingRecord.count({ where }),
+            ctx.db.campBookingRecord.groupBy({ by: ['status'], where, _count: { _all: true } }),
+            ctx.db.campBookingRecord.groupBy({
+              by: ['campYear'],
+              where: { deletedAt: null },
+              _count: { _all: true },
+            }),
+            ctx.db.campBookingRecord.aggregate({
+              where: { AND: [...and, notCancelled] },
+              _sum: { totalMinor: true, paidMinor: true },
+            }),
+            ctx.db.campBookingRecord.count({
+              where: { AND: [{ deletedAt: null }, { campId: null }, notCancelled] },
+            }),
+            ctx.db.campBookingRecord.count({ where: { deletedAt: null } }),
+          ])
+
+        const byStatus: Record<string, number> = {}
+        for (const g of statusGroups) byStatus[g.status ?? 'unknown'] = g._count._all
+
+        const contactsFor = (r: (typeof rows)[number]) => {
+          const list: { contactId: string; kind: string; name: string }[] = []
+          for (const c of [r.guardianContact, r.studentContact]) {
+            if (!c || list.some((l) => l.contactId === c.id)) continue
+            list.push({
+              contactId: c.id,
+              kind: String(c.kind),
+              name: [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Contact',
+            })
+          }
+          return list
+        }
+
         return {
-          connected: true as const,
-          total: filtered.length,
-          items: page.map((b) => ({
-            id: b.id,
-            status: b.status ?? null,
-            bookingType: b.booking_type ?? null,
-            campId: b.camp_id ?? null,
-            campName: b.camp_name ?? null,
-            enrolledCampIds: b.enrolled_camp_ids ?? (b.camp_id ? [b.camp_id] : []),
-            subject: b.subject ?? null,
-            weekNumber: b.week_number ?? null,
-            weekLabel: b.week_label ?? null,
-            startDate: b.start_date ?? null,
-            endDate: b.end_date ?? null,
-            multipleWeeks: b.multiple_weeks ?? false,
-            withAccommodation: b.with_accommodation ?? false,
-            withTransfer: b.with_transfer ?? false,
-            totalMinor: b.payment?.total_minor ?? null,
-            paidMinor: b.payment?.paid_minor ?? null,
-            paymentType: b.payment?.type ?? null,
-            agentName: b.agent_name ?? null,
-            campNotes: b.notes ?? null,
-            studentName:
-              [b.student?.first_name, b.student?.last_name].filter(Boolean).join(' ') || null,
-            studentEmail: b.student?.email ?? null,
-            dietaryRequirements: b.student?.dietary_requirements ?? null,
-            emergencyContactName: b.student?.emergency_contact_name ?? null,
-            emergencyContactPhone: b.student?.emergency_contact_phone ?? null,
-            guardianName: b.guardian?.name ?? null,
-            guardianEmail: b.guardian?.email ?? null,
-            guardianPhone: b.guardian?.mobile ?? null,
-            notesLog: (b.notes_log ?? []).map((n) => ({
-              id: n.id,
-              author: n.author ?? null,
-              body: n.body ?? null,
-              createdAt: n.created_at ?? null,
-              source: n.source ?? null,
-            })),
-            contacts: links.get(b.id) ?? [],
-            createdAt: b.created_at ?? null,
-            updatedAt: b.updated_at ?? null,
+          connected: createClientFromConfig() !== null,
+          total,
+          mirrorCount,
+          stats: {
+            byStatus,
+            totalMinor: money._sum.totalMinor ?? 0,
+            paidMinor: money._sum.paidMinor ?? 0,
+            unassigned: unassignedCount,
+          },
+          years: yearGroups
+            .map((g) => g.campYear)
+            .filter((y): y is number => typeof y === 'number')
+            .sort((a, b) => a - b),
+          items: rows.map((r) => ({
+            id: r.externalBookingId,
+            status: r.status,
+            bookingType: r.bookingType,
+            campId: r.campId,
+            campName: r.campName,
+            campYear: r.campYear,
+            enrolledCampIds: (Array.isArray(r.enrolledCampIds) ? r.enrolledCampIds : []) as string[],
+            subject: r.subject,
+            weekNumber: r.weekNumber,
+            weekLabel: r.weekLabel,
+            startDate: r.startDate ? r.startDate.toISOString() : null,
+            endDate: r.endDate ? r.endDate.toISOString() : null,
+            multipleWeeks: r.multipleWeeks,
+            withAccommodation: r.withAccommodation,
+            withTransfer: r.withTransfer,
+            totalMinor: r.totalMinor,
+            paidMinor: r.paidMinor,
+            paymentType: r.paymentType,
+            agentName: r.agentName,
+            campNotes: r.campNotes,
+            studentName: r.studentName,
+            studentEmail: r.studentEmail,
+            dietaryRequirements: r.dietaryRequirements,
+            emergencyContactName: r.emergencyContactName,
+            emergencyContactPhone: r.emergencyContactPhone,
+            guardianName: r.guardianName,
+            guardianEmail: r.guardianEmail,
+            guardianPhone: r.guardianPhone,
+            notesLog: (Array.isArray(r.notesLog) ? r.notesLog : []) as {
+              id: string
+              author: string | null
+              body: string | null
+              created_at?: string | null
+              createdAt?: string | null
+              source: string | null
+            }[],
+            contacts: contactsFor(r),
+            createdAt: r.sourceCreatedAt ? r.sourceCreatedAt.toISOString() : null,
+            updatedAt: r.sourceUpdatedAt ? r.sourceUpdatedAt.toISOString() : null,
+            lastSyncedAt: r.lastSyncedAt.toISOString(),
           })),
         }
       }),
+
+    /** Force an immediate re-pull from the camp app (event-triggered variant
+     *  of the 15-min cron). Sales Executive+. */
+    syncNow: protectedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      assertCanWriteBookings(user.role)
+      if (!createClientFromConfig()) {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Summer Camp app is not connected.' })
+      }
+      await requestSyncNow()
+      return { ok: true }
+    }),
 
     /** Edit the camp-writable booking fields: status, subject, booking notes.
      *  Camp first; local mirror patched; sync-now event confirms convergence. */
@@ -368,6 +436,15 @@ export const summerCampRouter = router({
         if (input.status !== undefined) patch['status'] = input.status
         if (input.subject !== undefined) patch['subject'] = input.subject
         await patchLocalBookingInteractions(ctx.db, input.bookingId, patch)
+        await ctx.db.campBookingRecord.updateMany({
+          where: { externalBookingId: input.bookingId },
+          data: {
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(input.subject !== undefined ? { subject: input.subject } : {}),
+            ...(input.notes !== undefined ? { campNotes: input.notes } : {}),
+            updatedById: user.id,
+          },
+        })
         await requestSyncNow()
 
         await ctx.audit({
@@ -415,6 +492,15 @@ export const summerCampRouter = router({
           campId: primary,
           ...(primary === null || primaryName !== null ? { campName: primaryName } : {}),
           enrolledCampIds: input.campIds,
+        })
+        await ctx.db.campBookingRecord.updateMany({
+          where: { externalBookingId: input.bookingId },
+          data: {
+            campId: primary,
+            ...(primary === null || primaryName !== null ? { campName: primaryName } : {}),
+            enrolledCampIds: input.campIds,
+            updatedById: user.id,
+          },
         })
         await requestSyncNow()
 
@@ -468,12 +554,164 @@ export const summerCampRouter = router({
           })
         }
 
+        const record = await ctx.db.campBookingRecord.findUnique({
+          where: { externalBookingId: input.bookingId },
+          select: { id: true, notesLog: true },
+        })
+        if (record) {
+          const log = Array.isArray(record.notesLog) ? [...(record.notesLog as object[])] : []
+          log.push({
+            id: push.campNoteId ?? `crm_${createId()}`,
+            author: user.email,
+            body: input.body,
+            created_at: new Date().toISOString(),
+            source: 'crm',
+          })
+          await ctx.db.campBookingRecord.update({
+            where: { id: record.id },
+            data: { notesLog: log as Prisma.InputJsonValue, updatedById: user.id },
+          })
+        }
+
         await ctx.audit({
           action: 'summer_camp.booking_note_added',
           target: primary
             ? { type: 'Contact', id: primary.contactId }
             : { type: 'System', id: input.bookingId },
           after: { bookingId: input.bookingId, pushed: true },
+        })
+        return { ok: true }
+      }),
+  }),
+
+  // ---------------------------------------------------------------------------
+  // Stripe purchases detected as Summer Camp / Work Experience. Auto-created
+  // as camp bookings through the CRM; this tray is the human control surface
+  // (retry / dismiss / historic scan).
+  // ---------------------------------------------------------------------------
+  purchases: router({
+    list: protectedProcedure
+      .input(z.object({ view: z.enum(['open', 'resolved', 'all']).default('open') }).default({ view: 'open' }))
+      .query(async ({ ctx, input }) => {
+        requireUser(ctx)
+        const where: Prisma.CampStripePurchaseWhereInput =
+          input.view === 'open'
+            ? { status: { in: ['pending', 'failed'] } }
+            : input.view === 'resolved'
+              ? { status: { in: ['booking_created', 'dismissed'] } }
+              : {}
+        const [rows, groups] = await Promise.all([
+          ctx.db.campStripePurchase.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            take: 200,
+            include: { contact: { select: { id: true, firstName: true, lastName: true } } },
+          }),
+          ctx.db.campStripePurchase.groupBy({ by: ['status'], _count: { _all: true } }),
+        ])
+        const counts: Record<string, number> = {}
+        for (const g of groups) counts[g.status] = g._count._all
+        return {
+          counts,
+          campConnected: createClientFromConfig() !== null,
+          stripeConfigured: Boolean(process.env['STRIPE_SECRET_KEY']),
+          items: rows.map((r) => ({
+            id: r.id,
+            stripeChargeId: r.stripeChargeId,
+            amountMinor: r.amountMinor,
+            currency: r.currency,
+            customerName: r.customerName,
+            customerEmail: r.customerEmail,
+            productText: r.productText,
+            matchedKeyword: r.matchedKeyword,
+            status: r.status,
+            error: r.error,
+            externalBookingId: r.externalBookingId,
+            contactId: r.contactId,
+            contactName: r.contact
+              ? [r.contact.firstName, r.contact.lastName].filter(Boolean).join(' ') || null
+              : null,
+            occurredAt: r.occurredAt ? r.occurredAt.toISOString() : null,
+            createdAt: r.createdAt.toISOString(),
+          })),
+        }
+      }),
+
+    /** Re-run the auto-create for a pending purchase (e.g. after connecting
+     *  the camp app, or a transient failure). Sales Executive+. */
+    retry: auditedProcedure
+      .input(z.object({ id: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCanWriteBookings(user.role)
+        const row = await ctx.db.campStripePurchase.findUnique({ where: { id: input.id } })
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (row.status === 'booking_created' || row.status === 'dismissed') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'This purchase is already resolved.' })
+        }
+        const { inngest } = await import('@studymind/jobs')
+        await inngest.send({
+          name: 'summer-camp/purchase.detected',
+          data: {
+            stripeChargeId: row.stripeChargeId,
+            stripePaymentIntentId: row.stripePaymentIntentId,
+            amountMinor: row.amountMinor,
+            currency: row.currency,
+            customerName: row.customerName,
+            customerEmail: row.customerEmail,
+            productText: row.productText,
+            matchedKeyword: row.matchedKeyword,
+            occurredAt: row.occurredAt ? row.occurredAt.toISOString() : null,
+          },
+        })
+        await ctx.audit({
+          action: 'summer_camp.purchase_retried',
+          target: { type: 'CampStripePurchase', id: row.id },
+          after: { stripeChargeId: row.stripeChargeId },
+        })
+        return { ok: true }
+      }),
+
+    /** Mark a detection as not-a-camp-purchase (kept on record, never acted
+     *  on again). Sales Executive+. */
+    dismiss: auditedProcedure
+      .input(z.object({ id: z.string().min(1) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCanWriteBookings(user.role)
+        const row = await ctx.db.campStripePurchase.findUnique({ where: { id: input.id } })
+        if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+        if (row.status === 'booking_created') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'A booking was already created for this purchase.' })
+        }
+        await ctx.db.campStripePurchase.update({
+          where: { id: row.id },
+          data: { status: 'dismissed', updatedById: user.id },
+        })
+        await ctx.audit({
+          action: 'summer_camp.purchase_dismissed',
+          target: { type: 'CampStripePurchase', id: row.id },
+          after: { stripeChargeId: row.stripeChargeId },
+        })
+        return { ok: true }
+      }),
+
+    /** Historic scan of recent Stripe charges (auto-creates bookings for
+     *  matches). CEO + Senior Manager, like the other mass imports. */
+    scanStripe: auditedProcedure
+      .input(z.object({ days: z.number().int().min(1).max(730).default(365) }).default({ days: 365 }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        if (!BACKFILL_ROLES.has(user.role)) throw new TRPCError({ code: 'FORBIDDEN' })
+        if (!process.env['STRIPE_SECRET_KEY']) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Stripe is not configured.' })
+        }
+        const { inngest } = await import('@studymind/jobs')
+        await inngest.send({ name: 'summer-camp/scan-purchases.requested', data: { days: input.days } })
+        await ctx.audit({
+          action: 'summer_camp.purchases_scan_requested',
+          target: { type: 'System', id: 'camp_stripe_purchase_scan' },
+          after: { days: input.days, initiatedBy: user.id },
         })
         return { ok: true }
       }),

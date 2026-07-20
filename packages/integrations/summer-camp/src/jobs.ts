@@ -9,6 +9,10 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
+import { createId } from '@paralleldrive/cuid2'
+
+import { keywordLabel, splitBillingName, type CampPurchaseKeyword } from '@studymind/core/camp'
+
 import { applyBookingEvent } from './apply'
 import { type BookingsPage, createClientFromConfig } from './client'
 import { BookingEventEnvelope, BookingResource, type BookingEventType } from './types'
@@ -38,12 +42,12 @@ function synthesizeEnvelope(b: BookingResource): BookingEventEnvelope {
 
 /** Apply one pulled page; returns how many parsed + applied. Pull path never
  *  audits per booking (audit:false) — see ApplyOptions. */
-async function applyPage(bookings: unknown[]): Promise<number> {
+async function applyPage(bookings: unknown[], syncSource: string): Promise<number> {
   let applied = 0
   for (const raw of bookings) {
     const parsed = BookingResource.safeParse(raw)
     if (!parsed.success) continue
-    await applyBookingEvent(db, synthesizeEnvelope(parsed.data), { audit: false })
+    await applyBookingEvent(db, synthesizeEnvelope(parsed.data), { audit: false, syncSource })
     applied += 1
   }
   return applied
@@ -117,7 +121,7 @@ export const summerCampBackfillBookings = inngest.createFunction(
     const page = await step.run('fetch', async () =>
       client.getBookings({ cursor, limit: PULL_PAGE_SIZE }),
     )
-    const applied = await applyPage(page.bookings)
+    const applied = await applyPage(page.bookings, 'backfill')
     const processed = processedSoFar + applied
 
     if (page.nextCursor) {
@@ -176,7 +180,7 @@ export const summerCampSyncBookings = inngest.createFunction(
       const page: BookingsPage = await step.run(`fetch-${pages}`, async () =>
         client.getBookings({ since, cursor: batchCursor, limit: PULL_PAGE_SIZE }),
       )
-      applied += await applyPage(page.bookings)
+      applied += await applyPage(page.bookings, 'sync')
       pages += 1
       if (page.nextCursor) cursor = page.nextCursor
       else break
@@ -187,8 +191,189 @@ export const summerCampSyncBookings = inngest.createFunction(
   },
 )
 
+interface PurchaseDetectedData {
+  stripeChargeId: string
+  stripePaymentIntentId?: string | null
+  amountMinor: number
+  currency?: string
+  customerName?: string | null
+  customerEmail?: string | null
+  productText?: string | null
+  matchedKeyword: CampPurchaseKeyword
+  occurredAt?: string | null
+}
+
+/**
+ * A Stripe charge matched "summer camp" / "work experience": record it as a
+ * CampStripePurchase (idempotent on the charge id) and AUTO-CREATE the camp
+ * booking through the CRM (POST /api/external/bookings — itself idempotent on
+ * payment.reference = the charge id, so retries never duplicate). The created
+ * booking is applied locally at once (contacts + timeline + CampBookingRecord).
+ * Rows that cannot auto-create (camp app not connected, no billing name) stay
+ * `pending` with the reason and surface in the /camps/purchases review tray.
+ */
+export const summerCampPurchaseDetected = inngest.createFunction(
+  {
+    id: 'summer-camp/purchase.detected',
+    name: 'Summer Camp Stripe purchase -> camp booking',
+    // Serialise per charge: the same charge can be emitted by the live
+    // charge.succeeded path, the historic scan, and a tray Retry — runs for
+    // one charge must queue behind each other so the record/skip check is
+    // race-free (the camp-side payment.reference dedupe is the second line).
+    concurrency: [{ limit: 2 }, { limit: 1, key: 'event.data.stripeChargeId' }],
+    retries: 4,
+  },
+  { event: 'summer-camp/purchase.detected' },
+  async ({ event, step, logger }) => {
+    const data = event.data as unknown as PurchaseDetectedData
+    if (!data?.stripeChargeId || !data.matchedKeyword) {
+      return { skipped: true, reason: 'malformed_event' }
+    }
+
+    // 1. Record the purchase (idempotent on the charge id). Never overwrite a
+    //    row a human already resolved or dismissed.
+    const purchase = await step.run('record', async () => {
+      const existing = await db.campStripePurchase.findUnique({
+        where: { stripeChargeId: data.stripeChargeId },
+        select: { id: true, status: true, externalBookingId: true },
+      })
+      if (existing) return existing
+      const created = await db.campStripePurchase.create({
+        data: {
+          id: createId(),
+          stripeChargeId: data.stripeChargeId,
+          stripePaymentIntentId: data.stripePaymentIntentId ?? null,
+          amountMinor: data.amountMinor,
+          currency: (data.currency ?? 'gbp').toLowerCase(),
+          customerName: data.customerName ?? null,
+          customerEmail: data.customerEmail ?? null,
+          productText: data.productText ?? null,
+          matchedKeyword: data.matchedKeyword,
+          occurredAt: data.occurredAt ? new Date(data.occurredAt) : null,
+          createdById: 'system:stripe',
+        },
+        select: { id: true, status: true, externalBookingId: true },
+      })
+      await writeAuditLogEntry(db, {
+        actorId: 'system:stripe',
+        action: 'summer_camp.purchase_detected',
+        target: { type: 'CampStripePurchase', id: created.id },
+        requestId: `camp-purchase:${data.stripeChargeId}`,
+        after: {
+          stripeChargeId: data.stripeChargeId,
+          amountMinor: data.amountMinor,
+          matchedKeyword: data.matchedKeyword,
+        },
+      })
+      return created
+    })
+
+    if (purchase.status === 'booking_created' || purchase.status === 'dismissed') {
+      return { skipped: true, reason: purchase.status, purchaseId: purchase.id }
+    }
+
+    // 2. Create the camp booking through the CRM.
+    const client = createClientFromConfig()
+    if (!client) {
+      await step.run('mark-not-connected', async () => {
+        await db.campStripePurchase.update({
+          where: { id: purchase.id },
+          data: { error: 'Summer Camp app not connected — connect it, then Retry from the tray.' },
+        })
+      })
+      return { pending: true, reason: 'not_configured', purchaseId: purchase.id }
+    }
+
+    const name = splitBillingName(data.customerName)
+    if (!name) {
+      await step.run('mark-no-name', async () => {
+        await db.campStripePurchase.update({
+          where: { id: purchase.id },
+          data: { error: 'No customer name on the Stripe charge — complete it from the tray.' },
+        })
+      })
+      return { pending: true, reason: 'no_name', purchaseId: purchase.id }
+    }
+
+    const created = await step.run('create-booking', async () => {
+      try {
+        return await client.createBooking({
+          student: { first_name: name.firstName, last_name: name.lastName, email: data.customerEmail ?? null },
+          guardian: { name: data.customerName ?? null, email: data.customerEmail ?? null },
+          subject: keywordLabel(data.matchedKeyword),
+          booking_type: 'b2c',
+          status: 'confirmed',
+          payment: {
+            total_minor: data.amountMinor,
+            paid_minor: data.amountMinor,
+            type: 'Stripe',
+            reference: data.stripeChargeId,
+          },
+          agent_name: 'CRM (Stripe auto)',
+          notes: `Auto-created from Stripe payment ${data.stripeChargeId}${data.productText ? ` - ${data.productText}` : ''}. Confirm the student details and assign a camp.`,
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'camp app rejected the booking'
+        await db.campStripePurchase.update({
+          where: { id: purchase.id },
+          data: { error: message },
+        })
+        // Rethrow so Inngest retries transient failures; the row stays
+        // pending (with the reason) if retries exhaust.
+        throw err
+      }
+    })
+
+    // 3. Mirror the created booking locally (contacts + timeline + record).
+    const outcome = await step.run('apply-locally', async () => {
+      const parsed = BookingResource.safeParse(created.booking)
+      if (!parsed.success) return { bookingId: null as string | null, contactId: null as string | null }
+      const result = await applyBookingEvent(db, synthesizeEnvelope(parsed.data), {
+        audit: false,
+        syncSource: 'crm_create',
+      })
+      return { bookingId: parsed.data.id, contactId: result.primaryContactId }
+    })
+
+    await step.run('finalise', async () => {
+      // Conditional update: a human may have dismissed the row while this run
+      // was in flight — honour that decision (the camp booking still exists
+      // and will mirror via the normal sync; only the tray row stays put).
+      const updated = await db.campStripePurchase.updateMany({
+        where: { id: purchase.id, status: { not: 'dismissed' } },
+        data: {
+          status: 'booking_created',
+          externalBookingId: outcome.bookingId,
+          contactId: outcome.contactId,
+          error: null,
+          updatedById: 'system:stripe',
+        },
+      })
+      if (updated.count === 0) return
+      await writeAuditLogEntry(db, {
+        actorId: 'system:stripe',
+        action: 'summer_camp.booking_created_from_stripe',
+        target: { type: 'CampStripePurchase', id: purchase.id },
+        requestId: `camp-booking-from-stripe:${data.stripeChargeId}`,
+        after: {
+          stripeChargeId: data.stripeChargeId,
+          externalBookingId: outcome.bookingId,
+          deduped: created.deduped,
+        },
+      })
+    })
+
+    logger.info(
+      { chargeId: data.stripeChargeId, bookingId: outcome.bookingId, deduped: created.deduped },
+      'summer_camp.purchase.processed',
+    )
+    return { ok: true, purchaseId: purchase.id, bookingId: outcome.bookingId }
+  },
+)
+
 export const FUNCTIONS = [
   summerCampEventReceived,
   summerCampBackfillBookings,
   summerCampSyncBookings,
+  summerCampPurchaseDetected,
 ]

@@ -6,6 +6,7 @@ import { getCurrentUser } from '@/lib/auth/server'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 
+import { CampsNav } from '../CampsNav'
 import { InstalmentsWorkspace } from './InstalmentsWorkspace'
 
 export const dynamic = 'force-dynamic'
@@ -23,11 +24,7 @@ export default async function CampInstalmentsPage() {
         subtitle="Track who has paid a deposit and what's still owed. Import the booking CSV, filter to instalment payers, and record further payments."
       />
       <PageBody>
-        <div className="mb-4">
-          <a href="/camps" className="text-sm font-medium text-primary-700 hover:text-primary-800">
-            ← Summer Camps
-          </a>
-        </div>
+        <CampsNav />
         <InstalmentsWorkspace canWrite={canWrite} />
       </PageBody>
     </>
