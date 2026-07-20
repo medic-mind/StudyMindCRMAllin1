@@ -860,7 +860,7 @@ function ResetPasswordModal({
   const disabled = reset.isPending || (mode === 'manual' && password.trim().length === 0)
 
   return (
-    <ModalShell title="Reset password" onClose={onClose}>
+    <ModalShell title="Reissue login details" onClose={onClose}>
       <form
         className="space-y-3"
         onSubmit={(e) => {
@@ -882,8 +882,8 @@ function ResetPasswordModal({
           </div>
         )}
         <p className="text-sm text-neutral-700">
-          Issue a new password for <span className="font-medium">{email}</span>. Their current
-          sessions end immediately.
+          Issue a new password for <span className="font-medium">{email}</span> and email it to them
+          (with a PDF) so they can sign in and set their own. Their current sessions end immediately.
         </p>
 
         <fieldset className="space-y-2">
@@ -949,7 +949,7 @@ function ResetPasswordModal({
             Cancel
           </Button>
           <Button type="submit" disabled={disabled}>
-            {reset.isPending ? 'Resetting…' : 'Reset password'}
+            {reset.isPending ? 'Reissuing…' : 'Reissue login details'}
           </Button>
         </div>
       </form>
@@ -1241,7 +1241,7 @@ export function RowActions(props: RowActionsProps) {
           onReset={(res) => {
             setDialog(null)
             setReveal(res)
-            toast.success('Password reset')
+            toast.success('Login details reissued')
           }}
         />
       )}
@@ -1294,7 +1294,7 @@ export function RowActions(props: RowActionsProps) {
 
       {reveal && (
         <CredentialModal
-          title="New password set"
+          title="New login details"
           email={email}
           temporaryPassword={reveal.temporaryPassword}
           emailStatus={reveal.emailStatus}
