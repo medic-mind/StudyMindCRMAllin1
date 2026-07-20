@@ -19,7 +19,7 @@ export interface MergeResult {
 
 export async function mergeContacts(
   db: PrismaClient,
-  args: { survivorId: string; loserId: string; actorUserId: string },
+  args: { survivorId: string; loserId: string; actorUserId: string | null },
 ): Promise<MergeResult> {
   const { survivorId, loserId, actorUserId } = args
   if (survivorId === loserId) {

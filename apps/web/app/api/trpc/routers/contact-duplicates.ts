@@ -9,7 +9,8 @@ import { z } from 'zod'
 
 import { clusterDuplicates } from '@studymind/core/contact'
 
-import { protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
+import { runAutoMergeDuplicates } from '@/lib/services/auto-merge-duplicates'
+import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
 
 const MANAGER_PLUS = new Set(['ceo', 'senior_manager', 'manager'])
 
@@ -76,4 +77,28 @@ export const contactDuplicatesRouter = router({
         capped: rows.length >= 20000,
       }
     }),
+
+  // Run the confident auto-merge immediately (ADR 0047). The hourly cron does
+  // the same thing unattended; this is the Manager+ "do it now" button. Only
+  // merges contacts that are confidently the same person (shared email, or
+  // phone + matching name) — ambiguous ones stay on this page for manual merge.
+  autoMergeNow: auditedProcedure.input(z.object({}).optional()).mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    if (!MANAGER_PLUS.has(user.role)) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'Only Manager or above can merge contacts',
+      })
+    }
+    const result = await runAutoMergeDuplicates(ctx.db, {
+      actorId: user.id,
+      actorUserId: user.id,
+    })
+    await ctx.audit({
+      action: 'contact.merged',
+      target: { type: 'System', id: 'contacts/auto-merge-duplicates' },
+      after: { ...result, manual: true },
+    })
+    return result
+  }),
 })

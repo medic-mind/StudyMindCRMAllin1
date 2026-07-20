@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { clusterDuplicates, emailKey, phoneKey } from './duplicates'
+import { clusterDuplicates, emailKey, nameKey, phoneKey, planAutoMerges } from './duplicates'
 
 describe('emailKey / phoneKey', () => {
   it('normalises email and the phone suffix', () => {
@@ -53,6 +53,62 @@ describe('clusterDuplicates', () => {
       clusterDuplicates([
         { id: 'a', email: 'a@x.com', phoneE164: null },
         { id: 'b', email: 'b@x.com', phoneE164: null },
+      ]),
+    ).toEqual([])
+  })
+})
+
+describe('nameKey', () => {
+  it('normalises to lowercase alphanumerics + single spaces', () => {
+    expect(nameKey('  John   Smith ')).toBe('john smith')
+    expect(nameKey('JOHN-SMITH')).toBe('john smith')
+    expect(nameKey('  ')).toBeNull()
+    expect(nameKey(null)).toBeNull()
+  })
+})
+
+describe('planAutoMerges', () => {
+  it('auto-merges contacts sharing an email (oldest survives)', () => {
+    const plans = planAutoMerges([
+      { id: 'old', email: 'jo@x.com', phoneE164: null, name: 'Jo' },
+      { id: 'new', email: 'JO@x.com', phoneE164: null, name: 'Jo Bloggs' },
+    ])
+    expect(plans).toEqual([{ survivorId: 'old', loserIds: ['new'] }])
+  })
+
+  it('auto-merges a phone match ONLY when the name also matches', () => {
+    const plans = planAutoMerges([
+      { id: 'a', email: null, phoneE164: '+447700900111', name: 'Jane Doe' },
+      { id: 'b', email: null, phoneE164: '07700900111', name: 'Jane Doe' },
+    ])
+    expect(plans).toEqual([{ survivorId: 'a', loserIds: ['b'] }])
+  })
+
+  it('does NOT auto-merge a shared landline with different names (§41.1)', () => {
+    // Same phone, different people (a family landline) — left for manual review.
+    const plans = planAutoMerges([
+      { id: 'mum', email: null, phoneE164: '+447700900111', name: 'Jane Doe' },
+      { id: 'son', email: null, phoneE164: '07700900111', name: 'Tom Doe' },
+    ])
+    expect(plans).toEqual([])
+  })
+
+  it('keeps only the survivor-connected members, dropping the ambiguous tail', () => {
+    // old~new share an email (confident); landline only shares a phone with a
+    // different name, so it is excluded from the auto-merge and stays manual.
+    const plans = planAutoMerges([
+      { id: 'old', email: 'jo@x.com', phoneE164: '+447700900111', name: 'Jo Bloggs' },
+      { id: 'new', email: 'jo@x.com', phoneE164: null, name: 'Jo Bloggs' },
+      { id: 'landline', email: null, phoneE164: '07700900111', name: 'Other Person' },
+    ])
+    expect(plans).toEqual([{ survivorId: 'old', loserIds: ['new'] }])
+  })
+
+  it('returns nothing when there are no duplicates', () => {
+    expect(
+      planAutoMerges([
+        { id: 'a', email: 'a@x.com', phoneE164: null, name: 'A' },
+        { id: 'b', email: 'b@x.com', phoneE164: null, name: 'B' },
       ]),
     ).toEqual([])
   })

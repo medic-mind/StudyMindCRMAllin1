@@ -8,6 +8,9 @@ export * from './hours-risk'
 export {
   clusterDuplicates,
   emailKey,
+  nameKey,
   phoneKey,
+  planAutoMerges,
+  type AutoMergePlan,
   type DupContactRow,
 } from './duplicates'

@@ -53,6 +53,20 @@ export function DuplicatesList({
     onError: (e) => toast.error(e.message ?? 'Could not merge'),
   })
 
+  // Run the automatic confident-merge immediately (the hourly cron does the
+  // same). Clears the clear-cut duplicates; whatever it leaves needs a human.
+  const autoMerge = trpc.contact.duplicates.autoMergeNow.useMutation({
+    onSuccess: (res) => {
+      toast.success(
+        res.merged > 0
+          ? `Auto-merged ${res.merged} duplicate${res.merged === 1 ? '' : 's'}`
+          : 'No confident duplicates to auto-merge',
+      )
+      void utils.contact.duplicates.find.invalidate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Auto-merge failed'),
+  })
+
   const remaining = initialClusters.filter((c) => !done.has(c.survivorId))
 
   // Bulk action: merge EVERY shown group, oldest contact kept in each.
@@ -91,17 +105,40 @@ export function DuplicatesList({
     }
   }
 
+  const autoMergeBanner = (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm text-primary-900">
+      <span>
+        <strong>Auto-merge is on.</strong> Confident duplicates — a shared email, or the same
+        phone <em>and</em> name — are merged automatically every hour. Anything below shares only a
+        phone with a different name (e.g. a family landline), so it needs your eye.
+      </span>
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        disabled={autoMerge.isPending}
+        onClick={() => autoMerge.mutate({})}
+      >
+        {autoMerge.isPending ? 'Merging…' : 'Run auto-merge now'}
+      </Button>
+    </div>
+  )
+
   if (initialClusters.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-8 text-center text-sm text-neutral-600">
-        No duplicate contacts found — everyone with a shared email or phone is
-        already a single record. New enquiries now dedupe automatically.
+      <div className="space-y-4">
+        {autoMergeBanner}
+        <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-8 text-center text-sm text-neutral-600">
+          No duplicate contacts to review — everyone with a shared email or phone is already a
+          single record, and confident duplicates are merged automatically.
+        </div>
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
+      {autoMergeBanner}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
         <span>
           Found <strong>{totalClusters}</strong> group

@@ -23,6 +23,7 @@ import { FUNCTIONS as SUMMER_CAMP_FUNCTIONS } from '@studymind/integration-summe
 import { FUNCTIONS as TRENGO_FUNCTIONS } from '@studymind/integration-trengo/jobs'
 import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 
+import { autoMergeDuplicatesHourly } from './_boundary/auto-merge-duplicates'
 import { costSummaryWeekly } from './_boundary/cost-summary'
 import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
 import { flagDdDefaultersNightly } from './_boundary/flag-dd-defaulters'
@@ -44,6 +45,7 @@ export const dynamic = 'force-dynamic'
 // integration-side glue (S3, Slack outbound) without creating a
 // jobs ↔ integrations import cycle (CLAUDE.md §17).
 const BOUNDARY_FUNCTIONS = [
+  autoMergeDuplicatesHourly,
   costSummaryWeekly,
   auditLogArchiveWeekly,
   ddChaseTick,

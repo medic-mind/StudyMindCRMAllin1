@@ -69,6 +69,11 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     description: 'Email staff who were given an account but have never signed in (capped nudges)',
   },
   {
+    id: 'contacts/auto-merge-duplicates',
+    cron: '0 * * * *',
+    description: 'Auto-merge confident duplicate contacts (shared email, or phone+name); ADR 0047',
+  },
+  {
     id: 'booking/sync-students',
     cron: '*/5 * * * *',
     description: 'Pull changed students from booking.studymind.co.uk (ADR 0029)',
