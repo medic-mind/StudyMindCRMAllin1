@@ -248,7 +248,10 @@ export const summerCampRouter = router({
         }
         const and: Prisma.CampBookingRecordWhereInput[] = [{ deletedAt: null }]
         if (input.status) and.push({ status: input.status })
-        if (input.year) and.push({ campYear: input.year })
+        // A camp filter implies its season — don't ALSO require campYear, which
+        // can lag for date-less bookings (e.g. a Stripe auto-create assigned to
+        // next season's camp) and would hide them from their own camp's list.
+        if (input.year && !input.campId) and.push({ campYear: input.year })
         if (input.campId) {
           and.push({
             OR: [{ campId: input.campId }, { enrolledCampIds: { array_contains: input.campId } }],
@@ -462,7 +465,15 @@ export const summerCampRouter = router({
      *  clears). The camp app owns assignment — it writes student_enrolments
      *  and the primary camp; we mirror + audit. */
     assignCamps: auditedProcedure
-      .input(z.object({ bookingId: z.string().min(1), campIds: z.array(z.string().min(1)).max(20) }))
+      .input(
+        z.object({
+          bookingId: z.string().min(1),
+          campIds: z.array(z.string().min(1)).max(20),
+          /** Season year the camps were picked from — the camp feed is
+           *  year-scoped, so the name lookup must ask for the same season. */
+          year: z.number().int().min(2000).max(2100).optional(),
+        }),
+      )
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
         assertCanWriteBookings(user.role)
@@ -476,14 +487,18 @@ export const summerCampRouter = router({
           })
         }
 
-        // Resolve the primary camp's name for the local mirror (best-effort —
-        // the sync-now pull corrects it either way).
+        // Resolve the primary camp's name + season year for the local mirror
+        // (best-effort — the sync-now pull corrects it either way).
         const primary = input.campIds[0] ?? null
         let primaryName: string | null = null
+        let primaryYear: number | null = null
         if (primary) {
           try {
-            const feed = await createClientFromConfig()?.getCamps()
-            primaryName = feed?.camps.find((c) => c.id === primary)?.name ?? null
+            const feed = await createClientFromConfig()?.getCamps(input.year)
+            const camp = feed?.camps.find((c) => c.id === primary)
+            primaryName = camp?.name ?? null
+            const start = camp?.start_date ? new Date(camp.start_date) : null
+            primaryYear = start && !Number.isNaN(start.getTime()) ? start.getUTCFullYear() : null
           } catch {
             primaryName = null
           }
@@ -498,6 +513,7 @@ export const summerCampRouter = router({
           data: {
             campId: primary,
             ...(primary === null || primaryName !== null ? { campName: primaryName } : {}),
+            ...(primaryYear !== null ? { campYear: primaryYear } : {}),
             enrolledCampIds: input.campIds,
             updatedById: user.id,
           },

@@ -92,11 +92,18 @@ function Detail({
   const [assigned, setAssigned] = useState<string[]>(b.enrolledCampIds)
   const [note, setNote] = useState('')
 
+  // The camp feed is year-scoped; a booking with no dates of its own (e.g. a
+  // December Stripe purchase for next summer) may need camps from a different
+  // season, so the assignment section carries its own season switcher.
+  const [assignYear, setAssignYear] = useState<number>(b.campYear ?? listYear)
   const campsQuery = trpc.summerCamp.camps.useQuery(
-    { year: b.campYear ?? listYear },
+    { year: assignYear },
     { refetchOnWindowFocus: false },
   )
   const campOptions = campsQuery.data?.feed?.camps ?? []
+  const seasonYears = Array.from(
+    new Set([...(campsQuery.data?.feed?.available_years ?? []), assignYear]),
+  ).sort((a, b2) => a - b2)
 
   const update = trpc.summerCamp.bookings.update.useMutation({
     onSuccess: () => {
@@ -236,7 +243,23 @@ function Detail({
       </section>
 
       <section className="space-y-2">
-        <SectionLabel>Camp assignment{b.campYear ? ` — ${b.campYear} season` : ''}</SectionLabel>
+        <div className="flex items-center justify-between gap-2">
+          <SectionLabel>Camp assignment</SectionLabel>
+          <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+            Season
+            <Select
+              value={String(assignYear)}
+              onChange={(e) => setAssignYear(Number(e.target.value))}
+              className="h-7 w-auto py-0 text-xs"
+            >
+              {seasonYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
         {campsQuery.isLoading ? (
           <p className="text-sm text-neutral-500">Loading camps…</p>
         ) : campOptions.length === 0 ? (
@@ -274,7 +297,7 @@ function Detail({
                 size="sm"
                 variant="secondary"
                 disabled={!assignmentDirty || assign.isPending}
-                onClick={() => assign.mutate({ bookingId: b.id, campIds: assigned })}
+                onClick={() => assign.mutate({ bookingId: b.id, campIds: assigned, year: assignYear })}
               >
                 {assign.isPending ? 'Assigning…' : 'Save assignment'}
               </Button>

@@ -58,6 +58,9 @@ export const BookingResource = z.object({
   booking_type: nullableString,
   camp_id: nullableString,
   camp_name: nullableString,
+  /** The assigned camp's season start date — year fallback for bookings with
+   *  no dates of their own (e.g. Stripe auto-creates before camp assignment). */
+  camp_start_date: nullableString,
   subject: nullableString,
   programme_type: nullableString,
   week_number: z.number().int().nullable().optional(),

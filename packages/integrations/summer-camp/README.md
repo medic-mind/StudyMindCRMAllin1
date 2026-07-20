@@ -41,7 +41,11 @@ jobs over `client.getBookings()` (the camp's keyset `GET /api/external/bookings`
 - **`summer-camp/sync-bookings`** — cron (every 15 min). Re-pulls bookings
   changed in the last `SUMMER_CAMP_SYNC_LOOKBACK_DAYS` (default 3) and applies
   them. Safety net for missed webhooks; also imports new bookings if the push
-  isn't configured.
+  isn't configured. Each tick ends with a **tombstone pass**: a full walk of
+  the camp's current booking ids marks mirror rows that no longer exist
+  camp-side as `cancelled` (a since-feed cannot emit "gone" rows and the
+  camp's delete webhook is best-effort). The pass only applies when the walk
+  completes within its page bound, and skips rows synced after it started.
 
 Both apply via the same `applyBookingEvent` with `audit: false` (the live
 webhook is the per-booking audit source) and are fully idempotent, so a re-run
@@ -94,10 +98,15 @@ The stripe integration's `charge.succeeded` job detects "summer camp" /
 and fires `summer-camp/purchase.detected`. The worker here records a
 `CampStripePurchase` (idempotent on the charge id) and auto-creates the camp
 booking via `client.createBooking` (`POST /api/external/bookings`, idempotent
-on `payment.reference` = the charge id), then applies the response locally.
-Unactionable rows stay `pending` for the `/camps/purchases` tray;
-`summer-camp/scan-purchases.requested` (handled in the stripe package) walks
-historic charges.
+on `payment.reference` = the charge id — camp-side the dedupe + insert run in
+one transaction under an advisory lock, and the worker itself is serialised
+per charge via an Inngest concurrency key, so a Retry racing the live event
+can never double-book). **GBP charges only** — the camp app records pounds, so
+a non-GBP charge stays `pending` with a "create manually" note rather than
+being written at face value. Unactionable rows stay `pending` for the
+`/camps/purchases` tray; `summer-camp/scan-purchases.requested` (handled in
+the stripe package) walks historic charges. A mid-flight human **Dismiss**
+wins: `finalise` never overwrites a dismissed row.
 
 ## Env
 

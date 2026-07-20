@@ -219,8 +219,11 @@ async function ensurePipelineCard(
   return card.id
 }
 
-/** Season year for a booking: start_date → first booked week → camp-record
- *  creation date. Null only when nothing carries a parseable date. */
+/** Season year for a booking: start_date → first booked week → the assigned
+ *  camp's season start → camp-record creation date. The camp fallback matters
+ *  for Stripe auto-creates (no dates of their own): once assigned, they must
+ *  land in the CAMP's season year, not the charge year. Null only when nothing
+ *  carries a parseable date. */
 export function deriveCampYear(b: BookingResource): number | null {
   const weekDates = Array.isArray(b.booked_weeks)
     ? b.booked_weeks.map((w) =>
@@ -229,7 +232,7 @@ export function deriveCampYear(b: BookingResource): number | null {
           : null,
       )
     : []
-  for (const candidate of [b.start_date, b.end_date, ...weekDates, b.created_at]) {
+  for (const candidate of [b.start_date, b.end_date, ...weekDates, b.camp_start_date, b.created_at]) {
     if (typeof candidate === 'string' && candidate) {
       const d = new Date(candidate)
       if (!Number.isNaN(d.getTime())) return d.getUTCFullYear()
@@ -446,6 +449,12 @@ export async function applyBookingEvent(
   opts: ApplyOptions = {},
 ): Promise<ApplyResult> {
   const shouldAudit = opts.audit ?? true
+  // The camp's delete path fires the cancelled event BEFORE deleting the row,
+  // so the envelope can still carry the pre-delete status. Force `cancelled`
+  // so the mirror + timeline converge out of the live/confirmed views.
+  if (envelope.type === 'summer_camp.booking.cancelled' && envelope.booking.status !== 'cancelled') {
+    envelope = { ...envelope, booking: { ...envelope.booking, status: 'cancelled' } }
+  }
   const b = envelope.booking
 
   const guardianEmail = cleanEmail(b.guardian?.email)
@@ -467,9 +476,26 @@ export async function applyBookingEvent(
 
   const campNote = b.camp_name ? `Summer camp booking: ${b.camp_name}` : 'Summer camp booking'
 
+  // A person with no email/phone can never be re-matched by upsertContact, so
+  // a re-apply (15-min sync) would mint a fresh Contact every time. Reuse the
+  // contacts a prior apply already linked to THIS booking instead.
+  const priorLinks = await db.campBookingRecord.findUnique({
+    where: { externalBookingId: b.id },
+    select: { studentContactId: true, guardianContactId: true },
+  })
+  const reusableContactId = async (id: string | null | undefined): Promise<string | null> => {
+    if (!id) return null
+    const row = await db.contact.findFirst({ where: { id, deletedAt: null }, select: { id: true } })
+    return row?.id ?? null
+  }
+
   let guardianContactId: string | null = null
   if (hasGuardian) {
-    guardianContactId = await upsertContact(db, {
+    guardianContactId =
+      !guardianEmail && !guardianPhone
+        ? await reusableContactId(priorLinks?.guardianContactId)
+        : null
+    guardianContactId ??= await upsertContact(db, {
       kind: 'parent',
       firstName: guardian.firstName,
       lastName: guardian.lastName,
@@ -481,7 +507,9 @@ export async function applyBookingEvent(
 
   let studentContactId: string | null = null
   if (hasStudent) {
-    studentContactId = await upsertContact(db, {
+    studentContactId =
+      !studentEmail && !studentPhone ? await reusableContactId(priorLinks?.studentContactId) : null
+    studentContactId ??= await upsertContact(db, {
       kind: 'student',
       firstName: student.firstName,
       lastName: student.lastName,

@@ -186,8 +186,57 @@ export const summerCampSyncBookings = inngest.createFunction(
       else break
     }
 
-    logger.info({ since, applied, pages }, 'summer_camp.sync.done')
-    return { applied, pages, since }
+    // Tombstone pass. A booking deleted in the camp app simply vanishes from
+    // the since-feed (which structurally cannot emit "gone" rows), and the
+    // camp's delete webhook is best-effort — so walk the FULL current id set
+    // and mark mirror rows that no longer exist camp-side as cancelled. Only
+    // runs when the walk completes inside the page bound (never tombstone on
+    // partial data), and skips rows synced after the sweep started (a booking
+    // created mid-sweep must not be cancelled by it).
+    const sweepStartedAt = new Date()
+    const liveIds = new Set<string>()
+    let sweepCursor: string | null = null
+    let sweepPages = 0
+    let sweepComplete = false
+    while (sweepPages < MAX_PAGES) {
+      const batchCursor: string | null = sweepCursor
+      const page: BookingsPage = await step.run(`sweep-${sweepPages}`, async () =>
+        client.getBookings({ cursor: batchCursor, limit: PULL_PAGE_SIZE }),
+      )
+      for (const b of page.bookings) {
+        const id = (b as { id?: unknown } | null)?.id
+        if (typeof id === 'string') liveIds.add(id)
+      }
+      sweepPages += 1
+      if (page.nextCursor) sweepCursor = page.nextCursor
+      else {
+        sweepComplete = true
+        break
+      }
+    }
+    let tombstoned = 0
+    if (sweepComplete) {
+      tombstoned = await step.run('tombstone-missing', async () => {
+        const live = await db.campBookingRecord.findMany({
+          where: {
+            deletedAt: null,
+            OR: [{ status: null }, { status: { not: 'cancelled' } }],
+            lastSyncedAt: { lt: sweepStartedAt },
+          },
+          select: { externalBookingId: true },
+        })
+        const gone = live.map((r) => r.externalBookingId).filter((id) => !liveIds.has(id))
+        if (gone.length === 0) return 0
+        const res = await db.campBookingRecord.updateMany({
+          where: { externalBookingId: { in: gone } },
+          data: { status: 'cancelled', lastSyncedAt: new Date(), lastSyncSource: 'sync_tombstone' },
+        })
+        return res.count
+      })
+    }
+
+    logger.info({ since, applied, pages, tombstoned }, 'summer_camp.sync.done')
+    return { applied, pages, since, tombstoned }
   },
 )
 
@@ -284,6 +333,22 @@ export const summerCampPurchaseDetected = inngest.createFunction(
       return { pending: true, reason: 'not_configured', purchaseId: purchase.id }
     }
 
+    // The camp app records money in GBP only — a non-GBP amount written into
+    // its pounds columns at face value would be silently wrong. Leave the row
+    // pending for a human to enter manually.
+    const chargeCurrency = (data.currency ?? 'gbp').toLowerCase()
+    if (chargeCurrency !== 'gbp') {
+      await step.run('mark-non-gbp', async () => {
+        await db.campStripePurchase.update({
+          where: { id: purchase.id },
+          data: {
+            error: `Charge is in ${chargeCurrency.toUpperCase()} — the camp app records GBP only. Create the booking manually.`,
+          },
+        })
+      })
+      return { pending: true, reason: 'non_gbp', purchaseId: purchase.id }
+    }
+
     const name = splitBillingName(data.customerName)
     if (!name) {
       await step.run('mark-no-name', async () => {
@@ -334,6 +399,19 @@ export const summerCampPurchaseDetected = inngest.createFunction(
       })
       return { bookingId: parsed.data.id, contactId: result.primaryContactId }
     })
+
+    if (!outcome.bookingId) {
+      // The camp accepted the POST but the response didn't parse — the booking
+      // may exist camp-side. Stay pending so Retry can reconcile: a re-POST
+      // dedupes on payment.reference and returns the existing booking.
+      await step.run('mark-unparsed-response', async () => {
+        await db.campStripePurchase.update({
+          where: { id: purchase.id },
+          data: { error: 'Camp app response could not be read — use Retry to reconcile the booking link.' },
+        })
+      })
+      return { pending: true, reason: 'unparsed_response', purchaseId: purchase.id }
+    }
 
     await step.run('finalise', async () => {
       // Conditional update: a human may have dismissed the row while this run
