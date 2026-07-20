@@ -1,7 +1,7 @@
-// Settings → Feature flags. RSC, admin | ops_manager.
+// Settings → Feature flags. RSC, CEO + Senior Manager.
 // CLAUDE.md §31.
 
-import { legacyAuth as auth } from '@/lib/auth/server'
+import { getCurrentUser } from '@/lib/auth/server'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
@@ -18,17 +18,16 @@ const BREADCRUMBS = [
 
 export const dynamic = 'force-dynamic'
 
+const FLAGS_ROLES = new Set(['ceo', 'senior_manager'])
+
 export default async function FlagsSettingsPage() {
-  const { sessionClaims } = await auth()
-  const role = (sessionClaims?.['role'] as string | undefined) ?? 'agent'
-  if (role !== 'admin' && role !== 'ops_manager') {
+  const me = await getCurrentUser()
+  if (!me || !FLAGS_ROLES.has(me.role)) {
     return (
       <>
         <PageHeader title="Feature flags" breadcrumbs={BREADCRUMBS} />
         <PageBody>
-          <p className="text-sm text-neutral-600">
-            Restricted to administrators and ops managers.
-          </p>
+          <p className="text-sm text-neutral-600">Restricted to CEO and Senior Manager.</p>
         </PageBody>
       </>
     )

@@ -15,7 +15,7 @@ const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
 
 const BREADCRUMBS = [
   { label: 'Settings', href: '/settings' },
-  { label: 'Direct Debit recovery templates', href: '/settings/dd-recovery-templates' },
+  { label: 'Direct Debit recovery', href: '/settings/dd-recovery-templates' },
 ]
 
 export default async function DdRecoveryTemplatesSettingsPage() {

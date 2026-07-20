@@ -1293,21 +1293,24 @@ export const adminUsersRouter = router({
     }),
 
   /* ------------------------------------------------------------------ */
-  /* erase — GDPR right-to-erasure: anonymise in place (irreversible)    */
+  /* permanentlyDelete — hard-remove the account row (irreversible)       */
   /* ------------------------------------------------------------------ */
-  // Removes all personal data from the account while KEEPING the row, so audit
-  // history and every `createdById`/`actorId` reference across the CRM stay
-  // resolvable (a hard DELETE would orphan them, §21). CEO only; the actor must
-  // retype the email to confirm.
-  erase: auditedProcedure
+  // A true permanent delete: the User row is removed. FK children cascade
+  // (roles, sessions, permissions, custom-role assignments, tokens, favorites,
+  // views); the encrypted KMS envelopes (not FK-enforced) are crypto-shredded;
+  // any board card they were assigned to is un-assigned. Past `createdById` /
+  // audit `actorId` references become unresolvable strings — the accountability
+  // record of the deletion itself is kept. CEO only; retype the email to
+  // confirm. Prefer the reversible `delete` for routine offboarding.
+  permanentlyDelete: auditedProcedure
     .input(z.object({ userId: z.string().min(1), confirmEmail: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
       const actor = requireUser(ctx)
       if (actor.role !== 'ceo') {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only a CEO can permanently erase an account.' })
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only a CEO can permanently delete an account.' })
       }
       if (actor.id === input.userId) {
-        throw new TRPCError({ code: 'CONFLICT', message: 'Cannot erase your own account.' })
+        throw new TRPCError({ code: 'CONFLICT', message: 'Cannot delete your own account.' })
       }
       const user = await ctx.db.user.findUnique({
         where: { id: input.userId },
@@ -1322,59 +1325,43 @@ export const adminUsersRouter = router({
       })
       if (!user) throw new TRPCError({ code: 'NOT_FOUND' })
       if (input.confirmEmail.trim().toLowerCase() !== user.email.toLowerCase()) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Type the account email exactly to confirm erasure.' })
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Type the account email exactly to confirm.' })
       }
       if (user.roleAssignments.some((r) => r.role === 'ceo' || r.role === 'super_admin')) {
         try {
           await assertNotLastCeo(ctx.db, user.id)
         } catch (e) {
           if (e instanceof BusinessError && e.code === 'LAST_CEO') {
-            throw new TRPCError({ code: 'CONFLICT', message: 'cannot erase the last ceo' })
+            throw new TRPCError({ code: 'CONFLICT', message: 'cannot delete the last ceo' })
           }
           throw e
         }
       }
-      const now = new Date()
-      // Anonymise: tombstone the unique email, drop every PII / secret column.
-      await ctx.db.user.update({
-        where: { id: user.id },
-        data: {
-          email: `erased-${user.id}@erased.invalid`,
-          name: null,
-          avatarKey: null,
-          passwordHash: null,
-          lastSignInIp: null,
-          lastSignInUa: null,
-          mfaEnabled: false,
-          mfaSecretCipherId: null,
-          totpSecretCipherId: null,
-          totpEnabledAt: null,
-          gmailRefreshTokenCipherId: null,
-          gmailConnectionStatus: null,
-          trengoUserId: null,
-          deactivatedAt: now,
-          deactivationReason: 'Erased (GDPR right to erasure)',
-          isActive: false,
-          deletedAt: now,
-          updatedById: actor.id,
-        },
+      // Audit the deletion first (the target id is still valid), never the PII.
+      await ctx.audit({
+        action: 'auth.user_erased',
+        target: { type: 'User', id: user.id },
+        after: { permanentlyDeleted: true },
       })
-      // Crypto-shred the KMS envelopes (they aren't FK-enforced, so delete them).
-      const cipherIds = [user.totpSecretCipherId, user.mfaSecretCipherId, user.gmailRefreshTokenCipherId].filter(
-        (id): id is string => Boolean(id),
-      )
-      if (cipherIds.length > 0) {
-        await ctx.db.encryptedField.deleteMany({ where: { id: { in: cipherIds } } })
+      const cipherIds = [
+        user.totpSecretCipherId,
+        user.mfaSecretCipherId,
+        user.gmailRefreshTokenCipherId,
+      ].filter((id): id is string => Boolean(id))
+      try {
+        await ctx.db.$transaction(async (tx) => {
+          if (cipherIds.length > 0) {
+            await tx.encryptedField.deleteMany({ where: { id: { in: cipherIds } } })
+          }
+          // Hard delete — FK children cascade, Card.assignee nulls (SetNull).
+          await tx.user.delete({ where: { id: user.id } })
+        })
+      } catch {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'Could not permanently delete — this account is still referenced. Use Delete instead.',
+        })
       }
-      await ctx.db.roleAssignment.deleteMany({ where: { userId: user.id } })
-      await ctx.db.userPermission.deleteMany({ where: { userId: user.id } })
-      await ctx.db.userCustomRole.deleteMany({ where: { userId: user.id } })
-      await ctx.db.session.deleteMany({ where: { userId: user.id } })
-      await ctx.db.emailVerificationToken.deleteMany({ where: { userId: user.id } })
-      await ctx.db.passwordResetToken.deleteMany({ where: { userId: user.id } })
-      await ctx.db.totpRecoveryCode.deleteMany({ where: { userId: user.id } })
-      // Never log the erased PII.
-      await ctx.audit({ action: 'auth.user_erased', target: { type: 'User', id: user.id }, after: { erased: true } })
       return { ok: true }
     }),
 

@@ -981,7 +981,7 @@ type DialogKind =
   | 'deactivate'
   | 'cancelInvite'
   | 'delete'
-  | 'erase'
+  | 'permanentDelete'
   | 'permissions'
   | null
 
@@ -1083,10 +1083,10 @@ export function RowActions(props: RowActionsProps) {
     onError: onErr,
   })
   const restore = trpc.admin.users.restore.useMutation({ onSuccess: ok('Restored (deactivated) — reactivate & assign roles'), onError: onErr })
-  const erase = trpc.admin.users.erase.useMutation({
+  const permanentlyDelete = trpc.admin.users.permanentlyDelete.useMutation({
     onSuccess: () => {
       setDialog(null)
-      ok('Account permanently erased')()
+      ok('Account permanently deleted')()
     },
     onError: onErr,
   })
@@ -1112,7 +1112,7 @@ export function RowActions(props: RowActionsProps) {
       items.push({ key: 'restore', label: 'Restore account', run: () => { setOpen(false); restore.mutate({ userId }) } })
     }
     if (access.canErase && !isSelf) {
-      items.push({ key: 'erase', label: 'Permanently erase', danger: true, run: () => setDialog('erase') })
+      items.push({ key: 'permdelete', label: 'Permanently delete', danger: true, run: () => setDialog('permanentDelete') })
     }
     return renderMenu()
   }
@@ -1160,7 +1160,7 @@ export function RowActions(props: RowActionsProps) {
     items.push({ key: 'delete', label: 'Delete account', danger: true, run: () => setDialog('delete') })
   }
   if (access.canErase && !isSelf) {
-    items.push({ key: 'erase', label: 'Permanently erase', danger: true, run: () => setDialog('erase') })
+    items.push({ key: 'permdelete', label: 'Permanently delete', danger: true, run: () => setDialog('permanentDelete') })
   }
 
   return renderMenu()
@@ -1279,12 +1279,12 @@ export function RowActions(props: RowActionsProps) {
           onClose={() => setDialog(null)}
         />
       )}
-      {dialog === 'erase' && (
-        <EraseModal
+      {dialog === 'permanentDelete' && (
+        <PermanentDeleteModal
           userId={userId}
           email={email}
-          pending={erase.isPending}
-          onConfirm={(confirmEmail) => erase.mutate({ userId, confirmEmail })}
+          pending={permanentlyDelete.isPending}
+          onConfirm={(confirmEmail) => permanentlyDelete.mutate({ userId, confirmEmail })}
           onClose={() => setDialog(null)}
         />
       )}
@@ -1310,7 +1310,7 @@ export function RowActions(props: RowActionsProps) {
 /* erase confirmation (type the email)                                         */
 /* -------------------------------------------------------------------------- */
 
-function EraseModal({
+function PermanentDeleteModal({
   userId: _userId,
   email,
   pending,
@@ -1326,7 +1326,7 @@ function EraseModal({
   const [value, setValue] = useState('')
   const matches = value.trim().toLowerCase() === email.toLowerCase()
   return (
-    <ModalShell title="Permanently erase account" onClose={onClose}>
+    <ModalShell title="Permanently delete account" onClose={onClose}>
       <p className="text-sm text-neutral-700">
         This <span className="font-semibold">cannot be undone</span>. All personal data on{' '}
         <span className="font-mono">{email}</span> is removed (GDPR erasure); their history stays
@@ -1352,7 +1352,7 @@ function EraseModal({
           disabled={pending || !matches}
           onClick={() => onConfirm(value.trim())}
         >
-          {pending ? 'Erasing…' : 'Permanently erase'}
+          {pending ? 'Deleting…' : 'Permanently delete'}
         </Button>
       </div>
     </ModalShell>

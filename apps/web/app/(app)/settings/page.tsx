@@ -1,6 +1,7 @@
-// Settings landing page. Grouped into People / Brand & Data / Platform so
-// admins can find what they need at a glance. Mailbox + 2FA + Sessions
-// live in the user menu — they are per-agent, not org-wide.
+// Settings landing page. Grouped into People / Brand & Data / Workflows /
+// Platform so admins can find what they need at a glance. Per-agent security
+// (2FA + Sessions) lives in the user menu; the per-agent mailbox is surfaced
+// both there and as a Platform tile here.
 
 import Link from 'next/link'
 
@@ -38,8 +39,9 @@ const GROUPS: Group[] = [
       {
         href: '/settings/users',
         title: 'Users & roles',
-        description: 'List users, invite, assign or revoke roles. Audited.',
-        roles: 'CEO · Senior Manager',
+        description:
+          'Create accounts, reissue logins, delete/erase, roles, individual permissions, avatars. Audited.',
+        roles: 'CEO · SM · Manager',
         icon: <UsersIcon size={16} />,
       },
       {
@@ -65,7 +67,7 @@ const GROUPS: Group[] = [
       {
         href: '/settings/companies',
         title: 'Companies',
-        description: 'Sister-brand tags (Medic Mind, Oxbridge Mind, Study Mind, anything you add).',
+        description: 'Sister-brand tags (Medic Mind, Oxbridge Mind, StudyMind, anything you add).',
         roles: 'CEO · Senior Manager',
         icon: <CoinsIcon size={16} />,
       },
@@ -118,7 +120,7 @@ const GROUPS: Group[] = [
         href: '/settings/slack-channels',
         title: 'Slack channels',
         description:
-          'Channels a call summary can be posted to as an internal action point for VAs, with deep-link buttons back into the CRM.',
+          'The Slack channels the CRM posts to (call-summary action points with deep-link buttons), and where each kind of notification is routed.',
         roles: 'Manager+',
         icon: <GitBranchIcon size={16} />,
       },
@@ -167,6 +169,14 @@ const GROUPS: Group[] = [
           'The hub for every external service — webhook status, plus B2B invoicing, email accounts and Slack routing.',
         roles: 'CEO · Senior Manager · Manager',
         icon: <BarChartIcon size={16} />,
+      },
+      {
+        href: '/settings/invoicing',
+        title: 'Invoicing',
+        description:
+          'Connect the B2B Invoices Platform (b2b.studymind.co.uk) for two-way invoice sync on account pages.',
+        roles: 'CEO · Senior Manager · Manager',
+        icon: <CoinsIcon size={16} />,
       },
       {
         href: '/settings/flags',
