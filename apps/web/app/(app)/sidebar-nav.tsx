@@ -30,23 +30,7 @@ import {
   UsersIcon,
 } from '@/components/ui/icon'
 
-/**
- * External links shown at the bottom of the sidebar — quick jumps to the
- * sister-app surfaces. Open in a new tab. Configurable via env so a
- * self-hosted install can re-point them without a code change.
- */
-const EXTERNAL_LINKS = [
-  {
-    label: 'Main Portal',
-    href:
-      process.env['NEXT_PUBLIC_MAIN_PORTAL_URL'] ?? 'https://portal.studymind.co.uk',
-  },
-  {
-    label: 'Invoice Site',
-    href:
-      process.env['NEXT_PUBLIC_INVOICE_SITE_URL'] ?? 'https://b2b.studymind.co.uk',
-  },
-]
+import { EXTERNAL_APP_LINKS } from '@/components/shell/external-links'
 
 export interface NavChild {
   href: string
@@ -234,11 +218,13 @@ export function SidebarNav({ items }: Props) {
         )
       })}
 
-      <div className="flex flex-col gap-px">
+      {/* External links live in the TOP BAR from md up; this group only
+          renders in the mobile drawer (below md) so phones don't lose them. */}
+      <div className="flex flex-col gap-px md:hidden">
         <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-neutral-400">
           External
         </div>
-        {EXTERNAL_LINKS.map((link) => (
+        {EXTERNAL_APP_LINKS.map((link) => (
           <a
             key={link.href}
             href={link.href}
@@ -247,7 +233,7 @@ export function SidebarNav({ items }: Props) {
             className="flex items-center gap-2.5 rounded-md px-3 py-2 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
           >
             <ExternalLinkGlyph />
-            <span>{link.label}</span>
+            <span>{link.title}</span>
           </a>
         ))}
       </div>
