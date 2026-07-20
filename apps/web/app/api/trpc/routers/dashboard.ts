@@ -3,7 +3,6 @@
 //   - four headline KPI tiles (role-aware),
 //   - a "Needs attention" grid of action queues across every work surface
 //     (Trengo, calls, leads, complaints, Slack, finance, Direct Debits, …),
-//   - recent audited activity,
 //   - the live at-risk-customers list (hours expiring unused — the current
 //     retention concept, CLAUDE.md §6.4, replacing the deprecated at-risk
 //     *families* derivation).
@@ -48,15 +47,6 @@ interface KpiTileData {
   icon: KpiIconKey
 }
 
-interface ActivityRow {
-  id: string
-  action: string
-  actorEmail: string | null
-  targetType: string
-  targetId: string
-  occurredAt: Date
-  href: string | null
-}
 
 interface AtRiskCustomerRow {
   id: string
@@ -88,66 +78,6 @@ const LEVEL_RANK: Record<HoursRiskLevel, number> = {
   low: 1,
   medium: 2,
   high: 3,
-}
-
-function targetHref(targetType: string, targetId: string): string | null {
-  switch (targetType) {
-    case 'Contact':
-      return `/contacts/${targetId}`
-    case 'Family':
-      return `/contacts/families/${targetId}`
-    case 'BusinessAccount':
-      return `/accounts/${targetId}`
-    case 'Conversation':
-      return `/inbox/conversations/${targetId}`
-    case 'Lead':
-      return `/leads`
-    case 'Complaint':
-      return `/complaints`
-    case 'Task':
-      return `/tasks`
-    case 'ReconciliationDiscrepancy':
-      return `/finance`
-    case 'PaymentLinkIntent':
-      return `/finance/payment-links`
-    case 'RefundIntent':
-      return `/finance/refunds`
-    default:
-      return null
-  }
-}
-
-/** Latest audited actions, with the actor email and a deep link resolved. */
-async function loadRecentActivity(db: PrismaClient): Promise<ActivityRow[]> {
-  const rows = await db.auditLogEntry.findMany({
-    orderBy: { occurredAt: 'desc' },
-    take: 12,
-    select: {
-      id: true,
-      action: true,
-      actorId: true,
-      targetType: true,
-      targetId: true,
-      occurredAt: true,
-    },
-  })
-  const actorIds = [...new Set(rows.map((r) => r.actorId).filter((x): x is string => !!x))]
-  const actors = actorIds.length
-    ? await db.user.findMany({
-        where: { id: { in: actorIds } },
-        select: { id: true, email: true },
-      })
-    : []
-  const emailById = new Map(actors.map((a) => [a.id, a.email] as const))
-  return rows.map((r) => ({
-    id: r.id,
-    action: r.action,
-    actorEmail: r.actorId ? emailById.get(r.actorId) ?? null : null,
-    targetType: r.targetType,
-    targetId: r.targetId,
-    occurredAt: r.occurredAt,
-    href: targetHref(r.targetType, r.targetId),
-  }))
 }
 
 /**
@@ -297,7 +227,6 @@ export const dashboardRouter = router({
         financeDiscrepancies,
         directDebitIssues,
         unresolvedPayments,
-        activity,
         missedCalls,
         atRisk,
       ] = await Promise.all([
@@ -340,7 +269,6 @@ export const dashboardRouter = router({
             })
           : Promise.resolve(0),
         isFinance ? loadUnresolvedPaymentCount(db) : Promise.resolve(0),
-        loadRecentActivity(db),
         loadMissedCallCount(db, now),
         loadAtRiskCustomers(db, now),
       ])
@@ -401,7 +329,6 @@ export const dashboardRouter = router({
       return {
         kpis,
         queues,
-        activity,
         atRiskCustomers: atRisk?.top ?? [],
       }
     }),

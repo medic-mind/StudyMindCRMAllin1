@@ -2,7 +2,7 @@
 // today: a brand greeting hero with a smart "what needs you" summary, four
 // role-aware KPI tiles, a "Needs attention" grid of action queues across every
 // work surface (Trengo, calls, leads, complaints, Slack, finance, Direct
-// Debits…), recent audited activity, the live at-risk-customers list, and an
+// Debits…), the live at-risk-customers list, and an
 // "Explore the workspace" jump-to grid. Powered by `dashboard.summary` (single
 // round-trip). CLAUDE.md §26 (RSC default), §28 (skeleton in loading.tsx,
 // gentle motion), §20 (role-aware), §29 (Europe/London clock).
@@ -17,7 +17,6 @@ import { GreetingHero } from '@/components/dashboard/greeting-hero'
 import { KpiTile } from '@/components/dashboard/kpi-tile'
 import { QueueCard } from '@/components/dashboard/queue-card'
 import { QuickLinks } from '@/components/dashboard/quick-links'
-import { RecentActivity } from '@/components/dashboard/recent-activity'
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import {
@@ -151,9 +150,8 @@ export default async function DashboardPage() {
             </div>
           </section>
 
-          {/* Recent activity + at-risk customers */}
-          <div className="animate-rise-4 grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <RecentActivity rows={data.activity} />
+          {/* At-risk customers */}
+          <div className="animate-rise-4">
             <AtRiskCustomersList rows={data.atRiskCustomers} total={atRiskTotal} />
           </div>
 
