@@ -32,7 +32,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { formatRoleLabel } from '@/lib/format/role-label'
 import { trpc } from '@/lib/trpc/client'
 
-export type UserStatus = 'active' | 'invited' | 'deactivated' | 'locked'
+export type UserStatus = 'active' | 'invited' | 'deactivated' | 'locked' | 'deleted'
 export type EmailStatus = 'sent' | 'skipped' | 'failed'
 
 export interface AccessFlags {
@@ -42,6 +42,9 @@ export interface AccessFlags {
   canGrantManage: boolean
   canDeactivate: boolean
   canManageRoles: boolean
+  canDelete?: boolean
+  canErase?: boolean
+  canSetPermissions?: boolean
   systemEmailReady?: boolean
 }
 
@@ -965,14 +968,36 @@ export interface RowActionsProps {
   currentRoles: string[]
   extraPermissions: string[]
   status: UserStatus
+  deleted?: boolean
+  awaitingFirstSignIn?: boolean
   isSelf: boolean
   access: AccessFlags
 }
 
-type DialogKind = 'edit' | 'roles' | 'reset' | 'deactivate' | 'cancelInvite' | null
+type DialogKind =
+  | 'edit'
+  | 'roles'
+  | 'reset'
+  | 'deactivate'
+  | 'cancelInvite'
+  | 'delete'
+  | 'erase'
+  | 'permissions'
+  | null
 
 export function RowActions(props: RowActionsProps) {
-  const { userId, email, name, currentRoles, extraPermissions, status, isSelf, access } = props
+  const {
+    userId,
+    email,
+    name,
+    currentRoles,
+    extraPermissions,
+    status,
+    deleted = false,
+    awaitingFirstSignIn = false,
+    isSelf,
+    access,
+  } = props
   const router = useRouter()
   const [open, setOpen] = useState(false)
   // The menu is rendered position:fixed (anchored to the trigger) so it is not
@@ -1050,6 +1075,29 @@ export function RowActions(props: RowActionsProps) {
     },
     onError: onErr,
   })
+  const deleteUser = trpc.admin.users.delete.useMutation({
+    onSuccess: () => {
+      setDialog(null)
+      ok('Account deleted')()
+    },
+    onError: onErr,
+  })
+  const restore = trpc.admin.users.restore.useMutation({ onSuccess: ok('Restored (deactivated) — reactivate & assign roles'), onError: onErr })
+  const erase = trpc.admin.users.erase.useMutation({
+    onSuccess: () => {
+      setDialog(null)
+      ok('Account permanently erased')()
+    },
+    onError: onErr,
+  })
+  const forceSignOut = trpc.admin.users.forceSignOut.useMutation({
+    onSuccess: (r) => ok(r.count > 0 ? `Signed out (${r.count} session${r.count === 1 ? '' : 's'})` : 'No active sessions')(),
+    onError: onErr,
+  })
+  const sendReminder = trpc.admin.users.sendLoginReminder.useMutation({
+    onSuccess: (r) => ok(r.emailStatus === 'sent' ? 'Reminder sent' : 'Reminder queued (connect Gmail to send)')(),
+    onError: onErr,
+  })
 
   const canAct = actorCanActOn(access, currentRoles)
   const hasManageGrant = extraPermissions.includes('user.manage')
@@ -1057,14 +1105,32 @@ export function RowActions(props: RowActionsProps) {
 
   // Build the menu item list from capabilities.
   const items: Array<{ key: string; label: string; danger?: boolean; run: () => void }> = []
+
+  if (deleted) {
+    // A soft-deleted account: only restore or permanently erase.
+    if (access.canDelete && canAct) {
+      items.push({ key: 'restore', label: 'Restore account', run: () => { setOpen(false); restore.mutate({ userId }) } })
+    }
+    if (access.canErase && !isSelf) {
+      items.push({ key: 'erase', label: 'Permanently erase', danger: true, run: () => setDialog('erase') })
+    }
+    return renderMenu()
+  }
+
   if (access.canManage && canAct && status !== 'deactivated') {
     items.push({ key: 'edit', label: 'Edit details', run: () => setDialog('edit') })
   }
   if (access.canManage && canAct && (status === 'active' || status === 'locked')) {
-    items.push({ key: 'reset', label: 'Reset password', run: () => setDialog('reset') })
+    items.push({ key: 'reset', label: 'Reissue login details', run: () => setDialog('reset') })
+  }
+  if (awaitingFirstSignIn && access.canManage && canAct) {
+    items.push({ key: 'remind', label: 'Send sign-in reminder', run: () => { setOpen(false); sendReminder.mutate({ userId }) } })
   }
   if (access.canManageRoles) {
     items.push({ key: 'roles', label: 'Manage roles', run: () => setDialog('roles') })
+  }
+  if (access.canSetPermissions && canAct) {
+    items.push({ key: 'permissions', label: 'Permissions', run: () => setDialog('permissions') })
   }
   if (access.canGrantManage && canAct && !targetManagesByRole) {
     items.push({
@@ -1077,6 +1143,9 @@ export function RowActions(props: RowActionsProps) {
       },
     })
   }
+  if (access.canManage && canAct && (status === 'active' || status === 'locked')) {
+    items.push({ key: 'signout', label: 'Force sign-out', run: () => { setOpen(false); forceSignOut.mutate({ userId }) } })
+  }
   if (access.canCreate && status === 'invited') {
     items.push({ key: 'resend', label: 'Resend invite', run: () => { setOpen(false); resend.mutate({ userId }) } })
     items.push({ key: 'cancel', label: 'Cancel invite', danger: true, run: () => setDialog('cancelInvite') })
@@ -1087,6 +1156,16 @@ export function RowActions(props: RowActionsProps) {
   if (access.canDeactivate && status === 'deactivated') {
     items.push({ key: 'react', label: 'Reactivate', run: () => { setOpen(false); reactivate.mutate({ userId }) } })
   }
+  if (access.canDelete && canAct && !isSelf && status !== 'invited') {
+    items.push({ key: 'delete', label: 'Delete account', danger: true, run: () => setDialog('delete') })
+  }
+  if (access.canErase && !isSelf) {
+    items.push({ key: 'erase', label: 'Permanently erase', danger: true, run: () => setDialog('erase') })
+  }
+
+  return renderMenu()
+
+  function renderMenu() {
 
   return (
     <div className="relative flex justify-end">
@@ -1189,6 +1268,29 @@ export function RowActions(props: RowActionsProps) {
           onClose={() => setDialog(null)}
         />
       )}
+      {dialog === 'delete' && (
+        <ConfirmModal
+          title="Delete account"
+          body={`Delete ${email}? They're removed from the roster, signed out, and their roles are revoked. You can restore them from the Deleted view.`}
+          confirmLabel="Delete account"
+          danger
+          pending={deleteUser.isPending}
+          onConfirm={() => deleteUser.mutate({ userId })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'erase' && (
+        <EraseModal
+          userId={userId}
+          email={email}
+          pending={erase.isPending}
+          onConfirm={(confirmEmail) => erase.mutate({ userId, confirmEmail })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'permissions' && (
+        <PermissionsModal userId={userId} name={name} email={email} onClose={() => setDialog(null)} />
+      )}
 
       {reveal && (
         <CredentialModal
@@ -1200,5 +1302,169 @@ export function RowActions(props: RowActionsProps) {
         />
       )}
     </div>
+    )
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* erase confirmation (type the email)                                         */
+/* -------------------------------------------------------------------------- */
+
+function EraseModal({
+  userId: _userId,
+  email,
+  pending,
+  onConfirm,
+  onClose,
+}: {
+  userId: string
+  email: string
+  pending: boolean
+  onConfirm: (confirmEmail: string) => void
+  onClose: () => void
+}) {
+  const [value, setValue] = useState('')
+  const matches = value.trim().toLowerCase() === email.toLowerCase()
+  return (
+    <ModalShell title="Permanently erase account" onClose={onClose}>
+      <p className="text-sm text-neutral-700">
+        This <span className="font-semibold">cannot be undone</span>. All personal data on{' '}
+        <span className="font-mono">{email}</span> is removed (GDPR erasure); their history stays
+        intact but no longer names them.
+      </p>
+      <div className="mt-3 space-y-1.5">
+        <Label htmlFor="erase-confirm">Type the email to confirm</Label>
+        <Input
+          id="erase-confirm"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={email}
+          autoComplete="off"
+        />
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          variant="destructive"
+          disabled={pending || !matches}
+          onClick={() => onConfirm(value.trim())}
+        >
+          {pending ? 'Erasing…' : 'Permanently erase'}
+        </Button>
+      </div>
+    </ModalShell>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* per-user permissions modal                                                  */
+/* -------------------------------------------------------------------------- */
+
+function PermissionsModal({
+  userId,
+  name,
+  email,
+  onClose,
+}: {
+  userId: string
+  name: string | null
+  email: string
+  onClose: () => void
+}) {
+  const utils = trpc.useUtils()
+  const router = useRouter()
+  const q = trpc.admin.users.permissionsFor.useQuery({ userId })
+  const [selected, setSelected] = useState<Set<string> | null>(null)
+
+  useEffect(() => {
+    if (q.data && selected === null) setSelected(new Set(q.data.individual))
+  }, [q.data, selected])
+
+  const save = trpc.admin.users.setPermissions.useMutation({
+    onSuccess: () => {
+      void utils.admin.users.permissionsFor.invalidate({ userId })
+      toast.success('Permissions updated')
+      router.refresh()
+      onClose()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+
+  const d = q.data
+  const roleSet = new Set(d?.roleActions ?? [])
+  const customSet = new Set(d?.customRoleActions ?? [])
+  const canGrant = new Set(d?.actorCanGrant ?? [])
+
+  function toggle(action: string) {
+    setSelected((prev) => {
+      const next = new Set(prev ?? [])
+      if (next.has(action)) next.delete(action)
+      else next.add(action)
+      return next
+    })
+  }
+
+  return (
+    <ModalShell title="Individual permissions" onClose={onClose} width="max-w-lg">
+      <p className="text-sm text-neutral-600">
+        Extra capabilities for <span className="font-medium">{name ?? email}</span>, on top of their
+        role. Greyed items already come from their role or a custom role.
+      </p>
+      {q.isLoading || !d || selected === null ? (
+        <p className="mt-4 text-sm text-neutral-500">Loading…</p>
+      ) : (
+        <div className="mt-3 max-h-[50vh] space-y-4 overflow-y-auto pr-1">
+          {d.catalogue.map((group) => (
+            <div key={group.title}>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                {group.title}
+              </div>
+              <div className="space-y-1">
+                {group.actions.map((a) => {
+                  const fromRole = roleSet.has(a.action) || customSet.has(a.action)
+                  const grantable = canGrant.has(a.action)
+                  const checked = fromRole || selected.has(a.action)
+                  const disabled = fromRole || !grantable
+                  return (
+                    <label
+                      key={a.action}
+                      className={`flex items-center gap-2 rounded px-1.5 py-1 text-sm ${
+                        disabled ? 'text-neutral-400' : 'text-neutral-800 hover:bg-neutral-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={disabled}
+                        onChange={() => toggle(a.action)}
+                      />
+                      <span>{a.label}</span>
+                      {fromRole ? (
+                        <span className="ml-auto text-[10px] text-neutral-400">from role</span>
+                      ) : null}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          disabled={save.isPending || selected === null}
+          onClick={() => save.mutate({ userId, permissions: [...(selected ?? [])] })}
+        >
+          {save.isPending ? 'Saving…' : 'Save permissions'}
+        </Button>
+      </div>
+    </ModalShell>
   )
 }

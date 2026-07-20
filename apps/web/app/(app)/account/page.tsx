@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/shell/page-header'
 import { Card } from '@/components/ui/card'
 import { createServerCaller } from '@/lib/trpc/server'
 
+import { AvatarSection } from './AvatarSection'
 import { ProfileForm } from './ProfileForm'
 
 const BREADCRUMBS = [{ label: 'Account', href: '/account' }]
@@ -46,6 +47,14 @@ export default async function AccountPage() {
         <p className="mt-4 border-t border-neutral-100 pt-3 text-xs text-neutral-500">
           Last sign-in: {fmt(me.lastSignInAt)}
         </p>
+      </Card>
+
+      <Card className="p-4">
+        <AvatarSection
+          name={me.name ?? null}
+          email={me.email}
+          initialAvatarKey={me.avatarKey ?? null}
+        />
       </Card>
 
       <section className="space-y-2">

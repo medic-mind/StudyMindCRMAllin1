@@ -35,6 +35,7 @@ import {
   leadReprocessUnresolved,
 } from './_boundary/process-lead'
 import { uebaWeekly } from './_boundary/ueba'
+import { userLoginReminders } from './_boundary/user-login-reminders'
 import { WEBINAR_BOUNDARY_FUNCTIONS } from './_boundary/webinar'
 
 export const runtime = 'nodejs'
@@ -53,6 +54,7 @@ const BOUNDARY_FUNCTIONS = [
   leadClassifyRequested,
   leadReprocessUnresolved,
   uebaWeekly,
+  userLoginReminders,
   ...WEBINAR_BOUNDARY_FUNCTIONS,
 ]
 

@@ -302,6 +302,17 @@ model User {
   failedSignInAttempts Int       @default(0)
   lockedUntil          DateTime?
 
+  /// Profile picture. Either a preset key (e.g. "gradient-aurora" — a
+  /// self-contained SVG rendered client-side) or null for the initials avatar.
+  /// Users pick one from Settings → My account; admins can set one too.
+  avatarKey            String?
+
+  /// Automated "please finish signing in" nudges (ADR 0021 amendment). Set when
+  /// the login-reminder cron emails a user who was created/invited but has never
+  /// signed in; capped so we never nag forever.
+  lastLoginReminderAt  DateTime?
+  loginReminderCount   Int       @default(0)
+
   /// ADR 0020 Phase 5 — when the user last opened the notifications bell.
   /// Rows in AuditLogEntry newer than this with this user as the target are
   /// counted as unread. Null means "never opened" (everything unread).

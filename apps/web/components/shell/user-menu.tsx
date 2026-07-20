@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { signOut } from 'next-auth/react'
 import { useEffect, useRef, useState } from 'react'
 
+import { Avatar } from '@/components/ui/avatar'
 import {
   ChevronDownIcon,
   LogOutIcon,
@@ -19,6 +20,7 @@ import {
   UserCircleIcon,
 } from '@/components/ui/icon'
 import { formatRoleLabel } from '@/lib/format/role-label'
+import { trpc } from '@/lib/trpc/client'
 
 interface Props {
   email: string
@@ -27,19 +29,12 @@ interface Props {
   totpEnabled?: boolean
 }
 
-function initialsOf(email: string, name: string | null): string {
-  if (name) {
-    const parts = name.trim().split(/\s+/)
-    const first = parts[0]?.[0] ?? ''
-    const last = parts.length > 1 ? parts[parts.length - 1]![0] : ''
-    const out = (first + last).toUpperCase()
-    if (out) return out
-  }
-  return email.slice(0, 2).toUpperCase()
-}
-
 export function UserMenu({ email, name, role, totpEnabled = false }: Props) {
   const [open, setOpen] = useState(false)
+  // The current user's chosen preset avatar (cached; refreshed when they pick one).
+  const me = trpc.account.me.useQuery(undefined, { staleTime: 5 * 60 * 1000 })
+  const avatarKey = me.data?.avatarKey ?? null
+  const displayName = name ?? email
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
@@ -64,7 +59,6 @@ export function UserMenu({ email, name, role, totpEnabled = false }: Props) {
     }
   }, [open])
 
-  const initials = initialsOf(email, name)
   const twoFaHref = totpEnabled ? '/account/disable-2fa' : '/account/setup-2fa'
 
   return (
@@ -77,12 +71,7 @@ export function UserMenu({ email, name, role, totpEnabled = false }: Props) {
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-2 rounded-full pr-2 text-neutral-700 hover:text-neutral-900"
       >
-        <span
-          aria-hidden="true"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary-600 text-xs font-semibold text-white"
-        >
-          {initials}
-        </span>
+        <Avatar name={displayName} avatarKey={avatarKey} size={32} />
         <ChevronDownIcon size={14} className="text-neutral-500" />
         <span className="sr-only">Open user menu for {email}</span>
       </button>
@@ -97,12 +86,7 @@ export function UserMenu({ email, name, role, totpEnabled = false }: Props) {
           {/* Identity */}
           <div className="border-b border-neutral-100 px-4 py-3">
             <div className="flex items-center gap-3">
-              <span
-                aria-hidden="true"
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary-600 text-sm font-semibold text-white"
-              >
-                {initials}
-              </span>
+              <Avatar name={displayName} avatarKey={avatarKey} size={40} />
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-neutral-900">
                   {name ?? email}

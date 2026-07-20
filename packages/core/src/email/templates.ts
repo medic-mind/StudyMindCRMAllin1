@@ -100,3 +100,54 @@ export function buildWelcomeEmail(input: WelcomeCredentials): RenderedEmail {
     text,
   }
 }
+
+export interface LoginReminderInput {
+  name?: string | null
+  signInUrl: string
+}
+
+/**
+ * A gentle nudge for a staff member who was given a StudyMind CRM account but
+ * has never signed in. No credentials are included (we don't hold the plaintext
+ * password); it points them at sign-in and tells them how to get fresh details.
+ */
+export function buildLoginReminderEmail(input: LoginReminderInput): RenderedEmail {
+  const name = (input.name ?? '').trim()
+  const hello = `Hello${name ? ` ${name}` : ''},`
+  const subject = 'A reminder to sign in to StudyMind CRM'
+  const bodyHtml = `
+    <p style="margin:0 0 14px;font-size:15px;line-height:1.55;">${escapeHtml(hello)}</p>
+    <p style="margin:0 0 8px;font-size:15px;line-height:1.55;color:${COLOR_TEXT};">
+      A StudyMind CRM account was set up for you, but we haven't seen you sign in yet.
+      When you're ready, you can sign in below.
+    </p>
+    <p style="margin:0 0 8px;">${emailButton(input.signInUrl, 'Sign in to StudyMind CRM')}</p>
+    <p style="margin:14px 0 0;font-size:13px;color:${COLOR_MUTED};word-break:break-all;">
+      Or paste this link into your browser: ${escapeHtml(input.signInUrl)}
+    </p>
+    <p style="margin:14px 0 0;font-size:14px;line-height:1.55;color:${COLOR_MUTED};">
+      If you've misplaced your login details, just let your administrator know and they'll reissue them.
+    </p>`
+  const text = [
+    hello,
+    '',
+    "A StudyMind CRM account was set up for you, but we haven't seen you sign in yet.",
+    '',
+    `Sign in here: ${input.signInUrl}`,
+    '',
+    "If you've misplaced your login details, ask your administrator to reissue them.",
+    '',
+    '— StudyMind CRM',
+  ].join('\n')
+  return {
+    subject,
+    html: renderEmailLayout({
+      brandName: 'StudyMind CRM',
+      heading: 'A reminder to sign in',
+      bodyHtml,
+      preheader: "You haven't signed in to StudyMind CRM yet.",
+      footerNote: STAFF_FOOTER,
+    }),
+    text,
+  }
+}

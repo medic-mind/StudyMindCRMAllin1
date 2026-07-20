@@ -21,7 +21,7 @@ import { BulkInviteDialog, CreateUserDialog, RowActions, type AccessFlags } from
 
 export const dynamic = 'force-dynamic'
 
-type StatusFilter = 'all' | 'active' | 'invited' | 'deactivated'
+type StatusFilter = 'all' | 'active' | 'invited' | 'deactivated' | 'deleted'
 
 interface PageSearchParams {
   q?: string
@@ -35,6 +35,7 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: 'active', label: 'Active' },
   { key: 'invited', label: 'Invited' },
   { key: 'deactivated', label: 'Deactivated' },
+  { key: 'deleted', label: 'Deleted' },
 ]
 
 export default async function UsersSettingsPage({
@@ -65,29 +66,33 @@ export default async function UsersSettingsPage({
     )
   }
 
-  const data = await caller.admin.users.list({
-    search: sp.q && sp.q.trim() ? sp.q.trim() : undefined,
-    cursor: sp.cursor,
-    limit: 50,
-  })
-
-  const status: StatusFilter = (['all', 'active', 'invited', 'deactivated'] as const).includes(
-    sp.status as StatusFilter,
-  )
+  const status: StatusFilter = (
+    ['all', 'active', 'invited', 'deactivated', 'deleted'] as const
+  ).includes(sp.status as StatusFilter)
     ? (sp.status as StatusFilter)
     : 'all'
+  const search = sp.q && sp.q.trim() ? sp.q.trim() : undefined
+  const showingDeleted = status === 'deleted'
+
+  // Live accounts (for every non-deleted tab + their counts). The deleted set
+  // is small — fetched separately so its tab + count are accurate.
+  const data = await caller.admin.users.list({ search, cursor: sp.cursor, deleted: false, limit: 50 })
+  const deletedData = await caller.admin.users.list({ search, deleted: true, limit: 50 })
 
   const counts = {
     all: data.items.length,
     active: data.items.filter((u) => u.status === 'active' || u.status === 'locked').length,
     invited: data.items.filter((u) => u.status === 'invited').length,
     deactivated: data.items.filter((u) => u.status === 'deactivated').length,
+    deleted: deletedData.items.length,
   }
-  const rows = data.items.filter((u) => {
-    if (status === 'all') return true
-    if (status === 'active') return u.status === 'active' || u.status === 'locked'
-    return u.status === status
-  })
+  const rows = showingDeleted
+    ? deletedData.items
+    : data.items.filter((u) => {
+        if (status === 'all') return true
+        if (status === 'active') return u.status === 'active' || u.status === 'locked'
+        return u.status === status
+      })
 
   const ceos = data.items.filter((u) => u.roles.some((r) => r.role === 'ceo'))
   const lastCeoWarning =
@@ -199,7 +204,7 @@ export default async function UsersSettingsPage({
                 <Tr key={u.id}>
                   <Td className="w-full">
                     <div className="flex items-center gap-2.5">
-                      <Avatar name={u.name || u.email} />
+                      <Avatar name={u.name || u.email} avatarKey={u.avatarKey} />
                       <div className="min-w-0">
                         <div className="truncate font-medium text-neutral-900">
                           {u.name ?? u.email.split('@')[0]}
@@ -225,6 +230,8 @@ export default async function UsersSettingsPage({
                       currentRoles={u.roles.map((r) => r.role)}
                       extraPermissions={u.extraPermissions}
                       status={u.status}
+                      deleted={u.deleted}
+                      awaitingFirstSignIn={u.awaitingFirstSignIn}
                       isSelf={u.id === me?.id}
                       access={access}
                     />
@@ -286,6 +293,7 @@ function StatusBadge({
     locked: { tone: 'danger', label: 'Locked' },
     deactivated: { tone: 'neutral', label: 'Deactivated' },
     invited: { tone: 'warn', label: 'Invited' },
+    deleted: { tone: 'neutral', label: 'Deleted' },
   }
   const s = map[status] ?? { tone: 'neutral' as BadgeTone, label: status }
   return (

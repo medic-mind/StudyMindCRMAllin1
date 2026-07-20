@@ -436,6 +436,14 @@ export const EVENT_NAMES = [
   'auth.password_reset_by_admin',
   'auth.permission_granted',
   'auth.permission_revoked',
+  // User-management upgrade (ADR 0021 amendment): delete/restore/erase,
+  // individual permission sets, admin session revocation, login reminders.
+  'auth.user_deleted',
+  'auth.user_restored',
+  'auth.user_erased',
+  'auth.user_permissions_set',
+  'auth.sessions_revoked_by_admin',
+  'auth.login_reminder_sent',
   // Audit-A2 / CLAUDE.md §20: TOTP MFA lifecycle and authn events.
   'auth.totp_setup_started',
   'auth.totp_enabled',

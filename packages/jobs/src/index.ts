@@ -64,6 +64,11 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     description: 'Renew Gmail Pub/Sub watches that expire within 24h',
   },
   {
+    id: 'users/login-reminders',
+    cron: '0 9 * * *',
+    description: 'Email staff who were given an account but have never signed in (capped nudges)',
+  },
+  {
     id: 'booking/sync-students',
     cron: '*/5 * * * *',
     description: 'Pull changed students from booking.studymind.co.uk (ADR 0029)',

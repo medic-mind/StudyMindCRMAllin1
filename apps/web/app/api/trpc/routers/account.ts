@@ -41,6 +41,7 @@ export const accountRouter = router({
         id: true,
         email: true,
         name: true,
+        avatarKey: true,
         lastSignInAt: true,
         mustResetPassword: true,
         totpEnabledAt: true,
@@ -49,6 +50,21 @@ export const accountRouter = router({
     if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
     return row
   }),
+
+  /** Choose (or clear) your own preset profile picture. */
+  setAvatar: auditedProcedure
+    .input(z.object({ avatarKey: z.string().trim().max(40).nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      const avatarKey = input.avatarKey && input.avatarKey.length > 0 ? input.avatarKey : null
+      await ctx.db.user.update({ where: { id: actor.id }, data: { avatarKey } })
+      await ctx.audit({
+        action: 'account.profile_updated',
+        target: { type: 'User', id: actor.id },
+        after: { avatarKey },
+      })
+      return { avatarKey }
+    }),
 
   /** Update the signed-in user's own display name + sign-in email. */
   updateProfile: auditedProcedure

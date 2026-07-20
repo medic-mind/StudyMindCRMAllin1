@@ -40,6 +40,7 @@
     "./auth/policies": "./src/auth/policies.ts",
     "./auth/passwords": "./src/auth/passwords.ts",
     "./auth/lockout": "./src/auth/lockout.ts",
+    "./auth/login-reminders": "./src/auth/login-reminders.ts",
     "./auth/guards": "./src/auth/guards.ts",
     "./auth/rate-limits": "./src/auth/rate-limits.ts",
     "./compliance/dsar": "./src/compliance/dsar.ts",

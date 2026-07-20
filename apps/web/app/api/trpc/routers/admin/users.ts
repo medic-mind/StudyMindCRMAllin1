@@ -25,6 +25,10 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
 import {
+  ACTION_GROUPS,
+  ACTION_LABELS,
+  ACTIONS,
+  ASSIGNABLE_ACTIONS,
   GRANTABLE_ACTIONS,
   canCreateUsers,
   canCreateUserAtRole,
@@ -33,8 +37,14 @@ import {
   canGrantUserManage,
   canManageUsers,
   canRevokeRole,
+  hasAction,
+  isAssignableAction,
   normaliseRole,
+  pickPrimaryRole,
+  roleCan,
   ROLES,
+  sanitizeRolePermissions,
+  type Action,
   type Role,
 } from '@studymind/core/auth/policies'
 import { assertNotLastCeo } from '@studymind/core/auth/guards'
@@ -48,6 +58,7 @@ import {
   hashToken,
 } from '@studymind/core/auth/passwords'
 import {
+  buildLoginReminderEmail,
   buildWelcomeEmail,
   buildWelcomePdf,
   WELCOME_PDF_FILENAME,
@@ -339,6 +350,11 @@ export const adminUsersRouter = router({
       canGrantManage: canGrantUserManage(actor.role),
       canDeactivate: canDeactivateUsers(actor.role),
       canManageRoles: ROLES.some((r) => canGrantRole(actor.role, r)),
+      // Delete (soft, reversible) is CEO + Senior Manager; permanent erase is
+      // CEO only; per-user permission grants are CEO + Senior Manager.
+      canDelete: canDeactivateUsers(actor.role),
+      canErase: actor.role === 'ceo',
+      canSetPermissions: actor.role === 'ceo' || actor.role === 'senior_manager',
       systemEmailReady,
     }
   }),
@@ -350,6 +366,8 @@ export const adminUsersRouter = router({
     .input(
       z.object({
         search: z.string().trim().min(1).optional(),
+        /** Show soft-deleted accounts instead of live ones (the "Deleted" view). */
+        deleted: z.boolean().default(false),
         cursor: z.string().optional(),
         limit: z.number().int().min(1).max(100).default(50),
       }),
@@ -358,7 +376,7 @@ export const adminUsersRouter = router({
       const actor = requireUser(ctx)
       assertCanManage(actor, await loadActorGrants(ctx.db, actor.id))
       const where = {
-        deletedAt: null,
+        deletedAt: input.deleted ? { not: null } : null,
         ...(input.search
           ? {
               OR: [
@@ -377,12 +395,15 @@ export const adminUsersRouter = router({
           id: true,
           email: true,
           name: true,
+          avatarKey: true,
           isActive: true,
           passwordHash: true,
           emailVerifiedAt: true,
           deactivatedAt: true,
+          deletedAt: true,
           lockedUntil: true,
           lastSignInAt: true,
+          loginReminderCount: true,
           mustResetPassword: true,
           roleAssignments: { select: { id: true, role: true } },
           permissions: { select: { permission: true } },
@@ -393,12 +414,15 @@ export const adminUsersRouter = router({
         id: u.id,
         email: u.email,
         name: u.name,
+        avatarKey: u.avatarKey,
         isActive: u.isActive,
         lastSignInAt: u.lastSignInAt,
+        deleted: Boolean(u.deletedAt),
+        loginReminderCount: u.loginReminderCount,
         // A temp-password account that has never signed in is technically
         // "active" but awaits first login — surface that to the UI.
         awaitingFirstSignIn: Boolean(u.passwordHash) && u.mustResetPassword && !u.lastSignInAt,
-        status: deriveStatus(u),
+        status: u.deletedAt ? ('deleted' as const) : deriveStatus(u),
         roles: u.roleAssignments.map((r) => ({
           id: r.id,
           role: normaliseRole(r.role) ?? ('virtual_assistant' as Role),
@@ -1172,5 +1196,325 @@ export const adminUsersRouter = router({
         target: { type: 'User', id: user.id },
       })
       return { ok: true, alreadyActive: false }
+    }),
+
+  /* ------------------------------------------------------------------ */
+  /* delete — soft-remove from the roster (reversible via restore)       */
+  /* ------------------------------------------------------------------ */
+  // A step beyond deactivate: the account is hidden from the roster, all
+  // roles/permissions are stripped, sessions killed, and sign-in blocked. Fully
+  // reversible from the Deleted view. CEO + Senior Manager only. GDPR erasure
+  // (irreversible anonymisation) is a separate action below.
+  delete: auditedProcedure
+    .input(z.object({ userId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      assertCanDeactivate(actor)
+      if (actor.id === input.userId) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'Cannot delete your own account.' })
+      }
+      const user = await ctx.db.user.findFirst({
+        where: { id: input.userId, deletedAt: null },
+        select: { id: true, roleAssignments: { select: { role: true } } },
+      })
+      if (!user) throw new TRPCError({ code: 'NOT_FOUND' })
+      // Same leadership guards as deactivate.
+      for (const ra of user.roleAssignments) {
+        const canonical = normaliseRole(ra.role) ?? ('virtual_assistant' as Role)
+        if (!canRevokeRole(actor.role, canonical)) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: `cannot delete a user with role: ${ra.role}` })
+        }
+      }
+      if (user.roleAssignments.some((r) => r.role === 'ceo' || r.role === 'super_admin')) {
+        try {
+          await assertNotLastCeo(ctx.db, user.id)
+        } catch (e) {
+          if (e instanceof BusinessError && e.code === 'LAST_CEO') {
+            throw new TRPCError({ code: 'CONFLICT', message: 'cannot delete the last ceo' })
+          }
+          throw e
+        }
+      }
+      const now = new Date()
+      await ctx.db.user.update({
+        where: { id: user.id },
+        data: {
+          deletedAt: now,
+          deactivatedAt: now,
+          deactivationReason: 'Account deleted',
+          isActive: false,
+          updatedById: actor.id,
+        },
+      })
+      await ctx.db.roleAssignment.deleteMany({ where: { userId: user.id } })
+      await ctx.db.userPermission.deleteMany({ where: { userId: user.id } })
+      await ctx.db.userCustomRole.deleteMany({ where: { userId: user.id } })
+      await ctx.db.session.deleteMany({ where: { userId: user.id } })
+      await ctx.audit({ action: 'auth.user_deleted', target: { type: 'User', id: user.id } })
+      return { ok: true }
+    }),
+
+  /* ------------------------------------------------------------------ */
+  /* restore — bring a soft-deleted account back (as deactivated)        */
+  /* ------------------------------------------------------------------ */
+  restore: auditedProcedure
+    .input(z.object({ userId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      assertCanDeactivate(actor)
+      const user = await ctx.db.user.findFirst({
+        where: { id: input.userId, deletedAt: { not: null } },
+        select: { id: true, email: true },
+      })
+      if (!user) throw new TRPCError({ code: 'NOT_FOUND' })
+      // Refuse to un-delete onto a live account that now owns the email.
+      const clash = await ctx.db.user.findFirst({
+        where: { email: user.email, deletedAt: null, id: { not: user.id } },
+        select: { id: true },
+      })
+      if (clash) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'Another live account now uses that email.' })
+      }
+      // Restore into the DEACTIVATED state (roles were removed on delete). The
+      // admin then explicitly reactivates + re-assigns roles — a restored
+      // account is never silently active with no roles.
+      await ctx.db.user.update({
+        where: { id: user.id },
+        data: {
+          deletedAt: null,
+          deactivatedAt: new Date(),
+          deactivationReason: 'Restored — reactivate and assign roles',
+          isActive: false,
+          updatedById: actor.id,
+        },
+      })
+      await ctx.audit({ action: 'auth.user_restored', target: { type: 'User', id: user.id } })
+      return { ok: true }
+    }),
+
+  /* ------------------------------------------------------------------ */
+  /* erase — GDPR right-to-erasure: anonymise in place (irreversible)    */
+  /* ------------------------------------------------------------------ */
+  // Removes all personal data from the account while KEEPING the row, so audit
+  // history and every `createdById`/`actorId` reference across the CRM stay
+  // resolvable (a hard DELETE would orphan them, §21). CEO only; the actor must
+  // retype the email to confirm.
+  erase: auditedProcedure
+    .input(z.object({ userId: z.string().min(1), confirmEmail: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      if (actor.role !== 'ceo') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only a CEO can permanently erase an account.' })
+      }
+      if (actor.id === input.userId) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'Cannot erase your own account.' })
+      }
+      const user = await ctx.db.user.findUnique({
+        where: { id: input.userId },
+        select: {
+          id: true,
+          email: true,
+          totpSecretCipherId: true,
+          mfaSecretCipherId: true,
+          gmailRefreshTokenCipherId: true,
+          roleAssignments: { select: { role: true } },
+        },
+      })
+      if (!user) throw new TRPCError({ code: 'NOT_FOUND' })
+      if (input.confirmEmail.trim().toLowerCase() !== user.email.toLowerCase()) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Type the account email exactly to confirm erasure.' })
+      }
+      if (user.roleAssignments.some((r) => r.role === 'ceo' || r.role === 'super_admin')) {
+        try {
+          await assertNotLastCeo(ctx.db, user.id)
+        } catch (e) {
+          if (e instanceof BusinessError && e.code === 'LAST_CEO') {
+            throw new TRPCError({ code: 'CONFLICT', message: 'cannot erase the last ceo' })
+          }
+          throw e
+        }
+      }
+      const now = new Date()
+      // Anonymise: tombstone the unique email, drop every PII / secret column.
+      await ctx.db.user.update({
+        where: { id: user.id },
+        data: {
+          email: `erased-${user.id}@erased.invalid`,
+          name: null,
+          avatarKey: null,
+          passwordHash: null,
+          lastSignInIp: null,
+          lastSignInUa: null,
+          mfaEnabled: false,
+          mfaSecretCipherId: null,
+          totpSecretCipherId: null,
+          totpEnabledAt: null,
+          gmailRefreshTokenCipherId: null,
+          gmailConnectionStatus: null,
+          trengoUserId: null,
+          deactivatedAt: now,
+          deactivationReason: 'Erased (GDPR right to erasure)',
+          isActive: false,
+          deletedAt: now,
+          updatedById: actor.id,
+        },
+      })
+      // Crypto-shred the KMS envelopes (they aren't FK-enforced, so delete them).
+      const cipherIds = [user.totpSecretCipherId, user.mfaSecretCipherId, user.gmailRefreshTokenCipherId].filter(
+        (id): id is string => Boolean(id),
+      )
+      if (cipherIds.length > 0) {
+        await ctx.db.encryptedField.deleteMany({ where: { id: { in: cipherIds } } })
+      }
+      await ctx.db.roleAssignment.deleteMany({ where: { userId: user.id } })
+      await ctx.db.userPermission.deleteMany({ where: { userId: user.id } })
+      await ctx.db.userCustomRole.deleteMany({ where: { userId: user.id } })
+      await ctx.db.session.deleteMany({ where: { userId: user.id } })
+      await ctx.db.emailVerificationToken.deleteMany({ where: { userId: user.id } })
+      await ctx.db.passwordResetToken.deleteMany({ where: { userId: user.id } })
+      await ctx.db.totpRecoveryCode.deleteMany({ where: { userId: user.id } })
+      // Never log the erased PII.
+      await ctx.audit({ action: 'auth.user_erased', target: { type: 'User', id: user.id }, after: { erased: true } })
+      return { ok: true }
+    }),
+
+  /* ------------------------------------------------------------------ */
+  /* forceSignOut — revoke all of a user's sessions                      */
+  /* ------------------------------------------------------------------ */
+  forceSignOut: auditedProcedure
+    .input(z.object({ userId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      assertCanManage(actor, await loadActorGrants(ctx.db, actor.id))
+      const target = await ctx.db.user.findFirst({
+        where: { id: input.userId, deletedAt: null },
+        select: { id: true, roleAssignments: { select: { role: true } } },
+      })
+      if (!target) throw new TRPCError({ code: 'NOT_FOUND' })
+      assertCanActOnTarget(actor, target.roleAssignments.map((r) => r.role))
+      const { count } = await ctx.db.session.deleteMany({ where: { userId: target.id } })
+      await ctx.audit({
+        action: 'auth.sessions_revoked_by_admin',
+        target: { type: 'User', id: target.id },
+        after: { count },
+      })
+      return { ok: true, count }
+    }),
+
+  /* ------------------------------------------------------------------ */
+  /* sendLoginReminder — nudge a user who has never signed in            */
+  /* ------------------------------------------------------------------ */
+  sendLoginReminder: auditedProcedure
+    .input(z.object({ userId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      assertCanManage(actor, await loadActorGrants(ctx.db, actor.id))
+      const target = await ctx.db.user.findFirst({
+        where: { id: input.userId, deletedAt: null, deactivatedAt: null },
+        select: { id: true, email: true, name: true, lastSignInAt: true },
+      })
+      if (!target) throw new TRPCError({ code: 'NOT_FOUND' })
+      if (target.lastSignInAt) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'This user has already signed in.' })
+      }
+      const rendered = buildLoginReminderEmail({ name: target.name, signInUrl: `${appUrl()}/sign-in` })
+      const send = await sendSystemEmail({ to: target.email, subject: rendered.subject, text: rendered.text, html: rendered.html })
+      if (send.status === 'failed') {
+        logger.error({ detail: send.detail }, 'admin.users.login_reminder.email_send_failed')
+      }
+      await ctx.db.user.update({
+        where: { id: target.id },
+        data: { lastLoginReminderAt: new Date(), loginReminderCount: { increment: 1 } },
+      })
+      await ctx.audit({
+        action: 'auth.login_reminder_sent',
+        target: { type: 'User', id: target.id },
+        after: { emailStatus: send.status, manual: true },
+      })
+      return { ok: true, emailStatus: send.status }
+    }),
+
+  /* ------------------------------------------------------------------ */
+  /* permissionsFor / setPermissions — individual permission grants      */
+  /* ------------------------------------------------------------------ */
+  // Give an individual specific capabilities on top of their role, using the
+  // same safe set + no-escalation guard as custom roles (§20). CEO + Senior
+  // Manager grant these.
+  permissionsFor: protectedProcedure
+    .input(z.object({ userId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      if (actor.role !== 'ceo' && actor.role !== 'senior_manager') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only a CEO or Senior Manager can view individual permissions.' })
+      }
+      const target = await ctx.db.user.findFirst({
+        where: { id: input.userId, deletedAt: null },
+        select: { id: true, roleAssignments: { select: { role: true } }, permissions: { select: { permission: true } } },
+      })
+      if (!target) throw new TRPCError({ code: 'NOT_FOUND' })
+      const targetRole = pickPrimaryRole(target.roleAssignments.map((r) => r.role))
+      const individual = target.permissions.map((p) => p.permission).filter(isAssignableAction)
+      const targetEffective = await loadEffectiveGrants(ctx.db, target.id)
+      // From base role (read-only in the UI).
+      const roleActions = ASSIGNABLE_ACTIONS.filter((a) => roleCan(targetRole, a))
+      // From custom roles = effective minus role minus individual grants.
+      const customRoleActions = targetEffective.filter(
+        (a) => isAssignableAction(a) && !individual.includes(a as Action) && !roleActions.includes(a as Action),
+      )
+      // What THIS actor may grant (their own effective actions, assignable only).
+      const actorGrants = await loadActorGrants(ctx.db, actor.id)
+      const actorCanGrant = ASSIGNABLE_ACTIONS.filter((a) => hasAction(actor.role, actorGrants, a))
+      return {
+        catalogue: ACTION_GROUPS.map((g) => ({
+          title: g.label,
+          actions: g.actions
+            .filter((a) => isAssignableAction(a))
+            .map((a) => ({ action: a, label: ACTION_LABELS[a] })),
+        })).filter((g) => g.actions.length > 0),
+        roleActions,
+        customRoleActions,
+        individual,
+        actorCanGrant,
+      }
+    }),
+
+  setPermissions: auditedProcedure
+    .input(z.object({ userId: z.string().min(1), permissions: z.array(z.string()).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const actor = requireUser(ctx)
+      if (actor.role !== 'ceo' && actor.role !== 'senior_manager') {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Only a CEO or Senior Manager can grant individual permissions.' })
+      }
+      const target = await ctx.db.user.findFirst({
+        where: { id: input.userId, deletedAt: null },
+        select: { id: true, roleAssignments: { select: { role: true } }, permissions: { select: { id: true, permission: true } } },
+      })
+      if (!target) throw new TRPCError({ code: 'NOT_FOUND' })
+      assertCanActOnTarget(actor, target.roleAssignments.map((r) => r.role))
+      // No privilege escalation: the actor may only grant what they hold.
+      const actorGrants = await loadActorGrants(ctx.db, actor.id)
+      const actorEffective = ACTIONS.filter((a) => hasAction(actor.role, actorGrants, a))
+      const desired = new Set(sanitizeRolePermissions(actorEffective, input.permissions))
+      // Reconcile the user's individual (assignable) permission rows to `desired`.
+      // Rows the actor cannot grant are left untouched (they didn't ask to change them).
+      const existingAssignable = target.permissions.filter((p) => isAssignableAction(p.permission))
+      const existingSet = new Set(existingAssignable.map((p) => p.permission))
+      const canGrant = new Set(actorEffective.filter(isAssignableAction))
+      const toAdd = [...desired].filter((p) => !existingSet.has(p))
+      const toRemove = existingAssignable.filter((p) => !desired.has(p.permission as Action) && canGrant.has(p.permission as Action))
+      for (const p of toAdd) {
+        await ctx.db.userPermission.create({
+          data: { id: createId(), userId: target.id, permission: p, createdById: actor.id },
+        })
+      }
+      for (const p of toRemove) {
+        await ctx.db.userPermission.delete({ where: { id: p.id } })
+      }
+      await ctx.audit({
+        action: 'auth.user_permissions_set',
+        target: { type: 'User', id: target.id },
+        after: { added: toAdd, removed: toRemove.map((p) => p.permission) },
+      })
+      return { ok: true, added: toAdd.length, removed: toRemove.length }
     }),
 })
