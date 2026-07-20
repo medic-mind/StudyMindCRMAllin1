@@ -24,7 +24,6 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
-import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -121,7 +120,6 @@ export function BoardDnd({
   canDeleteCard,
   currentUserName,
 }: Props) {
-  const router = useRouter()
   const [cards, setCards] = useState<CardData[]>(() => [...initialCards])
   const [activeId, setActiveId] = useState<string | null>(null)
   // Snapshot of card state taken just before an optimistic move, so a failed
@@ -223,10 +221,11 @@ export function BoardDnd({
     },
     onSuccess: async () => {
       preMoveSnapshot.current = null
-      // Invalidate the card-list query so other surfaces (e.g. the modal
-      // open elsewhere) catch up. router.refresh re-renders this RSC.
+      // The optimistic reorder already reflects the move; the row is persisted.
+      // We deliberately do NOT router.refresh() — that reloaded the entire RSC
+      // (all board queries + every card) on every drop, which is the flash/jank
+      // users saw. Other surfaces catch up via this cheap query invalidation.
       await utils.card.list.invalidate()
-      router.refresh()
     },
   })
 

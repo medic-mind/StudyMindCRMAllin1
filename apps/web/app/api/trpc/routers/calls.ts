@@ -257,6 +257,53 @@ export const callsRouter = router({
       }),
 
     /**
+     * Bulk version of setReview/clearReview for the missed-calls workspace's
+     * multi-select toolbar. `status: null` clears the overrides (back to the
+     * derived state); otherwise marks every selected call actioned or dismissed.
+     * One audit row per call (reuses the same actions as the per-row path).
+     * Sales Exec+.
+     */
+    bulkSetReview: auditedProcedure
+      .input(
+        z.object({
+          aircallCallIds: z.array(z.string().min(1)).min(1).max(300),
+          status: z.enum(['actioned', 'dismissed']).nullable(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCanReview(user.role)
+        const ids = [...new Set(input.aircallCallIds)]
+
+        if (input.status === null) {
+          const r = await ctx.db.missedCallReview.deleteMany({
+            where: { aircallCallId: { in: ids } },
+          })
+          for (const id of ids) {
+            await ctx.audit({
+              action: 'call.missed_review_cleared',
+              target: { type: 'AircallCall', id },
+            })
+          }
+          return { count: r.count }
+        }
+
+        for (const id of ids) {
+          await ctx.db.missedCallReview.upsert({
+            where: { aircallCallId: id },
+            create: { aircallCallId: id, status: input.status, reviewedById: user.id },
+            update: { status: input.status, reviewedById: user.id, reviewedAt: new Date() },
+          })
+          await ctx.audit({
+            action: input.status === 'dismissed' ? 'call.missed_dismissed' : 'call.missed_actioned',
+            target: { type: 'AircallCall', id },
+            after: { status: input.status },
+          })
+        }
+        return { count: ids.length }
+      }),
+
+    /**
      * Force an immediate pull of recent calls from Aircall — for when a
      * specific missed call hasn't come through (a dropped webhook). Fires the
      * same sync job the 10-minute cron runs (re-pulls the last 24h, idempotent

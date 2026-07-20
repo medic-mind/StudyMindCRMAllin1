@@ -14,6 +14,7 @@ import { TopBar } from '@/components/shell/top-bar'
 import { TrengoTokenBanner } from '@/components/shell/trengo-token-banner'
 
 import { MobileNav } from './mobile-nav'
+import { settingsNavChildren } from './settings/settings-links'
 import { SidebarNav, type NavItem } from './sidebar-nav'
 
 // Authenticated CRM shell is always rendered per-request — never prerender.
@@ -87,7 +88,16 @@ function buildNav(role: Role): NavItem[] {
       ],
     },
     { href: '/boards', label: 'Boards' },
-    { href: '/complaints', label: 'Complaints' },
+    {
+      href: '/complaints',
+      label: 'Complaints',
+      children: [
+        { href: '/complaints', label: 'Queue' },
+        // The complaints analytics report lives under Complaints now (moved
+        // out of Reports, 2026-07).
+        { href: '/complaints/reports', label: 'Report' },
+      ],
+    },
     // Read-only live view of the Summer Camp app: which camps are running, how
     // full they are, and the weekly session timetables. For the sales team.
     {
@@ -146,10 +156,6 @@ function buildNav(role: Role): NavItem[] {
       label: 'Reports',
       children: [
         { href: '/reports/aircall', label: 'Aircall' },
-        { href: '/reports/complaints', label: 'Complaints' },
-        { href: '/reports/finance', label: 'Finance' },
-        { href: '/reports/operations', label: 'Operations' },
-        { href: '/reports/retention', label: 'Retention' },
         { href: '/reports/cost', label: 'Cost' },
       ],
     },
@@ -158,20 +164,10 @@ function buildNav(role: Role): NavItem[] {
       label: 'Settings',
       // Settings is admin-tier. CEO and Senior Manager get the full panel;
       // Manager can read Integrations only (each child page enforces its own
-      // role gate so Users / Flags / Branding stay locked to CEO/SM).
-      // Ordered people → branding → platform.
+      // role gate). The sub-nav is the SHARED settings list (settings-links.ts)
+      // that also drives the Settings landing page, so the two never drift.
       visibleTo: ['ceo', 'senior_manager', 'manager'],
-      children: [
-        { href: '/settings/users', label: 'Users' },
-        { href: '/settings/teams', label: 'Teams' },
-        { href: '/settings/companies', label: 'Companies' },
-        { href: '/settings/branding', label: 'Branding' },
-        // Integrations is the single hub for every external service — B2B
-        // invoicing, email accounts and Slack routing are reached from there
-        // (no separate top-level entries).
-        { href: '/settings/integrations', label: 'Integrations' },
-        { href: '/settings/flags', label: 'Feature flags' },
-      ],
+      children: settingsNavChildren(),
     },
   ]
 

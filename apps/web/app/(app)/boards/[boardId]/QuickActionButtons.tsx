@@ -10,7 +10,6 @@
 
 'use client'
 
-import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
@@ -59,7 +58,6 @@ export function QuickActionButtons({
   onLocalMove,
   onLocalRevert,
 }: Props) {
-  const router = useRouter()
   const utils = trpc.useUtils()
   const apply = trpc.card.applyQuickAction.useMutation({
     onSuccess: async (_data, vars) => {
@@ -73,19 +71,19 @@ export function QuickActionButtons({
             }`
           : 'Applied',
       )
+      // Optimistic move already shifted the card; just catch up other surfaces.
+      // No router.refresh() — that reloaded the whole board on every click.
       await Promise.all([
         utils.card.list.invalidate(),
         utils.card.get.invalidate({ id: cardId }),
         utils.card.quickActions.list.invalidate(),
       ])
-      router.refresh()
     },
     onError: (e) => {
-      // Snap the optimistic move back and re-sync with the server so the
-      // card never stays vanished/mis-placed until a manual refresh.
+      // Snap the optimistic move back (the local snapshot restores it) — no
+      // full-page refresh needed.
       onLocalRevert?.()
       toast.error(e.message ?? 'Could not apply quick action')
-      router.refresh()
     },
   })
 

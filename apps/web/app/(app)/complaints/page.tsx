@@ -77,7 +77,7 @@ export default async function ComplaintsPage({
           <div className="flex items-center gap-2">
             {canSeeReport ? (
               <Link
-                href="/reports/complaints"
+                href="/complaints/reports"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 shadow-card transition-colors hover:bg-neutral-50"
               >
                 Full analytics report →

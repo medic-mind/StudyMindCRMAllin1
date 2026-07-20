@@ -8,14 +8,16 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { PhoneLink } from '@/components/shared/channel-links'
 import { Avatar } from '@/components/ui/avatar'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
+import { Toolbar } from '@/components/ui/toolbar'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
 
@@ -110,6 +112,8 @@ function fmtDateTime(d: string | Date): string {
 export function MissedCallsWorkspace({ items, counts, filter, days, canAction, health }: Props) {
   const router = useRouter()
   const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
   const problem = syncProblem(health, days)
 
   const onSettled = () => {
@@ -126,6 +130,46 @@ export function MissedCallsWorkspace({ items, counts, filter, days, canAction, h
     onError: (e) => toast.error(e.message ?? 'Could not update'),
     onSettled,
   })
+  const bulkSetReview = trpc.calls.missed.bulkSetReview.useMutation()
+
+  // Only Aircall-identified calls can be reviewed (a withheld number has no id).
+  const selectableIds = useMemo(
+    () => items.filter((i) => i.aircallCallId).map((i) => i.aircallCallId as string),
+    [items],
+  )
+  const allSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))
+
+  function toggleAll(next: boolean) {
+    setSelected(next ? new Set(selectableIds) : new Set())
+  }
+  function toggleOne(id: string, next: boolean) {
+    setSelected((prev) => {
+      const s = new Set(prev)
+      if (next) s.add(id)
+      else s.delete(id)
+      return s
+    })
+  }
+  async function runBulk(status: 'actioned' | 'dismissed' | null) {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    setBulkBusy(true)
+    try {
+      const { count } = await bulkSetReview.mutateAsync({ aircallCallIds: ids, status })
+      toast.success(
+        status === null
+          ? `Reopened ${count} call${count === 1 ? '' : 's'}`
+          : `Marked ${count} call${count === 1 ? '' : 's'} ${status}`,
+      )
+      setSelected(new Set())
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update the selected calls')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
 
   const now = new Date()
 
@@ -199,6 +243,31 @@ export function MissedCallsWorkspace({ items, counts, filter, days, canAction, h
         </div>
       </div>
 
+      {canAction && selected.size > 0 ? (
+        <Toolbar
+          label={`${selected.size} selected`}
+          clear={
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-xs font-medium text-neutral-500 hover:text-neutral-800"
+            >
+              Clear selection
+            </button>
+          }
+        >
+          <Button size="sm" variant="secondary" disabled={bulkBusy} onClick={() => runBulk('actioned')}>
+            Mark actioned
+          </Button>
+          <Button size="sm" variant="secondary" disabled={bulkBusy} onClick={() => runBulk('dismissed')}>
+            Dismiss
+          </Button>
+          <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => runBulk(null)}>
+            Reopen
+          </Button>
+        </Toolbar>
+      ) : null}
+
       <Card className="overflow-hidden">
         {items.length === 0 ? (
           <p className="p-8 text-center text-sm text-neutral-500">
@@ -210,6 +279,18 @@ export function MissedCallsWorkspace({ items, counts, filter, days, canAction, h
           <Table>
             <Thead>
               <Tr>
+                {canAction ? (
+                  <Th className="w-8">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all"
+                      checked={allSelected}
+                      disabled={selectableIds.length === 0}
+                      onChange={(e) => toggleAll(e.target.checked)}
+                      className="h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                    />
+                  </Th>
+                ) : null}
                 <Th>Caller</Th>
                 <Th>When</Th>
                 <Th>Status</Th>
@@ -220,8 +301,22 @@ export function MissedCallsWorkspace({ items, counts, filter, days, canAction, h
               {items.map((it) => {
                 const busy = busyKey === it.callKey
                 const calledBack = it.calledBackAt ? new Date(it.calledBackAt) : null
+                const isSelected = Boolean(it.aircallCallId && selected.has(it.aircallCallId))
                 return (
-                  <Tr key={it.callKey}>
+                  <Tr key={it.callKey} className={isSelected ? 'bg-primary-50/40' : undefined}>
+                    {canAction ? (
+                      <Td className="pr-0">
+                        {it.aircallCallId ? (
+                          <input
+                            type="checkbox"
+                            aria-label="Select call"
+                            checked={isSelected}
+                            onChange={(e) => toggleOne(it.aircallCallId as string, e.target.checked)}
+                            className="h-4 w-4 rounded border-neutral-300 text-primary-600 focus:ring-primary-500"
+                          />
+                        ) : null}
+                      </Td>
+                    ) : null}
                     <Td>
                       <div className="flex min-w-0 items-center gap-2.5">
                         <Avatar name={it.contactName ?? it.phone ?? '?'} size={28} />

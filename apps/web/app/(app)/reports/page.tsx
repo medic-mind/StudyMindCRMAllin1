@@ -12,28 +12,6 @@ const reports = [
       'Call volume, peak times and agent performance — inbound/outbound, missed and voicemail. Export to PDF.',
   },
   {
-    href: '/reports/complaints',
-    title: 'Complaints',
-    description:
-      'Open backlog, complaints raised and resolved over time, severity, theme and the customers with the most open complaints.',
-  },
-  {
-    href: '/reports/finance',
-    title: 'Finance',
-    description:
-      'Open discrepancies, money in/out by period, reconciliation lag percentile.',
-  },
-  {
-    href: '/reports/operations',
-    title: 'Operations',
-    description: 'Sessions delivered vs scheduled, missed-session rate, hours.',
-  },
-  {
-    href: '/reports/retention',
-    title: 'Retention',
-    description: 'Churn-score distribution, families at risk, churned this period.',
-  },
-  {
     href: '/reports/cost',
     title: 'Cost',
     description: 'Weekly AI + storage cost summaries archived to S3.',

@@ -9,7 +9,6 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
@@ -47,7 +46,6 @@ export function MoveCardMenu({
   onLocalMove,
   onLocalRevert,
 }: Props) {
-  const router = useRouter()
   const utils = trpc.useUtils()
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -118,19 +116,19 @@ export function MoveCardMenu({
         stages.find((s) => s.id === vars.toStageId) ??
         crossBoardStages.flatMap((g) => g.stages).find((s) => s.id === vars.toStageId)
       toast.success(`Moved to ${dest?.name ?? 'new stage'}`)
+      // Optimistic move already shifted the card; catch up other surfaces only.
+      // No router.refresh() — that reloaded the whole board on every move.
       await Promise.all([
         utils.card.list.invalidate(),
         utils.card.get.invalidate({ id: cardId }),
         utils.card.quickActions.list.invalidate(),
       ])
-      router.refresh()
     },
     onError: (e) => {
-      // Snap the optimistic move back and re-sync so a rejected move never
-      // leaves the card stranded in the wrong column until a manual refresh.
+      // Snap the optimistic move back (the local snapshot restores it) — no
+      // full-page refresh needed.
       onLocalRevert?.()
       toast.error(e.message ?? 'Could not move card')
-      router.refresh()
     },
   })
 
