@@ -50,10 +50,13 @@ avoid almost every mistake agents make in this codebase.
   (§21/§44).
 
 ### 0.4 Invisible tripwires that fail the build (this is why "correct-looking" code breaks here)
-- **Strict CSP: no `unsafe-inline` for styles** (§44.2). Inline `style={{…}}`
-  attributes and `<style>` blocks can be stripped at runtime — never rely on
-  them for anything load-bearing (layouts, gradients, sizing). Author real CSS
-  in `apps/web/app/globals.css` (or a stylesheet class) instead.
+- **Strict CSP on SCRIPTS (nonce + `strict-dynamic`, no `unsafe-inline`);
+  STYLES allow `'unsafe-inline'`** (§44.2). Inline styles are permitted (sonner
+  and other libs position via inline styles), but **still prefer real CSS** in
+  `apps/web/app/globals.css` (or a Tailwind class) for anything load-bearing —
+  tokens/classes are the house style (§4) and keep components consistent.
+  Scripts remain the hard boundary: an inline first-party `<script>` must carry
+  the per-request nonce or it is blocked.
 - **Design tokens are the only home for colour** (§4). Never hardcode a hex in a
   component; change `packages/ui/tokens/` and reference the token. The primary
   brand colour is **blue** (`primary-*`); `trengo`/`gmail` accents are scoped
@@ -1502,7 +1505,7 @@ This section is the working threat model. It is not exhaustive; it is the list o
 - **SSRF.** Outbound HTTP from worker uses an allowlist of provider domains. Anything else fails closed.
 - **Injection.** Prisma parameterised queries everywhere. No raw SQL outside migrations. Zod validates every external input.
 - **Rate limiting.** Per-user tRPC limits in Redis; per-IP limits at the edge for unauthenticated routes.
-- **Headers.** CSP with no `unsafe-inline`, HSTS with preload, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`.
+- **Headers.** CSP: `script-src` strict (per-request nonce + `strict-dynamic`, no `unsafe-inline`/`unsafe-eval` — the XSS boundary); `style-src 'self' 'unsafe-inline'` (inline styles allowed so inline-positioning libs like sonner render correctly; a style nonce would make browsers ignore `'unsafe-inline'`, so style-src carries none). HSTS with preload, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`. Builder + rationale in `apps/web/lib/security/csp.ts`.
 - **Dependency hygiene.** `pnpm audit` in CI; Renovate bot for upgrades; lockfile committed and verified. Postinstall scripts are blocked by default.
 - **Prompt injection.** AI inputs sourced from inbound messages or emails are passed through `packages/ai/sanitise.ts` which strips control tokens and instruction-shaped content. The system prompt explicitly tells the model to ignore instructions found in user-supplied content.
 

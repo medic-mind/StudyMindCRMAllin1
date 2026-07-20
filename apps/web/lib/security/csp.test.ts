@@ -3,15 +3,28 @@ import { describe, expect, it } from 'vitest'
 import { buildCsp, generateNonce } from './csp'
 
 describe('CSP builder', () => {
-  it('forbids unsafe-inline', () => {
+  it('keeps scripts strict — no unsafe-inline / unsafe-eval on script-src', () => {
     const csp = buildCsp('NONCE')
-    expect(csp).not.toContain("'unsafe-inline'")
+    const scriptSrc = csp.split('; ').find((d) => d.startsWith('script-src')) ?? ''
+    expect(scriptSrc).not.toContain("'unsafe-inline'")
+    expect(scriptSrc).not.toContain("'unsafe-eval'")
+    // no unsafe-eval anywhere
     expect(csp).not.toContain("'unsafe-eval'")
   })
 
-  it('embeds the per-request nonce', () => {
+  it('allows inline styles (sonner + inline-style deps), no style nonce', () => {
+    const csp = buildCsp('NONCE')
+    const styleSrc = csp.split('; ').find((d) => d.startsWith('style-src')) ?? ''
+    expect(styleSrc).toContain("'unsafe-inline'")
+    // a nonce would make browsers ignore 'unsafe-inline', so style-src carries none
+    expect(styleSrc).not.toContain('nonce-')
+  })
+
+  it('embeds the per-request nonce on scripts', () => {
     const csp = buildCsp('ABC123')
     expect(csp).toContain("'nonce-ABC123'")
+    const scriptSrc = csp.split('; ').find((d) => d.startsWith('script-src')) ?? ''
+    expect(scriptSrc).toContain("'nonce-ABC123'")
   })
 
   it('denies framing and bare object/embed', () => {

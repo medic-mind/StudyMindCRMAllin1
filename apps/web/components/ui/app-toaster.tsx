@@ -28,8 +28,14 @@ export function AppToaster() {
       closeButton
       toastOptions={{
         classNames: {
-          // Layout notes (the source of the reported "glitchy, misaligned"
-          // error toasts):
+          // Layout notes. The real cause of the old "glitchy, bottom-left,
+          // misaligned" toasts was the CSP: `style-src` was nonce-only with no
+          // `'unsafe-inline'`, which stripped sonner's injected stylesheet AND
+          // its inline positioning/stacking styles, dropping the toaster out of
+          // its fixed corner into a static document-flow stack. That is fixed in
+          // apps/web/lib/security/csp.ts (style-src now allows 'unsafe-inline';
+          // scripts stay strict). The class overrides below are pure polish on
+          // top of sonner's now-working base styles:
           //  - width stays at sonner's native 356px — forcing a narrower card
           //    breaks the stacking/slide maths and makes toasts jump as they
           //    settle;
