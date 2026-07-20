@@ -32,7 +32,7 @@ const STATUS_LABEL: Record<Status, string> = {
 
 function SharedMembers({ accountId }: { accountId: string }) {
   const account = trpc.mailAccount.get.useQuery({ id: accountId })
-  const users = trpc.task.assignableUsers.useQuery({})
+  const users = trpc.team.assignableUsers.useQuery({})
   const add = trpc.mailAccount.members.add.useMutation()
   const remove = trpc.mailAccount.members.remove.useMutation()
   const [adding, setAdding] = useState('')

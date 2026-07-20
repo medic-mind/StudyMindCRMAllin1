@@ -10,6 +10,11 @@
 //   - Entity ref:    <~TYPE:ID>   where TYPE ∈ contact | family | card | task
 //   - Everything else is plain text. URLs, *bold*, _italic_ and `code` are
 //     handled cosmetically by the renderer; they are not part of this grammar.
+//
+// `task` is a LEGACY ref type retained only so historically-stored bodies (and
+// the ChatRefType DB enum, forward-only §19) round-trip. The Tasks feature was
+// removed in 2026-07: the composer no longer offers task refs and a stored
+// `<~task:id>` resolves to a plain "not found" chip.
 
 export const CHAT_REF_TYPES = ['contact', 'family', 'card', 'task'] as const
 export type ChatRefType = (typeof CHAT_REF_TYPES)[number]

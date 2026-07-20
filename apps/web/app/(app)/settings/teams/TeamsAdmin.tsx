@@ -18,7 +18,7 @@ const COLOR_PRESETS = ['#9333ea', '#2563eb', '#059669', '#d97706', '#dc2626', '#
 function TeamRow({ teamId }: { teamId: string }) {
   const utils = trpc.useUtils()
   const team = trpc.team.get.useQuery({ id: teamId })
-  const users = trpc.task.assignableUsers.useQuery({})
+  const users = trpc.team.assignableUsers.useQuery({})
   const addMember = trpc.team.addMember.useMutation()
   const removeMember = trpc.team.removeMember.useMutation()
   const archive = trpc.team.archive.useMutation()

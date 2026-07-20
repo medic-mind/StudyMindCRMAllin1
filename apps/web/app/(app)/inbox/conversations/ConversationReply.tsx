@@ -109,7 +109,7 @@ export function ConversationReply({
   const [waTemplate, setWaTemplate] = useState<WaTemplate | null>(null)
   const [waParams, setWaParams] = useState<Record<string, string>>({})
 
-  const waTemplates = trpc.contact.callSummary.waTemplates.useQuery(undefined, {
+  const waTemplates = trpc.interaction.trengo.waTemplates.useQuery(undefined, {
     enabled: isWhatsapp && mode === 'template',
     staleTime: 60_000,
   })

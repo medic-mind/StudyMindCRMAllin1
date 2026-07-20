@@ -1,7 +1,11 @@
 # ADR 0039 — Info pack document library + the three-step call-summary wizard
 
 Date: 2026-06-10
-Status: accepted
+Status: SUPERSEDED by ADR 0046 (2026-07-20). The info-pack library, the
+call-summary templates, the multi-channel wizard (email / WhatsApp / SMS), the
+VA task hand-off, and the compulsory-Slack disposition layout were all removed;
+call summaries are now type → record on the CRM → post to `#callsummaries`.
+Retained below for historical context.
 
 ## Context
 

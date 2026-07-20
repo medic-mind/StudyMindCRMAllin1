@@ -21,7 +21,6 @@
     "./forwarding": "./src/forwarding/index.ts",
     "./pipeline": "./src/pipeline/index.ts",
     "./board": "./src/board/index.ts",
-    "./task": "./src/task/index.ts",
     "./team": "./src/team/index.ts",
     "./chat": "./src/chat/index.ts",
     "./chat/parse": "./src/chat/parse.ts",

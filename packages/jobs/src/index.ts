@@ -46,7 +46,7 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
   {
     id: 'ai/score-churn-risk',
     cron: '0 3 * * *',
-    description: 'Score every Family, create retention tasks above threshold',
+    description: 'Score every Family and refresh the at-risk derivation',
   },
   {
     id: 'compliance/enforce-retention',
@@ -141,7 +141,7 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
   {
     id: 'webinar/zoom-rotation-reminder',
     cron: '0 8 * * 1',
-    description: 'Open a Task to rotate each class Zoom link older than its rotation interval',
+    description: 'Auto-rotate stale class Zoom links; email the assigned person where it cannot',
   },
   {
     id: 'webinar/send-recordings',

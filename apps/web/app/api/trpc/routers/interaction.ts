@@ -12,6 +12,7 @@ import {
   type ReplyChannel,
 } from '@studymind/ai'
 import { BusinessError } from '@studymind/core/errors'
+import type { WhatsAppTemplate } from '@studymind/integration-trengo/outbound'
 import {
   InteractionCreateInput,
   type InteractionListItem,
@@ -833,6 +834,31 @@ export const interactionRouter = router({
           available: false as const,
           reason,
           replies: [] as Array<{ id: number; title: string; body: string }>,
+        }
+      }
+    }),
+
+    /**
+     * The agent's approved Trengo WhatsApp (HSM) templates, used by the Trengo
+     * WhatsApp composer (start-conversation + reply). Graceful: a missing or
+     * expired token returns `available:false` with a reason so the UI falls
+     * back to free text.
+     */
+    waTemplates: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      try {
+        const { listWhatsAppTemplates } = await import('@studymind/integration-trengo/outbound')
+        const templates = await listWhatsAppTemplates(user.id, ctx.requestId)
+        return { available: true as const, templates }
+      } catch (err) {
+        const reason =
+          err instanceof BusinessError && err.code === 'TOKEN_EXPIRED'
+            ? 'Connect your Trengo token in Settings to load WhatsApp templates.'
+            : 'Could not load WhatsApp templates from Trengo.'
+        return {
+          available: false as const,
+          reason,
+          templates: [] as WhatsAppTemplate[],
         }
       }
     }),

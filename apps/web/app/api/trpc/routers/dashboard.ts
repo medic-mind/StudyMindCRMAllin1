@@ -35,7 +35,7 @@ import {
 } from '@/lib/trpc/builders'
 
 type KpiTone = 'neutral' | 'success' | 'warn' | 'danger' | 'info'
-type KpiIconKey = 'listTodo' | 'inbox' | 'alertTriangle' | 'users'
+type KpiIconKey = 'inbox' | 'alertTriangle' | 'users'
 
 interface KpiTileData {
   key: string
@@ -216,8 +216,6 @@ export const dashboardRouter = router({
       const now = new Date()
 
       const [
-        myOpenTasks,
-        myOverdueTasks,
         unassignedConversations,
         customers,
         openComplaints,
@@ -230,17 +228,6 @@ export const dashboardRouter = router({
         missedCalls,
         atRisk,
       ] = await Promise.all([
-        db.task.count({
-          where: { assigneeId: user.id, deletedAt: null, status: { notIn: ['done', 'cancelled'] } },
-        }),
-        db.task.count({
-          where: {
-            assigneeId: user.id,
-            deletedAt: null,
-            status: { notIn: ['done', 'cancelled'] },
-            dueAt: { lt: now },
-          },
-        }),
         db.conversation.count({ where: { status: 'open', assigneeUserId: null } }),
         db.contact.count({ where: { deletedAt: null } }),
         db.complaint.count({ where: { deletedAt: null, status: { in: ['open', 'in_progress'] } } }),
@@ -288,15 +275,6 @@ export const dashboardRouter = router({
       const queues: QueueCard[] = buildQueueCards(queueCounts, role)
 
       const kpis: KpiTileData[] = [
-        {
-          key: 'tasks',
-          label: 'My open tasks',
-          value: myOpenTasks,
-          hint: myOverdueTasks > 0 ? `${myOverdueTasks} overdue` : 'Assigned to you',
-          href: '/tasks',
-          tone: myOverdueTasks > 0 ? 'warn' : myOpenTasks > 0 ? 'info' : 'success',
-          icon: 'listTodo',
-        },
         {
           key: 'conversations',
           label: 'Unassigned conversations',

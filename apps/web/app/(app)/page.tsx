@@ -23,7 +23,6 @@ import {
   AlertTriangleIcon,
   CheckCircleIcon,
   InboxIcon,
-  ListTodoIcon,
   UsersIcon,
 } from '@/components/ui/icon'
 import { createServerCaller } from '@/lib/trpc/server'
@@ -31,7 +30,6 @@ import { createServerCaller } from '@/lib/trpc/server'
 export const dynamic = 'force-dynamic'
 
 const KPI_ICONS: Record<string, ReactNode> = {
-  listTodo: <ListTodoIcon size={18} />,
   inbox: <InboxIcon size={18} />,
   alertTriangle: <AlertTriangleIcon size={18} />,
   users: <UsersIcon size={18} />,
@@ -75,19 +73,17 @@ export default async function DashboardPage() {
   }).format(now)
   const firstName = me.name ? me.name.split(' ')[0] ?? null : null
 
-  // "What needs you" — the KPI actionables (Trengo / tasks / at-risk) plus
-  // every queue, deduped into one honest total and a single best CTA.
+  // "What needs you" — the KPI actionables (Trengo / at-risk) plus every queue,
+  // deduped into one honest total and a single best CTA.
   const kpiByKey = new Map(data.kpis.map((k) => [k.key, k.value] as const))
   const conversations = kpiByKey.get('conversations') ?? 0
-  const tasks = kpiByKey.get('tasks') ?? 0
   const atRiskTotal = kpiByKey.get('atRisk') ?? 0
   const queueTotal = data.queues.reduce((sum, q) => sum + q.count, 0)
-  const attentionTotal = queueTotal + conversations + tasks + atRiskTotal
+  const attentionTotal = queueTotal + conversations + atRiskTotal
 
   const actionables = [
     ...data.queues.map((q) => ({ label: q.label, href: q.href, count: q.count })),
     { label: 'Trengo inbox', href: '/inbox', count: conversations },
-    { label: 'your tasks', href: '/tasks', count: tasks },
     { label: 'at-risk customers', href: '/contacts/at-risk', count: atRiskTotal },
   ]
   const top = actionables.filter((a) => a.count > 0).sort((a, b) => b.count - a.count)[0]

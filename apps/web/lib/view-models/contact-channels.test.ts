@@ -13,7 +13,6 @@ import {
   notesForContact,
   searchAcrossChannels,
   slackMentionsForContact,
-  tasksForContact,
   trengoConversationsForContact,
 } from './contact-channels'
 
@@ -228,20 +227,6 @@ describe('trengoConversationsForContact', () => {
     expect(out.items).toHaveLength(1)
     expect(out.items[0]?.messageCount).toBe(2)
     expect(out.items[0]?.replyDeadlineAt).toBeInstanceOf(Date)
-  })
-})
-
-describe('tasksForContact', () => {
-  it('splits open vs closed', async () => {
-    const db = makeDb({
-      tasks: [
-        { id: 'ta1', title: 't', status: 'open', dueAt: null, assigneeId: null, description: null },
-        { id: 'ta2', title: 't', status: 'done', dueAt: null, assigneeId: null, description: null },
-      ],
-    })
-    const out = await tasksForContact(db, { contactId: 'c1' })
-    expect(out.open).toHaveLength(1)
-    expect(out.closed).toHaveLength(1)
   })
 })
 

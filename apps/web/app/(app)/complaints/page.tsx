@@ -170,7 +170,6 @@ export default async function ComplaintsPage({
                     {c.updateCount > 0
                       ? ` · ${c.updateCount} update${c.updateCount === 1 ? '' : 's'}`
                       : ''}
-                    {c.taskId ? ' · task' : ''}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1.5">

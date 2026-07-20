@@ -16,7 +16,7 @@ import { trpc } from '@/lib/trpc/client'
 
 export function ConversationNotes({ conversationId }: { conversationId: string }) {
   const notes = trpc.inbox.conversations.notes.list.useQuery({ conversationId })
-  const users = trpc.task.assignableUsers.useQuery({})
+  const users = trpc.team.assignableUsers.useQuery({})
   const add = trpc.inbox.conversations.notes.add.useMutation()
   const [body, setBody] = useState('')
   const [mentions, setMentions] = useState<string[]>([])

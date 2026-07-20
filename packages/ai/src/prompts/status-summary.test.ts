@@ -15,7 +15,6 @@ const baseContext: ContactContext = {
   recentInteractions: [
     { type: 'call', occurredAt: '2026-05-08T10:00:00Z', brief: 'Spoke about trial' },
   ],
-  openTasks: [{ title: 'Confirm trial slot', dueAt: '2026-05-12T09:00:00Z' }],
   openDiscrepancies: [],
   hasSafeguardingFlag: false,
 }

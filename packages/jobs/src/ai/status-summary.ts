@@ -102,16 +102,6 @@ async function buildContext(contactId: string): Promise<ContactContext | null> {
     select: { type: true, occurredAt: true, summary: true },
   })
 
-  const tasks = await db.task.findMany({
-    where: {
-      deletedAt: null,
-      status: { in: ['open', 'in_progress', 'blocked'] },
-      OR: [{ contactId }, ...(familyIds.length > 0 ? [{ familyId: { in: familyIds } }] : [])],
-    },
-    select: { title: true, dueAt: true },
-    take: 10,
-  })
-
   const discrepancies =
     familyIds.length > 0
       ? await db.reconciliationDiscrepancy.findMany({
@@ -133,10 +123,6 @@ async function buildContext(contactId: string): Promise<ContactContext | null> {
       type: i.type,
       occurredAt: i.occurredAt.toISOString(),
       brief: i.summary ?? '',
-    })),
-    openTasks: tasks.map((t) => ({
-      title: t.title,
-      dueAt: t.dueAt ? t.dueAt.toISOString() : null,
     })),
     openDiscrepancies: discrepancies.map((d) => ({
       category: d.category,

@@ -15,19 +15,16 @@ import { formatRelativeTime } from '@/lib/format/relative-time'
 import { trpc } from '@/lib/trpc/client'
 
 import { AssignControl } from './AssignControl'
-import { ChannelIcon, channelLabelFor, type CockpitMe } from './cockpit-shared'
-import { ConversationTaskButton } from './ConversationTaskButton'
+import { ChannelIcon, channelLabelFor } from './cockpit-shared'
 import { MailThreadActions } from './MailThreadActions'
 import { TrengoThreadActions } from './TrengoThreadActions'
 
 export function ContextPane({
   conversationId,
-  me,
   onClose,
   onSelect,
 }: {
   conversationId: string
-  me: CockpitMe
   /** Close the pane — used by the backdrop + the X on the overlay (small
    *  screens). On xl the pane is a static column and onClose is unused. */
   onClose?: () => void
@@ -80,10 +77,6 @@ export function ContextPane({
   }
   const now = new Date()
   const isEmail = head.provider === 'email'
-  const defaultTitle = `Follow up: ${head.subject ?? head.contactName ?? 'conversation'}`.slice(
-    0,
-    280,
-  )
 
   return aside(
     wrapperClass,
@@ -159,17 +152,6 @@ export function ContextPane({
             />
           </>
         )}
-
-        <div className="rounded-lg border border-neutral-200 bg-white p-3 text-sm shadow-sm">
-          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">
-            Task
-          </h2>
-          <ConversationTaskButton
-            contactId={head.contactId}
-            meId={me.id}
-            defaultTitle={defaultTitle}
-          />
-        </div>
 
         {/* Spam box (Trengo parity) — CRM-side; restores to the open inbox. */}
         {!isEmail ? (

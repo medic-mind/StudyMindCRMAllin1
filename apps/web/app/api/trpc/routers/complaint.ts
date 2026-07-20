@@ -1,6 +1,6 @@
 // Complaints router. A complaint is logged against a customer (Contact),
 // appears on the Active complaints queue, can be worked with follow-ups +
-// action points, converted into a Task, and resolved. Every customer-facing
+// action points, and resolved. Every customer-facing
 // step writes a `note` Interaction on the contact timeline (so it is "synced
 // to the customer's CRM") plus an audit row. Any staff can log, work, and
 // resolve a complaint (product decision); Virtual Assistants included.
@@ -112,7 +112,6 @@ export const complaintRouter = router({
           severity: true,
           category: true,
           assigneeId: true,
-          taskId: true,
           createdAt: true,
           resolvedAt: true,
           contact: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -126,7 +125,6 @@ export const complaintRouter = router({
         severity: r.severity,
         category: r.category,
         assigneeId: r.assigneeId,
-        taskId: r.taskId,
         createdAt: r.createdAt,
         resolvedAt: r.resolvedAt,
         contactId: r.contact.id,
@@ -253,7 +251,6 @@ export const complaintRouter = router({
           severity: true,
           category: true,
           assigneeId: true,
-          taskId: true,
           resolution: true,
           resolvedAt: true,
           createdAt: true,
@@ -287,13 +284,6 @@ export const complaintRouter = router({
         severity: SeverityEnum.default('medium'),
         category: z.string().trim().max(80).optional(),
         assigneeId: z.string().optional(),
-        /** Open a follow-up Task for someone in the same step (optional). */
-        task: z
-          .object({
-            assigneeId: z.string().min(1),
-            dueAt: z.coerce.date().optional(),
-          })
-          .optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -336,37 +326,7 @@ export const complaintRouter = router({
         },
       })
 
-      // Optional follow-up task, assigned at log time (same shape as the
-      // standalone createTask below — kept in one mutation so the agent never
-      // logs a complaint and forgets the task half of it).
-      let taskId: string | null = null
-      if (input.task) {
-        taskId = createId()
-        await ctx.db.task.create({
-          data: {
-            id: taskId,
-            title: `Complaint: ${input.title}`,
-            description: input.description ?? null,
-            status: 'open',
-            contactId: input.contactId,
-            assigneeId: input.task.assigneeId,
-            dueAt: input.task.dueAt ?? null,
-            createdById: user.id,
-            updatedById: user.id,
-          },
-        })
-        await ctx.db.complaint.update({
-          where: { id },
-          data: { taskId, updatedById: user.id },
-        })
-        await ctx.audit({
-          action: 'complaint.task_created',
-          target: { type: 'Complaint', id },
-          after: { taskId, assigneeId: input.task.assigneeId },
-        })
-      }
-
-      return { id, taskId }
+      return { id }
     }),
 
   update: auditedProcedure
@@ -525,50 +485,5 @@ export const complaintRouter = router({
         target: { type: 'Complaint', id: input.id },
       })
       return { ok: true }
-    }),
-
-  /** Convert a complaint into a follow-up Task (one per complaint). */
-  createTask: auditedProcedure
-    .input(
-      z.object({
-        id: z.string(),
-        assigneeId: z.string().optional(),
-        dueAt: z.coerce.date().optional(),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      const c = await ctx.db.complaint.findFirst({
-        where: { id: input.id, deletedAt: null },
-        select: { id: true, contactId: true, title: true, description: true, taskId: true, assigneeId: true },
-      })
-      if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
-      if (c.taskId) {
-        return { taskId: c.taskId, alreadyLinked: true }
-      }
-      const taskId = createId()
-      await ctx.db.task.create({
-        data: {
-          id: taskId,
-          title: `Complaint: ${c.title}`,
-          description: c.description ?? null,
-          status: 'open',
-          contactId: c.contactId,
-          assigneeId: input.assigneeId ?? c.assigneeId ?? null,
-          dueAt: input.dueAt ?? null,
-          createdById: user.id,
-          updatedById: user.id,
-        },
-      })
-      await ctx.db.complaint.update({
-        where: { id: input.id },
-        data: { taskId, updatedById: user.id },
-      })
-      await ctx.audit({
-        action: 'complaint.task_created',
-        target: { type: 'Complaint', id: input.id },
-        after: { taskId },
-      })
-      return { taskId, alreadyLinked: false }
     }),
 })

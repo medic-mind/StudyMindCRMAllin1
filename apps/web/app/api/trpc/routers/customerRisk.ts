@@ -11,7 +11,6 @@
 // whole contact table — so it stays cheap without cursor pagination. Lives on
 // its own small router to keep tRPC client-type inference within budget.
 
-import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
@@ -93,26 +92,6 @@ export const customerRiskRouter = router({
         take: 5000,
       })
 
-      // Open-task counts for the scanned customers, in one grouped query
-      // (Contact has no Task back-relation, so we count separately).
-      const taskGroups =
-        rows.length > 0
-          ? await ctx.db.task.groupBy({
-              by: ['contactId'],
-              where: {
-                contactId: { in: rows.map((r) => r.id) },
-                deletedAt: null,
-                status: { notIn: ['done', 'cancelled'] },
-              },
-              _count: { _all: true },
-            })
-          : []
-      const openTaskByContact = new Map(
-        taskGroups
-          .filter((g): g is typeof g & { contactId: string } => g.contactId != null)
-          .map((g) => [g.contactId, g._count._all]),
-      )
-
       // Active complaints for the scanned customers (open | in_progress), so the
       // dashboard can surface "customer with hours at risk AND a live complaint".
       const complaintByContact = await loadContactComplaintCounts(
@@ -154,7 +133,6 @@ export const customerRiskRouter = router({
             labels: r.labels.map((l) => l.label),
             reviewStatus: (r.riskReview?.status as 'flagged' | 'dismissed' | undefined) ?? null,
             reviewNote: r.riskReview?.note ?? null,
-            openTaskCount: openTaskByContact.get(r.id) ?? 0,
             complaintCount: complaintByContact.get(r.id) ?? 0,
           }
         })
@@ -255,75 +233,5 @@ export const customerRiskRouter = router({
         target: { type: 'Contact', id: input.contactId },
       })
       return { ok: true }
-    }),
-
-  /**
-   * Create a follow-up Task against a customer straight from the dashboard
-   * (e.g. "Chase unused hours before expiry"). Sales Executive+. Mirrors the
-   * task router's create gating/validation but scoped to this workflow.
-   */
-  createTask: auditedProcedure
-    .input(
-      z.object({
-        contactId: z.string(),
-        title: z.string().trim().min(1).max(280),
-        assigneeId: z.string().min(1),
-        dueAt: z.date().optional(),
-        note: z.string().trim().max(4000).optional(),
-        /** Flag the customer at the same time (default true — they're a risk). */
-        alsoFlag: z.boolean().default(true),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const user = requireUser(ctx)
-      assertCanReview(user.role)
-      const [contact, assignee] = await Promise.all([
-        ctx.db.contact.findFirst({
-          where: { id: input.contactId, deletedAt: null },
-          select: { id: true },
-        }),
-        ctx.db.user.findFirst({
-          where: { id: input.assigneeId, deletedAt: null, isActive: true },
-          select: { id: true },
-        }),
-      ])
-      if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
-      if (!assignee) throw new TRPCError({ code: 'NOT_FOUND', message: 'Assignee not found' })
-
-      const id = createId()
-      await ctx.db.task.create({
-        data: {
-          id,
-          title: input.title,
-          description: input.note ?? null,
-          status: 'open',
-          assigneeId: assignee.id,
-          contactId: contact.id,
-          dueAt: input.dueAt ?? null,
-          createdById: user.id,
-          updatedById: user.id,
-          lastWrittenBy: 'crm',
-          lastWrittenAt: new Date(),
-        },
-      })
-      await ctx.audit({
-        action: 'task.created',
-        target: { type: 'Task', id },
-        after: { title: input.title, contactId: contact.id, source: 'at_risk_dashboard' },
-      })
-
-      if (input.alsoFlag) {
-        await ctx.db.contactRiskReview.upsert({
-          where: { contactId: contact.id },
-          create: { contactId: contact.id, status: 'flagged', reviewedById: user.id },
-          update: { status: 'flagged', reviewedById: user.id, reviewedAt: new Date() },
-        })
-        await ctx.audit({
-          action: 'contact.risk_flagged',
-          target: { type: 'Contact', id: contact.id },
-          after: { via: 'task_created' },
-        })
-      }
-      return { taskId: id }
     }),
 })

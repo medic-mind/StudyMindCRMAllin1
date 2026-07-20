@@ -27,7 +27,6 @@ import {
   CalendarIcon,
   CoinsIcon,
   FileTextIcon,
-  ListTodoIcon,
   MailIcon,
   MessageSquareIcon,
   PhoneIcon,
@@ -36,7 +35,6 @@ import {
   UsersIcon,
 } from '@/components/ui/icon'
 
-import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 
 import { AddNote } from './AddNote'
 import { CallButton } from './CallButton'
@@ -56,7 +54,6 @@ import { ForwardingSection } from './sections/ForwardingSection'
 import { LinkedContactsSection } from './sections/LinkedContactsSection'
 import { MailchimpPushButton } from './sections/MailchimpPushButton'
 import { SlackSection } from './sections/SlackSection'
-import { TasksSection } from './sections/TasksSection'
 import { TrengoSection } from './sections/TrengoSection'
 
 function formatKind(kind: string): string {
@@ -143,7 +140,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     callSummaryFeed,
     trengo,
     trengoTags,
-    tasks,
     notes,
     timeline,
     bookingSummary,
@@ -156,7 +152,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     caller.contact.channels.callSummaries({ contactId: id, limit: 25 }),
     caller.contact.channels.trengoConversations({ contactId: id, limit: 25 }),
     caller.contact.channels.trengoTags({ contactId: id }),
-    caller.contact.channels.tasks({ contactId: id }),
     caller.contact.channels.notes({ contactId: id, limit: 25 }),
     caller.interaction.list({ contactId: id, limit: 25 }),
     caller.contact.booking.summary({ contactId: id }),
@@ -182,7 +177,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     ['section-trengo', 'Trengo'],
     ['section-payments', 'Payments'],
     ['section-invoices', 'Invoices'],
-    ['section-tasks', 'Tasks'],
     ['section-notes', 'Notes'],
     ['section-documents', 'Documents'],
     ['section-timeline', 'Timeline'],
@@ -448,15 +442,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             icon={<FileTextIcon size={16} />}
           >
             <InvoicesPanel target={{ kind: 'contact', contactId: contact.id }} />
-          </SectionCard>
-
-          <SectionCard
-            id="section-tasks"
-            title="Tasks"
-            icon={<ListTodoIcon size={16} />}
-            action={<NewTaskDialog contactId={contact.id} contactName={contact.displayName} />}
-          >
-            <TasksSection open={tasks.open} closed={tasks.closed} />
           </SectionCard>
 
           <SectionCard id="section-notes" title="Notes" icon={<FileTextIcon size={16} />}>

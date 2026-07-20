@@ -41,7 +41,6 @@ const PROVIDERS = [
   'aircall',
   'trengo',
   'slack',
-  'asana',
   'gmail',
   'booking',
   'lead',

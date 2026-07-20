@@ -19,7 +19,6 @@ import {
   notesForContact,
   searchAcrossChannels,
   slackMentionsForContact,
-  tasksForContact,
   trengoConversationsForContact,
   trengoTagsForContact,
 } from '@/lib/view-models/contact-channels'
@@ -88,10 +87,6 @@ export const contactChannelsRouter = router({
   trengoTags: protectedProcedure
     .input(ContactOnlyInput)
     .query(({ ctx, input }) => trengoTagsForContact(ctx.db, input.contactId)),
-
-  tasks: protectedProcedure
-    .input(ContactOnlyInput)
-    .query(({ ctx, input }) => tasksForContact(ctx.db, input)),
 
   notes: protectedProcedure.input(ChannelListInput).query(({ ctx, input }) =>
     notesForContact(ctx.db, {

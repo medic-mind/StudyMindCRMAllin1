@@ -1,7 +1,7 @@
 // Complaints on the contact page. Log a complaint, work it with follow-ups +
-// action points, convert it to a Task, and resolve it. Every customer-facing
-// step is mirrored onto the contact timeline server-side. Any staff can log
-// and resolve (product decision). CLAUDE.md §26.
+// action points, and resolve it. Every customer-facing step is mirrored onto
+// the contact timeline server-side. Any staff can log and resolve (product
+// decision). CLAUDE.md §26.
 
 'use client'
 
@@ -44,16 +44,12 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
   const [description, setDescription] = useState('')
   const [severity, setSeverity] = useState<Severity>('medium')
   const [category, setCategory] = useState('')
-  const [withTask, setWithTask] = useState(false)
-  const [taskAssigneeId, setTaskAssigneeId] = useState('')
-  const [taskDue, setTaskDue] = useState('')
   const [busy, setBusy] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
 
   const create = trpc.complaint.create.useMutation()
   // Preset themes + every category already in use; staff can also type new.
   const categoriesQuery = trpc.complaint.categories.useQuery(undefined, { enabled: adding })
-  const usersQuery = trpc.task.assignableUsers.useQuery({}, { enabled: adding && withTask })
 
   async function refresh() {
     await Promise.all([
@@ -68,34 +64,20 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
       toast.error('Give the complaint a short title.')
       return
     }
-    if (withTask && !taskAssigneeId) {
-      toast.error('Pick who the follow-up task is for, or untick the task option.')
-      return
-    }
     setBusy(true)
     try {
-      const result = await create.mutateAsync({
+      await create.mutateAsync({
         contactId,
         title: title.trim(),
         description: description.trim() || undefined,
         severity,
         category: category.trim() || undefined,
-        task:
-          withTask && taskAssigneeId
-            ? {
-                assigneeId: taskAssigneeId,
-                dueAt: taskDue ? new Date(`${taskDue}T17:00:00`) : undefined,
-              }
-            : undefined,
       })
-      toast.success(result.taskId ? 'Complaint logged and task assigned' : 'Complaint logged')
+      toast.success('Complaint logged')
       setTitle('')
       setDescription('')
       setSeverity('medium')
       setCategory('')
-      setWithTask(false)
-      setTaskAssigneeId('')
-      setTaskDue('')
       setAdding(false)
       await refresh()
     } catch (e) {
@@ -151,41 +133,6 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
             />
           </div>
 
-          {/* Optional follow-up task, assigned as part of logging. */}
-          <div className="rounded-md border border-neutral-200 bg-white p-2">
-            <label className="flex items-center gap-2 text-sm text-neutral-800">
-              <input
-                type="checkbox"
-                checked={withTask}
-                onChange={(e) => setWithTask(e.target.checked)}
-              />
-              Assign a follow-up task to someone
-            </label>
-            {withTask && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Select
-                  value={taskAssigneeId}
-                  onChange={(e) => setTaskAssigneeId(e.target.value)}
-                  aria-label="Task assignee"
-                >
-                  <option value="">Who is it for?</option>
-                  {(usersQuery.data ?? []).map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name ?? u.email}
-                    </option>
-                  ))}
-                </Select>
-                <Input
-                  type="date"
-                  className="max-w-[11rem]"
-                  value={taskDue}
-                  onChange={(e) => setTaskDue(e.target.value)}
-                  aria-label="Task due date (optional)"
-                />
-                <span className="text-xs text-neutral-500">Due date optional</span>
-              </div>
-            )}
-          </div>
           <div className="flex gap-2">
             <Button size="sm" onClick={submitNew} disabled={busy || title.trim().length < 2}>
               {busy ? 'Saving…' : 'Log complaint'}
@@ -218,7 +165,6 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
                     {formatRelativeTime(new Date(c.createdAt), new Date())}
                     {c.category ? ` · ${c.category}` : ''}
                     {c.updateCount > 0 ? ` · ${c.updateCount} update${c.updateCount === 1 ? '' : 's'}` : ''}
-                    {c.taskId ? ' · task created' : ''}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1.5">
@@ -254,7 +200,6 @@ function ComplaintDetail({ id, onChanged }: { id: string; onChanged: () => Promi
   const setDone = trpc.complaint.setActionPointDone.useMutation()
   const resolve = trpc.complaint.resolve.useMutation()
   const reopen = trpc.complaint.reopen.useMutation()
-  const createTask = trpc.complaint.createTask.useMutation()
   const update = trpc.complaint.update.useMutation()
 
   async function refreshDetail() {
@@ -297,29 +242,6 @@ function ComplaintDetail({ id, onChanged }: { id: string; onChanged: () => Promi
           <option value="medium">Medium</option>
           <option value="high">High</option>
         </Select>
-        {!c.taskId ? (
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true)
-              try {
-                await createTask.mutateAsync({ id })
-                toast.success('Follow-up task created')
-                await refreshDetail()
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : 'Could not create task')
-              } finally {
-                setBusy(false)
-              }
-            }}
-          >
-            Make a task
-          </Button>
-        ) : (
-          <span className="text-[11px] text-neutral-500">Linked to a task ✓</span>
-        )}
       </div>
 
       {/* Follow-ups + action points */}

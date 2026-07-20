@@ -41,7 +41,6 @@ const PROVIDERS = [
   'aircall',
   'trengo',
   'slack',
-  'asana',
   'gmail',
   'booking',
   'lead',
@@ -58,7 +57,6 @@ const PROVIDER_CATEGORY: Record<Provider, string> = {
   trengo: 'Communications',
   slack: 'Communications',
   gmail: 'Communications',
-  asana: 'Productivity',
   booking: 'Booking & data',
   lead: 'Lead capture',
 }
@@ -194,25 +192,6 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
       },
     ],
     providerDashboardUrl: 'https://api.slack.com/apps',
-  },
-  asana: {
-    label: 'Asana',
-    description: 'Project-scoped task sync. CLAUDE.md §13.',
-    envVars: ['ASANA_PERSONAL_ACCESS_TOKEN', 'ASANA_WEBHOOK_SECRET'],
-    cronFunctionIds: [],
-    perAgentTokens: null,
-    runbook: '/docs/runbooks/secret-rotation.md',
-    setupSteps: [
-      {
-        title: 'Create a Personal Access Token',
-        body: 'Asana → My Settings → Apps → Manage Developer Apps → + New access token. Paste into ASANA_PERSONAL_ACCESS_TOKEN.',
-      },
-      {
-        title: 'Register the project webhook',
-        body: 'Webhooks register programmatically against the project allowlist in packages/integrations/asana/config.ts. The handshake echoes X-Hook-Secret automatically on first registration.',
-      },
-    ],
-    providerDashboardUrl: 'https://app.asana.com/0/my-apps',
   },
   gmail: {
     label: 'Gmail',
@@ -350,9 +329,6 @@ export const adminIntegrationsRouter = router({
       (m) => m.watchExpiresAt !== null && m.watchExpiresAt.getTime() - now < 1000 * 60 * 60 * 24,
     ).length
 
-    // Asana webhooks registered (one per project).
-    const asanaWebhookCount = await ctx.db.asanaWebhook.count()
-
     return {
       providers: lastEvents.map((p) => ({
         provider: p.provider,
@@ -374,9 +350,6 @@ export const adminIntegrationsRouter = router({
           address: m.address,
           watchExpiresAt: m.watchExpiresAt,
         })),
-      },
-      asana: {
-        webhooks: asanaWebhookCount,
       },
     }
   }),

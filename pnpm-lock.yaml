@@ -117,9 +117,6 @@ importers:
       '@studymind/integration-aircall':
         specifier: workspace:*
         version: link:../../packages/integrations/aircall
-      '@studymind/integration-asana':
-        specifier: workspace:*
-        version: link:../../packages/integrations/asana
       '@studymind/integration-booking':
         specifier: workspace:*
         version: link:../../packages/integrations/booking
@@ -365,34 +362,6 @@ importers:
       '@studymind/ai':
         specifier: workspace:*
         version: link:../../ai
-      '@studymind/audit':
-        specifier: workspace:*
-        version: link:../../audit
-      '@studymind/core':
-        specifier: workspace:*
-        version: link:../../core
-      '@studymind/db':
-        specifier: workspace:*
-        version: link:../../db
-      '@studymind/jobs':
-        specifier: workspace:*
-        version: link:../../jobs
-      zod:
-        specifier: ^3.23.8
-        version: 3.25.76
-    devDependencies:
-      typescript:
-        specifier: ^5.6.3
-        version: 5.9.3
-
-  packages/integrations/asana:
-    dependencies:
-      '@paralleldrive/cuid2':
-        specifier: ^3.3.0
-        version: 3.3.0
-      '@prisma/client':
-        specifier: ^5.22.0
-        version: 5.22.0(prisma@5.22.0)
       '@studymind/audit':
         specifier: workspace:*
         version: link:../../audit

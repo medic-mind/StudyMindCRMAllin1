@@ -50,9 +50,14 @@ function Stat({
   )
 }
 
+const SUBJECT_TITLE = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
 export default async function WebinarsOverviewPage() {
   const caller = await createServerCaller()
-  const o = await caller.webinar.overview()
+  const [o, rotationDue] = await Promise.all([
+    caller.webinar.overview(),
+    caller.webinar.zoom.rotationDue(),
+  ])
 
   return (
     <>
@@ -99,6 +104,45 @@ export default async function WebinarsOverviewPage() {
           />
           <Stat label="Emails sent (7 days)" value={o.emailsSentLast7Days} />
         </div>
+
+        {rotationDue.length > 0 ? (
+          <Card className="mt-6 border-amber-200 bg-amber-50/40">
+            <CardBody>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-neutral-900">
+                  Zoom links to rotate ({rotationDue.length})
+                </h2>
+                <span className="text-xs text-neutral-500">
+                  Auto-rotation handles most of these; the ones below need a person.
+                </span>
+              </div>
+              <ul className="mt-3 divide-y divide-amber-100">
+                {rotationDue.map((c) => (
+                  <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <span className="min-w-0">
+                      <Link
+                        href="/webinars/groups"
+                        className="text-sm font-medium text-neutral-900 hover:text-primary-700 hover:underline"
+                      >
+                        {SUBJECT_TITLE(c.subject)} {c.level.toUpperCase()} — {c.title}
+                      </Link>
+                      <span className="block text-xs text-neutral-500">
+                        {c.autoRotate && c.hasLink
+                          ? 'Auto-rotation on — the weekly job will rotate it.'
+                          : !c.hasLink
+                            ? 'No Zoom link yet — set one up on the group page.'
+                            : 'Auto-rotation off — rotate the link manually on the group page.'}
+                      </span>
+                    </span>
+                    <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
+                      every {c.zoomRotateEveryWeeks}w
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </CardBody>
+          </Card>
+        ) : null}
 
         <Card className="mt-6">
           <CardBody>

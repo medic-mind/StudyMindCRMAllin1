@@ -18,7 +18,6 @@ type Provider =
   | 'aircall'
   | 'trengo'
   | 'slack'
-  | 'asana'
   | 'gmail'
   | 'booking'
   | 'lead'

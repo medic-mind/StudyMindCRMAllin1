@@ -22,6 +22,9 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
   const [zoomSendRecordings, setZoomSendRecordings] = useState(initial.zoomSendRecordings)
   const [zoomTrashAfterSend, setZoomTrashAfterSend] = useState(initial.zoomTrashAfterSend)
   const [senderAddress, setSenderAddress] = useState(initial.senderAddress ?? '')
+  const [rotationReminderEmail, setRotationReminderEmail] = useState(
+    initial.rotationReminderEmail ?? '',
+  )
 
   const senderOptionsQ = trpc.webinar.settings.senderOptions.useQuery()
   const senderOptions = senderOptionsQ.data
@@ -78,6 +81,7 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
           zoomSendRecordings,
           zoomTrashAfterSend,
           senderAddress: senderAddress || null,
+          rotationReminderEmail: rotationReminderEmail.trim(),
           // Keep the audit actor aligned with the chosen mailbox (null = default).
           senderMailboxUserId: selectedMailbox?.userId ?? null,
         })
@@ -138,6 +142,32 @@ export function SettingsForm({ initial, canManage }: { initial: Settings; canMan
                 group&apos;s page to confirm the sender.
               </p>
             )}
+          </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardBody>
+          <h2 className="text-sm font-semibold text-neutral-900">
+            Zoom-link rotation reminders go to
+          </h2>
+          <p className="mt-1 text-sm text-neutral-600">
+            Class Zoom links rotate automatically. When one can&apos;t be rotated (auto-rotation off,
+            Zoom not connected, or a rotation fails), this person is emailed to rotate it by hand.
+            Those classes also appear on the Webinars overview. Leave blank to turn the reminder
+            email off.
+          </p>
+          <div className="mt-3 max-w-md">
+            <Field label="Reminder email" htmlFor="rotation-reminder-email">
+              <Input
+                id="rotation-reminder-email"
+                type="email"
+                value={rotationReminderEmail}
+                onChange={(e) => setRotationReminderEmail(e.target.value)}
+                placeholder="name@studymind.co.uk"
+                disabled={!canManage}
+              />
+            </Field>
           </div>
         </CardBody>
       </Card>
