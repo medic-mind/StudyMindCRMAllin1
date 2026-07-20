@@ -31,6 +31,32 @@ function assertCanManageTeams(role: UserRole): void {
 }
 
 export const teamRouter = router({
+  // A small user directory for assignment / @mention pickers across the app
+  // (card assignee, team + mail-account members, conversation @mentions).
+  // Active users only.
+  assignableUsers: protectedProcedure
+    .input(z.object({ q: z.string().trim().min(1).max(80).optional() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db.user.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          ...(input.q
+            ? {
+                OR: [
+                  { email: { contains: input.q, mode: 'insensitive' as const } },
+                  { name: { contains: input.q, mode: 'insensitive' as const } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: { email: 'asc' },
+        take: 50,
+        select: { id: true, email: true, name: true },
+      })
+      return rows
+    }),
+
   list: protectedProcedure
     .input(
       z

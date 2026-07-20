@@ -88,7 +88,6 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       { kind: 'Go', id: 'nav-contacts', label: 'Customers', onSelect: () => go('/contacts') },
       { kind: 'Go', id: 'nav-accounts', label: 'Accounts', onSelect: () => go('/accounts') },
       { kind: 'Go', id: 'nav-boards', label: 'Boards', onSelect: () => go('/boards') },
-      { kind: 'Go', id: 'nav-tasks', label: 'Tasks', onSelect: () => go('/tasks') },
       { kind: 'Go', id: 'nav-reports', label: 'Reports', onSelect: () => go('/reports') },
     ]
     const q = query.toLowerCase()

@@ -760,45 +760,6 @@ export async function trengoTagsForContact(
 }
 
 // -----------------------------------------------------------------------------
-// Tasks
-// -----------------------------------------------------------------------------
-
-export interface TaskEntry {
-  id: string
-  title: string
-  status: string
-  dueAt: Date | null
-  assigneeId: string | null
-  description: string | null
-}
-
-export async function tasksForContact(
-  db: PrismaClient,
-  input: { contactId: string },
-): Promise<{ open: TaskEntry[]; closed: TaskEntry[] }> {
-  const rows = await db.task.findMany({
-    where: { contactId: input.contactId, deletedAt: null },
-    orderBy: [{ status: 'asc' }, { dueAt: 'asc' }, { id: 'desc' }],
-    take: 200,
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      dueAt: true,
-      assigneeId: true,
-      description: true,
-    },
-  })
-  const open: TaskEntry[] = []
-  const closed: TaskEntry[] = []
-  for (const r of rows) {
-    if (r.status === 'done' || r.status === 'cancelled') closed.push(r)
-    else open.push(r)
-  }
-  return { open, closed }
-}
-
-// -----------------------------------------------------------------------------
 // Notes
 // -----------------------------------------------------------------------------
 
@@ -857,7 +818,6 @@ export interface ChannelSummary {
   slack: { mentionCount: number; latestAt: Date | null }
   callSummaries: { count: number; latestAt: Date | null }
   trengo: { conversationCount: number; latestAt: Date | null }
-  tasks: { openCount: number }
   notes: { count: number; latestAt: Date | null }
 }
 
@@ -867,7 +827,7 @@ export async function channelSummaryForContact(
 ): Promise<ChannelSummary> {
   // We deliberately do a small set of cheap aggregates rather than one big
   // group-by, so each can use the partial index added in the chunk-1 migration.
-  const [emails, calls, slack, callSummaries, trengoMsgs, tasksOpen, notes] = await Promise.all([
+  const [emails, calls, slack, callSummaries, trengoMsgs, notes] = await Promise.all([
     db.interaction.findMany({
       where: {
         contactId,
@@ -899,13 +859,6 @@ export async function channelSummaryForContact(
       orderBy: { occurredAt: 'desc' },
       take: 200,
       select: { occurredAt: true, payload: true },
-    }),
-    db.task.count({
-      where: {
-        contactId,
-        deletedAt: null,
-        status: { notIn: ['done', 'cancelled'] },
-      },
     }),
     db.interaction.aggregate({
       where: { contactId, deletedAt: null, type: 'note' },
@@ -966,7 +919,6 @@ export async function channelSummaryForContact(
       conversationCount: trengoConvs.size,
       latestAt: trengoLatest,
     },
-    tasks: { openCount: tasksOpen },
     notes: { count: notes._count.id, latestAt: notes._max.occurredAt },
   }
 }

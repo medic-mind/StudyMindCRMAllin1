@@ -39,8 +39,6 @@ function actionLabel(action: string): string {
     'charge.payment_link_requested': 'created a payment link',
     'finance.discrepancy_resolved': 'resolved a discrepancy',
     'finance.unresolved_payment_resolved': 'linked a payment',
-    'task.created': 'created a task',
-    'task.completed': 'completed a task',
     'complaint.created': 'logged a complaint',
     'complaint.resolved': 'resolved a complaint',
     'business_account.note_added': 'added an account note',

@@ -31,6 +31,9 @@ export async function resolveRefs(
     contact: new Set<string>(),
     family: new Set<string>(),
     card: new Set<string>(),
+    // Legacy: the Tasks feature was removed (2026-07). We still accept `task`
+    // refs so historical bodies parse, but no longer resolve them — they keep
+    // the default "not found" entry set below.
     task: new Set<string>(),
   }
   for (const r of refs) byType[r.type].add(r.id)
@@ -45,7 +48,7 @@ export async function resolveRefs(
     })
   }
 
-  const [contacts, families, cards, tasks] = await Promise.all([
+  const [contacts, families, cards] = await Promise.all([
     byType.contact.size
       ? db.contact.findMany({
           where: { id: { in: [...byType.contact] } },
@@ -83,12 +86,6 @@ export async function resolveRefs(
           },
         })
       : Promise.resolve([]),
-    byType.task.size
-      ? db.task.findMany({
-          where: { id: { in: [...byType.task] } },
-          select: { id: true, title: true, deletedAt: true },
-        })
-      : Promise.resolve([]),
   ])
 
   for (const c of contacts) {
@@ -116,14 +113,6 @@ export async function resolveRefs(
       href: `/boards/${c.boardId}?card=${c.id}`,
     })
   }
-  for (const t of tasks) {
-    out.set(refKey('task', t.id), {
-      type: 'task',
-      id: t.id,
-      label: t.title,
-      href: t.deletedAt ? null : `/tasks/${t.id}`,
-    })
-  }
 
   return out
 }
@@ -137,8 +126,8 @@ export interface RefSearchResult {
 
 /**
  * Search CRM entities for the composer's "reference a customer" picker. Mixed
- * result set across Contacts, Families, Cards, and Tasks, ranked by type then
- * name. Read-only; never mutates.
+ * result set across Contacts, Families, and Cards, ranked by type then name.
+ * Read-only; never mutates.
  */
 export async function searchRefTargets(
   db: Db,
@@ -148,7 +137,7 @@ export async function searchRefTargets(
   if (q.length === 0) return []
   const perType = Math.max(1, Math.min(input.limit ?? 6, 10))
 
-  const [contacts, families, cards, tasks] = await Promise.all([
+  const [contacts, families, cards] = await Promise.all([
     db.contact.findMany({
       where: {
         deletedAt: null,
@@ -191,11 +180,6 @@ export async function searchRefTargets(
         },
       },
     }),
-    db.task.findMany({
-      where: { deletedAt: null, title: { contains: q, mode: 'insensitive' } },
-      take: perType,
-      select: { id: true, title: true },
-    }),
   ])
 
   const results: RefSearchResult[] = []
@@ -218,9 +202,6 @@ export async function searchRefTargets(
       label: c.description?.trim() || name,
       sublabel: `Card · ${name}`,
     })
-  }
-  for (const t of tasks) {
-    results.push({ type: 'task', id: t.id, label: t.title, sublabel: 'Task' })
   }
   return results
 }

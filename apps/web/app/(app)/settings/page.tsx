@@ -91,22 +91,6 @@ const GROUPS: Group[] = [
         icon: <MailIcon size={16} />,
       },
       {
-        href: '/settings/call-summary-templates',
-        title: 'Call summary templates',
-        description:
-          'Prefill templates for the contact page Call Summary panel (UCAT, Medical Interview, Dental Interview…). Optionally carries an attached PDF.',
-        roles: 'Manager+',
-        icon: <MailIcon size={16} />,
-      },
-      {
-        href: '/settings/documents',
-        title: 'Documents',
-        description:
-          'Information packs and brochures (PDF) agents attach to call-summary emails. One library, picked at send time.',
-        roles: 'Manager+',
-        icon: <MailIcon size={16} />,
-      },
-      {
         href: '/settings/dd-recovery-templates',
         title: 'Direct Debit recovery templates',
         description:

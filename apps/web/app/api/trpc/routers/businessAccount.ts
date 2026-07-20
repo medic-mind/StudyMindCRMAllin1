@@ -500,8 +500,8 @@ const companiesSubRouter = router({
     }),
 })
 
-// Notes / tasks / activity on a B2B account — parity with the customer view.
-// Notes + tasks are Sales Executive+ to write (VA reads). CLAUDE.md §20.1.
+// Notes / activity on a B2B account — parity with the customer view.
+// Notes are Sales Executive+ to write (VA reads). CLAUDE.md §20.1.
 const ACCOUNT_WRITE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
@@ -565,37 +565,6 @@ const accountNotesRouter = router({
         after: { interactionId: id },
       })
       return { id }
-    }),
-})
-
-const accountTasksRouter = router({
-  list: protectedProcedure
-    .input(z.object({ accountId: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const rows = await ctx.db.task.findMany({
-        where: { businessAccountId: input.accountId, deletedAt: null },
-        orderBy: [{ status: 'asc' }, { dueAt: 'asc' }, { createdAt: 'desc' }],
-        select: { id: true, title: true, status: true, dueAt: true, assigneeId: true },
-        take: 100,
-      })
-      // Task has no User relation — resolve assignee names in one batch.
-      const assigneeIds = [...new Set(rows.map((r) => r.assigneeId).filter((x): x is string => !!x))]
-      const users = assigneeIds.length
-        ? await ctx.db.user.findMany({
-            where: { id: { in: assigneeIds } },
-            select: { id: true, name: true, email: true },
-          })
-        : []
-      const nameById = new Map(users.map((u) => [u.id, u.name ?? u.email]))
-      const items = rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        status: r.status,
-        dueAt: r.dueAt,
-        assigneeName: r.assigneeId ? nameById.get(r.assigneeId) ?? null : null,
-      }))
-      const isOpen = (s: string) => s !== 'done' && s !== 'cancelled'
-      return { open: items.filter((t) => isOpen(t.status)), closed: items.filter((t) => !isOpen(t.status)) }
     }),
 })
 
@@ -1195,7 +1164,6 @@ export const businessAccountRouter = router({
   contacts: contactsRouter,
   students: studentsRouter,
   notes: accountNotesRouter,
-  tasks: accountTasksRouter,
   activity: accountActivityRouter,
   slackMentions: accountSlackRouter,
   companies: companiesSubRouter,

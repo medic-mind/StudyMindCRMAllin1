@@ -598,14 +598,6 @@ const classRouter = router({
         where: { id: input.id },
         data: { zoomLink: input.zoomLink, zoomLinkUpdatedAt: new Date(), updatedById: user.id },
       })
-      // Close any open rotation reminder for this class.
-      const title = `[Webinar] Update Zoom link — ${subjectLabel(before.subject)} ${levelLabel(
-        before.level,
-      )}`
-      await ctx.db.task.updateMany({
-        where: { title, status: { in: ['open', 'in_progress'] } },
-        data: { status: 'done' },
-      })
       await ctx.audit({
         action: 'webinar.zoom_link_rotated',
         target: { type: 'WebinarClass', id: input.id },
@@ -1658,6 +1650,9 @@ const settingsRouter = router({
       zoomSendRecordings: row?.zoomSendRecordings ?? false,
       zoomTrashAfterSend: row?.zoomTrashAfterSend ?? false,
       zoomHostEmail: row?.zoomHostEmail ?? '',
+      // Where the weekly Zoom-link rotation reminder goes when a link can't be
+      // auto-rotated (the "assigned person"). Blank = no reminder email.
+      rotationReminderEmail: row?.rotationReminderEmail ?? '',
     }
   }),
 
@@ -1695,6 +1690,7 @@ const settingsRouter = router({
         zoomSendRecordings: z.boolean().optional(),
         zoomTrashAfterSend: z.boolean().optional(),
         zoomHostEmail: z.string().trim().max(160).nullish(),
+        rotationReminderEmail: z.string().trim().email().max(254).nullish().or(z.literal('')),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -1720,6 +1716,9 @@ const settingsRouter = router({
           zoomSendRecordings: input.zoomSendRecordings ?? false,
           zoomTrashAfterSend: input.zoomTrashAfterSend ?? false,
           zoomHostEmail: input.zoomHostEmail ?? null,
+          rotationReminderEmail: input.rotationReminderEmail
+            ? input.rotationReminderEmail
+            : null,
           createdById: user.id,
           updatedById: user.id,
         },
@@ -1750,6 +1749,9 @@ const settingsRouter = router({
             ? { zoomTrashAfterSend: input.zoomTrashAfterSend }
             : {}),
           ...(input.zoomHostEmail !== undefined ? { zoomHostEmail: input.zoomHostEmail } : {}),
+          ...(input.rotationReminderEmail !== undefined
+            ? { rotationReminderEmail: input.rotationReminderEmail || null }
+            : {}),
           updatedById: user.id,
         },
       })
@@ -1771,6 +1773,16 @@ const zoomRouter = router({
   status: protectedProcedure.query(async ({ ctx }) => {
     requireUser(ctx)
     return zoomConnectionStatus(ctx.db)
+  }),
+
+  /** On-system reminder (redesign 2026-07): the active class Zoom links that are
+   *  due for rotation right now. Auto-rotation handles most of these on the
+   *  weekly job; this surfaces the ones a human still needs to rotate. Derived,
+   *  never stored. */
+  rotationDue: protectedProcedure.query(async ({ ctx }) => {
+    requireUser(ctx)
+    const { listZoomRotationDue } = await import('@/lib/webinar/zoom-reminder-service')
+    return listZoomRotationDue(ctx.db, new Date())
   }),
 
   /** Connect Zoom from the UI: paste the Server-to-Server OAuth app's three

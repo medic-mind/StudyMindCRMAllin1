@@ -25,7 +25,6 @@ const nextConfig = {
     '@studymind/core',
     '@studymind/db',
     '@studymind/integration-aircall',
-    '@studymind/integration-asana',
     '@studymind/integration-booking',
     '@studymind/integration-gmail',
     '@studymind/integration-gocardless',

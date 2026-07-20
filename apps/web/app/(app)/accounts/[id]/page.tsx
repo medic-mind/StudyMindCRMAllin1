@@ -15,7 +15,6 @@ import { accountStatusTone } from '@/lib/ui/status-tone'
 
 import { SlackSection } from '../../contacts/[id]/sections/SlackSection'
 
-import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 
 import { AccountEditor } from './AccountEditor'
 import { AccountContacts } from './AccountContacts'
@@ -48,10 +47,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
   const canInvoiceWrite = Boolean(me && INVOICING_WRITE_ROLES.has(me.role))
   const canInvoiceMarkPaid = Boolean(me && INVOICING_MARK_PAID_ROLES.has(me.role))
 
-  // Notes / tasks / activity / Slack — parity with the customer view.
-  const [notes, tasks, activity, slackMentions] = await Promise.all([
+  // Notes / activity / Slack — parity with the customer view.
+  const [notes, activity, slackMentions] = await Promise.all([
     caller.businessAccount.notes.list({ accountId: id, limit: 50 }),
-    caller.businessAccount.tasks.list({ accountId: id }),
     caller.businessAccount.activity.list({ accountId: id, limit: 30 }),
     caller.businessAccount.slackMentions.list({ accountId: id, limit: 25 }),
   ])
@@ -104,45 +102,6 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
         </div>
 
         <AccountStudents accountId={account.id} />
-
-        <Card className="p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-neutral-900">Tasks</h2>
-            <NewTaskDialog
-              businessAccountId={account.id}
-              triggerLabel="New task"
-              triggerSize="sm"
-            />
-          </div>
-          {tasks.open.length === 0 && tasks.closed.length === 0 ? (
-            <p className="text-sm text-neutral-500">
-              No tasks yet — raise one against this account with “New task”.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {[...tasks.open, ...tasks.closed].map((t) => {
-                const done = t.status === 'done' || t.status === 'cancelled'
-                return (
-                  <li
-                    key={t.id}
-                    className="flex items-center justify-between gap-3 rounded-md border border-neutral-200 px-3 py-2 text-sm"
-                  >
-                    <span className={done ? 'text-neutral-400 line-through' : 'text-neutral-900'}>
-                      {t.title}
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2 text-xs text-neutral-500">
-                      {t.assigneeName ? <span>{t.assigneeName}</span> : null}
-                      {t.dueAt ? <span>· due {fmt(t.dueAt)}</span> : null}
-                      <span className="rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase">
-                        {t.status.replace(/_/g, ' ')}
-                      </span>
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </Card>
 
         <Card className="p-5">
           <h2 className="mb-3 text-sm font-semibold text-neutral-900">Notes</h2>
@@ -206,7 +165,7 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
           <h2 className="mb-3 text-sm font-semibold text-neutral-900">Activity</h2>
           {activity.length === 0 ? (
             <p className="text-sm text-neutral-500">
-              Notes and tasks raised against this account will appear here.
+              Notes and activity raised against this account will appear here.
             </p>
           ) : (
             <ol className="space-y-2">

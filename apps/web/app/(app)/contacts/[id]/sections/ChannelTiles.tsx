@@ -6,7 +6,6 @@ import Link from 'next/link'
 import type { ReactNode } from 'react'
 
 import {
-  ListTodoIcon,
   MailIcon,
   MessageSquareIcon,
   PhoneIcon,
@@ -118,14 +117,6 @@ export function ChannelTiles({ summary }: { summary: ChannelSummary }): JSX.Elem
         icon={<SmartphoneIcon size={14} />}
         primary={`${summary.trengo.conversationCount}`}
         secondary={`conversation${summary.trengo.conversationCount === 1 ? '' : 's'}`}
-      />
-      <Tile
-        href="#section-tasks"
-        label="Tasks"
-        tone={summary.tasks.openCount > 0 ? 'warn' : 'success'}
-        icon={<ListTodoIcon size={14} />}
-        primary={`${summary.tasks.openCount}`}
-        secondary={summary.tasks.openCount > 0 ? 'open' : 'all done'}
       />
     </div>
   )

@@ -1,10 +1,9 @@
 // Log-complaint modal for the Complaints hub: pick the customer (typeahead),
 // then the same fields as the contact page's ComplaintsSection form — title,
-// details, severity, category (preset + free-type), and an optional follow-up
-// task assigned to someone. Server work is the existing complaint.create
-// (audited; the complaint is stored on the customer's record either way).
-// Modal behaviour mirrors NewTaskDialog (Esc closes, backdrop closes, focus
-// restore). CLAUDE.md §26, §28.
+// details, severity, and category (preset + free-type). Server work is the
+// existing complaint.create (audited; the complaint is stored on the
+// customer's record). Esc closes, backdrop closes, focus restore.
+// CLAUDE.md §26, §28.
 
 'use client'
 
@@ -30,13 +29,9 @@ export function NewComplaintDialog() {
   const [description, setDescription] = useState('')
   const [severity, setSeverity] = useState<Severity>('medium')
   const [category, setCategory] = useState('')
-  const [withTask, setWithTask] = useState(false)
-  const [taskAssigneeId, setTaskAssigneeId] = useState('')
-  const [taskDue, setTaskDue] = useState('')
   const [errors, setErrors] = useState<{
     customer?: string
     title?: string
-    task?: string
     form?: string
   }>({})
   const titleRef = useRef<HTMLInputElement>(null)
@@ -49,22 +44,18 @@ export function NewComplaintDialog() {
     { enabled: open && contactQuery.trim().length >= 2 && !pickedContactId },
   )
   const categoriesQuery = trpc.complaint.categories.useQuery(undefined, { enabled: open })
-  const usersQuery = trpc.task.assignableUsers.useQuery({}, { enabled: open && withTask })
 
   const create = trpc.complaint.create.useMutation({
-    onSuccess: async (result) => {
+    onSuccess: async () => {
       setOpen(false)
       setTitle('')
       setDescription('')
       setSeverity('medium')
       setCategory('')
-      setWithTask(false)
-      setTaskAssigneeId('')
-      setTaskDue('')
       setContactQuery('')
       setPickedContactId(null)
       setErrors({})
-      toast.success(result.taskId ? 'Complaint logged and task assigned' : 'Complaint logged')
+      toast.success('Complaint logged')
       await utils.complaint.activeCount.invalidate()
       router.refresh()
     },
@@ -90,13 +81,10 @@ export function NewComplaintDialog() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const next: { customer?: string; title?: string; task?: string } = {}
+    const next: { customer?: string; title?: string } = {}
     if (!pickedContactId) next.customer = 'Pick the customer the complaint is about.'
     if (title.trim().length < 2) next.title = 'Give the complaint a short title.'
-    if (withTask && !taskAssigneeId) {
-      next.task = 'Pick who the follow-up task is for, or untick the task option.'
-    }
-    if (next.customer || next.title || next.task || !pickedContactId) {
+    if (next.customer || next.title || !pickedContactId) {
       setErrors(next)
       if (next.title && !next.customer) titleRef.current?.focus()
       return
@@ -108,13 +96,6 @@ export function NewComplaintDialog() {
       description: description.trim() || undefined,
       severity,
       category: category.trim() || undefined,
-      task:
-        withTask && taskAssigneeId
-          ? {
-              assigneeId: taskAssigneeId,
-              dueAt: taskDue ? new Date(`${taskDue}T17:00:00`) : undefined,
-            }
-          : undefined,
     })
   }
 
@@ -241,50 +222,6 @@ export function NewComplaintDialog() {
                     onChange={setCategory}
                   />
                 </Field>
-              </div>
-
-              {/* Optional follow-up task, assigned as part of logging. */}
-              <div className="rounded-md border border-neutral-200 bg-neutral-50/60 p-2.5">
-                <label className="flex items-center gap-2 text-sm text-neutral-800">
-                  <input
-                    type="checkbox"
-                    checked={withTask}
-                    onChange={(e) => setWithTask(e.target.checked)}
-                  />
-                  Assign a follow-up task to someone
-                </label>
-                {withTask && (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <Select
-                      value={taskAssigneeId}
-                      onChange={(e) => {
-                        setTaskAssigneeId(e.target.value)
-                        if (errors.task) setErrors((p) => ({ ...p, task: undefined }))
-                      }}
-                      aria-label="Task assignee"
-                    >
-                      <option value="">Who is it for?</option>
-                      {(usersQuery.data ?? []).map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name ?? u.email}
-                        </option>
-                      ))}
-                    </Select>
-                    <Input
-                      type="date"
-                      className="max-w-[11rem]"
-                      value={taskDue}
-                      onChange={(e) => setTaskDue(e.target.value)}
-                      aria-label="Task due date (optional)"
-                    />
-                    <span className="text-xs text-neutral-500">Due date optional</span>
-                  </div>
-                )}
-                {errors.task ? (
-                  <p role="alert" className="mt-1.5 text-xs font-medium text-red-700">
-                    {errors.task}
-                  </p>
-                ) : null}
               </div>
 
               {errors.form && (

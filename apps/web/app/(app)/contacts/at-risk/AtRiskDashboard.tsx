@@ -1,22 +1,18 @@
 // At-risk customers dashboard (client island). Renders the scored rows from
-// customerRisk.list and adds per-row triage: flag / dismiss / clear, and a
-// "Create task" modal that opens a follow-up Task against the customer and
-// flags them in one go. View + level lenses live in the URL so the view is
-// shareable. CLAUDE.md §26 (client leaf), §27 (mutations via tRPC).
+// customerRisk.list and adds per-row triage: flag / dismiss / clear. View +
+// level lenses live in the URL so the view is shareable. CLAUDE.md §26
+// (client leaf), §27 (mutations via tRPC).
 
 'use client'
 
-import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { riskLabel, riskTone } from '@/lib/ui/status-tone'
 import { Card } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { trpc } from '@/lib/trpc/client'
 
@@ -44,7 +40,6 @@ export interface RiskRow {
   labels: LabelChip[]
   reviewStatus: 'flagged' | 'dismissed' | null
   reviewNote: string | null
-  openTaskCount: number
   complaintCount: number
 }
 
@@ -76,7 +71,6 @@ export function AtRiskDashboard({
   const searchParams = useSearchParams()
   const utils = trpc.useUtils()
   const canReview = CAN_REVIEW.has(role)
-  const [taskFor, setTaskFor] = useState<RiskRow | null>(null)
 
   const setReview = trpc.customerRisk.setReview.useMutation()
   const clearReview = trpc.customerRisk.clearReview.useMutation()
@@ -215,7 +209,7 @@ export function AtRiskDashboard({
                           <EmailLink email={c.email} />
                           <PhoneLink phone={c.phoneE164} />
                         </span>
-                        {(c.labels.length > 0 || c.openTaskCount > 0 || c.complaintCount > 0) && (
+                        {(c.labels.length > 0 || c.complaintCount > 0) && (
                           <span className="mt-1 flex flex-wrap items-center gap-1">
                             {c.complaintCount > 0 && (
                               <Link
@@ -225,11 +219,6 @@ export function AtRiskDashboard({
                               >
                                 {c.complaintCount} complaint{c.complaintCount === 1 ? '' : 's'}
                               </Link>
-                            )}
-                            {c.openTaskCount > 0 && (
-                              <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-700">
-                                {c.openTaskCount} open task{c.openTaskCount === 1 ? '' : 's'}
-                              </span>
                             )}
                             {c.labels.map((l) => (
                               <span
@@ -287,14 +276,6 @@ export function AtRiskDashboard({
                   {canReview && (
                     <td className="px-3 py-2 text-right">
                       <div className="inline-flex items-center gap-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => setTaskFor(c)}
-                        >
-                          Create task
-                        </Button>
                         {c.reviewStatus === 'flagged' ? (
                           <button
                             type="button"
@@ -339,131 +320,6 @@ export function AtRiskDashboard({
         </Card>
       )}
 
-      {taskFor && (
-        <CreateTaskModal row={taskFor} onClose={() => setTaskFor(null)} onDone={refresh} />
-      )}
-    </div>
-  )
-}
-
-function CreateTaskModal({
-  row,
-  onClose,
-  onDone,
-}: {
-  row: RiskRow
-  onClose: () => void
-  onDone: () => void
-}) {
-  const expiry =
-    row.daysToExpiry == null
-      ? ''
-      : row.daysToExpiry <= 0
-        ? ' (expiring now)'
-        : ` (expires in ${row.daysToExpiry}d)`
-  const [title, setTitle] = useState(
-    `Chase ${row.hoursRemaining}h unused hours${expiry} — ${row.name}`,
-  )
-  const [assigneeId, setAssigneeId] = useState('')
-  const [due, setDue] = useState('')
-  const [note, setNote] = useState(row.reasons.join('; '))
-
-  const usersQuery = trpc.task.assignableUsers.useQuery({})
-  const users = usersQuery.data ?? []
-  const create = trpc.customerRisk.createTask.useMutation({
-    onSuccess: () => {
-      toast.success('Task created and customer flagged')
-      onClose()
-      onDone()
-    },
-    onError: (e) => toast.error(e.message),
-  })
-
-  function submit() {
-    if (!title.trim()) {
-      toast.error('Give the task a title')
-      return
-    }
-    if (!assigneeId) {
-      toast.error('Pick an assignee')
-      return
-    }
-    create.mutate({
-      contactId: row.id,
-      title: title.trim(),
-      assigneeId,
-      note: note.trim() || undefined,
-      dueAt: due ? new Date(due) : undefined,
-      alsoFlag: true,
-    })
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/40 p-4"
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-xl border border-neutral-200 bg-white p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-base font-semibold text-neutral-900">Create follow-up task</h2>
-        <p className="mt-0.5 text-xs text-neutral-500">
-          Opens a task against {row.name} and flags them as being handled.
-        </p>
-
-        <div className="mt-4 space-y-3">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-neutral-600">Title</span>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs text-neutral-600">Assignee</span>
-              <select
-                value={assigneeId}
-                onChange={(e) => setAssigneeId(e.target.value)}
-                className="h-9 rounded-md border border-neutral-300 bg-white px-2 text-sm"
-              >
-                <option value="">Select…</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name ?? u.email}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              <span className="text-xs text-neutral-600">Due (optional)</span>
-              <Input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
-            </label>
-          </div>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-neutral-600">Note (optional)</span>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={3}
-              className="w-full rounded-md border border-neutral-300 bg-white p-2 text-sm focus:border-primary-500 focus:outline-none"
-            />
-          </label>
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-sm text-neutral-500 hover:underline"
-          >
-            Cancel
-          </button>
-          <Button type="button" onClick={submit} disabled={create.isPending}>
-            {create.isPending ? 'Creating…' : 'Create task'}
-          </Button>
-        </div>
-      </div>
     </div>
   )
 }

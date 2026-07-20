@@ -18,7 +18,7 @@ import {
   expireLapsedEnrollments,
 } from '@/lib/webinar/enrollment-service'
 import { sendDueRecordings, sendRecordingsForMeetingId } from '@/lib/webinar/recordings-service'
-import { createZoomRotationTasks } from '@/lib/webinar/zoom-reminder-service'
+import { runZoomRotation } from '@/lib/webinar/zoom-reminder-service'
 
 export const webinarDispatchWeeklyEmails = inngest.createFunction(
   {
@@ -65,7 +65,7 @@ export const webinarZoomRotationReminder = inngest.createFunction(
   },
   { cron: '0 8 * * 1' },
   async ({ step, logger }) => {
-    const result = await step.run('remind', async () => createZoomRotationTasks(db, new Date()))
+    const result = await step.run('rotate', async () => runZoomRotation(db, new Date()))
     logger.info({ ...result }, 'webinar.zoom_reminder.complete')
     return result
   },

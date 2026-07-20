@@ -16,7 +16,6 @@ import { brandingRouter } from './routers/branding'
 import { businessAccountRouter } from './routers/businessAccount'
 import { callsRouter } from './routers/calls'
 import { callSummariesRouter } from './routers/callSummary'
-import { callSummaryTemplateRouter } from './routers/callSummaryTemplate'
 import { customerRiskRouter } from './routers/customerRisk'
 import { chatRouter } from './routers/chat'
 import { companyRouter } from './routers/company'
@@ -56,7 +55,6 @@ import { forwardingRouter } from './routers/forwarding'
 import { gocardlessRouter } from './routers/gocardless'
 import { contactSuggestionsRouter } from './routers/contact-suggestions'
 import { inboxRouter } from './routers/inbox'
-import { infoPackRouter } from './routers/infoPack'
 import { interactionRouter } from './routers/interaction'
 import { invoicingRouter } from './routers/invoicing'
 import { knowledgeRouter } from './routers/knowledge'
@@ -73,7 +71,6 @@ import { searchRouter } from './routers/search'
 import { slackChannelRouter } from './routers/slackChannel'
 import { slackSummaryRouter } from './routers/slackSummary'
 import { summerCampRouter } from './routers/summerCamp'
-import { taskRouter } from './routers/task'
 import { roleRouter } from './routers/role'
 import { teamRouter } from './routers/team'
 import { uploadedInvoiceRouter } from './routers/uploadedInvoice'
@@ -89,7 +86,6 @@ export const appRouter = router({
   businessAccount: businessAccountRouter,
   calls: callsRouter,
   callSummaries: callSummariesRouter,
-  callSummaryTemplate: callSummaryTemplateRouter,
   customerRisk: customerRiskRouter,
   chat: chatRouter,
   company: companyRouter,
@@ -106,7 +102,6 @@ export const appRouter = router({
   gocardless: gocardlessRouter,
   contactSuggestion: contactSuggestionsRouter,
   inbox: inboxRouter,
-  infoPack: infoPackRouter,
   interaction: interactionRouter,
   invoicing: invoicingRouter,
   knowledge: knowledgeRouter,
@@ -123,7 +118,6 @@ export const appRouter = router({
   slackChannel: slackChannelRouter,
   slackSummary: slackSummaryRouter,
   summerCamp: summerCampRouter,
-  task: taskRouter,
   team: teamRouter,
   role: roleRouter,
   uploadedInvoice: uploadedInvoiceRouter,

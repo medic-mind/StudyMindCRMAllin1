@@ -1,14 +1,13 @@
 // One Direct Debit defaulter row (Slice B). Client island: expands to a
-// drill-down showing the payment/instalment timeline plus human-confirmed
-// actions (raise a dunning task, send a reminder). CLAUDE.md §3 — we never
-// auto-charge or auto-dun; every action below requires a person to confirm.
+// drill-down showing the payment/instalment timeline plus a jump to the family
+// to send a reminder. CLAUDE.md §3 — we never auto-charge or auto-dun; every
+// action below requires a person to confirm.
 
 'use client'
 
 import Link from 'next/link'
 import { useState } from 'react'
 
-import { NewTaskDialog } from '@/app/(app)/tasks/NewTaskDialog'
 import { Badge, type BadgeTone } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Td, Tr } from '@/components/ui/table'
@@ -104,10 +103,6 @@ export function DefaulterRow({ defaulter: d }: { defaulter: Defaulter }): JSX.El
           <Td colSpan={9} className="bg-neutral-50">
             <div className="space-y-4 py-2">
               <div className="flex flex-wrap items-center gap-2">
-                <NewTaskDialog
-                  familyId={d.familyId}
-                  contactName={d.billingContactName ?? undefined}
-                />
                 <Link
                   href={`/contacts/families/${d.familyId}`}
                   className="inline-flex h-8 items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200"

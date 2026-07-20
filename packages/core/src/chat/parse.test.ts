@@ -32,7 +32,7 @@ describe('tokenizeChatBody', () => {
     ])
   })
 
-  it('parses all four ref types', () => {
+  it('parses all ref types (incl. legacy task)', () => {
     const body = '<~contact:a> <~family:b> <~card:c> <~task:d>'
     const refs = tokenizeChatBody(body).filter((t) => t.kind === 'ref')
     expect(refs).toEqual([
@@ -97,9 +97,9 @@ describe('extractRefs', () => {
 
 describe('token encoders', () => {
   it('mentionToken / refToken produce parseable output', () => {
-    const body = `${mentionToken('u9')} ${refToken('task', 't3')}`
+    const body = `${mentionToken('u9')} ${refToken('card', 't3')}`
     expect(extractMentionUserIds(body)).toEqual(['u9'])
-    expect(extractRefs(body)).toEqual([{ type: 'task', id: 't3' }])
+    expect(extractRefs(body)).toEqual([{ type: 'card', id: 't3' }])
   })
 })
 

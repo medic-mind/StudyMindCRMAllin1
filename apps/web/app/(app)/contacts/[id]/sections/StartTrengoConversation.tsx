@@ -56,7 +56,7 @@ export function StartTrengoConversation({ contactId }: { contactId: string }) {
   const [waTemplate, setWaTemplate] = useState<WaTemplate | null>(null)
   const [waParams, setWaParams] = useState<Record<string, string>>({})
 
-  const waTemplatesQuery = trpc.contact.callSummary.waTemplates.useQuery(undefined, {
+  const waTemplatesQuery = trpc.interaction.trengo.waTemplates.useQuery(undefined, {
     enabled: open && channel === 'whatsapp',
     staleTime: 60_000,
   })

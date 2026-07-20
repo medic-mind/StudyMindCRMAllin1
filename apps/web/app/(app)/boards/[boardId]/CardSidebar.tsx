@@ -73,7 +73,7 @@ function formatDueRow(d: Date | string | null) {
 export function CardSidebar({ card, canWrite }: Props) {
   const router = useRouter()
   const utils = trpc.useUtils()
-  const usersQuery = trpc.task.assignableUsers.useQuery({}, { enabled: canWrite })
+  const usersQuery = trpc.team.assignableUsers.useQuery({}, { enabled: canWrite })
 
   const update = trpc.card.update.useMutation({
     onSuccess: async () => {

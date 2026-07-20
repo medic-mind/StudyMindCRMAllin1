@@ -32,8 +32,6 @@ export interface ContactContext {
     occurredAt: string
     brief: string
   }>
-  /** Open Task summaries. */
-  openTasks: Array<{ title: string; dueAt: string | null }>
   /** Unresolved reconciliation discrepancies (category + summary). */
   openDiscrepancies: Array<{ category: string; summary: string }>
   /**
@@ -80,10 +78,6 @@ export function buildStatusSummaryPrompt(
     at: i.occurredAt,
     brief: sanitiseUserContent(i.brief).slice(0, 200),
   }))
-  const tasks = ctx.openTasks.map((t) => ({
-    title: sanitiseUserContent(t.title).slice(0, 160),
-    dueAt: t.dueAt,
-  }))
   const discrepancies = ctx.openDiscrepancies.map((d) => ({
     category: d.category,
     summary: sanitiseUserContent(d.summary).slice(0, 200),
@@ -93,7 +87,6 @@ export function buildStatusSummaryPrompt(
     contact: { firstName: ctx.firstName, kind: ctx.kind },
     hasSafeguardingFlag: ctx.hasSafeguardingFlag,
     interactions,
-    tasks,
     discrepancies,
   }
   const user = `Context:\n${JSON.stringify(payload, null, 2)}`

@@ -23,7 +23,6 @@ import { useConfirm } from '@/components/ui/confirm'
 import { trpc } from '@/lib/trpc/client'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
-import { NewTaskDialog } from '../../tasks/NewTaskDialog'
 import { CallSummarySection } from './CallSummarySection'
 import { CardSidebar } from './CardSidebar'
 import { CardSubtasks } from './CardSubtasks'
@@ -295,11 +294,6 @@ export function CardModal({
 
             <CallSummarySection cardId={card.id} canWrite={canWrite} />
 
-            <CardTasksSection
-              contactId={card.contactId}
-              contactName={card.contactName}
-            />
-
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Comments
@@ -344,86 +338,3 @@ export function CardModal({
   )
 }
 
-/** Tasks linked to the card's backing contact + inline "New task" button.
- * Same `contact.channels.tasks` query the contact page uses, so the modal
- * always agrees with the contact's task list. */
-function CardTasksSection({
-  contactId,
-  contactName,
-}: {
-  contactId: string
-  contactName: string
-}) {
-  const tasksQuery = trpc.contact.channels.tasks.useQuery({ contactId })
-  const open = tasksQuery.data?.open ?? []
-  const closed = tasksQuery.data?.closed ?? []
-  return (
-    <section>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-          Tasks
-        </h3>
-        <NewTaskDialog contactId={contactId} contactName={contactName} />
-      </div>
-      {tasksQuery.isLoading ? (
-        <p className="text-sm text-neutral-500">Loading…</p>
-      ) : open.length === 0 && closed.length === 0 ? (
-        <p className="text-sm text-neutral-500">
-          No tasks for {contactName} yet — click <em>New task</em> to assign one.
-        </p>
-      ) : (
-        <ul className="space-y-1.5">
-          {open.map((t) => (
-            <TaskRow key={t.id} task={t} />
-          ))}
-          {closed.length > 0 && (
-            <li className="pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-              Closed
-            </li>
-          )}
-          {closed.map((t) => (
-            <TaskRow key={t.id} task={t} muted />
-          ))}
-        </ul>
-      )}
-    </section>
-  )
-}
-
-function TaskRow({
-  task,
-  muted,
-}: {
-  task: {
-    id: string
-    title: string
-    status: string
-    dueAt: Date | string | null
-  }
-  muted?: boolean
-}) {
-  return (
-    <li
-      className={`flex items-center gap-2 rounded border border-neutral-200 px-2 py-1 text-xs ${muted ? 'text-neutral-500' : 'text-neutral-800'}`}
-    >
-      <span
-        aria-hidden
-        className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{
-          backgroundColor:
-            task.status === 'done' || task.status === 'cancelled'
-              ? '#94a3b8'
-              : '#10b981',
-        }}
-      />
-      <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
-      {task.dueAt && (
-        <time className="font-mono text-[10px] tabular-nums text-neutral-500">
-          {new Intl.DateTimeFormat('en-GB', { dateStyle: 'short' }).format(
-            new Date(task.dueAt),
-          )}
-        </time>
-      )}
-    </li>
-  )
-}

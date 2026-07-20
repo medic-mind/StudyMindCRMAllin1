@@ -13,7 +13,6 @@ import { serve } from 'inngest/next'
 
 import { withSentry } from '@studymind/core/observability/sentry'
 import { FUNCTIONS as AIRCALL_FUNCTIONS } from '@studymind/integration-aircall/jobs'
-import { FUNCTIONS as ASANA_FUNCTIONS } from '@studymind/integration-asana/jobs'
 import { FUNCTIONS as BOOKING_FUNCTIONS } from '@studymind/integration-booking/jobs'
 import { FUNCTIONS as GMAIL_FUNCTIONS } from '@studymind/integration-gmail/jobs'
 import { FUNCTIONS as GOCARDLESS_FUNCTIONS } from '@studymind/integration-gocardless/jobs'
@@ -67,7 +66,6 @@ const handlers = serve({
     ...AIRCALL_FUNCTIONS,
     ...TRENGO_FUNCTIONS,
     ...SLACK_FUNCTIONS,
-    ...ASANA_FUNCTIONS,
     ...GMAIL_FUNCTIONS,
     ...INVOICING_FUNCTIONS,
     ...SUMMER_CAMP_FUNCTIONS,

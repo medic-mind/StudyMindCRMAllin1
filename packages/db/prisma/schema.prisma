@@ -254,14 +254,6 @@ enum DdRecoveryChannel {
   sms
 }
 
-enum TaskStatus {
-  open
-  in_progress
-  blocked
-  done
-  cancelled
-}
-
 // -----------------------------------------------------------------------------
 // Identity
 // -----------------------------------------------------------------------------
@@ -936,7 +928,6 @@ model Family {
   uploadedInvoices UploadedInvoice[]
   payments         Payment[]
   discrepancies    ReconciliationDiscrepancy[]
-  tasks            Task[]
   company          Company?                    @relation(fields: [companyId], references: [id])
 
   @@index([state])
@@ -1109,12 +1100,11 @@ model Card {
   @@index([scheduledCallAt])
 }
 
-/// A checklist item ON a card (Todoist-style sub-tasks). Distinct from the
-/// CRM Task table and from contact-synced Asana tasks — these are
-/// lightweight, card-local checkboxes the agent ticks off as they work the
-/// card. No assignee / due date by design; if it needs those it should be a
-/// real Task. Sales Executive+ manages them; the toggle is cheap and not
-/// individually audited (the card itself carries the audit trail).
+/// A checklist item ON a card (Todoist-style sub-tasks) — lightweight,
+/// card-local checkboxes the agent ticks off as they work the card. No
+/// assignee / due date by design. Sales Executive+ manages them; the toggle is
+/// cheap and not individually audited (the card itself carries the audit
+/// trail).
 model CardSubtask {
   id        String  @id
   cardId    String
@@ -2546,53 +2536,8 @@ model LeadClassificationCorrection {
   @@index([field])
 }
 
-model Task {
-  id            String     @id
-  title         String
-  description   String?
-  status        TaskStatus @default(open)
-  assigneeId    String?
-  /// Optional Team ownership so tasks can be scoped per ops squad as well
-  /// as per assignee.
-  teamId        String?
-  familyId      String?
-  /// Optional Contact linkage (CLAUDE.md §13 — Asana sync stores the CRM
-  /// contact id in the `crm_contact_id` custom field on the Asana task).
-  contactId     String?
-  dueAt         DateTime?
-  /// Asana task linkage (CLAUDE.md §13). Unique when set.
-  asanaTaskId   String?
-  /// Last writer attribution: "crm", "asana", or a user id. Used to avoid
-  /// echo loops when both sides update the same field in quick succession.
-  lastWrittenBy String?
-  lastWrittenAt DateTime?
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  createdById String?
-  updatedById String?
-  deletedAt   DateTime?
-
-  /// Optional link to a B2B account so tasks can be raised against a School
-  /// or Partnership, not only a Contact / Family.
-  businessAccountId String?
-
-  family Family? @relation(fields: [familyId], references: [id])
-  team   Team?   @relation(fields: [teamId], references: [id])
-  businessAccount BusinessAccount? @relation(fields: [businessAccountId], references: [id])
-  complaint       Complaint?
-
-  @@unique([asanaTaskId])
-  @@index([assigneeId, status])
-  @@index([familyId])
-  @@index([contactId])
-  @@index([businessAccountId])
-  @@index([teamId, status])
-}
-
 // -----------------------------------------------------------------------------
-// Teams — internal ops squads. Tasks can be assigned to a team in addition
-// to (or instead of) a person. CEO + Senior Manager manage membership.
+// Teams — internal ops squads. CEO + Senior Manager manage membership.
 // -----------------------------------------------------------------------------
 
 model Team {
@@ -2608,7 +2553,6 @@ model Team {
   archivedAt  DateTime?
 
   members TeamMember[]
-  tasks   Task[]
   /// ADR 0021: a shared team inbox can be tied to an ops Team (Admissions,
   /// Sales, …). Optional — a shared inbox may exist without a Team.
   mailAccounts MailAccount[]
@@ -2675,75 +2619,6 @@ model ForwardingRule {
   subjectTemplate String
   bodyTemplate    String
   sortOrder       Int      @default(0)
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  createdById String?
-  updatedById String?
-  archivedAt  DateTime?
-
-  @@index([archivedAt])
-  @@index([sortOrder])
-}
-
-// -----------------------------------------------------------------------------
-// Call summary templates — admin-managed prefill templates for the contact
-// page Call Summary panel (UCAT call, Medical Interview call, Dental
-// Interview call, etc). Optionally carries an attached PDF (stored inline
-// as bytes, same trade-off as ContactDocument / BrandingSetting per
-// CLAUDE.md §4) which the caller can open while running the script. Manager+
-// manages the catalogue; everyone reads.
-// -----------------------------------------------------------------------------
-
-model CallSummaryTemplate {
-  id          String  @id
-  name        String  @unique
-  description String?
-  /// The body shown in the textarea when the agent picks this template.
-  /// Free-form markdown-ish text — same shape as the existing hardcoded
-  /// quick-start fragments.
-  body        String
-  sortOrder   Int     @default(0)
-
-  // Optional attached PDF. Same byte-storage approach as ContactDocument
-  // and BrandingSetting — keeps self-hosted deploys S3-free. `pdfData` is
-  // null when there's no attachment; the four fields are written together.
-  pdfFileName    String?
-  pdfContentType String?
-  pdfByteSize    Int?
-  pdfData        Bytes?
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  createdById String?
-  updatedById String?
-  archivedAt  DateTime?
-
-  @@index([archivedAt])
-  @@index([sortOrder])
-}
-
-// -----------------------------------------------------------------------------
-// Info pack / brochure document library (Settings → Documents). The PDFs the
-// team attaches to call-summary emails (information packs, brochures, course
-// guides). Stored inline like CallSummaryTemplate.pdfData so self-hosted
-// deploys stay S3-free; served at /api/info-packs/[id]/file. Manager+ manages
-// the catalogue; everyone reads + picks them in the call-summary email step.
-// Deliberately NOT offered on the Trengo WhatsApp path — approved WhatsApp
-// templates already carry the pack links, so attaching the PDF again would
-// duplicate it.
-// -----------------------------------------------------------------------------
-
-model InfoPackDocument {
-  id          String  @id
-  name        String  @unique
-  description String?
-  sortOrder   Int     @default(0)
-
-  fileName    String
-  contentType String
-  byteSize    Int
-  data        Bytes
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -2893,7 +2768,6 @@ model BusinessAccount {
   companies          BusinessAccountCompany[]
   labels             BusinessAccountLabel[]
   interactions       Interaction[]            @relation("BusinessAccountInteractions")
-  tasks              Task[]
   /// Mirror of customers on the B2B Invoices Platform (b2b.studymind.co.uk)
   /// that correlate to this account (schools, partnerships, AP/council).
   invoicingCustomers InvoicingCustomer[]
@@ -3366,22 +3240,6 @@ model SlackPost {
   postedAt       DateTime @default(now())
 
   @@index([postedAt])
-}
-
-model AsanaWebhook {
-  id            String @id
-  projectId     String
-  /// Secret Asana sends in the X-Hook-Secret header on creation; we echo it
-  /// back to complete the handshake and store it for subsequent payload
-  /// signature verification (CLAUDE.md §13).
-  webhookSecret String
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdById String?
-  updatedById String?
-
-  @@index([projectId])
 }
 
 model GmailMailbox {
@@ -4449,6 +4307,13 @@ model WebinarSettings {
   zoomClientSecretKeyVersion    Int?
   zoomHostEmail       String?
 
+  /// The single "assigned person" emailed when a class Zoom link can't be
+  /// auto-rotated (auto-rotation off, Zoom not connected, or a rotation fails)
+  /// — the task-free replacement for the old rotation-reminder Task. Null = no
+  /// reminder email is sent (the on-system reminder on the Webinars overview
+  /// still shows the due links).
+  rotationReminderEmail String?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   createdById String?
@@ -4521,8 +4386,8 @@ model WebinarLevelOption {
 
 /// A complaint logged against a customer (Contact). Surfaced on the contact
 /// page and on the Active complaints queue. Follow-ups + action points hang
-/// off it via ComplaintUpdate; it can be converted into a follow-up Task.
-/// Status/severity are text (validated fail-closed in the app layer).
+/// off it via ComplaintUpdate. Status/severity are text (validated fail-closed
+/// in the app layer).
 model Complaint {
   id          String  @id
   contactId   String
@@ -4535,8 +4400,6 @@ model Complaint {
   /// Free-text category (billing, scheduling, tutor, safeguarding, …).
   category    String?
   assigneeId  String?
-  /// Optional link to a follow-up Task created from this complaint.
-  taskId       String?   @unique
   /// Idempotency key for system-raised complaints (ADR 0042) — e.g.
   /// "slack:<channelId>:<ts>" for a complaint-channel call summary. Null for
   /// human-logged complaints.
@@ -4552,7 +4415,6 @@ model Complaint {
   deletedAt   DateTime?
 
   contact Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  task    Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
   updates ComplaintUpdate[]
 
   @@index([status])

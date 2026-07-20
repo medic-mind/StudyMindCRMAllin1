@@ -121,7 +121,7 @@ export function AddCardButton({
   // wall-clock value (CLAUDE.md §29) converted to UTC on submit.
   const [assigneeId, setAssigneeId] = useState('')
   const [callWall, setCallWall] = useState('')
-  const usersQuery = trpc.task.assignableUsers.useQuery({}, { enabled: open })
+  const usersQuery = trpc.team.assignableUsers.useQuery({}, { enabled: open })
 
   // Display fields captured at submit time, merged with the server id in
   // onSuccess to build the optimistic card (avoids reading state mid-reset).

@@ -24,7 +24,6 @@ interface FakeState {
   contacts: Row[]
   reviews: Row[]
   users: Row[]
-  tasks: Row[]
 }
 
 function makeCtx(role: SessionUser['role'], seed: Partial<FakeState> = {}) {
@@ -32,7 +31,6 @@ function makeCtx(role: SessionUser['role'], seed: Partial<FakeState> = {}) {
     contacts: seed.contacts ?? [],
     reviews: seed.reviews ?? [],
     users: seed.users ?? [],
-    tasks: seed.tasks ?? [],
   }
   const { audit, actions } = makeAudit()
 
@@ -68,12 +66,6 @@ function makeCtx(role: SessionUser['role'], seed: Partial<FakeState> = {}) {
         const before = s.reviews.length
         s.reviews = s.reviews.filter((r) => r.contactId !== where.contactId)
         return { count: before - s.reviews.length }
-      },
-    },
-    task: {
-      create: async ({ data }: { data: Row }) => {
-        s.tasks.push({ ...data })
-        return data
       },
     },
   }
@@ -121,49 +113,3 @@ describe('customerRisk.setReview', () => {
   })
 })
 
-describe('customerRisk.createTask', () => {
-  it('allows virtual_assistant (identical to sales_executive, 2026-07)', async () => {
-    const { ctx, state } = makeCtx('virtual_assistant', SEED)
-    const caller = customerRiskRouter.createCaller(ctx)
-    const res = await caller.createTask({ contactId: 'c1', title: 'Chase', assigneeId: 'u1' })
-    expect(res.taskId).toBeTruthy()
-    expect(state.tasks).toHaveLength(1)
-  })
-
-  it('creates a task, flags the customer, and audits both', async () => {
-    const { ctx, state, actions } = makeCtx('sales_executive', SEED)
-    const caller = customerRiskRouter.createCaller(ctx)
-    const res = await caller.createTask({
-      contactId: 'c1',
-      title: 'Chase unused hours',
-      assigneeId: 'u1',
-    })
-    expect(res.taskId).toBeTruthy()
-    expect(state.tasks).toHaveLength(1)
-    expect(state.tasks[0]!.contactId).toBe('c1')
-    expect(state.reviews[0]?.status).toBe('flagged') // alsoFlag default
-    expect(actions).toContain('task.created')
-    expect(actions).toContain('contact.risk_flagged')
-  })
-
-  it('alsoFlag=false creates the task without flagging', async () => {
-    const { ctx, state } = makeCtx('manager', SEED)
-    const caller = customerRiskRouter.createCaller(ctx)
-    await caller.createTask({
-      contactId: 'c1',
-      title: 'Note only',
-      assigneeId: 'u1',
-      alsoFlag: false,
-    })
-    expect(state.tasks).toHaveLength(1)
-    expect(state.reviews).toHaveLength(0)
-  })
-
-  it('404s on a missing assignee', async () => {
-    const { ctx } = makeCtx('sales_executive', { contacts: [{ id: 'c1' }], users: [] })
-    const caller = customerRiskRouter.createCaller(ctx)
-    await expect(
-      caller.createTask({ contactId: 'c1', title: 'X', assigneeId: 'nope' }),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
-  })
-})

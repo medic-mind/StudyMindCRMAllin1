@@ -19,7 +19,6 @@
     "@studymind/core": "workspace:*",
     "@studymind/db": "workspace:*",
     "@studymind/integration-aircall": "workspace:*",
-    "@studymind/integration-asana": "workspace:*",
     "@studymind/integration-booking": "workspace:*",
     "@studymind/integration-gmail": "workspace:*",
     "@studymind/integration-gocardless": "workspace:*",

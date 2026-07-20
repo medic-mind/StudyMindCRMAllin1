@@ -102,7 +102,6 @@ export const EVENT_NAMES = [
   'role.restored',
   'role.assigned',
   'role.unassigned',
-  'task.team_changed',
 
   // Internal team messaging (ADR 0022). Channel administration is audited;
   // individual messages are high-volume staff↔staff chat and are deliberately
@@ -143,27 +142,8 @@ export const EVENT_NAMES = [
   'business_account.student_added',
   'business_account.student_updated',
   'business_account.student_archived',
-  // Notes + tasks on a B2B account (parity with the customer view).
+  // Notes on a B2B account (parity with the customer view).
   'business_account.note_added',
-  'business_account.task_created',
-
-  // Call summary templates (Settings → Call summary templates). Admin
-  // catalogue used to prefill the contact page Call Summary panel.
-  'call_summary_template.created',
-  'call_summary_template.updated',
-  'call_summary_template.archived',
-  'call_summary_template.restored',
-  'call_summary_template.pdf_attached',
-  'call_summary_template.pdf_removed',
-
-  // Info pack / brochure document library (Settings → Documents). The PDFs
-  // attached to call-summary emails (information packs, brochures, guides).
-  'info_pack.created',
-  'info_pack.updated',
-  'info_pack.file_replaced',
-  'info_pack.archived',
-  'info_pack.restored',
-  'info_pack.deleted',
 
   // Slack channel options (Settings → Slack channels). Operator-managed Slack
   // channels the call-summary "Internal — Slack" section can post to, with
@@ -360,11 +340,7 @@ export const EVENT_NAMES = [
   'ai.draft_generated',
   'ai.classification_completed',
 
-  // Tasks / admin / flags
-  'task.created',
-  'task.updated',
-  'task.closed',
-  'task.commented',
+  // Admin / flags
   'admin.role.assign',
   'admin.role.revoke',
   'flag.toggled',
@@ -395,7 +371,6 @@ export const EVENT_NAMES = [
   'complaint.resolved',
   'complaint.dismissed',
   'complaint.reopened',
-  'complaint.task_created',
   // Contact-timeline note events written alongside complaint transitions.
   'complaint.raised',
 
@@ -529,8 +504,7 @@ export const EVENT_NAMES = [
   // webhook). `after` carries { ticketId, from, to, source: 'reconcile' }.
   'trengo.status_reconciled',
 
-  // ui-completeness chunks 5/6/8: task creation, inbox triage, integration tests
-  'task.assigned',
+  // ui-completeness chunks 5/6/8: inbox triage, integration tests
   'inbox.message_assigned',
   'inbox.message_snoozed',
   'admin.integration_tested',
@@ -634,7 +608,6 @@ export const INNGEST_EVENT_NAMES = [
   'gocardless/event.received',
   'aircall/event.received',
   'trengo/event.received',
-  'asana/event.received',
   'slack/event.received',
   // On-demand "re-run Slack matching now" — Manager+ from the /inbox/slack-mentions
   // tray. Re-runs the relink + retro-stamp passes immediately (the cron also does

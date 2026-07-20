@@ -477,7 +477,6 @@ export function InboxCockpit({
       {selectedId && showContext ? (
         <ContextPane
           conversationId={selectedId}
-          me={me}
           onClose={() => setShowContext(false)}
           onSelect={(id) => setSelectedId(id)}
         />
