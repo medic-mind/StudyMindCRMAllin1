@@ -125,10 +125,17 @@ function CredentialReveal({
   email,
   temporaryPassword,
   emailStatus,
+  unsentReason = 'not_connected',
 }: {
   email: string
   temporaryPassword: string
   emailStatus?: EmailStatus
+  /**
+   * Why nothing was emailed when emailStatus === 'skipped'. `by_choice` is the
+   * "Reset password" flow (the admin sets a password and shares it directly);
+   * `not_connected` is Gmail not yet configured.
+   */
+  unsentReason?: 'not_connected' | 'by_choice'
 }) {
   const signInUrl =
     typeof window !== 'undefined' ? `${window.location.origin}/sign-in` : '/sign-in'
@@ -139,12 +146,16 @@ function CredentialReveal({
     `Temporary password: ${temporaryPassword}\n` +
     `You'll be asked to set your own password on first sign-in.`
 
+  const skippedText =
+    unsentReason === 'by_choice'
+      ? `No email was sent — copy this password and share it with them securely.`
+      : `Email isn't connected yet, so nothing was sent — copy these details and share them securely.`
   const note =
     emailStatus === 'sent'
       ? { tone: 'text-green-800', text: `A welcome email with these details (and a PDF) was sent to ${email}.` }
       : emailStatus === 'failed'
         ? { tone: 'text-amber-800', text: `We couldn't send the email — copy these details and share them securely.` }
-        : { tone: 'text-amber-800', text: `Email isn't connected yet, so nothing was sent — copy these details and share them securely.` }
+        : { tone: 'text-amber-800', text: skippedText }
 
   const Row = ({ label, value, mono }: { label: string; value: string; mono?: boolean }) => (
     <div className="flex items-center gap-2">
@@ -181,6 +192,7 @@ function CredentialModal(props: {
   email: string
   temporaryPassword: string
   emailStatus?: EmailStatus
+  unsentReason?: 'not_connected' | 'by_choice'
   onClose: () => void
 }) {
   return (
@@ -189,6 +201,7 @@ function CredentialModal(props: {
         email={props.email}
         temporaryPassword={props.temporaryPassword}
         emailStatus={props.emailStatus}
+        unsentReason={props.unsentReason}
       />
       <div className="mt-4 flex justify-end">
         <Button type="button" onClick={props.onClose}>
@@ -829,22 +842,25 @@ function RolesModal({
 }
 
 /* -------------------------------------------------------------------------- */
-/* reset password — generate a temporary one, or set one manually              */
+/* reset password (set a specific one, no email) vs reissue (generate + email) */
 /* -------------------------------------------------------------------------- */
 
 function ResetPasswordModal({
   userId,
   email,
+  variant,
   onClose,
   onReset,
 }: {
   userId: string
   email: string
+  /** `reissue` generates + emails; `setPassword` sets a specific one, no email. */
+  variant: 'reissue' | 'setPassword'
   onClose: () => void
   onReset: (res: { temporaryPassword: string; emailStatus: EmailStatus }) => void
 }) {
   const router = useRouter()
-  const [mode, setMode] = useState<'generate' | 'manual'>('generate')
+  const isReissue = variant === 'reissue'
   const [password, setPassword] = useState('')
   const [requireChange, setRequireChange] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -857,20 +873,20 @@ function ResetPasswordModal({
     onError: (e) => setError(e.message),
   })
 
-  const disabled = reset.isPending || (mode === 'manual' && password.trim().length === 0)
+  const disabled = reset.isPending || (!isReissue && password.trim().length === 0)
 
   return (
-    <ModalShell title="Reissue login details" onClose={onClose}>
+    <ModalShell title={isReissue ? 'Reissue login details' : 'Reset password'} onClose={onClose}>
       <form
         className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault()
           setError(null)
-          reset.mutate({
-            userId,
-            password: mode === 'manual' ? password : undefined,
-            requireChange,
-          })
+          reset.mutate(
+            isReissue
+              ? { userId, requireChange, sendEmail: true }
+              : { userId, password, requireChange, sendEmail: false },
+          )
         }}
       >
         {error && (
@@ -881,46 +897,22 @@ function ResetPasswordModal({
             {error}
           </div>
         )}
-        <p className="text-sm text-neutral-700">
-          Issue a new password for <span className="font-medium">{email}</span> and email it to them
-          (with a PDF) so they can sign in and set their own. Their current sessions end immediately.
-        </p>
 
-        <fieldset className="space-y-2">
-          <legend className="sr-only">Password method</legend>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="radio"
-              name="reset-mode"
-              className="mt-0.5"
-              checked={mode === 'generate'}
-              onChange={() => setMode('generate')}
-            />
-            <span>
-              <span className="font-medium">Generate a temporary password</span>
-              <span className="block text-xs text-neutral-500">
-                Random, emailed with a PDF when Gmail is connected.
-              </span>
-            </span>
-          </label>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="radio"
-              name="reset-mode"
-              className="mt-0.5"
-              checked={mode === 'manual'}
-              onChange={() => setMode('manual')}
-            />
-            <span>
-              <span className="font-medium">Set a password myself</span>
-              <span className="block text-xs text-neutral-500">
-                Useful if they&rsquo;ve lost access to their email — share it with them directly.
-              </span>
-            </span>
-          </label>
-        </fieldset>
+        {isReissue ? (
+          <p className="text-sm text-neutral-700">
+            Generate a new random password for <span className="font-medium">{email}</span> and email
+            it to them (with a PDF) so they can sign in and set their own. Their current sessions end
+            immediately.
+          </p>
+        ) : (
+          <p className="text-sm text-neutral-700">
+            Set a specific password for <span className="font-medium">{email}</span> and share it with
+            them directly — no email is sent. Useful when they&rsquo;ve lost access to their inbox.
+            Their current sessions end immediately.
+          </p>
+        )}
 
-        {mode === 'manual' && (
+        {!isReissue && (
           <div className="space-y-1.5">
             <Label htmlFor="reset-password">New password</Label>
             <PasswordField
@@ -949,7 +941,13 @@ function ResetPasswordModal({
             Cancel
           </Button>
           <Button type="submit" disabled={disabled}>
-            {reset.isPending ? 'Reissuing…' : 'Reissue login details'}
+            {isReissue
+              ? reset.isPending
+                ? 'Reissuing…'
+                : 'Reissue login details'
+              : reset.isPending
+                ? 'Resetting…'
+                : 'Reset password'}
           </Button>
         </div>
       </form>
@@ -977,7 +975,8 @@ export interface RowActionsProps {
 type DialogKind =
   | 'edit'
   | 'roles'
-  | 'reset'
+  | 'setPassword'
+  | 'reissue'
   | 'deactivate'
   | 'cancelInvite'
   | 'delete'
@@ -1004,9 +1003,12 @@ export function RowActions(props: RowActionsProps) {
   // clipped by the table's overflow-auto/rounded container. ADR 0021.
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const [dialog, setDialog] = useState<DialogKind>(null)
-  const [reveal, setReveal] = useState<{ temporaryPassword: string; emailStatus: EmailStatus } | null>(
-    null,
-  )
+  const [reveal, setReveal] = useState<{
+    title: string
+    temporaryPassword: string
+    emailStatus: EmailStatus
+    unsentReason: 'not_connected' | 'by_choice'
+  } | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
 
@@ -1121,7 +1123,10 @@ export function RowActions(props: RowActionsProps) {
     items.push({ key: 'edit', label: 'Edit details', run: () => setDialog('edit') })
   }
   if (access.canManage && canAct && (status === 'active' || status === 'locked')) {
-    items.push({ key: 'reset', label: 'Reissue login details', run: () => setDialog('reset') })
+    // Two distinct actions: change the password directly (no email) vs. issue a
+    // fresh random password and email it to them.
+    items.push({ key: 'setpw', label: 'Reset password', run: () => setDialog('setPassword') })
+    items.push({ key: 'reissue', label: 'Reissue login details', run: () => setDialog('reissue') })
   }
   if (awaitingFirstSignIn && access.canManage && canAct) {
     items.push({ key: 'remind', label: 'Send sign-in reminder', run: () => { setOpen(false); sendReminder.mutate({ userId }) } })
@@ -1233,14 +1238,28 @@ export function RowActions(props: RowActionsProps) {
           onClose={() => setDialog(null)}
         />
       )}
-      {dialog === 'reset' && (
+      {dialog === 'setPassword' && (
         <ResetPasswordModal
           userId={userId}
           email={email}
+          variant="setPassword"
           onClose={() => setDialog(null)}
           onReset={(res) => {
             setDialog(null)
-            setReveal(res)
+            setReveal({ ...res, title: 'New password', unsentReason: 'by_choice' })
+            toast.success('Password reset')
+          }}
+        />
+      )}
+      {dialog === 'reissue' && (
+        <ResetPasswordModal
+          userId={userId}
+          email={email}
+          variant="reissue"
+          onClose={() => setDialog(null)}
+          onReset={(res) => {
+            setDialog(null)
+            setReveal({ ...res, title: 'New login details', unsentReason: 'not_connected' })
             toast.success('Login details reissued')
           }}
         />
@@ -1294,10 +1313,11 @@ export function RowActions(props: RowActionsProps) {
 
       {reveal && (
         <CredentialModal
-          title="New login details"
+          title={reveal.title}
           email={email}
           temporaryPassword={reveal.temporaryPassword}
           emailStatus={reveal.emailStatus}
+          unsentReason={reveal.unsentReason}
           onClose={() => setReveal(null)}
         />
       )}

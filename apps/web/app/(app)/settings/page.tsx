@@ -38,9 +38,9 @@ const GROUPS: Group[] = [
     tiles: [
       {
         href: '/settings/users',
-        title: 'Users & roles',
+        title: 'Users',
         description:
-          'Create accounts, reissue logins, delete/erase, roles, individual permissions, avatars. Audited.',
+          'Create accounts, reset or reissue logins, delete/erase, per-user permissions, avatars. Audited.',
         roles: 'CEO · SM · Manager',
         icon: <UsersIcon size={16} />,
       },

@@ -6,7 +6,8 @@
 //   - create (temp password + welcome PDF; user must reset on first login)
 //   - invite (legacy email-link path; user sets their own password)
 //   - update details (name) and change email
-//   - resetPassword (admin-issued temp password + email/PDF)
+//   - resetPassword — "Reset password" (set a specific one, no email) and
+//     "Reissue login details" (generate a temp one, email it + PDF)
 //   - grant / revoke the `user.manage` permission to an individual
 //   - assign / revoke roles, gated by canGrantRole / canRevokeRole
 //   - deactivate / reactivate
@@ -173,6 +174,12 @@ interface IssueArgs {
   password?: string
   /** Force a change on first sign-in. Defaults to true. */
   requireChange?: boolean
+  /**
+   * Email the credentials (welcome/reset message + PDF). Defaults to true.
+   * "Reset password" sets this false — the admin sets a specific password and
+   * shares it directly, so nothing is emailed (emailStatus === 'skipped').
+   */
+  sendEmail?: boolean
 }
 
 /**
@@ -213,6 +220,12 @@ async function issueTemporaryCredentials(
       where: { userId: args.userId, usedAt: null },
       data: { usedAt: now },
     })
+  }
+
+  // "Reset password" sets a specific credential and hands it over directly, so
+  // we skip the email entirely rather than send an unwanted welcome message.
+  if (args.sendEmail === false) {
+    return { temporaryPassword, emailStatus: 'skipped' as const }
   }
 
   const creds: WelcomeCredentials = {
@@ -692,19 +705,22 @@ export const adminUsersRouter = router({
     }),
 
   /* ------------------------------------------------------------------ */
-  /* resetPassword — generate a temp password, or set one manually        */
+  /* resetPassword — set a password (email it, or hand it over directly)  */
   /* ------------------------------------------------------------------ */
-  // Two ways to reset (ADR 0021): omit `password` to generate a strong
-  // temporary one (emailed + PDF), or pass `password` to set a specific one
-  // yourself — useful when the user has lost access to their email and you
-  // need to give them working credentials directly. `requireChange` (default
-  // true) forces a change on first sign-in.
+  // Backs two distinct actions (ADR 0021):
+  //   • "Reset password"  — pass `password`, `sendEmail:false`: set a specific
+  //     password and share it directly, no email. For when the user has lost
+  //     access to their inbox.
+  //   • "Reissue login details" — omit `password`, `sendEmail:true`: generate
+  //     a strong temporary password and email it (+ PDF).
+  // `requireChange` (default true) forces a change on first sign-in.
   resetPassword: auditedProcedure
     .input(
       z.object({
         userId: z.string().min(1),
         password: z.string().optional(),
         requireChange: z.boolean().default(true),
+        sendEmail: z.boolean().default(true),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -750,13 +766,18 @@ export const adminUsersRouter = router({
           invalidateSessions: true,
           password: input.password,
           requireChange: input.requireChange,
+          sendEmail: input.sendEmail,
         },
       )
 
       await ctx.audit({
         action: 'auth.password_reset_by_admin',
         target: { type: 'User', id: target.id },
-        after: { manualPassword: input.password !== undefined, requireChange: input.requireChange },
+        after: {
+          manualPassword: input.password !== undefined,
+          requireChange: input.requireChange,
+          emailed: input.sendEmail,
+        },
       })
       return { ok: true, email: target.email, temporaryPassword, emailStatus, requireChange: input.requireChange }
     }),
