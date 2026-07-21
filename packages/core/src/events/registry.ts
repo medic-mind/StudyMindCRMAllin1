@@ -692,6 +692,10 @@ export const INNGEST_EVENT_NAMES = [
   // Zoom recording.completed webhook (ADR 0035): hands off async so the class
   // recording is emailed promptly instead of waiting for the hourly sweep.
   'webinar/recording.completed',
+  // Payment-alert email ingestion (ADR 0048): the Gmail sync spots a purchase
+  // alert and hands off async so the AI extraction + weekly-class enrolment run
+  // at the apps/web boundary (which can reach the enrolment engine).
+  'webinar/purchase-email.received',
   // Summer Camp booking webhook (camp.studymind.co.uk): one bus event per
   // inbound booking create/update/cancel, processed async like every provider.
   'summer-camp/event.received',

@@ -29,6 +29,7 @@ export type AiTaskCategory =
   | 'knowledge_edit'
   | 'contact_name_extraction'
   | 'dd_recovery_draft'
+  | 'purchase_email'
 
 export interface BudgetLimit {
   /** Daily cap in USD. */
@@ -78,6 +79,9 @@ export const BUDGETS: Readonly<Record<AiTaskCategory, BudgetLimit>> = {
   // amendment): personalises an already-filled, staff-authored template. Human
   // reviews before sending; the deterministic template is the backbone.
   dd_recovery_draft: { daily: 10, monthly: 200 },
+  // Extract buyer + product from a payment-alert email (ADR 0048). One call per
+  // purchase alert, mini-tier; the sender gate keeps it off ordinary mail.
+  purchase_email: { daily: 5, monthly: 100 },
 }
 
 interface UsageBucket {

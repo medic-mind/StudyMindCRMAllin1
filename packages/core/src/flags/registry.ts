@@ -81,6 +81,18 @@ export const FLAGS = {
     default: false,
     owner: 'tech-lead',
   },
+  // Operational CHANNEL gate (like google_voice above): stays off until the
+  // mailbox that receives the payment alerts is connected and the alert
+  // sender(s) are set (PURCHASE_ALERT_SENDERS). Ingests Stripe payment-alert
+  // emails to record the purchase + auto-enrol weekly-class payers, with NO
+  // Stripe API access in the CRM (ADR 0048). Kill switch afterwards.
+  'stripe.purchase_email_ingest_enabled': {
+    description:
+      'Pick up purchases from Stripe payment-alert emails via the Gmail sync (no Stripe API): record the purchase on the client and auto-enrol confident weekly-class matches (ADR 0048). Off until the receiving mailbox is connected and PURCHASE_ALERT_SENDERS is set.',
+    kind: 'operational',
+    default: false,
+    owner: 'tech-lead',
+  },
 } as const satisfies Record<string, FlagMetadata>
 
 export type FlagName = keyof typeof FLAGS

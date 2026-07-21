@@ -34,6 +34,7 @@ import {
   leadClassifyRequested,
   leadReprocessUnresolved,
 } from './_boundary/process-lead'
+import { purchaseEmailReceived } from './_boundary/purchase-email'
 import { uebaWeekly } from './_boundary/ueba'
 import { userLoginReminders } from './_boundary/user-login-reminders'
 import { WEBINAR_BOUNDARY_FUNCTIONS } from './_boundary/webinar'
@@ -54,6 +55,7 @@ const BOUNDARY_FUNCTIONS = [
   leadBackfillCountries,
   leadClassifyRequested,
   leadReprocessUnresolved,
+  purchaseEmailReceived,
   uebaWeekly,
   userLoginReminders,
   ...WEBINAR_BOUNDARY_FUNCTIONS,

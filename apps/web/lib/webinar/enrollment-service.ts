@@ -285,6 +285,102 @@ export async function detectEnrollmentsFromStripe(
   return result
 }
 
+export interface EnrollFromPurchaseInput {
+  /** Already-resolved contact (the boundary matches/creates + records first). */
+  contactId: string
+  /** The product/line-item text from the payment email — drives the match. */
+  productText: string
+  billingInterval: 'month' | 'year' | 'one_off' | null
+  actorId: string | null
+  requestId: string
+  /** Consult the AI organiser when the deterministic rules find nothing. */
+  useAi?: boolean
+  now?: Date
+}
+
+export interface EnrollFromPurchaseResult {
+  matched: number
+  autoEnrolled: number
+  pendingReview: number
+  cohort: string | null
+  reason: 'enrolled' | 'no_class_match' | 'no_cohort'
+}
+
+/**
+ * Enrol a purchaser into their weekly class(es) from an EMAIL-sourced purchase
+ * (ADR 0048) — the no-Stripe-API path. Same engine as the Stripe scan: resolve
+ * today's cohort, run the deterministic subject/level matcher over the product
+ * text (AI only as a fallback, always `pending_review`), and upsert the
+ * enrolment (confident rule match auto-activates, everything else waits for a
+ * human — CLAUDE.md §3). Expiry is date-based (there is no live subscription to
+ * refetch): a monthly plan gets a rolling window that each renewal email
+ * refreshes; a yearly plan ~a year; a one-off never auto-expires.
+ */
+export async function enrollFromPurchase(
+  db: PrismaClient,
+  input: EnrollFromPurchaseInput,
+): Promise<EnrollFromPurchaseResult> {
+  const now = input.now ?? new Date()
+  const result: EnrollFromPurchaseResult = {
+    matched: 0,
+    autoEnrolled: 0,
+    pendingReview: 0,
+    cohort: null,
+    reason: 'no_class_match',
+  }
+
+  const resolved = await resolveCohortForDate(db, now)
+  if (!resolved || resolved.index.size === 0) {
+    result.reason = 'no_cohort'
+    return result
+  }
+  result.cohort = resolved.cohortName
+
+  const cat = await loadCatalogues(db)
+  let detected: DetectedClass[] = detectWebinarClassesWithRules(
+    { subjectRules: cat.subjectRules, levelRules: cat.levelRules },
+    [input.productText],
+  )
+  if (detected.length === 0 && input.useAi) {
+    const key = input.productText.toLowerCase().replace(/\s+/g, ' ').trim()
+    if (key) detected = await consultAi(key, cat, input.requestId)
+  }
+  if (detected.length === 0) return result
+
+  const expiresAt = expiryFromInterval(input.billingInterval, now)
+  for (const d of detected) {
+    const classId = resolved.index.get(`${d.subject}:${d.level}`)
+    if (!classId) continue
+    const outcome = await upsertEnrollment(db, {
+      classId,
+      contactId: input.contactId,
+      // Email purchases carry no subscription id; expiry is date-based below.
+      stripeSubscriptionId: null,
+      stripeCustomerId: null,
+      billingInterval: input.billingInterval === 'one_off' ? null : input.billingInterval,
+      expiresAt,
+      detected: d,
+      actorId: input.actorId,
+      requestId: input.requestId,
+    })
+    result.matched += 1
+    if (outcome === 'active') result.autoEnrolled += 1
+    else result.pendingReview += 1
+  }
+  if (result.matched > 0) result.reason = 'enrolled'
+  return result
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+function expiryFromInterval(
+  interval: 'month' | 'year' | 'one_off' | null,
+  now: Date,
+): Date | null {
+  if (interval === 'month') return new Date(now.getTime() + 35 * DAY_MS)
+  if (interval === 'year') return new Date(now.getTime() + 372 * DAY_MS)
+  return null
+}
+
 interface Catalogues {
   subjectRules: SubjectRule[]
   levelRules: LevelRule[]
@@ -360,7 +456,8 @@ async function consultAi(
 interface UpsertInput {
   classId: string
   contactId: string
-  stripeSubscriptionId: string
+  // Null for an email-sourced purchase that carries no subscription id (ADR 0048).
+  stripeSubscriptionId: string | null
   stripeCustomerId: string | null
   billingInterval: string | null
   expiresAt: Date | null

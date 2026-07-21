@@ -38,6 +38,7 @@ import { primaryAccountByContact } from './business-account-link'
 import { ensureAllMailAccountBridges } from './mail-account-bridge'
 import { isGoogleVoiceSender } from './google-voice'
 import { handleGoogleVoiceMessage } from './google-voice-handler'
+import { isPurchaseAlertSender } from './purchase-email'
 import { putAttachment } from './s3'
 import { deriveThreadFlags, DELETED_THREAD_FLAGS } from './thread-flags'
 
@@ -500,6 +501,32 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
       client,
     })
     if (handled) return
+  }
+
+  // Payment-alert emails (Stripe receipts / "payment received") are how we pick
+  // up purchases WITHOUT the Stripe API (ADR 0048). Cheap sender+flag gate here;
+  // the AI extraction + contact match + weekly-class enrolment happen at the
+  // apps/web boundary (which can reach the enrolment engine), fired as an event.
+  // We take ownership of the message so the raw alert doesn't also land as an
+  // unmatched email on a timeline.
+  if (
+    isPurchaseAlertSender(fromAddrs) &&
+    (await flag('stripe.purchase_email_ingest_enabled'))
+  ) {
+    await inngest.send({
+      name: 'webinar/purchase-email.received',
+      data: {
+        gmailMessageId: message.id,
+        agentId: input.agentId,
+        requestId: input.requestId,
+        fromEmail: fromAddrs[0] ?? null,
+        subject,
+        // Cap the body so the event stays small; the extractor only needs the
+        // receipt text, which sits near the top.
+        body: (message.body ?? '').slice(0, 12000),
+      },
+    })
+    return
   }
 
   // Determine direction. If any of the agent's addresses is in From, it's

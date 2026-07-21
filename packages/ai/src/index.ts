@@ -159,6 +159,13 @@ export {
   type WebinarCatalogueOption,
 } from './prompts/webinar-class-match'
 export {
+  buildPurchaseEmailPrompt,
+  purchaseEmailSchema,
+  VERSION as PURCHASE_EMAIL_PROMPT_VERSION,
+  type PurchaseEmailAi,
+  type PurchaseEmailPromptInput,
+} from './prompts/purchase-email'
+export {
   buildScheduleImportPrompt,
   scheduleImportSchema,
   VERSION as WEBINAR_SCHEDULE_IMPORT_PROMPT_VERSION,
