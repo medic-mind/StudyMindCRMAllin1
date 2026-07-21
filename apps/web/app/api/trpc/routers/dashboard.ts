@@ -221,7 +221,6 @@ export const dashboardRouter = router({
         openComplaints,
         leadsToTriage,
         slackMentions,
-        contactSuggestions,
         financeDiscrepancies,
         directDebitIssues,
         unresolvedPayments,
@@ -233,7 +232,6 @@ export const dashboardRouter = router({
         db.complaint.count({ where: { deletedAt: null, status: { in: ['open', 'in_progress'] } } }),
         db.lead.count({ where: { deletedAt: null, status: 'needs_triage' } }),
         db.unassignedSummary.count({ where: { resolvedAt: null } }),
-        db.contactFieldSuggestion.count({ where: { status: 'pending' } }),
         isFinance
           ? db.reconciliationDiscrepancy.count({
               where: { resolvedAt: null, category: { notIn: [...DD_CATEGORIES] } },
@@ -267,7 +265,6 @@ export const dashboardRouter = router({
         leadsToTriage,
         openComplaints,
         slackMentions,
-        contactSuggestions,
         financeDiscrepancies,
         directDebitIssues,
         unresolvedPayments,

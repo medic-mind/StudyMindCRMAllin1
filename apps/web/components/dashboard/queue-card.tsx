@@ -14,7 +14,6 @@ import {
   HashIcon,
   PhoneIcon,
   RepeatIcon,
-  SparklesIcon,
   UserPlusIcon,
 } from '@/components/ui/icon'
 import type { QueueCard as QueueCardData, QueueIconKey, QueueTone } from '@/lib/dashboard/queues'
@@ -26,7 +25,6 @@ const ICONS: Record<QueueIconKey, IconComp> = {
   userPlus: UserPlusIcon,
   alertTriangle: AlertTriangleIcon,
   hash: HashIcon,
-  sparkles: SparklesIcon,
   coins: CoinsIcon,
   repeat: RepeatIcon,
 }

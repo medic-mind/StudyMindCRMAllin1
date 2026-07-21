@@ -15,7 +15,6 @@ export type QueueIconKey =
   | 'userPlus'
   | 'alertTriangle'
   | 'hash'
-  | 'sparkles'
   | 'coins'
   | 'repeat'
 
@@ -34,7 +33,6 @@ export interface QueueCounts {
   leadsToTriage: number
   openComplaints: number
   slackMentions: number
-  contactSuggestions: number
   financeDiscrepancies: number
   directDebitIssues: number
   unresolvedPayments: number
@@ -64,7 +62,6 @@ const QUEUE_DEFS: readonly QueueDef[] = [
   { key: 'leadsToTriage', label: 'Leads to triage', href: '/leads', icon: 'userPlus', activeTone: 'warn' },
   { key: 'openComplaints', label: 'Open complaints', href: '/complaints', icon: 'alertTriangle', activeTone: 'danger' },
   { key: 'slackMentions', label: 'Slack mentions', href: '/inbox/slack-mentions', icon: 'hash', activeTone: 'info' },
-  { key: 'contactSuggestions', label: 'Field suggestions', href: '/inbox/suggestions', icon: 'sparkles', activeTone: 'info' },
   { key: 'financeDiscrepancies', label: 'Finance discrepancies', href: '/finance', icon: 'coins', activeTone: 'warn', roles: FINANCE_ROLES },
   { key: 'directDebitIssues', label: 'Direct Debit issues', href: '/direct-debits/issues', icon: 'repeat', activeTone: 'danger', roles: FINANCE_ROLES },
   { key: 'unresolvedPayments', label: 'Unresolved payments', href: '/finance/unresolved-payments', icon: 'coins', activeTone: 'warn', roles: FINANCE_ROLES },

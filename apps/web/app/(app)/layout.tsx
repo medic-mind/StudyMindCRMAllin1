@@ -119,24 +119,15 @@ function buildNav(role: Role): NavItem[] {
         { href: '/webinars/settings', label: 'Settings' },
       ],
     },
-    {
-      href: '/finance',
-      label: 'Finance',
-      // Sales Executives do not see Finance — they can create payment links
-      // from the contact detail UI but never see refund/allocation tooling.
-      // CEO, Senior Manager, Manager only (ADR 0014).
-      visibleTo: ['ceo', 'senior_manager', 'manager'],
-      children: [
-        { href: '/finance', label: 'Discrepancies' },
-        { href: '/finance/unresolved-payments', label: 'Unresolved payments' },
-        { href: '/finance/refunds', label: 'Refunds' },
-        { href: '/finance/payment-links', label: 'Payment links' },
-      ],
-    },
+    // Finance (Stripe reconciliation/refunds/payment-links) removed from the
+    // nav at the operator's request (2026-07) — StudyMind no longer processes
+    // payments through Stripe. The /finance/* routes are retained (forward-only,
+    // §19) so any deep link still resolves; they are simply no longer surfaced
+    // in the sidebar. Direct Debits (GoCardless, below) is the live money
+    // surface and stays as its own top-level section.
     // GoCardless Direct Debits — its own top-level section (ADR 0038). The
     // master dashboard lives at /direct-debits; the old /finance/direct-debit
-    // route redirects here so there is exactly ONE home for Direct Debits
-    // (Finance keeps reconciliation: discrepancies, refunds, payment links).
+    // route redirects here so there is exactly ONE home for Direct Debits.
     {
       href: '/direct-debits',
       label: 'Direct Debits',

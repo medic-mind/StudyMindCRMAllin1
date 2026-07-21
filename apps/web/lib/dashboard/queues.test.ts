@@ -7,7 +7,6 @@ const ZERO: QueueCounts = {
   leadsToTriage: 0,
   openComplaints: 0,
   slackMentions: 0,
-  contactSuggestions: 0,
   financeDiscrepancies: 0,
   directDebitIssues: 0,
   unresolvedPayments: 0,
@@ -41,7 +40,6 @@ describe('buildQueueCards', () => {
       'leadsToTriage',
       'openComplaints',
       'slackMentions',
-      'contactSuggestions',
     ])
   })
 
