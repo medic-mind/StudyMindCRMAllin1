@@ -51,7 +51,7 @@ function automationStatusLine(d: Detail): { text: string; tone: 'on' | 'off' | '
   if (d.status === 'written_off') return { text: 'Written off — automated reminders stopped', tone: 'off' }
   const armed = d.autoChase && (d.sendEmails || d.sendTexts)
   if (!armed) return { text: 'Automated reminders are OFF for this person', tone: 'off' }
-  if (!d.setupLinkUrl)
+  if (d.recoveryStrategy !== 'demand_full' && !d.setupLinkUrl)
     return {
       text: 'Automated reminders ON — but nothing sends until a re-signup link is added below',
       tone: 'warn',
@@ -444,9 +444,44 @@ function AutomaticRecoveryPanel({ detail: d, onChange }: { detail: Detail; onCha
 
       <p className="mt-2 text-xs text-neutral-500">
         When on, the escalating chase sends each enabled channel a more-serious message every{' '}
-        {d.cadenceDays} day{d.cadenceDays === 1 ? '' : 's'} until they pay or set the Direct Debit
-        back up. Nothing sends until the re-signup link is set.
+        {d.cadenceDays} day{d.cadenceDays === 1 ? '' : 's'} until they pay
+        {d.recoveryStrategy === 'demand_full' ? ' in full' : ' or set the Direct Debit back up'}.
       </p>
+
+      {/* Recovery goal: get them back on a plan (send the sign-up link) vs
+          demand the full outstanding balance now. Drives whether a re-signup
+          link is required before reminders can send. */}
+      <div className="mt-3">
+        <div className="text-xs font-medium text-neutral-700">What are we asking them to do?</div>
+        <div className="mt-1 inline-flex rounded-md border border-neutral-200 p-0.5 text-xs">
+          {(
+            [
+              ['resend_link', 'Sign up to a plan again'],
+              ['demand_full', 'Pay the full amount now'],
+            ] as const
+          ).map(([value, label]) => {
+            const active = (d.recoveryStrategy ?? 'resend_link') === value
+            return (
+              <button
+                key={value}
+                type="button"
+                disabled={busy || !open}
+                className={`rounded px-3 py-1 ${
+                  active ? 'bg-neutral-900 text-white' : 'text-neutral-600'
+                } disabled:opacity-50`}
+                onClick={() => update.mutate({ caseId: d.id, recoveryStrategy: value })}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="mt-1 text-[11px] text-neutral-500">
+          {d.recoveryStrategy === 'demand_full'
+            ? 'Chases for the full outstanding balance — no re-signup link needed.'
+            : 'Chases them back onto a Direct Debit / payment plan — paste the re-signup link below before reminders send.'}
+        </p>
+      </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="text-xs text-neutral-600">
@@ -494,7 +529,9 @@ function AutomaticRecoveryPanel({ detail: d, onChange }: { detail: Detail; onCha
       </div>
 
       <label className="mt-3 block text-xs text-neutral-600">
-        Re-signup link (GoCardless or Stripe) — messages only start once this is set
+        {d.recoveryStrategy === 'demand_full'
+          ? 'Re-signup link (GoCardless or Stripe) — optional; add one if you also want to offer a plan'
+          : 'Re-signup link (GoCardless or Stripe) — messages only start once this is set'}
         <div className="mt-1 flex gap-1">
           <Input
             value={link}

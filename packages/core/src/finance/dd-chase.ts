@@ -15,6 +15,8 @@ export interface ChaseTemplateRef {
   body: string
 }
 
+export type RecoveryStrategy = 'resend_link' | 'demand_full'
+
 export interface ChaseCaseState {
   status: 'new' | 'chasing' | 'escalated' | 'recovered' | 'written_off'
   autoChase: boolean
@@ -23,6 +25,11 @@ export interface ChaseCaseState {
   chaseEmail: string | null
   chasePhoneE164: string | null
   setupLinkUrl: string | null
+  /** The recovery goal (ADR 0045 amendment). `resend_link` chases them back
+   *  onto a plan and needs the re-signup link before it sends; `demand_full`
+   *  demands the whole outstanding balance and needs no link. Defaults to
+   *  `resend_link` when a caller doesn't set it. */
+  recoveryStrategy?: RecoveryStrategy
   escalationStep: number
   nextAutoMessageAt: Date | null
 }
@@ -51,7 +58,11 @@ export function decideChaseTick(input: {
   const { cs, now } = input
   if (CLOSED.has(cs.status)) return { kind: 'skip', reason: 'closed' }
   if (!cs.autoChase) return { kind: 'skip', reason: 'auto_off' }
-  if (!cs.setupLinkUrl) return { kind: 'skip', reason: 'no_link' }
+  // The re-signup goal cannot send until the link is pasted; demanding the full
+  // balance needs no link (the templates carry the pay-in-full instructions).
+  if ((cs.recoveryStrategy ?? 'resend_link') === 'resend_link' && !cs.setupLinkUrl) {
+    return { kind: 'skip', reason: 'no_link' }
+  }
   if (!cs.nextAutoMessageAt || cs.nextAutoMessageAt.getTime() > now.getTime()) {
     return { kind: 'skip', reason: 'not_due' }
   }

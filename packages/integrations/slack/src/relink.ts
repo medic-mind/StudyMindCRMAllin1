@@ -436,7 +436,7 @@ export const slackRelinkUnassigned = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 2,
   },
-  { cron: '*/30 * * * *' },
+  { cron: '*/15 * * * *' },
   async ({ step, logger }) => {
     const result = await step.run('relink', async () =>
       relinkParkedRowsOnce('system:slack/relink-unassigned'),

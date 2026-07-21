@@ -213,7 +213,7 @@ export const slackSummaryRouter = router({
       }),
 
     /**
-     * Re-run Slack matching immediately (the cron also does this every 30 min).
+     * Re-run Slack matching immediately (the cron also does this every 15 min).
      * Fires the on-demand Inngest twin which (1) re-runs the resolver over every
      * parked row and auto-links the unambiguous ones, and (2) retro-stamps
      * historic contact-linked mentions onto their school. Returns once enqueued;

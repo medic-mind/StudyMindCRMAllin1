@@ -381,3 +381,146 @@ export async function flagPlanIssues(
     resolved,
   }
 }
+
+// -----------------------------------------------------------------------------
+// Auto-populate the recovery worklist (ADR 0045 amendment).
+//
+// Operators asked that anyone detected to be underpaying, cancelling early, or
+// behind on a plan is AUTOMATICALLY added to the recovery list — so no one has
+// to remember to "start" a case, and everyone who owes lives in one place until
+// a human resolves them. This creates a DirectDebitCase (find-or-create) for
+// every post-cutoff issue the detectors above surface: cancelled/underpaid
+// plans, plans behind schedule, AND family defaulters — unifying the three
+// separate "detected issues" tables into one worklist.
+//
+// SAFE by construction (§3 — never auto-send): a created case starts with
+// auto-send OFF and NO re-signup link, so the engine sends nothing until staff
+// arm it (paste the GoCardless/Stripe link, choose the goal, turn reminders on).
+// System-authored (createdById null, §19). Idempotent — re-runs never duplicate.
+// -----------------------------------------------------------------------------
+
+export interface AutoOpenRecoveryResult {
+  plansOpened: number
+  defaultersOpened: number
+}
+
+const CASE_CLOSED_STATUSES = ['recovered', 'written_off'] as const
+
+export async function autoOpenRecoveryCases(
+  db: DbClient,
+  now: Date = new Date(),
+  cutoff: Date = DEFAULT_DD_ISSUE_CUTOFF,
+): Promise<AutoOpenRecoveryResult> {
+  let plansOpened = 0
+  let defaultersOpened = 0
+
+  // Plan-level issues, keyed on the unique gcSubscriptionId.
+  const [shortfalls, arrears] = await Promise.all([
+    listPlanShortfalls(db),
+    listActivePlanArrears(db, { now }),
+  ])
+  const planIssues = [
+    ...shortfalls
+      .filter((s) => ddIssueMeetsCutoff(s.issueDate, cutoff))
+      .map((s) => ({
+        gcSubscriptionId: s.gcSubscriptionId,
+        gcCustomerId: s.gcCustomerId,
+        contactId: s.contactId,
+        familyId: s.familyId,
+        outstandingMinor: s.shortfallMinor,
+      })),
+    ...arrears
+      .filter((a) => ddIssueMeetsCutoff(a.issueDate, cutoff))
+      .map((a) => ({
+        gcSubscriptionId: a.gcSubscriptionId,
+        gcCustomerId: a.gcCustomerId,
+        contactId: a.contactId,
+        familyId: a.familyId,
+        outstandingMinor: a.estimatedArrearsMinor,
+      })),
+  ]
+  const seenSub = new Set<string>()
+  for (const p of planIssues) {
+    if (seenSub.has(p.gcSubscriptionId)) continue
+    seenSub.add(p.gcSubscriptionId)
+    const existing = await db.directDebitCase.findUnique({
+      where: { gcSubscriptionId: p.gcSubscriptionId },
+      select: { id: true },
+    })
+    if (existing) continue
+    const contact = p.contactId
+      ? await db.contact.findFirst({
+          where: { id: p.contactId, deletedAt: null },
+          select: { email: true, phoneE164: true },
+        })
+      : null
+    await db.directDebitCase.create({
+      data: {
+        id: createId(),
+        gcSubscriptionId: p.gcSubscriptionId,
+        gcCustomerId: p.gcCustomerId ?? null,
+        contactId: p.contactId ?? null,
+        familyId: p.familyId ?? null,
+        status: 'new',
+        openingShortfallMinor: Math.max(0, Math.round(p.outstandingMinor)),
+        sendEmails: false,
+        sendTexts: false,
+        setupLinkUrl: null,
+        nextAutoMessageAt: null,
+        chaseEmail: contact?.email ?? null,
+        chasePhoneE164: contact?.phoneE164 ?? null,
+        createdById: null,
+        updatedById: null,
+      },
+    })
+    plansOpened += 1
+  }
+
+  // Family-level defaulters, keyed on the billing contact (no plan id).
+  const defaulters = (await listDefaulters(db, { now })).filter((d) =>
+    ddIssueMeetsCutoff(d.issueDate, cutoff),
+  )
+  for (const d of defaulters) {
+    const family = await db.family.findFirst({
+      where: { id: d.familyId, deletedAt: null },
+      select: { billingContactId: true },
+    })
+    if (!family?.billingContactId) continue
+    const contactId = family.billingContactId
+    // Don't spawn a second case for a contact already being worked.
+    const existing = await db.directDebitCase.findFirst({
+      where: { contactId, status: { notIn: [...CASE_CLOSED_STATUSES] } },
+      select: { id: true },
+    })
+    if (existing) continue
+    const [contact, gcCustomer] = await Promise.all([
+      db.contact.findFirst({
+        where: { id: contactId, deletedAt: null },
+        select: { email: true, phoneE164: true },
+      }),
+      db.gcCustomer.findFirst({ where: { contactId }, select: { gcCustomerId: true } }),
+    ])
+    await db.directDebitCase.create({
+      data: {
+        id: createId(),
+        gcSubscriptionId: null,
+        gcCustomerId: gcCustomer?.gcCustomerId ?? null,
+        contactId,
+        familyId: d.familyId,
+        status: 'new',
+        openingShortfallMinor: Math.max(0, Math.round(d.outstandingMinor)),
+        sendEmails: false,
+        sendTexts: false,
+        setupLinkUrl: null,
+        nextAutoMessageAt: null,
+        chaseEmail: contact?.email ?? null,
+        chasePhoneE164: contact?.phoneE164 ?? null,
+        createdById: null,
+        updatedById: null,
+      },
+    })
+    defaultersOpened += 1
+  }
+
+  return { plansOpened, defaultersOpened }
+}

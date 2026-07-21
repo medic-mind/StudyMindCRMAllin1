@@ -984,6 +984,7 @@ export const financeRouter = router({
             chaseEmail: z.string().trim().email().max(200).nullish(),
             chasePhoneE164: z.string().trim().max(20).nullish(),
             setupLinkUrl: z.string().trim().url().max(600).nullish(),
+            recoveryStrategy: z.enum(['resend_link', 'demand_full']).optional(),
             cadenceDays: z.number().int().min(1).max(30).optional(),
             outstandingMinor: z.number().int().nonnegative().optional(),
           }),
@@ -1001,6 +1002,7 @@ export const financeRouter = router({
             'sendEmails',
             'sendTexts',
             'cadenceDays',
+            'recoveryStrategy',
           ] as const) {
             if (input[k] !== undefined) patch[k] = input[k]
           }
@@ -1010,11 +1012,15 @@ export const financeRouter = router({
           if (input.outstandingMinor !== undefined) {
             patch['openingShortfallMinor'] = input.outstandingMinor
           }
-          // Arm the engine when a link appears (or auto-chase is switched back
-          // on with a link present) and nothing is scheduled yet.
+          // Arm the engine when the case is ready to send and nothing is
+          // scheduled yet. "Ready" depends on the goal: re-signup needs the
+          // link pasted; demand-full needs no link (it chases for the full
+          // balance). Switching auto-chase off clears the schedule.
           const linkAfter = input.setupLinkUrl !== undefined ? input.setupLinkUrl : existing.setupLinkUrl
           const autoAfter = input.autoChase !== undefined ? input.autoChase : existing.autoChase
-          if (linkAfter && autoAfter && !existing.nextAutoMessageAt) {
+          const strategyAfter = input.recoveryStrategy ?? existing.recoveryStrategy
+          const readyToSend = strategyAfter === 'demand_full' ? true : Boolean(linkAfter)
+          if (readyToSend && autoAfter && !existing.nextAutoMessageAt) {
             patch['nextAutoMessageAt'] = new Date()
           }
           if (!autoAfter) patch['nextAutoMessageAt'] = null
@@ -1163,6 +1169,8 @@ export const financeRouter = router({
             sendEmails: c.sendEmails,
             sendTexts: c.sendTexts,
             setupLinkUrl: c.setupLinkUrl,
+            recoveryStrategy:
+              c.recoveryStrategy === 'demand_full' ? 'demand_full' : 'resend_link',
             cadenceDays: c.cadenceDays,
             escalationStep: c.escalationStep,
             lastAutoMessageAt: c.lastAutoMessageAt,

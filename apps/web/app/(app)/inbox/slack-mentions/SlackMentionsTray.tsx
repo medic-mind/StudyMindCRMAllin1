@@ -56,9 +56,10 @@ export function SlackMentionsTray() {
   const header = (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-xs text-neutral-500">
-        Slack is pulled every 15 minutes and matching re-runs every 30: mentions that resolve to one
-        customer link themselves, and dead/noise rows are dismissed automatically. What lands here is
-        genuinely ambiguous — assign it, or clear it in bulk below.
+        Slack is pulled and matching re-runs automatically every 15 minutes — no button needed:
+        mentions that resolve to one customer link themselves, and dead/noise rows are dismissed
+        automatically. What lands here is genuinely ambiguous (e.g. two customers with the same
+        name) — assign it, or clear it in bulk below.
       </p>
       <div className="flex items-center gap-2">
         <Button

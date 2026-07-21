@@ -76,9 +76,29 @@ describe('decideChaseTick', () => {
     expect(d.kind).toBe('exhausted')
   })
 
-  it('never sends without the staff-pasted link', () => {
+  it('never sends without the staff-pasted link (re-signup goal, the default)', () => {
     const d = decideChaseTick({
       cs: cs({ setupLinkUrl: null }),
+      now,
+      emailTemplates: emails,
+      smsTemplates: texts,
+    })
+    expect(d).toEqual({ kind: 'skip', reason: 'no_link' })
+  })
+
+  it('demand-full goal sends WITHOUT a re-signup link (chases for the full balance)', () => {
+    const d = decideChaseTick({
+      cs: cs({ setupLinkUrl: null, recoveryStrategy: 'demand_full' }),
+      now,
+      emailTemplates: emails,
+      smsTemplates: texts,
+    })
+    expect(d.kind).toBe('send')
+  })
+
+  it('re-signup goal still requires the link even when set explicitly', () => {
+    const d = decideChaseTick({
+      cs: cs({ setupLinkUrl: null, recoveryStrategy: 'resend_link' }),
       now,
       emailTemplates: emails,
       smsTemplates: texts,

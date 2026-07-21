@@ -12,7 +12,11 @@
 
 import { resolveDdIssueCutoff } from '@studymind/core/finance'
 import { resolveTopicChannelId } from '@studymind/core/slack'
-import { flagDefaulters, flagPlanIssues } from '@studymind/jobs/finance/flag-dd-defaulters'
+import {
+  autoOpenRecoveryCases,
+  flagDefaulters,
+  flagPlanIssues,
+} from '@studymind/jobs/finance/flag-dd-defaulters'
 import { inngest } from '@studymind/jobs'
 import { postAlert } from '@studymind/integration-slack/outbound'
 
@@ -59,6 +63,14 @@ export const flagDdDefaultersNightly = inngest.createFunction(
     const result = await step.run('flag-defaulters', () => flagDefaulters(db, new Date(), cutoff))
     const planResult = await step.run('flag-plan-issues', () =>
       flagPlanIssues(db, new Date(), cutoff),
+    )
+
+    // Auto-populate the recovery worklist: every detected post-cutoff issue
+    // (cancelled/underpaid plan, plan behind schedule, family defaulter) gets a
+    // recovery case created for it — auto-send OFF, no link, so nothing sends
+    // until staff arm it (ADR 0045 amendment, §3). Idempotent find-or-create.
+    const opened = await step.run('auto-open-recovery-cases', () =>
+      autoOpenRecoveryCases(db, new Date(), cutoff),
     )
 
     const newlyShortfall = planResult.newlyFlagged.filter((p) => p.kind === 'shortfall').length
@@ -108,6 +120,7 @@ export const flagDdDefaultersNightly = inngest.createFunction(
         newlyShortfall,
         newlyArrears,
         resolved: result.resolved + planResult.resolved,
+        casesOpened: opened.plansOpened + opened.defaultersOpened,
       },
       'finance dd-issue scan complete',
     )
@@ -117,6 +130,7 @@ export const flagDdDefaultersNightly = inngest.createFunction(
       newlyShortfall,
       newlyArrears,
       resolved: result.resolved + planResult.resolved,
+      casesOpened: opened.plansOpened + opened.defaultersOpened,
     }
   },
 )

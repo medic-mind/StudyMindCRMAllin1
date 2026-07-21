@@ -176,6 +176,7 @@ export const ddChaseTick = inngest.createFunction(
           chaseEmail: c.chaseEmail,
           chasePhoneE164: c.chasePhoneE164,
           setupLinkUrl: c.setupLinkUrl,
+          recoveryStrategy: c.recoveryStrategy === 'demand_full' ? 'demand_full' : 'resend_link',
           escalationStep: c.escalationStep,
           nextAutoMessageAt: c.nextAutoMessageAt,
         },
