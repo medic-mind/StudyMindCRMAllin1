@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import type { CardFaceKey } from '@/lib/board/card-face'
+import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icon'
 import { trpc } from '@/lib/trpc/client'
 
 import { BoardColumn } from './BoardColumn'
@@ -125,6 +126,25 @@ export function BoardDnd({
   // Snapshot of card state taken just before an optimistic move, so a failed
   // mutation can revert. A kanban only ever has one move in flight at a time.
   const preMoveSnapshot = useRef<CardData[] | null>(null)
+
+  // Horizontal navigation. The columns row scrolls sideways within a bounded
+  // height (below) so its scrollbar stays on-screen; these arrow buttons make
+  // left/right movement obvious for mouse users (trackpad swipe / shift-wheel
+  // already work). Buttons only show when the board actually overflows.
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [overflowsX, setOverflowsX] = useState(false)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const check = () => setOverflowsX(el.scrollWidth > el.clientWidth + 4)
+    check()
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [stages.length])
+  function scrollColumns(direction: -1 | 1) {
+    scrollRef.current?.scrollBy({ left: direction * 336, behavior: 'smooth' })
+  }
 
   // Reconcile server → local whenever the card set meaningfully changes. The
   // useState initialiser only runs once, so without this a `router.refresh()`
@@ -294,13 +314,41 @@ export function BoardDnd({
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex gap-4 overflow-x-auto pb-2">
-        {stages.map((stage) => (
-          <div
-            key={stage.id}
-            data-stage-col={stage.id}
-            className="min-w-[300px] max-w-[320px] flex-1"
-          >
+      <div className="relative">
+        {overflowsX ? (
+          <>
+            <button
+              type="button"
+              aria-label="Scroll boards left"
+              onClick={() => scrollColumns(-1)}
+              className="absolute left-1 top-1/2 z-20 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-neutral-200 bg-white/95 text-neutral-600 shadow-md backdrop-blur transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+            >
+              <ChevronLeftIcon size={18} />
+            </button>
+            <button
+              type="button"
+              aria-label="Scroll boards right"
+              onClick={() => scrollColumns(1)}
+              className="absolute right-1 top-1/2 z-20 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-neutral-200 bg-white/95 text-neutral-600 shadow-md backdrop-blur transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+            >
+              <ChevronRightIcon size={18} />
+            </button>
+          </>
+        ) : null}
+        {/* Bounded height so the horizontal scrollbar sits at the bottom of the
+            board area (on-screen), not pushed to the bottom of a tall page as
+            columns fill with cards. Tall columns scroll vertically inside this
+            box; many columns scroll horizontally — both stay in view. */}
+        <div
+          ref={scrollRef}
+          className="flex max-h-[calc(100dvh-13rem)] gap-4 overflow-auto pb-2"
+        >
+          {stages.map((stage) => (
+            <div
+              key={stage.id}
+              data-stage-col={stage.id}
+              className="min-w-[300px] max-w-[320px] flex-1"
+            >
             <BoardColumn
               boardId={boardId}
               stage={stage}
@@ -318,8 +366,9 @@ export function BoardDnd({
               onLocalRevert={revertLocalMove}
               onCardCreated={addCardLocal}
             />
-          </div>
-        ))}
+            </div>
+          ))}
+        </div>
       </div>
       <DragOverlay>
         {activeCard ? (
