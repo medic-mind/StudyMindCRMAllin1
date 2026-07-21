@@ -14,7 +14,6 @@ import { contactKindTone } from '@/lib/ui/status-tone'
 
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { ContactDirectDebitPanel } from '@/components/finance/gocardless/ContactDirectDebitPanel'
-import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { ComposeEmailButton } from '@/components/mail/compose-email'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
@@ -293,9 +292,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
               <ComposeEmailButton to={contact.email} size="sm" variant="secondary" />
             )}
             <EditContactButton contactId={contact.id} />
-            {contact.family && (
-              <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
-            )}
             {contact.family && (
               <Link href={`/contacts/families/${contact.family.id}`} className={ACTION_LINK_CLS}>
                 Open family

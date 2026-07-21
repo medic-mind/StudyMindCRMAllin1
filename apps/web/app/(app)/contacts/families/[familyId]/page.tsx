@@ -12,7 +12,6 @@ import { FamilyDirectDebitPanel } from '@/components/finance/gocardless/FamilyDi
 import { PaymentsPanel } from '@/components/finance/PaymentsPanel'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { ReconcileNowButton } from '@/components/finance/ReconcileNowButton'
-import { SendPaymentLinkButton } from '@/components/finance/SendPaymentLinkButton'
 import { Table, Tbody, Td, Th, Thead, Tr } from '@/components/ui/table'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -122,7 +121,6 @@ export default async function FamilyDetailPage({
       </div>
 
       <section className="flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3">
-        <SendPaymentLinkButton familyId={data.id} />
         <ChangeBillingContactButton
           familyId={data.id}
           members={data.members.map((m) => ({
