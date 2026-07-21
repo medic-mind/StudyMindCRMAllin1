@@ -135,22 +135,33 @@ function IssuesTab({ canWrite }: { canWrite: boolean }) {
           <div>
             <h2 className="text-sm font-semibold text-neutral-900">Detected issues</h2>
             <p className="text-xs text-neutral-500">
-              Underpayments and Direct Debits cancelled before every payment was collected. Start a
-              recovery case from any of these.
+              Underpayments and Direct Debits cancelled before every payment was collected. Open a
+              recovery case from any row to see the message history, turn the automated reminders
+              on/off, and send an email or text.
             </p>
           </div>
-          <label className="flex items-center gap-1.5 text-xs text-neutral-600">
-            <input
-              type="checkbox"
-              checked={includeHistoric}
-              onChange={(e) => setIncludeHistoric(e.target.checked)}
-            />
-            Show issues before July 2026
-          </label>
+          <div className="flex items-center gap-3">
+            {canWrite ? (
+              <Link
+                href="/settings/dd-recovery-templates"
+                className="text-xs font-medium text-primary-700 hover:underline"
+              >
+                Recovery templates &amp; settings →
+              </Link>
+            ) : null}
+            <label className="flex items-center gap-1.5 text-xs text-neutral-600">
+              <input
+                type="checkbox"
+                checked={includeHistoric}
+                onChange={(e) => setIncludeHistoric(e.target.checked)}
+              />
+              Show issues before July 2026
+            </label>
+          </div>
         </div>
         <DefaultersSection includeHistoric={includeHistoric} canWrite={canWrite} />
-        <PlanShortfallsSection includeHistoric={includeHistoric} />
-        <ActivePlanArrearsSection includeHistoric={includeHistoric} />
+        <PlanShortfallsSection includeHistoric={includeHistoric} canWrite={canWrite} />
+        <ActivePlanArrearsSection includeHistoric={includeHistoric} canWrite={canWrite} />
       </div>
     </div>
   )

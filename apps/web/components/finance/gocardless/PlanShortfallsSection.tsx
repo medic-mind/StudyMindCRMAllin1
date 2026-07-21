@@ -138,7 +138,13 @@ function CustomerCell({
   return <span className="font-medium text-neutral-700">{label}</span>
 }
 
-export function PlanShortfallsSection({ includeHistoric = false }: { includeHistoric?: boolean }) {
+export function PlanShortfallsSection({
+  includeHistoric = false,
+  canWrite = false,
+}: {
+  includeHistoric?: boolean
+  canWrite?: boolean
+}) {
   const query = trpc.finance.directDebit.listPlanShortfalls.useQuery({ includeHistoric })
   const items = (query.data?.items ?? []) as Shortfall[]
   const [sort, setSort] = useState<{ key: keyof Shortfall; dir: SortDir }>({
@@ -152,9 +158,7 @@ export function PlanShortfallsSection({ includeHistoric = false }: { includeHist
     { gcSubscriptionIds: subIds },
     { enabled: subIds.length > 0 },
   )
-  const usersQuery = trpc.finance.directDebit.cases.assignableUsers.useQuery()
   const caseBySub = new Map((casesQuery.data?.cases ?? []).map((c) => [c.gcSubscriptionId, c]))
-  const assignableUsers = usersQuery.data ?? []
 
   if (query.isLoading) {
     return <p className="px-1 py-6 text-sm text-neutral-500">Loading cancelled plans…</p>
@@ -309,19 +313,7 @@ export function PlanShortfallsSection({ includeHistoric = false }: { includeHist
                         openingShortfallMinor: s.shortfallMinor,
                       }}
                       caseData={caseBySub.get(s.gcSubscriptionId)}
-                      assignableUsers={assignableUsers}
-                      sendContext={{
-                        gcSubscriptionId: s.gcSubscriptionId,
-                        contactId: s.contactId,
-                        gcCustomerId: s.gcCustomerId,
-                        familyId: s.familyId,
-                        customerName: s.customerName,
-                        planName: s.name,
-                        currency: s.currency,
-                        shortfallMinor: s.shortfallMinor,
-                        collectedMinor: s.collectedMinor,
-                        expectedTotalMinor: s.expectedTotalMinor,
-                      }}
+                      canWrite={canWrite}
                     />
                   </Td>
                 </Tr>
@@ -356,8 +348,10 @@ interface Arrears {
 
 export function ActivePlanArrearsSection({
   includeHistoric = false,
+  canWrite = false,
 }: {
   includeHistoric?: boolean
+  canWrite?: boolean
 }) {
   const query = trpc.finance.directDebit.listActivePlanArrears.useQuery({ includeHistoric })
   const items = (query.data?.items ?? []) as Arrears[]
@@ -366,6 +360,13 @@ export function ActivePlanArrearsSection({
     dir: 'desc',
   })
   const rows = useSortedRows(items, sort.key, sort.dir)
+
+  const subIds = items.map((i) => i.gcSubscriptionId)
+  const casesQuery = trpc.finance.directDebit.cases.forSubscriptions.useQuery(
+    { gcSubscriptionIds: subIds },
+    { enabled: subIds.length > 0 },
+  )
+  const caseBySub = new Map((casesQuery.data?.cases ?? []).map((c) => [c.gcSubscriptionId, c]))
 
   if (query.isLoading) {
     return <p className="px-1 py-6 text-sm text-neutral-500">Loading active plans…</p>
@@ -454,6 +455,7 @@ export function ActivePlanArrearsSection({
                   align="right"
                 />
                 <Th>Next charge</Th>
+                <Th className="text-right">Case</Th>
               </Tr>
             </Thead>
             <Tbody>
@@ -490,6 +492,19 @@ export function ActivePlanArrearsSection({
                     {formatMoneyMinor(s.estimatedArrearsMinor, s.currency)}
                   </Td>
                   <Td className="text-xs text-neutral-500">{formatDate(s.nextChargeAt)}</Td>
+                  <Td className="text-right">
+                    <ShortfallCaseCell
+                      links={{
+                        gcSubscriptionId: s.gcSubscriptionId,
+                        gcCustomerId: s.gcCustomerId,
+                        contactId: s.contactId,
+                        familyId: s.familyId,
+                        openingShortfallMinor: s.estimatedArrearsMinor,
+                      }}
+                      caseData={caseBySub.get(s.gcSubscriptionId)}
+                      canWrite={canWrite}
+                    />
+                  </Td>
                 </Tr>
               ))}
             </Tbody>

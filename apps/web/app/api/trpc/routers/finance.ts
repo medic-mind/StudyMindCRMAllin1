@@ -440,8 +440,21 @@ export const financeRouter = router({
                 })
               : []
           const ownerName = new Map(owners.map((o) => [o.id, o.name ?? o.email]))
+          // Message counts per case so a row can show "N messages sent" without
+          // opening the modal. One grouped query over the small case set.
+          const caseIds = [...cases.values()].map((c) => c.id)
+          const counts =
+            caseIds.length > 0
+              ? await ctx.db.ddCaseMessage.groupBy({
+                  by: ['caseId'],
+                  where: { caseId: { in: caseIds } },
+                  _count: { _all: true },
+                })
+              : []
+          const messageCount = new Map(counts.map((c) => [c.caseId, c._count._all]))
           return {
             cases: [...cases.values()].map((c) => ({
+              id: c.id,
               gcSubscriptionId: c.gcSubscriptionId,
               status: c.status,
               ownerUserId: c.ownerUserId,
@@ -451,6 +464,14 @@ export const financeRouter = router({
               recoveredAt: c.recoveredAt,
               recoveryMethod: c.recoveryMethod,
               recoveryRef: c.recoveryRef,
+              // Automation state — powers the at-a-glance chip on each row.
+              autoChase: c.autoChase,
+              sendEmails: c.sendEmails,
+              sendTexts: c.sendTexts,
+              hasSetupLink: Boolean(c.setupLinkUrl),
+              escalationStep: c.escalationStep,
+              nextAutoMessageAt: c.nextAutoMessageAt,
+              messageCount: messageCount.get(c.id) ?? 0,
             })),
           }
         }),
@@ -863,6 +884,90 @@ export const financeRouter = router({
             action: 'direct_debit.case_opened',
             target: { type: 'DirectDebitCase', id },
             after: { fromDefaulter: true, familyId: input.familyId, contactId, outstandingMinor: input.outstandingMinor },
+          })
+          return { id, created: true }
+        }),
+
+      /**
+       * Open (or reuse) the recovery case for a specific GoCardless plan — the
+       * cancelled/underpaid + behind-schedule rows on the Issues tab. This is the
+       * plan-level analogue of openCaseForFamily: it turns a "3 cancelled plans"
+       * row into the same rich CaseDetailModal (comms history, automation on/off,
+       * inline send) the recovery worklist uses, instead of the thin per-row
+       * dropdowns. Find-or-create keyed on the plan's unique gcSubscriptionId so
+       * repeated clicks never spawn duplicates; seeds the contact's email/phone
+       * when linked; auto-send starts OFF (§3 — the human arms it in the modal).
+       * Returns the case id for the client to open.
+       */
+      openCaseForSubscription: protectedProcedure
+        .input(
+          z.object({
+            gcSubscriptionId: z.string().min(1),
+            outstandingMinor: z.number().int().nonnegative().default(0),
+            links: z
+              .object({
+                gcCustomerId: z.string().nullish(),
+                contactId: z.string().nullish(),
+                familyId: z.string().nullish(),
+              })
+              .optional(),
+          }),
+        )
+        .mutation(async ({ ctx, input }) => {
+          const user = requireUser(ctx)
+          assertFinanceRole(user)
+
+          // Reuse the plan's existing case (the unique constraint guarantees at
+          // most one) — never spawn a duplicate when the row is opened again.
+          const existing = await ctx.db.directDebitCase.findUnique({
+            where: { gcSubscriptionId: input.gcSubscriptionId },
+            select: { id: true },
+          })
+          if (existing) return { id: existing.id, created: false }
+
+          const contactId = input.links?.contactId ?? null
+          const contact = contactId
+            ? await ctx.db.contact.findFirst({
+                where: { id: contactId, deletedAt: null },
+                select: { email: true, phoneE164: true },
+              })
+            : null
+          const cadenceDays = (await loadDdRecoverySettings(ctx.db)).defaultCadenceDays
+
+          const id = createId()
+          await ctx.db.directDebitCase.create({
+            data: {
+              id,
+              gcSubscriptionId: input.gcSubscriptionId,
+              gcCustomerId: input.links?.gcCustomerId ?? null,
+              contactId,
+              familyId: input.links?.familyId ?? null,
+              personName: null,
+              status: 'new',
+              openingShortfallMinor: input.outstandingMinor,
+              // Auto-send OFF on open — the case exists to be worked; the human
+              // arms channels + pastes the re-signup link in the modal (§3).
+              sendEmails: false,
+              sendTexts: false,
+              chaseEmail: contact?.email ?? null,
+              chasePhoneE164: contact?.phoneE164 ?? null,
+              setupLinkUrl: null,
+              cadenceDays,
+              nextAutoMessageAt: null,
+              ownerUserId: user.id,
+              createdById: user.id,
+              updatedById: user.id,
+            },
+          })
+          await ctx.audit({
+            action: 'direct_debit.case_opened',
+            target: { type: 'DirectDebitCase', id },
+            after: {
+              fromPlan: true,
+              gcSubscriptionId: input.gcSubscriptionId,
+              contactId,
+              outstandingMinor: input.outstandingMinor,
+            },
           })
           return { id, created: true }
         }),

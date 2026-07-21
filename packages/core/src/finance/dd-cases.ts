@@ -74,6 +74,14 @@ export interface DirectDebitCaseRow {
   recoveryRef: string | null
   notes: string | null
   updatedAt: Date
+  // Automation state — so a list row can show "on the automated reminders,
+  // step N, next <date>" at a glance without opening the case (ADR 0045).
+  autoChase: boolean
+  sendEmails: boolean
+  sendTexts: boolean
+  setupLinkUrl: string | null
+  escalationStep: number
+  nextAutoMessageAt: Date | null
 }
 
 export interface UpsertCaseInput {

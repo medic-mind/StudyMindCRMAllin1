@@ -1,24 +1,30 @@
 'use client'
 
-// Per-shortfall recovery-case controls on the Issues tab (ADR 0038, seventh
-// amendment): set the workflow status and assign an owner. The case is created
-// lazily on first action. Read/write CRM state only — outbound recovery comms
-// are human-confirmed elsewhere (CLAUDE.md §3).
+// Per-plan recovery-case control on the Issues tab (cancelled/underpaid +
+// behind-schedule plans). The single action is OPEN THE CASE — the full
+// CaseDetailModal mini-CRM: every message ever sent, the recovery step, the
+// automated-reminder on/off switch, and an inline email/SMS composer that works
+// even for a plan with no CRM contact. A compact chip summarises the automation
+// state at a glance. This replaces the old status/owner dropdowns + the
+// contact-required "Send message" dialog that dead-ended on unlinked plans
+// (most cancelled plans predate the CRM). Reads open to all staff; creating a
+// case is finance-gated (server-enforced). CLAUDE.md §3.
 
+import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Badge, type BadgeTone } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatMoneyMinor } from '@/lib/format/money'
 import { trpc } from '@/lib/trpc/client'
 
-import { RecordRecoveryDialog } from './RecordRecoveryDialog'
-import { SendRecoveryDialog, type SendRecoveryContext } from './SendRecoveryDialog'
+import { CaseDetailModal } from './CaseDetailModal'
 
 const STATUS_LABEL: Record<string, string> = {
   new: 'New',
   chasing: 'Chasing',
   escalated: 'Escalated',
-  recovered: 'Recovered',
+  recovered: 'Up to date',
   written_off: 'Written off',
 }
 
@@ -30,8 +36,6 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   written_off: 'neutral',
 }
 
-const STATUS_OPTIONS = ['new', 'chasing', 'escalated', 'recovered', 'written_off'] as const
-
 export interface ShortfallCaseLinks {
   gcSubscriptionId: string
   gcCustomerId: string | null
@@ -40,102 +44,101 @@ export interface ShortfallCaseLinks {
   openingShortfallMinor: number
 }
 
-interface CaseData {
+export interface ShortfallCaseData {
+  id: string
   status: string
-  ownerUserId: string | null
   ownerName: string | null
   recoveredMinor?: number
+  autoChase: boolean
+  sendEmails: boolean
+  sendTexts: boolean
+  hasSetupLink: boolean
+  escalationStep: number
+  messageCount: number
+}
+
+/** The one-line automation summary shown on the row (read-at-a-glance). */
+function automationSummary(c: ShortfallCaseData): { label: string; tone: BadgeTone } {
+  if (c.status === 'recovered') return { label: 'Recovered', tone: 'success' }
+  if (c.status === 'written_off') return { label: 'Written off', tone: 'neutral' }
+  if (!c.autoChase || (!c.sendEmails && !c.sendTexts)) return { label: 'Auto reminders off', tone: 'neutral' }
+  if (!c.hasSetupLink) return { label: 'Auto on · needs link', tone: 'warn' }
+  return { label: `Auto on · step ${c.escalationStep + 1}`, tone: 'info' }
 }
 
 export function ShortfallCaseCell({
   links,
   caseData,
-  assignableUsers,
-  sendContext,
+  canWrite,
 }: {
   links: ShortfallCaseLinks
-  caseData: CaseData | undefined
-  assignableUsers: Array<{ id: string; name: string }>
-  sendContext: SendRecoveryContext
+  caseData: ShortfallCaseData | undefined
+  canWrite: boolean
 }) {
   const utils = trpc.useUtils()
-  const invalidate = () => utils.finance.directDebit.cases.forSubscriptions.invalidate()
-
-  const setStatus = trpc.finance.directDebit.cases.setStatus.useMutation({
-    onSuccess: invalidate,
-    onError: (e) => toast.error(e.message),
-  })
-  const assign = trpc.finance.directDebit.cases.assign.useMutation({
-    onSuccess: invalidate,
-    onError: (e) => toast.error(e.message),
+  const [openCaseId, setOpenCaseId] = useState<string | null>(null)
+  const openCase = trpc.finance.directDebit.cases.openCaseForSubscription.useMutation({
+    onSuccess: (res) => setOpenCaseId(res.id),
+    onError: (e) => toast.error(e.message ?? 'Could not open the recovery case'),
   })
 
-  const linkPayload = {
-    gcCustomerId: links.gcCustomerId,
-    contactId: links.contactId,
-    familyId: links.familyId,
-    openingShortfallMinor: links.openingShortfallMinor,
+  const summary = caseData ? automationSummary(caseData) : null
+
+  function open() {
+    if (caseData?.id) {
+      setOpenCaseId(caseData.id)
+      return
+    }
+    openCase.mutate({
+      gcSubscriptionId: links.gcSubscriptionId,
+      outstandingMinor: links.openingShortfallMinor,
+      links: {
+        gcCustomerId: links.gcCustomerId,
+        contactId: links.contactId,
+        familyId: links.familyId,
+      },
+    })
   }
-
-  const status = caseData?.status ?? 'new'
-  const busy = setStatus.isPending || assign.isPending
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-1.5">
-        <Badge tone={STATUS_TONE[status] ?? 'neutral'}>{STATUS_LABEL[status] ?? status}</Badge>
-        {status === 'recovered' && caseData?.recoveredMinor ? (
-          <span className="font-mono text-[11px] tabular-nums text-emerald-700">
-            {formatMoneyMinor(caseData.recoveredMinor)}
-          </span>
-        ) : null}
-      </div>
-      <div className="flex items-center gap-1">
-        <select
-          aria-label="Case status"
-          className="h-6 rounded border border-neutral-200 bg-white px-1 text-[11px] text-neutral-700 disabled:opacity-50"
-          value={status}
-          disabled={busy}
-          onChange={(e) =>
-            setStatus.mutate({
-              gcSubscriptionId: links.gcSubscriptionId,
-              status: e.target.value,
-              links: linkPayload,
-            })
-          }
-        >
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABEL[s]}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Case owner"
-          className="h-6 max-w-[7rem] rounded border border-neutral-200 bg-white px-1 text-[11px] text-neutral-700 disabled:opacity-50"
-          value={caseData?.ownerUserId ?? ''}
-          disabled={busy}
-          onChange={(e) =>
-            assign.mutate({
-              gcSubscriptionId: links.gcSubscriptionId,
-              ownerUserId: e.target.value || null,
-              links: linkPayload,
-            })
-          }
-        >
-          <option value="">Unassigned</option>
-          {assignableUsers.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      {status !== 'recovered' ? (
-        <div className="flex items-center gap-1">
-          <SendRecoveryDialog context={sendContext} />
-          <RecordRecoveryDialog links={links} defaultAmountMinor={links.openingShortfallMinor} />
-        </div>
+      {caseData ? (
+        <>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <Badge tone={STATUS_TONE[caseData.status] ?? 'neutral'}>
+              {STATUS_LABEL[caseData.status] ?? caseData.status}
+            </Badge>
+            {summary ? <Badge tone={summary.tone}>{summary.label}</Badge> : null}
+          </div>
+          {caseData.status === 'recovered' && caseData.recoveredMinor ? (
+            <span className="font-mono text-[11px] tabular-nums text-emerald-700">
+              {formatMoneyMinor(caseData.recoveredMinor)} recovered
+            </span>
+          ) : caseData.messageCount > 0 ? (
+            <span className="text-[11px] text-neutral-500">
+              {caseData.messageCount} message{caseData.messageCount === 1 ? '' : 's'} sent
+            </span>
+          ) : null}
+        </>
+      ) : (
+        <span className="text-[11px] text-neutral-400">No recovery case yet</span>
+      )}
+
+      {caseData || canWrite ? (
+        <Button type="button" size="sm" variant="secondary" disabled={openCase.isPending} onClick={open}>
+          {openCase.isPending ? 'Opening…' : caseData ? 'Open case' : 'Start recovery'}
+        </Button>
+      ) : null}
+
+      {openCaseId ? (
+        <CaseDetailModal
+          caseId={openCaseId}
+          canWrite={canWrite}
+          onClose={() => {
+            setOpenCaseId(null)
+            void utils.finance.directDebit.cases.forSubscriptions.invalidate()
+          }}
+        />
       ) : null}
     </div>
   )

@@ -44,6 +44,48 @@ const STATUS_LABEL: Record<string, string> = {
 
 type Channel = 'email' | 'sms'
 
+/** The one-line "are they on the automated reminder system?" answer — the exact
+ *  thing the operator asked to see at a glance. Pure. */
+function automationStatusLine(d: Detail): { text: string; tone: 'on' | 'off' | 'warn' } {
+  if (d.status === 'recovered') return { text: 'Recovered — automated reminders stopped', tone: 'off' }
+  if (d.status === 'written_off') return { text: 'Written off — automated reminders stopped', tone: 'off' }
+  const armed = d.autoChase && (d.sendEmails || d.sendTexts)
+  if (!armed) return { text: 'Automated reminders are OFF for this person', tone: 'off' }
+  if (!d.setupLinkUrl)
+    return {
+      text: 'Automated reminders ON — but nothing sends until a re-signup link is added below',
+      tone: 'warn',
+    }
+  return {
+    text: `On the automated reminder system — step ${d.escalationStep + 1}${
+      d.nextAutoMessageAt ? ` · next message ${formatDate(d.nextAutoMessageAt)}` : ' · scheduling'
+    }`,
+    tone: 'on',
+  }
+}
+
+const STATUS_BANNER_CLS: Record<'on' | 'off' | 'warn', string> = {
+  on: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  off: 'border-neutral-200 bg-neutral-50 text-neutral-600',
+  warn: 'border-amber-200 bg-amber-50 text-amber-800',
+}
+
+/** Read-only automation + status summary for staff who cannot write (the send
+ *  + control panels are hidden for them, but they should still see whether the
+ *  person is on the reminder system). */
+function ReadonlyAutomationSummary({ detail: d }: { detail: Detail }) {
+  const line = automationStatusLine(d)
+  return (
+    <section className={`rounded-lg border p-3 ${STATUS_BANNER_CLS[line.tone]}`}>
+      <p className="text-sm font-medium">{line.text}</p>
+      <p className="mt-0.5 text-xs opacity-80">
+        {d.messages.length} message{d.messages.length === 1 ? '' : 's'} sent · outstanding{' '}
+        {formatMoneyMinor(d.outstandingMinor)}
+      </p>
+    </section>
+  )
+}
+
 export function CaseDetailModal({
   caseId,
   canWrite,
@@ -83,8 +125,14 @@ export function CaseDetailModal({
       ) : (
         <div className="space-y-5">
           <HeaderRow detail={d} />
+          {/* Automation first (turn reminders on/off), then the manual composer,
+              then the full history — matching how an agent works a case. */}
+          {canWrite ? (
+            <AutomaticRecoveryPanel detail={d} onChange={refresh} />
+          ) : (
+            <ReadonlyAutomationSummary detail={d} />
+          )}
           {canWrite ? <SendPanel detail={d} onSent={refresh} /> : null}
-          {canWrite ? <AutomaticRecoveryPanel detail={d} onChange={refresh} /> : null}
           <HistoryPanel messages={d.messages} />
         </div>
       )}
@@ -358,21 +406,22 @@ function AutomaticRecoveryPanel({ detail: d, onChange }: { detail: Detail; onCha
 
   const busy = update.isPending || markUpToDate.isPending
   const open = d.status === 'new' || d.status === 'chasing' || d.status === 'escalated'
+  const statusLine = automationStatusLine(d)
 
   return (
     <section className="rounded-lg border border-neutral-200 p-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-neutral-900">Automatic recovery</h3>
+        <h3 className="text-sm font-semibold text-neutral-900">Automated reminders</h3>
         {open ? (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <Button
               type="button"
               size="sm"
-              variant="secondary"
+              variant={d.autoChase ? 'secondary' : 'default'}
               disabled={busy}
               onClick={() => update.mutate({ caseId: d.id, autoChase: !d.autoChase })}
             >
-              {d.autoChase ? 'Pause' : 'Resume'}
+              {d.autoChase ? 'Turn reminders OFF' : 'Turn reminders ON'}
             </Button>
             <Button
               type="button"
@@ -380,14 +429,21 @@ function AutomaticRecoveryPanel({ detail: d, onChange }: { detail: Detail; onCha
               disabled={busy}
               onClick={() => markUpToDate.mutate({ caseId: d.id })}
             >
-              Up to date ✓
+              Mark up to date
             </Button>
           </div>
         ) : null}
       </div>
 
-      <p className="mt-0.5 text-xs text-neutral-500">
-        The escalating chase sends each enabled channel a more-serious message every{' '}
+      {/* The at-a-glance answer to "are they on the automated system?" */}
+      <p
+        className={`mt-2 rounded-md border px-3 py-2 text-sm font-medium ${STATUS_BANNER_CLS[statusLine.tone]}`}
+      >
+        {statusLine.text}
+      </p>
+
+      <p className="mt-2 text-xs text-neutral-500">
+        When on, the escalating chase sends each enabled channel a more-serious message every{' '}
         {d.cadenceDays} day{d.cadenceDays === 1 ? '' : 's'} until they pay or set the Direct Debit
         back up. Nothing sends until the re-signup link is set.
       </p>
