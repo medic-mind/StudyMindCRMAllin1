@@ -9,6 +9,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { useComposeEmail } from '@/components/mail/compose-email'
 import { trpc } from '@/lib/trpc/client'
@@ -122,6 +123,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   const flat = useMemo(() => [...commands, ...entityRows], [commands, entityRows])
 
+  // The palette renders in a portal on document.body (below). Guard against the
+  // brief server/first-client render where document isn't ready.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+
   const [highlight, setHighlight] = useState(0)
   useEffect(() => {
     setHighlight(0)
@@ -152,14 +158,20 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     }
   }
 
-  if (!open) return null
+  if (!open || !mounted) return null
 
-  return (
+  // Portal to document.body: the top bar sets `backdrop-blur`, and a
+  // backdrop-filter on an ancestor makes it the containing block for
+  // position:fixed descendants — which trapped this overlay inside the 64px
+  // top bar (a "big grey box" you couldn't click off below the bar). Rendering
+  // on <body> restores true viewport-fixed positioning so the backdrop covers
+  // the whole screen and a click anywhere outside the panel closes it.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
-      className="fixed inset-0 z-50 flex items-start justify-center bg-neutral-900/40 px-4 pt-[15vh] backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-neutral-900/30 px-4 pt-[15vh]"
       onClick={(e) => {
         if (e.target === e.currentTarget) onOpenChange(false)
       }}
@@ -225,6 +237,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           ↑↓ navigate · Enter run · Esc close
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
