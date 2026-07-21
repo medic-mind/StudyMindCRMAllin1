@@ -243,6 +243,7 @@ export const EVENT_NAMES = [
   'lead.maintenance_requested',
   'lead.maintenance_completed',
   'lead.source_archived',
+  'lead.source_deleted',
   'lead.rule_created',
   'lead.rule_updated',
   'lead.rule_archived',

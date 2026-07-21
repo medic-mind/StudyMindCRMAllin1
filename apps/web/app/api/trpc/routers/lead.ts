@@ -568,5 +568,28 @@ export const leadRouter = router({
         })
         return { id: input.id }
       }),
+
+    // Permanently delete a lead-source API key. The key stops working
+    // immediately and the row is removed. Past leads captured with this key are
+    // preserved — their `sourceId` FK is `onDelete: SetNull`, so they simply
+    // detach rather than being deleted. Distinct from `archive` (reversible).
+    delete: auditedProcedure
+      .input(z.object({ id: z.string() }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCanManageSources(user.role)
+        const existing = await ctx.db.leadSource.findUnique({
+          where: { id: input.id },
+          select: { id: true, name: true },
+        })
+        if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+        await ctx.db.leadSource.delete({ where: { id: input.id } })
+        await ctx.audit({
+          action: 'lead.source_deleted',
+          target: { type: 'LeadSource', id: input.id },
+          after: { name: existing.name, deleted: true },
+        })
+        return { id: input.id }
+      }),
   }),
 })

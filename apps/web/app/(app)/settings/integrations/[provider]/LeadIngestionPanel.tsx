@@ -2,7 +2,7 @@
 
 // Contact-Form-7 / universal lead ingestion control panel (ADR 0023). Shown on
 // Settings → Integrations → Lead webhook. Surfaces the copy-paste endpoint URL,
-// per-website API keys (create / rotate / archive — raw key shown once), and a
+// per-website API keys (create / rotate / archive / delete — raw key shown once), and a
 // one-click test-lead generator. Manager+ (the page already gates this).
 
 import { useEffect, useState } from 'react'
@@ -68,6 +68,13 @@ export function LeadIngestionPanel() {
   const archive = trpc.lead.sources.archive.useMutation({
     onSuccess: async () => {
       toast.success('Source archived')
+      await utils.lead.sources.list.invalidate()
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const remove = trpc.lead.sources.delete.useMutation({
+    onSuccess: async () => {
+      toast.success('API key deleted')
       await utils.lead.sources.list.invalidate()
     },
     onError: (e) => toast.error(e.message),
@@ -189,24 +196,41 @@ export function LeadIngestionPanel() {
                     )}
                   </Td>
                   <Td>
-                    {!s.archived ? (
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          className="text-xs text-primary-700 hover:underline"
-                          onClick={() => rotate.mutate({ id: s.id })}
-                        >
-                          Rotate
-                        </button>
-                        <button
-                          type="button"
-                          className="text-xs text-red-600 hover:underline"
-                          onClick={() => archive.mutate({ id: s.id })}
-                        >
-                          Archive
-                        </button>
-                      </div>
-                    ) : null}
+                    <div className="flex justify-end gap-2">
+                      {!s.archived ? (
+                        <>
+                          <button
+                            type="button"
+                            className="text-xs text-primary-700 hover:underline"
+                            onClick={() => rotate.mutate({ id: s.id })}
+                          >
+                            Rotate
+                          </button>
+                          <button
+                            type="button"
+                            className="text-xs text-neutral-600 hover:underline"
+                            onClick={() => archive.mutate({ id: s.id })}
+                          >
+                            Archive
+                          </button>
+                        </>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="text-xs text-red-600 hover:underline"
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Delete the API key “${s.name}”? It stops working immediately and can't be undone. Past leads are kept.`,
+                            )
+                          ) {
+                            remove.mutate({ id: s.id })
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </Td>
                 </Tr>
               ))}
