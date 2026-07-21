@@ -133,12 +133,6 @@ export default async function FamilyDetailPage({
           }))}
           currentBillingContactId={data.billingContact?.id ?? null}
         />
-        <Link
-          href={`/finance/refunds/new?familyId=${data.id}`}
-          className="inline-flex items-center rounded-md bg-neutral-100 px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200 h-8"
-        >
-          Issue refund
-        </Link>
         <ReconcileNowButton familyId={data.id} />
       </section>
 

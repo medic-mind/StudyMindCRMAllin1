@@ -296,9 +296,6 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             {contact.family && (
               <SendPaymentLinkButton familyId={contact.family.id} contactId={contact.id} />
             )}
-            <Link href={`/finance/refunds/new?contactId=${contact.id}`} className={ACTION_LINK_CLS}>
-              Issue refund
-            </Link>
             {contact.family && (
               <Link href={`/contacts/families/${contact.family.id}`} className={ACTION_LINK_CLS}>
                 Open family
