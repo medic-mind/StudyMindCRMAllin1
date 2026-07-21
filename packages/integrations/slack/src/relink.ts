@@ -64,6 +64,11 @@ export function isUnrescuableParkedRow(input: {
 /** Outcome of processing one parked row. */
 type RelinkOutcome = 'linked' | 'dismissed' | 'parked'
 
+/** AI confidence at/above which we trust its named customer enough to
+ *  auto-create them from a parked mention in any channel (mirrors the live
+ *  handler's SLACK_MATCH_THRESHOLD; kept local to avoid a jobs↔relink cycle). */
+const AI_CONFIDENT_THRESHOLD = 0.5
+
 /** The slice of an `UnassignedSummary.parsed` blob the relink needs. */
 export interface ParsedCandidate {
   name: string | null
@@ -276,18 +281,21 @@ async function relinkOneRow(
       }
     }
 
-    // Auto-onboard (ADR 0043): a parked call log that STILL matches nobody
-    // creates the customer — phone anchors, else email, else (call-log
-    // channels only) a full name — so the tray backlog drains into real
-    // contact records instead of waiting forever. Shared lines stay parked.
+    // Auto-onboard (ADR 0043): a parked mention that STILL matches nobody
+    // creates the customer — phone anchors, else email, else a full name — so
+    // the tray backlog drains into real contact records instead of waiting
+    // forever. Name-only creation unlocks in a call-log channel OR when the AI
+    // was confident about the customer it named (operator direction 2026-07:
+    // trust the AI's good guess). Shared lines stay parked (§41.1).
     const { channelName } = await resolveSlackNames({ channelId: row.channelId })
+    const aiWasConfident = row.confidence != null && row.confidence >= AI_CONFIDENT_THRESHOLD
     if (!target && row.messageText) {
       target = await autoOnboardContactForSlackMessage({
         messageText: row.messageText,
         phone: candidate.phone ?? fromText.phone,
         email: candidate.email,
         nameCandidates: [...(candidate.name ? [candidate.name] : []), ...extractedNames],
-        allowNameOnly: isCallLogChannel(channelName),
+        allowNameOnly: isCallLogChannel(channelName) || aiWasConfident,
         requestId: `slack-relink:${row.id}`,
       })
     }

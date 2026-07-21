@@ -365,7 +365,11 @@ export const slackEventReceived = inngest.createFunction(
             : []),
           ...nameCandidates,
         ],
-        allowNameOnly: isCallLogChannel(channelName),
+        // The AI already cleared the confidence bar (§3 amendment, operator
+        // direction 2026-07): trust its good guess to create the customer if
+        // they don't exist yet, in ANY channel — not just call-log channels.
+        // Own-brand + noise + full-name guards still apply inside onboard.
+        allowNameOnly: true,
         requestId: eventId,
       })
     })

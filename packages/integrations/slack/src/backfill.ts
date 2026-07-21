@@ -667,7 +667,9 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
         ...(parsed.candidateContactIdentifier.name ? [parsed.candidateContactIdentifier.name] : []),
         ...nameCandidates,
       ],
-      allowNameOnly: isCallLogChannel(channelName),
+      // AI already cleared the confidence bar — trust its guess to create the
+      // customer in any channel (operator direction 2026-07). Guards inside.
+      allowNameOnly: true,
       requestId: input.requestId,
     })
   }

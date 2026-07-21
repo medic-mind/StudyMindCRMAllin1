@@ -117,8 +117,10 @@ export async function autoOnboardContactForSlackMessage(input: {
   phone: string | null
   email: string | null
   nameCandidates: readonly string[]
-  /** True for call-log channels (#…callsummaries/#…complaints) — unlocks the
-   *  full-name-only tier. */
+  /** Unlocks the full-name-only creation tier. True for call-log channels
+   *  (#…callsummaries/#…complaints) AND — since the 2026-07 operator direction
+   *  — whenever the AI was confident about the customer it named, so a good AI
+   *  guess creates the contact in any channel. */
   allowNameOnly?: boolean
   requestId: string
 }): Promise<SlackLinkTarget | null> {
