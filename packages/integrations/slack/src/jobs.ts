@@ -527,6 +527,9 @@ export const aiDriftTriageReminder = inngest.createFunction(
 
 // ADR 0017: 90-day historic backfill on first-connect.
 import { BACKFILL_FUNCTIONS as SLACK_BACKFILL_FUNCTIONS } from './backfill'
+// ADR 0042 amendment: retroactively open complaints for existing complaint-
+// channel mentions (admin button).
+import { COMPLAINT_BACKFILL_FUNCTIONS } from './backfill-complaints'
 // ADR 0034 amendment: recurring auto-relink of parked mentions + its on-demand
 // twin (the "Re-run Slack matching now" button).
 import { slackRelinkNow, slackRelinkUnassigned } from './relink'
@@ -541,4 +544,5 @@ export const FUNCTIONS = [
   slackRelinkNow,
   ...SLACK_SYNC_FUNCTIONS,
   ...SLACK_BACKFILL_FUNCTIONS,
+  ...COMPLAINT_BACKFILL_FUNCTIONS,
 ] as const

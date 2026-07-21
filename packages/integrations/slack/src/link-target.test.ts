@@ -123,7 +123,11 @@ describe('resolveSlackLinkTargetFromNames', () => {
     })
   })
 
-  it('a person + an UNRELATED school is ambiguous — parks (null)', async () => {
+  it('a person + an unrelated org collapses to the single person (the mention is about them)', async () => {
+    // A call summary that names the customer AND some other org in passing
+    // must still land on the customer — exactly ONE person resolved, so the
+    // message is unambiguously about them. Previously this parked, which is a
+    // big source of the stuck-tray backlog.
     matchContact.mockImplementation(async (_db: unknown, cand: { name?: string | null }) =>
       cand.name === 'Aanya Sharma'
         ? { contactId: 'c1', via: 'name', reason: 'matched' }
@@ -136,7 +140,24 @@ describe('resolveSlackLinkTargetFromNames', () => {
     )
     baFindFirst.mockResolvedValue(null) // Aanya belongs to no school
 
-    expect(await resolveSlackLinkTargetFromNames(['Aanya Sharma', 'Elm Grove'])).toBeNull()
+    const t = await resolveSlackLinkTargetFromNames(['Aanya Sharma', 'Elm Grove'])
+    expect(t).toEqual({ kind: 'contact', contactId: 'c1', via: 'name' })
+  })
+
+  it('parks (null) when only orgs resolve and there are two different ones', async () => {
+    matchContact.mockResolvedValue({ contactId: null, via: null, reason: 'no_match' })
+    matchAccount.mockImplementation(async (_db: unknown, cand: { name?: string | null }) => {
+      if (cand.name === 'Oakwood Primary')
+        return { businessAccountId: 'a1', via: 'name', reason: 'matched' }
+      if (cand.name === 'Elm Grove')
+        return { businessAccountId: 'a2', via: 'name', reason: 'matched' }
+      return { businessAccountId: null, via: null, reason: 'no_match' }
+    })
+    baFindFirst.mockResolvedValue(null)
+
+    expect(
+      await resolveSlackLinkTargetFromNames(['Oakwood Primary', 'Elm Grove']),
+    ).toBeNull()
   })
 
   it('returns null when nothing resolves (empty list, or no matches)', async () => {

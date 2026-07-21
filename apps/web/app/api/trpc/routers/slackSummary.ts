@@ -298,5 +298,36 @@ export const slackSummaryRouter = router({
         })
         return { ok: true }
       }),
+
+    /**
+     * Bulk-dismiss parked mentions in one action — the human complement to the
+     * cron's auto-dismiss, so an agent can clear a screen of noise/dead rows at
+     * once instead of X-ing them one by one. Only clears rows still open; caps
+     * the batch so it stays a single fast transaction. One audit row per cleared
+     * mention (§20/§27) so the bulk action stays fully accountable.
+     */
+    bulkDismiss: auditedProcedure
+      .input(z.object({ ids: z.array(z.string()).min(1).max(200) }))
+      .mutation(async ({ ctx, input }) => {
+        const user = requireUser(ctx)
+        assertCanTriage(user.role)
+        const rows = await ctx.db.unassignedSummary.findMany({
+          where: { id: { in: input.ids }, resolvedAt: null },
+          select: { id: true, channelId: true },
+        })
+        if (rows.length === 0) return { dismissed: 0 }
+        await ctx.db.unassignedSummary.updateMany({
+          where: { id: { in: rows.map((r) => r.id) }, resolvedAt: null },
+          data: { resolvedAt: new Date(), resolvedById: user.id },
+        })
+        for (const row of rows) {
+          await ctx.audit({
+            action: 'slack_summary.dismissed',
+            target: { type: 'UnassignedSummary', id: row.id },
+            after: { channelId: row.channelId, bulk: true },
+          })
+        }
+        return { dismissed: rows.length }
+      }),
   }),
 })

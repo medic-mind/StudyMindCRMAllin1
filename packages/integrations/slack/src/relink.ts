@@ -30,8 +30,39 @@ import {
   targetForeignKey,
 } from './link-target'
 import { resolveSlackNames, resolveThreadParentText } from './names'
+import { isSkippableSlackNoise } from './noise'
+import { isOwnBrandName, loadOwnBrands, type OwnBrands } from './own-brands'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
+
+/**
+ * A parked row is UNRESCUABLE when there is genuinely nothing to match on and
+ * never will be: no AI candidate name/email/phone, no name extractable from the
+ * archived text (after own-brand filtering), no email/phone in the text, and the
+ * text is either empty or pure Slack noise (an ack, an emoji, a bare link). A
+ * human could not action such a row either, so the relink cron auto-dismisses it
+ * (audited) to keep the tray a live worklist rather than an ever-growing
+ * graveyard — the "smart dismiss" half of triage. A substantive but nameless
+ * message (a real note that just doesn't name anyone the matcher can read) is
+ * NOT unrescuable — it stays for a human to assign by hand (§3). Pure so it is
+ * unit-tested in isolation.
+ */
+export function isUnrescuableParkedRow(input: {
+  candidate: { name: string | null; email: string | null; phone: string | null }
+  messageText: string | null
+  extractedNames: readonly string[]
+  textSignals: { email: string | null; phone: string | null }
+}): boolean {
+  if (input.candidate.name || input.candidate.email || input.candidate.phone) return false
+  if (input.extractedNames.length > 0) return false
+  if (input.textSignals.email || input.textSignals.phone) return false
+  const text = input.messageText?.trim() ?? ''
+  if (text.length === 0) return true
+  return isSkippableSlackNoise(text)
+}
+
+/** Outcome of processing one parked row. */
+type RelinkOutcome = 'linked' | 'dismissed' | 'parked'
 
 /** The slice of an `UnassignedSummary.parsed` blob the relink needs. */
 export interface ParsedCandidate {
@@ -114,12 +145,16 @@ export const RELINK_SCAN_CAP = 2000
  */
 export async function relinkParkedRowsOnce(
   actorId: string,
-): Promise<{ scanned: number; linked: number; errors: number }> {
+): Promise<{ scanned: number; linked: number; dismissed: number; errors: number }> {
   let scanned = 0
   let linked = 0
+  let dismissed = 0
   let errors = 0
   let threadBudget = RELINK_THREAD_FETCHES
   let cursorId: string | null = null
+  // Own-brand catalogue is process-cached; load once per tick so the name
+  // re-scan filters out "Medic Mind" & co exactly like the live ingest paths.
+  const brands = await loadOwnBrands()
 
   while (scanned < RELINK_SCAN_CAP) {
     const rows: RelinkRow[] = await db.unassignedSummary.findMany({
@@ -144,12 +179,13 @@ export async function relinkParkedRowsOnce(
     for (const row of rows) {
       scanned += 1
       try {
-        const didLink = await relinkOneRow(row, actorId, () => {
+        const outcome = await relinkOneRow(row, actorId, brands, () => {
           if (threadBudget <= 0) return false
           threadBudget -= 1
           return true
         })
-        if (didLink) linked += 1
+        if (outcome === 'linked') linked += 1
+        else if (outcome === 'dismissed') dismissed += 1
       } catch (err) {
         errors += 1
         logger.warn(
@@ -161,7 +197,7 @@ export async function relinkParkedRowsOnce(
     if (rows.length < RELINK_BATCH) break
   }
 
-  return { scanned, linked, errors }
+  return { scanned, linked, dismissed, errors }
 }
 
 interface RelinkRow {
@@ -175,12 +211,18 @@ interface RelinkRow {
   createdAt: Date
 }
 
-/** Try to resolve + archive ONE parked row. Returns true when it linked. */
+/**
+ * Try to resolve + archive ONE parked row. Returns:
+ *   - 'linked'    → matched a contact/account and wrote the slack_summary
+ *   - 'dismissed' → unrescuable (no identity, dead/noise text) → cleared
+ *   - 'parked'    → still ambiguous / awaiting its contact → left for a human
+ */
 async function relinkOneRow(
   row: RelinkRow,
   actorId: string,
+  brands: OwnBrands,
   takeThreadBudget: () => boolean,
-): Promise<boolean> {
+): Promise<RelinkOutcome> {
   {
     const cand = candidateFromParsed(row.parsed)
     // Merge the stored AI candidate with a fresh deterministic scan of the
@@ -203,10 +245,15 @@ async function relinkOneRow(
     // extraction existed carry name:null and could never be rescued. Re-scan
     // the archived message text for name candidates and run them through the
     // same unambiguous-only resolver — so the historic backlog self-heals
-    // without AI.
-    if (!target && row.messageText) {
-      const names = extractNameCandidates(row.messageText)
-      if (names.length > 0) target = await resolveSlackLinkTargetFromNames(names)
+    // without AI. Own-brand tokens ("… Medic Mind") are filtered FIRST, exactly
+    // as the live webhook + backfill do (jobs.ts / backfill.ts) — without this
+    // the relink was the one path that let a brand name resolve as a second
+    // entity and park an otherwise-linkable mention (the "Paula Baker" bug).
+    const extractedNames = row.messageText
+      ? extractNameCandidates(row.messageText).filter((n) => !isOwnBrandName(n, brands))
+      : []
+    if (!target && extractedNames.length > 0) {
+      target = await resolveSlackLinkTargetFromNames(extractedNames)
     }
 
     // Thread-aware retry: a reply that named no customer inherits its thread
@@ -239,16 +286,39 @@ async function relinkOneRow(
         messageText: row.messageText,
         phone: candidate.phone ?? fromText.phone,
         email: candidate.email,
-        nameCandidates: [
-          ...(candidate.name ? [candidate.name] : []),
-          ...extractNameCandidates(row.messageText),
-        ],
+        nameCandidates: [...(candidate.name ? [candidate.name] : []), ...extractedNames],
         allowNameOnly: isCallLogChannel(channelName),
         requestId: `slack-relink:${row.id}`,
       })
     }
 
-    if (!target) return false
+    if (!target) {
+      // Nothing linked. If the row is genuinely unrescuable (no identity + dead
+      // or pure-noise text) auto-dismiss it so the tray reflects real work; a
+      // substantive nameless message stays parked for a human (§3).
+      if (
+        isUnrescuableParkedRow({
+          candidate,
+          messageText: row.messageText,
+          extractedNames,
+          textSignals: { email: fromText.email, phone: fromText.phone },
+        })
+      ) {
+        await db.unassignedSummary.update({
+          where: { id: row.id },
+          data: { resolvedAt: new Date() },
+        })
+        await writeAuditLogEntry(db, {
+          actorId,
+          action: 'slack_summary.dismissed',
+          target: { type: 'UnassignedSummary', id: row.id },
+          requestId: `slack-relink:${row.id}`,
+          after: { auto: true, reason: 'unrescuable', channelId: row.channelId },
+        })
+        return 'dismissed'
+      }
+      return 'parked'
+    }
 
     // Idempotent: a row may have been linked by a concurrent pass, or a
     // prior tick that failed after the interaction write. Dedupe on the
@@ -318,7 +388,7 @@ async function relinkOneRow(
       where: { id: row.id },
       data: { resolvedAt: new Date() },
     })
-    return true
+    return 'linked'
   }
 }
 

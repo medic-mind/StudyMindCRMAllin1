@@ -322,6 +322,27 @@ export const adminBackfillRouter = router({
     }),
   }),
 
+  // ADR 0042 amendment — retroactively open Complaints for complaint-channel
+  // Slack mentions already archived in the CRM (on/after the go-live cutoff).
+  // The live auto-raise only fires on first ingest, so existing mentions never
+  // became Complaint rows; this walks them and (idempotently) opens the
+  // complaints. Manager+ (a workspace-wide reprocess). Idempotent on
+  // Complaint.sourceKey, so it is safe to run repeatedly.
+  slackComplaints: router({
+    reprocess: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      if (!READ_ROLES.has(user.role)) throw new TRPCError({ code: 'FORBIDDEN' })
+      const { inngest } = await import('@studymind/jobs')
+      await inngest.send({ name: 'slack/backfill-complaints.requested', data: {} })
+      await ctx.audit({
+        action: 'slack.complaint_reprocess_requested',
+        target: { type: 'System', id: 'slack-complaint-reprocess' },
+        after: { initiatedBy: user.id },
+      })
+      return { ok: true as const }
+    }),
+  }),
+
   /** Running jobs for the current user — drives the progress banner. */
   mine: protectedProcedure.query(async ({ ctx }) => {
     const user = requireUser(ctx)

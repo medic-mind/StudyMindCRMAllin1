@@ -10,10 +10,28 @@
 
 import { SLACK_EMOJI_CODE_RE, slackTextToPlain } from './extract'
 
-/** Mentions older than this never auto-open a NEW complaint — the 90-day
- *  backfill and deep history pulls must not flood the Active queue with
- *  complaints that were resolved long ago outside the CRM. */
+/** A mention is "live" (worth auto-raising as a fresh complaint the moment it
+ *  arrives) when it is at most this old. This is the fast path for real-time
+ *  ingest; older messages are judged against the go-live cutoff below. */
 export const COMPLAINT_AUTO_RAISE_HORIZON_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Go-live cutoff (mirrors the DD-issues cutoff, §9). A backfill/pull must be
+ *  able to open complaints for EVERY post-go-live complaint-channel message —
+ *  not just the last 7 days — so historic-but-current complaints stop being
+ *  silently archived as mere mentions. It must NOT dredge up genuinely ancient
+ *  (pre-CRM) history, so anything before this date is still ignored unless it
+ *  is within the live horizon. Overridable via `COMPLAINT_AUTO_RAISE_CUTOFF_DATE`. */
+export const DEFAULT_COMPLAINT_AUTO_RAISE_CUTOFF = new Date('2026-07-01T00:00:00.000Z')
+
+/** Resolve the cutoff from a raw env value, falling back to the go-live default
+ *  when unset/unparseable. Accepts `YYYY-MM-DD` or a full ISO timestamp. */
+export function resolveComplaintAutoRaiseCutoff(raw?: string | null): Date {
+  if (!raw) return DEFAULT_COMPLAINT_AUTO_RAISE_CUTOFF
+  const trimmed = raw.trim()
+  if (!trimmed) return DEFAULT_COMPLAINT_AUTO_RAISE_CUTOFF
+  const parsed = new Date(trimmed)
+  return Number.isNaN(parsed.getTime()) ? DEFAULT_COMPLAINT_AUTO_RAISE_CUTOFF : parsed
+}
 
 /** AI slack-summary category → Complaint preset category (complaint.ts router
  *  PRESET_CATEGORIES). Unknown/absent categories stay null — staff pick one. */
@@ -42,19 +60,30 @@ export function isCallLogChannel(channelName: string | null | undefined): boolea
  *  beyond this the ts is garbage and the horizon must not be bypassed. */
 const FUTURE_SKEW_TOLERANCE_MS = 24 * 60 * 60 * 1000
 
-/** Should this linked mention auto-open a Complaint? Contact-linked mentions
- *  only (an org-only mention has nobody to log the complaint against), in a
- *  complaint-flavoured channel, and recent enough to still be live. */
+/**
+ * Should this linked mention auto-open a Complaint? Contact-linked mentions only
+ * (an org-only mention has nobody to log the complaint against), in a
+ * complaint-flavoured channel, and either still LIVE (within the 7-day horizon,
+ * the real-time fast path) OR on/after the go-live cutoff (so a backfill/pull
+ * can open complaints for every post-go-live message, not just the last week).
+ * A message timestamped implausibly far in the future is rejected as garbage.
+ */
 export function shouldAutoRaiseComplaint(input: {
   channelName: string | null | undefined
   contactId: string | null | undefined
   occurredAt: Date
   now: Date
+  /** Go-live cutoff; defaults to the constant when a caller doesn't supply one. */
+  cutoff?: Date
 }): boolean {
   if (!isComplaintChannel(input.channelName)) return false
   if (!input.contactId) return false
   const age = input.now.getTime() - input.occurredAt.getTime()
-  return age <= COMPLAINT_AUTO_RAISE_HORIZON_MS && age >= -FUTURE_SKEW_TOLERANCE_MS
+  if (age < -FUTURE_SKEW_TOLERANCE_MS) return false
+  const cutoff = input.cutoff ?? DEFAULT_COMPLAINT_AUTO_RAISE_CUTOFF
+  const recent = age <= COMPLAINT_AUTO_RAISE_HORIZON_MS
+  const postCutoff = input.occurredAt.getTime() >= cutoff.getTime()
+  return recent || postCutoff
 }
 
 export interface ComplaintDraft {

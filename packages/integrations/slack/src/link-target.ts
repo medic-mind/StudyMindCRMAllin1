@@ -89,46 +89,42 @@ export async function resolveSlackLinkTarget(
 
 /**
  * Resolve a list of deterministically-extracted name candidates to ONE target.
- * Each candidate goes through the same unambiguous-only resolver; the link is
- * made only when every candidate that resolves at all points at the SAME
- * entity. Two candidates resolving to two different people is ambiguity at the
- * message level — we park rather than guess (§3), exactly like the matcher's
- * own take:2 guard. Free (no AI); powers name-only matching when no AI
- * provider is configured.
+ * Each candidate goes through the same unambiguous-only resolver, then we
+ * collapse the results:
+ *
+ *   - Two or more DIFFERENT people (contacts) named in one message is genuine
+ *     ambiguity — we don't know which the mention is really about, so we park
+ *     it for a human (§3, "never guess between two people").
+ *   - Exactly ONE person resolved is who the message is about. Any orgs that
+ *     also resolved (the person's own school, a partner mentioned in passing,
+ *     a co-named tutor/staff member who isn't a contact) collapse to that one
+ *     person — the contact is the more specific, correct home and already
+ *     carries its own school stamp. This is the fix for "a call summary that
+ *     names the parent AND their school (or a tutor) never linked": previously
+ *     any second resolving entity parked the whole message.
+ *   - No person and exactly one org → file it on that org's timeline.
+ *   - No person and two+ orgs (or nothing) → unresolved / ambiguous.
+ *
+ * Free (no AI); powers name-only matching when no AI provider is configured.
  */
 export async function resolveSlackLinkTargetFromNames(
   names: readonly string[],
 ): Promise<SlackLinkTarget | null> {
-  let resolved: SlackLinkTarget | null = null
+  const contactsById = new Map<string, SlackLinkTarget>()
+  const accountsById = new Map<string, SlackLinkTarget>()
   for (const name of names) {
     const target = await resolveSlackLinkTarget({ name, email: null, phone: null })
     if (!target) continue
-    if (!resolved) {
-      resolved = target
-      continue
-    }
-    if (resolved.kind === target.kind) {
-      const same =
-        resolved.contactId === target.contactId &&
-        resolved.businessAccountId === target.businessAccountId
-      if (!same) return null // two candidates → two different entities: ambiguous
-      continue
-    }
-    // Mixed kinds are consistent when the person belongs to the named school
-    // ("Aanya Sharma at Oakwood Primary") — keep the more specific contact
-    // target. Anything else is ambiguous.
-    const contactTarget: SlackLinkTarget = resolved.kind === 'contact' ? resolved : target
-    const accountTarget: SlackLinkTarget = resolved.kind === 'account' ? resolved : target
-    if (
-      contactTarget.businessAccountId &&
-      contactTarget.businessAccountId === accountTarget.businessAccountId
-    ) {
-      resolved = contactTarget
-      continue
-    }
-    return null
+    if (target.contactId) contactsById.set(target.contactId, target)
+    else if (target.businessAccountId) accountsById.set(target.businessAccountId, target)
   }
-  return resolved
+  // Two or more distinct people named → genuine ambiguity, park (§3).
+  if (contactsById.size >= 2) return null
+  // Exactly one person → that's the subject; orgs collapse into them.
+  if (contactsById.size === 1) return [...contactsById.values()][0]!
+  // No person, exactly one org named → file on that org.
+  if (accountsById.size === 1) return [...accountsById.values()][0]!
+  return null
 }
 
 /** The interaction foreign keys for a target — `contactId` and/or

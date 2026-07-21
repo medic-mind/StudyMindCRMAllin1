@@ -61,13 +61,52 @@ describe('shouldAutoRaiseComplaint', () => {
     ).toBe(false)
   })
 
-  it('never raises past the horizon — backfills must not flood the queue', () => {
-    const ancient = new Date(now.getTime() - COMPLAINT_AUTO_RAISE_HORIZON_MS - 1)
+  it('raises an old-but-post-go-live mention (the backfill/reprocess case, not just the last 7 days)', () => {
+    // Well past the 7-day live horizon, but on/after the go-live cutoff — this
+    // is the fix: existing complaint-channel mentions since go-live must be
+    // openable as Complaints, not silently archived.
+    const oldButLive = new Date(now.getTime() - COMPLAINT_AUTO_RAISE_HORIZON_MS - 5 * 24 * 60 * 60 * 1000)
+    expect(oldButLive.getTime()).toBeGreaterThanOrEqual(new Date('2026-07-01T00:00:00Z').getTime())
     expect(
       shouldAutoRaiseComplaint({
         channelName: 'complaintcallsummaries',
         contactId: 'c1',
-        occurredAt: ancient,
+        occurredAt: oldButLive,
+        now,
+      }),
+    ).toBe(true)
+  })
+
+  it('never raises for genuinely pre-go-live (pre-CRM) history — backfills must not flood the queue', () => {
+    const preCutoff = new Date('2026-06-15T12:00:00Z')
+    expect(
+      shouldAutoRaiseComplaint({
+        channelName: 'complaintcallsummaries',
+        contactId: 'c1',
+        occurredAt: preCutoff,
+        now,
+      }),
+    ).toBe(false)
+  })
+
+  it('honours an explicit cutoff override', () => {
+    const may = new Date('2026-05-10T12:00:00Z')
+    // With a May cutoff, a May message qualifies…
+    expect(
+      shouldAutoRaiseComplaint({
+        channelName: 'complaintcallsummaries',
+        contactId: 'c1',
+        occurredAt: may,
+        now,
+        cutoff: new Date('2026-05-01T00:00:00Z'),
+      }),
+    ).toBe(true)
+    // …but not against the default (July) cutoff.
+    expect(
+      shouldAutoRaiseComplaint({
+        channelName: 'complaintcallsummaries',
+        contactId: 'c1',
+        occurredAt: may,
         now,
       }),
     ).toBe(false)

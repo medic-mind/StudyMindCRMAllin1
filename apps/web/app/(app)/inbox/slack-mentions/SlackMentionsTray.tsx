@@ -28,20 +28,37 @@ export function SlackMentionsTray() {
   })
   const relinkNow = trpc.slackSummary.unassigned.relinkNow.useMutation()
   const syncNow = trpc.slackSummary.unassigned.syncNow.useMutation()
+  const bulkDismiss = trpc.slackSummary.unassigned.bulkDismiss.useMutation()
   const items = listQuery.data ?? []
   const aiOff = diagnostics.data?.aiConfigured === false
 
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
   async function refresh() {
+    setSelected(new Set())
     await Promise.all([
       utils.slackSummary.unassigned.list.invalidate(),
       utils.slackSummary.unassigned.count.invalidate(),
     ])
   }
 
+  const allSelected = items.length > 0 && items.every((m) => selected.has(m.id))
+  const toggleSelectAll = () =>
+    setSelected(allSelected ? new Set() : new Set(items.map((m) => m.id)))
+
   const header = (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-xs text-neutral-500">
-        Slack is pulled from every channel the bot is in, every 15 minutes; matching re-runs every 30.
+        Slack is pulled every 15 minutes and matching re-runs every 30: mentions that resolve to one
+        customer link themselves, and dead/noise rows are dismissed automatically. What lands here is
+        genuinely ambiguous — assign it, or clear it in bulk below.
       </p>
       <div className="flex items-center gap-2">
         <Button
@@ -125,10 +142,47 @@ export function SlackMentionsTray() {
     <div className="space-y-3">
       {header}
       {aiOff ? banner : null}
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs">
+        <label className="flex items-center gap-2 font-medium text-neutral-700">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={toggleSelectAll}
+            className="h-4 w-4 rounded border-neutral-300"
+          />
+          {selected.size > 0 ? `${selected.size} selected` : 'Select all'}
+        </label>
+        {selected.size > 0 ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={bulkDismiss.isPending}
+            onClick={async () => {
+              try {
+                const r = await bulkDismiss.mutateAsync({ ids: [...selected] })
+                toast.message(`Dismissed ${r.dismissed} mention${r.dismissed === 1 ? '' : 's'}`)
+                await refresh()
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Could not dismiss')
+              }
+            }}
+          >
+            {bulkDismiss.isPending ? 'Dismissing…' : `Dismiss ${selected.size} selected`}
+          </Button>
+        ) : (
+          <span className="text-neutral-400">Tick rows to clear several at once.</span>
+        )}
+      </div>
       <ul className="space-y-3">
         {items.map((m) => (
           <li key={m.id}>
-            <MentionCard mention={m} onDone={refresh} />
+            <MentionCard
+              mention={m}
+              onDone={refresh}
+              selected={selected.has(m.id)}
+              onToggleSelected={() => toggleSelected(m.id)}
+            />
           </li>
         ))}
       </ul>
@@ -154,15 +208,32 @@ interface Mention {
   candidatePhone: string | null
 }
 
-function MentionCard({ mention, onDone }: { mention: Mention; onDone: () => Promise<void> }) {
+function MentionCard({
+  mention,
+  onDone,
+  selected,
+  onToggleSelected,
+}: {
+  mention: Mention
+  onDone: () => Promise<void>
+  selected: boolean
+  onToggleSelected: () => void
+}) {
   const [assigning, setAssigning] = useState<null | 'contact' | 'account'>(null)
   const assign = trpc.slackSummary.unassigned.assign.useMutation()
   const dismiss = trpc.slackSummary.unassigned.dismiss.useMutation()
   const now = new Date()
 
   return (
-    <Card className="p-4">
+    <Card className={selected ? 'p-4 ring-2 ring-primary-300' : 'p-4'}>
       <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelected}
+          aria-label="Select mention"
+          className="h-4 w-4 rounded border-neutral-300"
+        />
         <span className="font-mono">{mention.channelId}</span>
         {mention.senderName ? <span>· {mention.senderName}</span> : null}
         {mention.category ? <Badge tone="info">{mention.category}</Badge> : null}

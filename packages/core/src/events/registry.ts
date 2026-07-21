@@ -356,6 +356,9 @@ export const EVENT_NAMES = [
   'slack.message_summarised',
   // Operator-confirmed bulk join of all public channels (ADR 0043).
   'slack.channels_joined',
+  // Admin requested the one-off retroactive complaint reprocess (ADR 0042
+  // amendment) over existing complaint-channel mentions.
+  'slack.complaint_reprocess_requested',
   // Triage of the unassigned Slack-mentions tray: a human assigns a parked
   // mention to a contact (creating the slack_summary record) or dismisses it.
   'slack_summary.assigned',
@@ -633,6 +636,10 @@ export const INNGEST_EVENT_NAMES = [
   // On-demand "Sync from Slack now" — pull recent messages from every bot
   // channel immediately (the slack/sync-messages cron also runs every 15 min).
   'slack/sync-now.requested',
+  // One-off retroactive complaint opener — walk existing complaint-channel
+  // mentions on/after the go-live cutoff and open Complaints for them
+  // (ADR 0042 amendment). Admin-triggered; self-reschedules by keyset cursor.
+  'slack/backfill-complaints.requested',
   'gmail/event.received',
   'booking/event.received',
   'aircall/transcribe-fallback',

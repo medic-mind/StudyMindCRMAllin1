@@ -16,7 +16,11 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { logger } from '@studymind/core/logger'
 import { db } from '@studymind/db'
 
-import { buildComplaintDraft, shouldAutoRaiseComplaint } from './channel-rules'
+import {
+  buildComplaintDraft,
+  resolveComplaintAutoRaiseCutoff,
+  shouldAutoRaiseComplaint,
+} from './channel-rules'
 
 export interface AutoComplaintInput {
   contactId: string | null | undefined
@@ -28,6 +32,9 @@ export interface AutoComplaintInput {
   aiCategory?: string | null
   occurredAt: Date
   now?: Date
+  /** Go-live cutoff; defaults to the env-resolved value. Passed explicitly by
+   *  the reprocess backfill so a re-run uses the same window. */
+  cutoff?: Date
 }
 
 export interface AutoComplaintResult {
@@ -39,12 +46,15 @@ export async function maybeRaiseComplaintFromSlack(
   input: AutoComplaintInput,
 ): Promise<AutoComplaintResult> {
   const now = input.now ?? new Date()
+  const cutoff =
+    input.cutoff ?? resolveComplaintAutoRaiseCutoff(process.env['COMPLAINT_AUTO_RAISE_CUTOFF_DATE'])
   if (
     !shouldAutoRaiseComplaint({
       channelName: input.channelName,
       contactId: input.contactId,
       occurredAt: input.occurredAt,
       now,
+      cutoff,
     })
   ) {
     return { raised: false, complaintId: null }
