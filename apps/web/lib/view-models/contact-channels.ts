@@ -9,6 +9,8 @@
 
 import type { PrismaClient } from '@prisma/client'
 
+import { htmlToText } from '@/lib/format/html-text'
+
 // -----------------------------------------------------------------------------
 // Common
 // -----------------------------------------------------------------------------
@@ -96,6 +98,8 @@ export interface EmailMessage {
   bcc: string[]
   subject: string | null
   snippet: string | null
+  /** Sanitised HTML body for the reading pane, when the sync captured one. */
+  bodyHtml: string | null
   attachments: Array<{ s3Key: string; filename: string; mimeType: string; sizeBytes: number }>
   unread: boolean
   gmailMessageId: string | null
@@ -130,6 +134,15 @@ function rowToEmailMessage(row: {
       mimeType: asString(a['mimeType']) ?? 'application/octet-stream',
       sizeBytes: asNumber(a['sizeBytes']) ?? 0,
     }))
+  const bodyHtml = asString(p['bodyHtml'])
+  // A real preview from the body — NOT the subject. Gmail stores summary =
+  // subject and no plaintext snippet, so the old `snippet` was the subject line
+  // repeated (looked like "no preview"). Derive it from the captured HTML body;
+  // fall back to any stored plaintext snippet, else null.
+  const preview =
+    (bodyHtml ? htmlToText(bodyHtml).replace(/\s+/g, ' ').trim().slice(0, 200) : '') ||
+    asString(p['snippet']) ||
+    null
   return {
     id: row.id,
     occurredAt: row.occurredAt,
@@ -139,7 +152,8 @@ function rowToEmailMessage(row: {
     cc: asStringArray(p['cc']),
     bcc: asStringArray(p['bcc']),
     subject: asString(p['subject']) ?? row.summary,
-    snippet: row.summary ?? asString(p['snippet']),
+    snippet: preview,
+    bodyHtml,
     attachments,
     unread: labels.includes('UNREAD'),
     gmailMessageId: asString(p['gmailMessageId']),

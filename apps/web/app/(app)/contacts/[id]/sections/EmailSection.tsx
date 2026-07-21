@@ -7,6 +7,7 @@
 import { useState } from 'react'
 
 import type { EmailThread } from '@/lib/view-models/contact-channels'
+import { EmailHtmlBody } from '@/components/mail/email-html-body'
 import { EmailReplyPanel } from '@/components/contact/EmailReplyPanel'
 
 interface Props {
@@ -74,9 +75,16 @@ function ThreadCard({ thread }: { thread: EmailThread }) {
                   {relativeTime(m.occurredAt)}
                 </time>
               </div>
-              {m.snippet && (
-                <div className="mt-1 text-sm text-neutral-800">{m.snippet}</div>
-              )}
+              {m.bodyHtml || m.gmailMessageId ? (
+                // The real email — rich HTML in the shared reading pane (falls
+                // back to a plain-text preview via its toggle). Same component
+                // as /mail; the render route is access-gated per contact.
+                <div className="mt-2">
+                  <EmailHtmlBody interactionId={m.id} text={m.snippet ?? ''} height={340} />
+                </div>
+              ) : m.snippet ? (
+                <div className="mt-1 whitespace-pre-wrap text-sm text-neutral-800">{m.snippet}</div>
+              ) : null}
               {m.attachments.length > 0 && (
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   {m.attachments.map((a) => (

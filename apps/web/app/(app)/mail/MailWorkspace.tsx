@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+import { EmailHtmlBody } from '@/components/mail/email-html-body'
 import { Avatar } from '@/components/ui/avatar'
 import {
   AlertOctagonIcon,
@@ -1550,40 +1551,6 @@ function ConversationView({
   )
 }
 
-// -----------------------------------------------------------------------------
-// Email HTML body — rendered like Gmail in a LOCKED sandboxed iframe. ADR 0041.
-// `sandbox` WITHOUT allow-scripts (no JS) and WITHOUT allow-same-origin (unique
-// origin: can't read our cookies/DOM). The HTML is served by a dedicated route
-// (`/api/internal/mail-render/:id`) that carries its OWN relaxed CSP so remote
-// images + inline styles render (a `srcdoc` iframe inherits the app's strict CSP
-// and blocked both). Sanitised server-side as defence in depth.
-// -----------------------------------------------------------------------------
-
-function EmailHtmlBody({ interactionId, text }: { interactionId: string; text: string }) {
-  const [showHtml, setShowHtml] = useState(true)
-  return (
-    <div>
-      {showHtml ? (
-        <iframe
-          title="Email message"
-          sandbox="allow-popups allow-popups-to-escape-sandbox"
-          src={`/api/internal/mail-render/${interactionId}`}
-          className="w-full bg-white"
-          style={{ height: 460, border: 0 }}
-        />
-      ) : (
-        <p className="whitespace-pre-wrap break-words text-sm text-neutral-900">{text || '(no content)'}</p>
-      )}
-      <button
-        type="button"
-        onClick={() => setShowHtml((v) => !v)}
-        className="mt-1 text-[11px] font-medium text-neutral-400 hover:text-neutral-600"
-      >
-        {showHtml ? 'View plain text' : 'View formatted'}
-      </button>
-    </div>
-  )
-}
 
 // -----------------------------------------------------------------------------
 // Compose — docked bottom-right (Gmail "New Message" window). Auto-saves to a

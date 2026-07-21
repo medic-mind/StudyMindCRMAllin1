@@ -20,6 +20,7 @@ import type { InteractionListItem } from '@studymind/core/interaction'
 
 import { EmailReplyPanel } from '@/components/contact/EmailReplyPanel'
 import { Button } from '@/components/ui/button'
+import { displayMessageBody } from '@/lib/format/html-text'
 import {
   collapseTimeline,
   TIMELINE_FILTERS,
@@ -34,6 +35,14 @@ interface Props {
   contactId: string
   initialItems: InteractionListItem[]
   initialNextCursor: { id: string; occurredAt: Date } | null
+}
+
+// A summary line for the feed. Trengo email messages store raw HTML sliced
+// mid-tag as their summary; render that as readable text and cap it. Ordinary
+// summaries (subjects, notes, "Card moved") are plain text — left untouched.
+function renderTimelineSummary(summary: string): string {
+  const text = displayMessageBody(summary) ?? summary
+  return text !== summary ? text.slice(0, 400) : summary
 }
 
 const TONE_CLS: Record<ReturnType<typeof timelineLabel>['tone'], string> = {
@@ -150,7 +159,9 @@ export function Timeline({ contactId, initialItems, initialNextCursor }: Props) 
                   </time>
                 </div>
                 {it.summary ? (
-                  <div className="mt-1.5 text-sm text-neutral-900">{it.summary}</div>
+                  <div className="mt-1.5 whitespace-pre-wrap text-sm text-neutral-900">
+                    {renderTimelineSummary(it.summary)}
+                  </div>
                 ) : null}
                 {it.meta?.error ? (
                   <p className="mt-1 text-xs text-red-700">
