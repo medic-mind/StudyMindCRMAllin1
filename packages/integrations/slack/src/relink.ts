@@ -15,10 +15,12 @@
 import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
+import { logger } from '@studymind/core/logger'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
+import { isCallLogChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { extractContactSignals, extractNameCandidates, slackTsToDate } from './extract'
 import {
@@ -98,33 +100,88 @@ async function threadParentTextForRow(row: {
   return resolveThreadParentText({ channelId: row.channelId, threadTs })
 }
 
+/** Total open rows scanned per tick (paged in RELINK_BATCH chunks). The old
+ *  behaviour re-read only the OLDEST batch every tick, so a head-of-queue of
+ *  unlinkable rows starved everything behind it — the "250+ stuck" failure. */
+export const RELINK_SCAN_CAP = 2000
+
 /**
  * One pass over open parked rows: re-run the resolver and auto-link the
  * unambiguous ones. Shared by the recurring cron and the on-demand button.
- * `actorId` tags the audit row with which path triggered it.
+ * `actorId` tags the audit row with which path triggered it. Each row is
+ * error-isolated — one poisoned row must never abort the drain (that
+ * previously froze the whole backlog behind the first throwing row).
  */
 export async function relinkParkedRowsOnce(
   actorId: string,
-): Promise<{ scanned: number; linked: number }> {
-  const rows = await db.unassignedSummary.findMany({
-    where: { resolvedAt: null },
-    orderBy: { createdAt: 'asc' },
-    take: RELINK_BATCH,
-    select: {
-      id: true,
-      slackTs: true,
-      channelId: true,
-      parsed: true,
-      confidence: true,
-      messageText: true,
-      senderName: true,
-      createdAt: true,
-    },
-  })
-
+): Promise<{ scanned: number; linked: number; errors: number }> {
+  let scanned = 0
   let linked = 0
+  let errors = 0
   let threadBudget = RELINK_THREAD_FETCHES
-  for (const row of rows) {
+  let cursorId: string | null = null
+
+  while (scanned < RELINK_SCAN_CAP) {
+    const rows: RelinkRow[] = await db.unassignedSummary.findMany({
+      where: { resolvedAt: null },
+      orderBy: { id: 'asc' },
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      take: RELINK_BATCH,
+      select: {
+        id: true,
+        slackTs: true,
+        channelId: true,
+        parsed: true,
+        confidence: true,
+        messageText: true,
+        senderName: true,
+        createdAt: true,
+      },
+    })
+    if (rows.length === 0) break
+    cursorId = rows[rows.length - 1]!.id
+
+    for (const row of rows) {
+      scanned += 1
+      try {
+        const didLink = await relinkOneRow(row, actorId, () => {
+          if (threadBudget <= 0) return false
+          threadBudget -= 1
+          return true
+        })
+        if (didLink) linked += 1
+      } catch (err) {
+        errors += 1
+        logger.warn(
+          { rowId: row.id, channelId: row.channelId, err },
+          'slack relink: row failed — continuing with the rest',
+        )
+      }
+    }
+    if (rows.length < RELINK_BATCH) break
+  }
+
+  return { scanned, linked, errors }
+}
+
+interface RelinkRow {
+  id: string
+  slackTs: string
+  channelId: string
+  parsed: unknown
+  confidence: number | null
+  messageText: string | null
+  senderName: string | null
+  createdAt: Date
+}
+
+/** Try to resolve + archive ONE parked row. Returns true when it linked. */
+async function relinkOneRow(
+  row: RelinkRow,
+  actorId: string,
+  takeThreadBudget: () => boolean,
+): Promise<boolean> {
+  {
     const cand = candidateFromParsed(row.parsed)
     // Merge the stored AI candidate with a fresh deterministic scan of the
     // original message (catches an email/phone the first pass missed, and
@@ -154,8 +211,7 @@ export async function relinkParkedRowsOnce(
 
     // Thread-aware retry: a reply that named no customer inherits its thread
     // root's email/phone. Bounded per tick (Slack rate limits).
-    if (!target && threadBudget > 0) {
-      threadBudget -= 1
+    if (!target && takeThreadBudget()) {
       const parentText = await threadParentTextForRow(row)
       if (parentText) {
         const parentSig = extractContactSignals(parentText)
@@ -173,27 +229,26 @@ export async function relinkParkedRowsOnce(
       }
     }
 
-    // Auto-onboard (ADR 0043): a parked phone-bearing call log whose number
-    // STILL matches nobody creates the customer — the same call-channel
-    // standard as Aircall (§10) — so the tray backlog drains into real
+    // Auto-onboard (ADR 0043): a parked call log that STILL matches nobody
+    // creates the customer — phone anchors, else email, else (call-log
+    // channels only) a full name — so the tray backlog drains into real
     // contact records instead of waiting forever. Shared lines stay parked.
+    const { channelName } = await resolveSlackNames({ channelId: row.channelId })
     if (!target && row.messageText) {
-      const phone = candidate.phone ?? fromText.phone
-      if (phone) {
-        target = await autoOnboardContactForSlackMessage({
-          messageText: row.messageText,
-          phone,
-          email: candidate.email,
-          nameCandidates: [
-            ...(candidate.name ? [candidate.name] : []),
-            ...extractNameCandidates(row.messageText),
-          ],
-          requestId: `slack-relink:${row.id}`,
-        })
-      }
+      target = await autoOnboardContactForSlackMessage({
+        messageText: row.messageText,
+        phone: candidate.phone ?? fromText.phone,
+        email: candidate.email,
+        nameCandidates: [
+          ...(candidate.name ? [candidate.name] : []),
+          ...extractNameCandidates(row.messageText),
+        ],
+        allowNameOnly: isCallLogChannel(channelName),
+        requestId: `slack-relink:${row.id}`,
+      })
     }
 
-    if (!target) continue
+    if (!target) return false
 
     // Idempotent: a row may have been linked by a concurrent pass, or a
     // prior tick that failed after the interaction write. Dedupe on the
@@ -248,7 +303,6 @@ export async function relinkParkedRowsOnce(
     // customer actually complained, not when the row was parked. Idempotent +
     // best-effort inside; channel-name lookups are cached per channel.
     if (target.contactId && row.messageText) {
-      const { channelName } = await resolveSlackNames({ channelId: row.channelId })
       await maybeRaiseComplaintFromSlack({
         contactId: target.contactId,
         channelId: row.channelId,
@@ -264,10 +318,8 @@ export async function relinkParkedRowsOnce(
       where: { id: row.id },
       data: { resolvedAt: new Date() },
     })
-    linked += 1
+    return true
   }
-
-  return { scanned: rows.length, linked }
 }
 
 /**

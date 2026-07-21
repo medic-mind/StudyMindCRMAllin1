@@ -25,7 +25,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
-import { isComplaintChannel } from './channel-rules'
+import { isCallLogChannel, isComplaintChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
@@ -185,16 +185,18 @@ export const slackEventReceived = inngest.createFunction(
       })
     }
 
-    // Auto-onboard (ADR 0043): a phone-bearing call log that matched nobody
-    // creates the customer — the call-channel standard (§10/§16). Only the
-    // MESSAGE's own phone counts; shared lines return null and park (§41.1).
-    if (!rulesTarget && signals.phone) {
+    // Auto-onboard (ADR 0043): a call log that matched nobody creates the
+    // customer — phone anchors, else email, else (call-log channels only) a
+    // full name. Only the MESSAGE's own identity counts; shared lines return
+    // null and park (§41.1).
+    if (!rulesTarget) {
       rulesTarget = await step.run('auto-onboard', async () =>
         autoOnboardContactForSlackMessage({
           messageText: message.text,
           phone: signals.phone,
           email: usableEmail(signals.email),
           nameCandidates,
+          allowNameOnly: isCallLogChannel(channelName),
           requestId: eventId,
         }),
       )
@@ -347,12 +349,26 @@ export const slackEventReceived = inngest.createFunction(
     }
 
     // 3. High confidence — match to ONE contact (email → phone → unambiguous
-    //    name), else ONE B2B account (school / partnership). Ambiguity and
-    //    misses park for triage; we never auto-create a Contact (§12) and
-    //    never guess between two same-named people (§3).
-    const target = await step.run('match-target', async () =>
-      resolveSlackLinkTarget(parsed.candidateContactIdentifier),
-    )
+    //    name), else ONE B2B account (school / partnership); else onboard from
+    //    the AI's identity under the ADR 0043 tiers (the AI reads lower-case
+    //    names and odd formats the rules miss). Only true dead-ends park.
+    const target = await step.run('match-target', async () => {
+      const resolvedTarget = await resolveSlackLinkTarget(parsed.candidateContactIdentifier)
+      if (resolvedTarget) return resolvedTarget
+      return autoOnboardContactForSlackMessage({
+        messageText: message.text,
+        phone: parsed.candidateContactIdentifier.phone ?? signals.phone,
+        email: usableEmail(parsed.candidateContactIdentifier.email ?? signals.email),
+        nameCandidates: [
+          ...(parsed.candidateContactIdentifier.name
+            ? [parsed.candidateContactIdentifier.name]
+            : []),
+          ...nameCandidates,
+        ],
+        allowNameOnly: isCallLogChannel(channelName),
+        requestId: eventId,
+      })
+    })
 
     if (!target) {
       // Confidence said yes but no match in our DB — also park.

@@ -39,7 +39,7 @@ import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE, listIngestChannelIds } from './client'
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
-import { isComplaintChannel } from './channel-rules'
+import { isCallLogChannel, isComplaintChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
@@ -541,17 +541,19 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
         : null)
   }
 
-  // Auto-onboard (ADR 0043): a phone-bearing call log that matched nobody
-  // creates the customer — the call-channel standard (§10/§16). The phone must
-  // be the MESSAGE's own (a reply inheriting the root's phone links via the
-  // rules path once the root's contact exists). Shared lines return null and
-  // park for a human (§41.1).
-  if (!rulesTarget && signals.phone) {
+  // Auto-onboard (ADR 0043): a call log that matched nobody creates the
+  // customer — the call-channel standard (§10/§16). Phone anchors when
+  // present; else email; else — in call-log channels only — a full name. The
+  // identity must be the MESSAGE's own (a reply inheriting the root's phone
+  // links via the rules path once the root's contact exists). Shared lines
+  // return null and park for a human (§41.1).
+  if (!rulesTarget) {
     rulesTarget = await autoOnboardContactForSlackMessage({
       messageText: message.text,
       phone: signals.phone,
       email: usableEmail(signals.email),
       nameCandidates,
+      allowNameOnly: isCallLogChannel(channelName),
       requestId: input.requestId,
     })
   }
@@ -652,11 +654,25 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   }
 
   // Shared resolver: Contact (email → phone → name) else B2B account (§12).
-  const target = await resolveSlackLinkTarget(parsed.candidateContactIdentifier)
+  let target = await resolveSlackLinkTarget(parsed.candidateContactIdentifier)
   if (!target) {
-    // The AI named someone, but no Contact/account matches (yet). Park it — the
-    // relink cron auto-links it once the customer is created (§12). Never
-    // auto-create a Contact from an unmatched Slack message (§11/§12).
+    // The AI named someone but nothing matches — onboard from the AI's
+    // identity (it reads lower-case names and odd formats the rules miss)
+    // under the same ADR 0043 tiers before parking.
+    target = await autoOnboardContactForSlackMessage({
+      messageText: message.text,
+      phone: parsed.candidateContactIdentifier.phone ?? signals.phone,
+      email: usableEmail(parsed.candidateContactIdentifier.email ?? signals.email),
+      nameCandidates: [
+        ...(parsed.candidateContactIdentifier.name ? [parsed.candidateContactIdentifier.name] : []),
+        ...nameCandidates,
+      ],
+      allowNameOnly: isCallLogChannel(channelName),
+      requestId: input.requestId,
+    })
+  }
+  if (!target) {
+    // Still nothing to key on — park; the relink cron keeps retrying (§12).
     await parkUnassignedSummary({ message, channelId, parsed, senderName })
     return { matched: false }
   }

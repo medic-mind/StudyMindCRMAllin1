@@ -28,6 +28,16 @@ export function isComplaintChannel(channelName: string | null | undefined): bool
   return channelName.toLowerCase().replace(/^#/u, '').includes('complaint')
 }
 
+/** Channels whose messages ARE call logs (#callsummaries, #post-trial-…,
+ *  #anzcallsummaries, #…complaints…). In these, a full name on its own is a
+ *  genuine customer reference, so the auto-onboard's name-only tier unlocks
+ *  (ADR 0043 widening); generic channels keep the spam guard. */
+export function isCallLogChannel(channelName: string | null | undefined): boolean {
+  if (!channelName) return false
+  const n = channelName.toLowerCase().replace(/^#/u, '')
+  return n.includes('summar') || n.includes('complaint')
+}
+
 /** Tolerated clock skew for a mention timestamped slightly in the future —
  *  beyond this the ts is garbage and the horizon must not be bypassed. */
 const FUTURE_SKEW_TOLERANCE_MS = 24 * 60 * 60 * 1000

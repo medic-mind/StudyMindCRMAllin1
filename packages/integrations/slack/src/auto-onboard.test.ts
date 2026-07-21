@@ -54,6 +54,7 @@ describe('callLogNameFromFirstLine', () => {
 
 describe('onboardDecision', () => {
   const base = {
+    allowNameOnly: false,
     isBrandName: (n: string) => isOwnBrandName(n, BRANDS),
     isBrandEmail: (e: string) => isOwnBrandEmail(e, BRANDS),
   }
@@ -92,14 +93,44 @@ describe('onboardDecision', () => {
     expect(d?.name).toBe('Irina Ramzan')
   })
 
-  it('never onboards without a phone — name-only chatter stays parked (§11)', () => {
+  it('falls back to the email tier when there is no phone', () => {
+    const d = onboardDecision({
+      ...base,
+      messageText: 'Irina Ramzan <mailto:irina@hotmail.co.uk|irina@hotmail.co.uk> Career Camps',
+      phone: null,
+      email: 'irina@hotmail.co.uk',
+      nameCandidates: ['Irina Ramzan'],
+    })
+    expect(d).toEqual({ phoneE164: null, email: 'irina@hotmail.co.uk', name: 'Irina Ramzan' })
+  })
+
+  it('onboards a FULL name alone only in call-log channels (allowNameOnly)', () => {
+    const input = {
+      ...base,
+      messageText: 'Spoke to Aanya Sharma about the mocks',
+      phone: null,
+      email: null,
+      nameCandidates: ['Aanya Sharma'],
+    }
+    // Generic channel: parked (spam guard stands).
+    expect(onboardDecision(input)).toBeNull()
+    // Call-log channel: onboards.
+    expect(onboardDecision({ ...input, allowNameOnly: true })).toEqual({
+      phoneE164: null,
+      email: null,
+      name: 'Aanya Sharma',
+    })
+  })
+
+  it('never onboards a single-token name, even in call-log channels', () => {
     expect(
       onboardDecision({
         ...base,
-        messageText: 'Spoke to Aanya Sharma about the mocks',
+        allowNameOnly: true,
+        messageText: 'Update on Sampada',
         phone: null,
         email: null,
-        nameCandidates: ['Aanya Sharma'],
+        nameCandidates: ['Sampada'],
       }),
     ).toBeNull()
   })

@@ -1,16 +1,24 @@
-// Auto-onboard a customer from a Slack call summary (ADR 0043).
+// Auto-onboard a customer from a Slack call summary (ADR 0043, widened by the
+// 2026-07 operator direction: no mention waits for a human).
 //
 // The team's call-log format ("🇬🇧Aviral Sethi +447818953024 Medic Mind …")
-// names a real person the team just SPOKE to, with a diallable number. When
-// that number matches nobody in the CRM, parking the mention in a tray is the
-// wrong altitude — a call summary is a record of a genuine human touch, the
-// same standard as an Aircall call (§10) or a web enquiry (§16), so we create
-// the lightweight Contact and file the message on their timeline. The phone is
-// the gate: name-only chatter never creates anybody (§11's spam guard stands),
-// and creation reuses the shared call resolver (`resolveOrCreateContactForCall`)
-// so dedupe/fill-blanks/shared-line semantics are identical to Aircall —
-// including NEVER auto-merging (§41.1).
+// names a real person the team just SPOKE to. When nothing in the CRM matches,
+// parking the mention in a tray is the wrong altitude — a call summary is a
+// record of a genuine human touch, the same standard as an Aircall call (§10)
+// or a web enquiry (§16), so we create the lightweight Contact and file the
+// message on their timeline. Identity tiers, strongest first:
+//   1. PHONE — via the shared call resolver (`resolveOrCreateContactForCall`),
+//      identical dedupe/fill-blanks/shared-line semantics to Aircall.
+//   2. EMAIL — attach to the most recently active contact on that email
+//      (ADR 0044's shared-identifier convention), else create.
+//   3. FULL NAME (2+ words) — create, but ONLY when the caller flags the
+//      channel as a call-log channel (#…callsummaries / #…complaints): generic
+//      chatter never mints contacts (§11's spam guard, narrowed not dropped).
+// Never auto-merges (§41.1).
 
+import { createId } from '@paralleldrive/cuid2'
+
+import { writeAuditLogEntry } from '@studymind/audit'
 import { splitDisplayName, resolveOrCreateContactForCall } from '@studymind/core/contact/from-call'
 import { db } from '@studymind/db'
 
@@ -60,44 +68,58 @@ export function callLogNameFromFirstLine(messageText: string): string | null {
 }
 
 export interface OnboardDecision {
-  phoneE164: string
-  name: string | null
+  /** Exactly one identity tier is the anchor; the others enrich the record. */
+  phoneE164: string | null
   email: string | null
+  name: string | null
 }
 
-/** Pure decision: should this unmatched message create a Contact, and with
- *  what identity? Phone required; the name prefers the call-log header (works
- *  for lower-case names), else the first non-brand extracted candidate. */
+/** Pure decision: should this unmatched message create/attach a Contact, and
+ *  with what identity? Phone anchors when present; else a non-brand email;
+ *  else — only when `allowNameOnly` (a call-log channel) — a FULL name
+ *  (2+ words). The name prefers the call-log header (works for lower-case
+ *  names), else the first non-brand extracted candidate. */
 export function onboardDecision(input: {
   messageText: string
   phone: string | null
   email: string | null
   nameCandidates: readonly string[]
+  allowNameOnly: boolean
   isBrandName: (name: string) => boolean
   isBrandEmail: (email: string) => boolean
 }): OnboardDecision | null {
-  if (!input.phone) return null
-  const phoneE164 = normaliseSlackPhoneToE164(input.phone)
-  if (!phoneE164) return null
   const headerName = callLogNameFromFirstLine(input.messageText)
   const name =
     [headerName, ...input.nameCandidates].find(
       (n): n is string => !!n && !input.isBrandName(n),
     ) ?? null
   const email = input.email && !input.isBrandEmail(input.email) ? input.email : null
-  return { phoneE164, name, email }
+
+  const phoneE164 = input.phone ? normaliseSlackPhoneToE164(input.phone) : null
+  if (phoneE164) return { phoneE164, email, name }
+  if (email) return { phoneE164: null, email, name }
+  // Name-only: a FULL name in a call-log channel is a genuine customer
+  // reference (the operator's tray was full of exactly these); a single token
+  // anywhere, or any name in a generic channel, still never creates anybody.
+  if (input.allowNameOnly && name && name.trim().split(/\s+/u).length >= 2) {
+    return { phoneE164: null, email: null, name }
+  }
+  return null
 }
 
 /**
- * Create (or phone-match) the Contact for an unmatched phone-bearing message
- * and return it as a link target — null when the message shouldn't onboard
- * (no phone) or the number is a shared line (triage stays with a human).
+ * Create (or match) the Contact for an unmatched message and return it as a
+ * link target — null when the message shouldn't onboard (no usable identity,
+ * or a shared phone line where triage stays with a human).
  */
 export async function autoOnboardContactForSlackMessage(input: {
   messageText: string
   phone: string | null
   email: string | null
   nameCandidates: readonly string[]
+  /** True for call-log channels (#…callsummaries/#…complaints) — unlocks the
+   *  full-name-only tier. */
+  allowNameOnly?: boolean
   requestId: string
 }): Promise<SlackLinkTarget | null> {
   const brands = await loadOwnBrands()
@@ -106,6 +128,7 @@ export async function autoOnboardContactForSlackMessage(input: {
     phone: input.phone,
     email: input.email,
     nameCandidates: input.nameCandidates,
+    allowNameOnly: input.allowNameOnly ?? false,
     isBrandName: (n) => isOwnBrandName(n, brands),
     isBrandEmail: (e) => isOwnBrandEmail(e, brands),
   })
@@ -113,20 +136,69 @@ export async function autoOnboardContactForSlackMessage(input: {
   const { firstName, lastName } = decision.name
     ? splitDisplayName(decision.name)
     : { firstName: null, lastName: null }
-  const res = await resolveOrCreateContactForCall(
-    db,
-    {
-      phoneE164: decision.phoneE164,
+
+  // Tier 1 — phone: the shared call resolver (dedupe, fill-blanks, shared-line
+  // park, §41.1).
+  if (decision.phoneE164) {
+    const res = await resolveOrCreateContactForCall(
+      db,
+      { phoneE164: decision.phoneE164, firstName, lastName, email: decision.email },
+      { referralSource: 'Slack call summary', actorId: null, requestId: input.requestId },
+    )
+    if (!res.contactId) return null
+    return targetForContactId(res.contactId)
+  }
+
+  // Tier 2 — email: attach to the most recently active contact on that email
+  // (ADR 0044's shared-identifier convention — an annotation, never a merge),
+  // filling blank names on an exact single match; else create.
+  if (decision.email) {
+    const matches = await db.contact.findMany({
+      where: { email: { equals: decision.email, mode: 'insensitive' }, deletedAt: null },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true, firstName: true, lastName: true },
+      take: 5,
+    })
+    if (matches.length > 0) {
+      const existing = matches[0]!
+      if (matches.length === 1 && !existing.firstName && firstName) {
+        await db.contact.update({
+          where: { id: existing.id },
+          data: { firstName, lastName },
+        })
+      }
+      return targetForContactId(existing.id)
+    }
+  }
+
+  // Create (email tier with no match, or the full-name-only tier — two
+  // same-named contacts already failed the unique-name pass upstream, and per
+  // ADR 0044 a fresh record beats guessing between them).
+  const id = createId()
+  await db.contact.create({
+    data: {
+      id,
+      kind: 'unclassified',
       firstName,
       lastName,
       email: decision.email,
-    },
-    {
       referralSource: 'Slack call summary',
-      actorId: null,
-      requestId: input.requestId,
+      createdById: null,
+      updatedById: null,
     },
-  )
-  if (!res.contactId) return null
-  return targetForContactId(res.contactId)
+  })
+  await writeAuditLogEntry(db, {
+    actorId: null,
+    requestId: input.requestId,
+    action: 'contact.created',
+    target: { type: 'Contact', id },
+    after: {
+      email: decision.email,
+      firstName,
+      lastName,
+      referralSource: 'Slack call summary',
+      autoCreatedFromSlack: true,
+    },
+  })
+  return targetForContactId(id)
 }
