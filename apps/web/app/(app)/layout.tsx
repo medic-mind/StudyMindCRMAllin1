@@ -1,3 +1,4 @@
+import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 
 import { getBrandingLogoMeta } from '@studymind/core/branding'
@@ -178,9 +179,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     redirect('/sign-in')
   }
   // Force mustResetPassword users to the change-password page even on direct
-  // (app) navigation — middleware does this too, but this guarantees the
-  // child page never renders against a half-bootstrapped account.
-  if (me.mustResetPassword) {
+  // (app) navigation — middleware does this too, but this guarantees the child
+  // page never renders against a half-bootstrapped account. CRITICAL: exempt
+  // the change-password page itself (and sign-out), or this layout redirects it
+  // to itself → ERR_TOO_MANY_REDIRECTS, which locked every new colleague (who
+  // starts with a temp password → mustResetPassword) out of the CRM on first
+  // login. Mirrors the middleware's exemption; pathname comes from the header
+  // middleware sets.
+  const pathname = (await headers()).get('x-pathname') ?? ''
+  if (
+    me.mustResetPassword &&
+    pathname !== '/account/change-password' &&
+    !pathname.startsWith('/api/auth/')
+  ) {
     redirect('/account/change-password')
   }
   const role: Role = me.role

@@ -82,6 +82,11 @@ export default authMiddleware((req) => {
   requestHeaders.set('x-request-id', requestId)
 
   const pathname = req.nextUrl.pathname
+  // Expose the path to server components (the (app) layout reads it so its
+  // mustResetPassword guard never redirects the change-password page to itself
+  // → ERR_TOO_MANY_REDIRECTS). Set on the request headers that flow through to
+  // the RSC render below.
+  requestHeaders.set('x-pathname', pathname)
 
   // The email reading-pane render route (ADR 0041) returns sanitised email HTML
   // to be framed by /mail. It MUST carry its own relaxed CSP (remote images +
