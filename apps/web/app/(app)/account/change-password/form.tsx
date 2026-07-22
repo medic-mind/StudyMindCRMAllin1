@@ -1,6 +1,7 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
+import { SessionProvider, useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
@@ -37,13 +38,37 @@ function classCount(p: string): number {
   return n
 }
 
+// Scoped SessionProvider so the form can call useSession().update() after a
+// successful change — this re-issues the session cookie with the fresh
+// mustResetPassword=false, so the edge middleware stops bouncing the user back
+// to this page (mirrors the setup-2fa wizard's fix for the same class of stale-
+// cookie redirect). Scoped here only; the rest of the app reads the JWT
+// server-side with no client session fetch.
 export function ChangePasswordForm() {
+  return (
+    <SessionProvider>
+      <ChangePasswordFormInner />
+    </SessionProvider>
+  )
+}
+
+function ChangePasswordFormInner() {
   const router = useRouter()
   const utils = trpc.useUtils()
+  const { update: refreshSession } = useSession()
   const change = trpc.account.changePassword.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success('Password updated. Other sessions have been signed out.')
-      utils.account.me.invalidate()
+      // Force the JWT to refresh NOW (trigger === 'update' in the jwt callback
+      // re-reads mustResetPassword from the DB), so the edge cookie clears the
+      // flag and the user is let into the CRM instead of being redirected back
+      // here for up to ~60s.
+      try {
+        await refreshSession()
+      } catch {
+        // Non-fatal: the 60s role-refresh / next node request also converges it.
+      }
+      await utils.account.me.invalidate()
       router.push('/account')
       router.refresh()
     },
