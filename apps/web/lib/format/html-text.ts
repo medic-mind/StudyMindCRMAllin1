@@ -28,16 +28,24 @@ const NAMED_ENTITIES: Record<string, string> = {
   ldquo: '“',
 }
 
+/** Safely turn a numeric code point into a character. String.fromCodePoint
+ *  throws RangeError for anything outside 0..0x10FFFF, so a malformed or hostile
+ *  numeric entity (e.g. `&#x110000;` or `&#9999999;`) would otherwise crash the
+ *  whole render — the contact page, Activity timeline, Mail workspace and Trengo
+ *  thread all decode email bodies through here. Out-of-range → dropped. */
+function fromCodePointSafe(code: number): string {
+  if (!Number.isInteger(code) || code < 1 || code > 0x10ffff) return ''
+  try {
+    return String.fromCodePoint(code)
+  } catch {
+    return ''
+  }
+}
+
 function decodeEntities(s: string): string {
   return s
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => {
-      const code = Number.parseInt(hex, 16)
-      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : ''
-    })
-    .replace(/&#(\d+);/g, (_, dec: string) => {
-      const code = Number.parseInt(dec, 10)
-      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : ''
-    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => fromCodePointSafe(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => fromCodePointSafe(Number.parseInt(dec, 10)))
     .replace(/&([a-z]+);/gi, (m, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? m)
 }
 

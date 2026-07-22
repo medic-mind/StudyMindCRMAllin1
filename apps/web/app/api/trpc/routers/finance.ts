@@ -1396,8 +1396,12 @@ export const financeRouter = router({
           })
 
           if (status === 'failed') {
+            // A failed send is an EXPECTED, user-actionable condition (no system
+            // mailbox connected, expired Trengo token, bad address) — the
+            // attempt is already logged as failed on the case. BAD_REQUEST, not
+            // INTERNAL_SERVER_ERROR, so it doesn't page on-call (§25/§27).
             throw new TRPCError({
-              code: 'INTERNAL_SERVER_ERROR',
+              code: 'BAD_REQUEST',
               message: error ?? 'The message could not be sent.',
             })
           }
@@ -1529,7 +1533,9 @@ export const financeRouter = router({
             })
             if (result.status !== 'sent') {
               throw new TRPCError({
-                code: 'INTERNAL_SERVER_ERROR',
+                // Expected config state (no mailbox / send skipped), not a bug —
+                // BAD_REQUEST so it doesn't page on-call (§25/§27).
+                code: 'BAD_REQUEST',
                 message:
                   result.detail ??
                   (result.status === 'skipped'

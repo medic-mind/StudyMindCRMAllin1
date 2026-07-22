@@ -39,6 +39,14 @@ describe('htmlToText', () => {
     )
   })
 
+  it('drops out-of-range numeric entities instead of crashing (RangeError guard)', () => {
+    // Code points above U+10FFFF make String.fromCodePoint throw — a malformed
+    // or hostile email body must never crash the render. They are dropped.
+    expect(() => htmlToText('ok &#x110000; &#9999999; done')).not.toThrow()
+    // Entities drop to '' and the resulting space run collapses to one.
+    expect(htmlToText('ok &#x110000; &#9999999; done')).toBe('ok done')
+  })
+
   it('never emits markup (XSS-shaped input becomes inert text)', () => {
     const out = htmlToText('<img src=x onerror=alert(1)><a href="javascript:x">click</a>')
     expect(out).toBe('click')

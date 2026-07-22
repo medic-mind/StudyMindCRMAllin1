@@ -1561,7 +1561,9 @@ export const gocardlessRouter = router({
         })
         if (sent.status !== 'sent') {
           throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
+            // Expected send failure (no mailbox / bad address), not a server bug
+            // — BAD_REQUEST so it doesn't page on-call (§25/§27).
+            code: 'BAD_REQUEST',
             message: sent.detail ?? 'Email could not be sent',
           })
         }
