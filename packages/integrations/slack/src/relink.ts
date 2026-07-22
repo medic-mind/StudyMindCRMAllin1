@@ -370,7 +370,10 @@ async function relinkOneRow(
           id: createId(),
           type: 'slack_summary',
           ...targetForeignKey(target),
-          occurredAt: row.createdAt,
+          // The Slack message time, not the park time — otherwise a relinked
+          // historic mention jumps to the top of the timeline (the adjacent
+          // complaint hook already uses slackTsToDate for this reason).
+          occurredAt: slackTsToDate(row.slackTs),
           summary: (cand.summary ?? row.messageText ?? 'Slack message').slice(0, 280),
           payload: {
             event: 'slack.message_summarised',

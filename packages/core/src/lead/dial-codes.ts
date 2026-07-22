@@ -364,6 +364,11 @@ export function findDialCountry(token: string | null | undefined): DialCountry |
  * typed inline, and refuses anything outside plausible E.164 lengths so we
  * never store junk in `Contact.phoneE164` (§29).
  */
+// Countries where the national trunk '0' is retained after the dial code in the
+// international (E.164) number rather than dropped. Italy is the canonical case
+// (`+39 06…`); nearly everyone else drops it.
+const TRUNK_ZERO_RETAINED: ReadonlySet<string> = new Set<string>(['IT'])
+
 export function composePhoneE164(country: DialCountry, rawNumber: string): string | null {
   let digits = rawNumber.replace(/[^\d]/gu, '')
   if (!digits) return null
@@ -373,8 +378,13 @@ export function composePhoneE164(country: DialCountry, rawNumber: string): strin
     const candidate = `+${digits}`
     if (/^\+[1-9]\d{6,14}$/u.test(candidate)) return candidate
   }
-  // National format: strip a single trunk 0, prepend the dial code.
-  const national = digits.startsWith('0') ? digits.slice(1) : digits
+  // National format: strip a single trunk 0, prepend the dial code — EXCEPT
+  // for countries where the leading 0 is part of the international number
+  // (Italy: `+39 06…`). Stripping it there yields a wrong, undialable E.164.
+  const national =
+    digits.startsWith('0') && !TRUNK_ZERO_RETAINED.has(country.iso2)
+      ? digits.slice(1)
+      : digits
   if (national.length < 6 || national.length > 12) return null
   const candidate = `+${country.dial}${national}`
   return /^\+[1-9]\d{6,14}$/u.test(candidate) ? candidate : null

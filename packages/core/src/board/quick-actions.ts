@@ -161,32 +161,37 @@ export async function applyQuickAction(
     )
   }
 
-  // Comment first so it's timestamped just before the move (matches the
-  // user's mental model: "called twice [then] → Called twice").
-  let commentId: string | null = null
-  if (action.commentTemplate && action.commentTemplate.trim().length > 0) {
-    const comment = await addCardComment(
-      db,
-      {
-        cardId: input.cardId,
-        authorId: input.actorUserId,
-        body: action.commentTemplate.trim(),
-      },
-      ctx,
-    )
-    commentId = comment.id
+  // Comment + move must be ONE transaction: otherwise the templated comment is
+  // already committed when the move fails (e.g. the target stage was archived),
+  // and each retry appends another duplicate comment. `moveCard` composes with
+  // the transaction we open here rather than starting its own.
+  const targetBoardId = action.targetStage.boardId
+  const exec = async (tx: Db) => {
+    // Comment first so it's timestamped just before the move (matches the
+    // user's mental model: "called twice [then] → Called twice").
+    let commentId: string | null = null
+    if (action.commentTemplate && action.commentTemplate.trim().length > 0) {
+      const comment = await addCardComment(
+        tx,
+        {
+          cardId: input.cardId,
+          authorId: input.actorUserId,
+          body: action.commentTemplate.trim(),
+        },
+        ctx,
+      )
+      commentId = comment.id
+    }
+
+    await moveCard(tx, { cardId: input.cardId, toStageId: action.targetStageId }, ctx)
+
+    return {
+      cardId: input.cardId,
+      commentId,
+      targetStageId: action.targetStageId,
+      targetBoardId,
+    }
   }
 
-  await moveCard(
-    db,
-    { cardId: input.cardId, toStageId: action.targetStageId },
-    ctx,
-  )
-
-  return {
-    cardId: input.cardId,
-    commentId,
-    targetStageId: action.targetStageId,
-    targetBoardId: action.targetStage.boardId,
-  }
+  return '$transaction' in db ? db.$transaction((tx) => exec(tx)) : exec(db)
 }

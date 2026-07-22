@@ -158,7 +158,11 @@ export async function reconcileFamily(
   })) as PaymentRow[]
 
   const allocations = (await db.allocation.findMany({
-    where: { payment: { familyId } },
+    // Only ACTIVE allocations. Re-allocation soft-deletes the superseded rows
+    // (finance router `allocation.upsert`), so without this filter a payment's
+    // deleted + active rows sum together and can exceed the payment amount —
+    // tripping the §41.2 invariant below and wedging the nightly pipeline.
+    where: { payment: { familyId }, deletedAt: null },
     select: { id: true, paymentId: true, amountMinor: true },
   })) as AllocationRow[]
 

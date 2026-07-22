@@ -168,9 +168,29 @@ export const stripeEventReceived = inngest.createFunction(
         const charge = refetched.data.object as {
           id: string
           customer: string | { id: string } | null
+          amount: number
+          amount_refunded: number
+          refunded: boolean
         }
         const customerId =
           typeof charge.customer === 'string' ? charge.customer : (charge.customer?.id ?? '')
+        // Stripe fires `charge.refunded` for PARTIAL refunds too — `refunded`
+        // only flips true on a full refund and `amount_refunded` is cumulative.
+        // Only a FULL refund reverts the mirrored Payment; a partial refund
+        // leaves it collected, otherwise the paid/failed split, dunning and CCJ
+        // balances would be overstated by the whole charge (CLAUDE.md §9).
+        const fullyRefunded =
+          charge.refunded === true || (charge.amount_refunded ?? 0) >= (charge.amount ?? 0)
+        if (!fullyRefunded) {
+          return {
+            kind: 'payment_refund' as const,
+            stripeId: charge.id,
+            stripeCustomerId: customerId,
+            classification: null,
+            unresolved: false,
+            familyId: null,
+          }
+        }
         const result = await revertStripePayment(db, {
           stripeChargeId: charge.id,
           revertedAt: new Date(),

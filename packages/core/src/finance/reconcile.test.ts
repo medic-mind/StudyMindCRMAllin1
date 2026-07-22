@@ -34,6 +34,7 @@ interface FakeAllocation {
   id: string
   paymentId: string
   amountMinor: number
+  deletedAt?: Date | null
 }
 
 interface FakeSubscription {
@@ -101,11 +102,23 @@ function makeFakeDb(seed: Partial<FakeData> = {}) {
         Promise.resolve(data.payments.filter((p) => p.familyId === where.familyId)),
     },
     allocation: {
-      findMany: ({ where }: { where: { payment: { familyId: string } } }) => {
+      findMany: ({
+        where,
+      }: {
+        where: { payment: { familyId: string }; deletedAt?: Date | null }
+      }) => {
         const ids = data.payments
           .filter((p) => p.familyId === where.payment.familyId)
           .map((p) => p.id)
-        return Promise.resolve(data.allocations.filter((a) => ids.includes(a.paymentId)))
+        return Promise.resolve(
+          data.allocations.filter(
+            (a) =>
+              ids.includes(a.paymentId) &&
+              // Honour the `deletedAt: null` filter like the real DB — a
+              // soft-deleted (superseded) allocation must not be summed.
+              !(where.deletedAt === null && (a.deletedAt ?? null) !== null),
+          ),
+        )
       },
     },
     stripeSubscription: {
@@ -211,6 +224,34 @@ describe('reconcileFamily', () => {
       ],
     })
     await expect(reconcileFamily(db, 'f1')).rejects.toThrow(/Allocation invariant/)
+  })
+
+  it('ignores soft-deleted (superseded) allocations — no false invariant throw', async () => {
+    // Regression: re-allocating soft-deletes the old row and creates a new one.
+    // Summing both would exceed the payment and wrongly trip the §41.2 invariant
+    // (wedging the nightly pipeline). Only the active allocation must count.
+    const db = makeFakeDb({
+      families: [{ id: 'f1', state: 'active', financialAccount: { status: 'ok' } }],
+      payments: [
+        {
+          id: 'p1',
+          familyId: 'f1',
+          amountMinor: 5_000,
+          reverted: false,
+          confirmedAt: new Date('2026-05-01'),
+          receivedAt: new Date('2026-05-01'),
+        },
+      ],
+      allocations: [
+        { id: 'a1', paymentId: 'p1', amountMinor: 5_000, deletedAt: new Date('2026-05-02') },
+        { id: 'a2', paymentId: 'p1', amountMinor: 5_000, deletedAt: null },
+      ],
+    })
+    const result = await reconcileFamily(db, 'f1')
+    // Fully allocated by the active row → no invariant throw, no unallocated row.
+    expect(
+      result.discrepancies.find((d) => d.category === 'payment_unallocated'),
+    ).toBeUndefined()
   })
 
   it('surfaces churned + active subscription', async () => {

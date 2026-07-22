@@ -90,6 +90,11 @@ describe('composePhoneE164', () => {
   it('strips a trunk zero before prepending the dial code', () => {
     expect(composePhoneE164(uk, '07700 900123')).toBe('+447700900123')
   })
+  it('KEEPS the trunk zero for countries that retain it (Italy: +39 06…)', () => {
+    // Regression: Italy is the exception — the leading 0 is part of the
+    // international number. Stripping it produced a wrong, undialable E.164.
+    expect(composePhoneE164(findDialCountry('IT')!, '06 1234 5678')).toBe('+390612345678')
+  })
   it('tolerates the dial code typed inline', () => {
     expect(composePhoneE164(peru, '51 928 812 118')).toBe('+51928812118')
     expect(composePhoneE164(peru, '0051 928 812 118')).toBe('+51928812118')

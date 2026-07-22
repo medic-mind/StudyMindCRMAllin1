@@ -10,7 +10,7 @@
 // admin backfill; this job covers the live/recent window going forward.
 
 import { recordCronRun } from '@studymind/core/observability/cron-heartbeat'
-import { db } from '@studymind/db'
+import { db, Prisma } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { processBackfillCall } from './backfill'
@@ -45,7 +45,11 @@ export const aircallSyncCalls = inngest.createFunction(
     // no calls yet, look back a bounded window.
     const since = await step.run('compute-since', async () => {
       const latest = await db.interaction.findFirst({
-        where: { type: 'call' },
+        // Aircall calls ONLY — Google Voice (source:'google_voice') and manual
+        // click-to-call logs are also type:'call', and a recent non-Aircall
+        // call would otherwise drag this cursor past unsynced Aircall history,
+        // defeating the "missed webhook self-heals" guarantee.
+        where: { type: 'call', payload: { path: ['aircallCallId'], not: Prisma.DbNull } },
         orderBy: { occurredAt: 'desc' },
         select: { occurredAt: true },
       })

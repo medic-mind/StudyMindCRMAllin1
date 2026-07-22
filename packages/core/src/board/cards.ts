@@ -263,68 +263,77 @@ export async function moveCard(
   const fromStageId = card.stageId
   const fromBoardId = card.boardId
 
-  // First place the card on the target stage (so it is part of the sibling
-  // set), then resequence when an explicit position was requested.
-  const landingPosition =
-    input.toPosition ?? (await nextCardPosition(db, targetBoardId, input.toStageId))
-  await db.card.update({
-    where: { id: card.id },
-    data: {
-      stageId: input.toStageId,
-      position: landingPosition,
-      ...(isCrossBoard ? { boardId: targetBoardId } : {}),
-    },
-  })
-
-  let position = landingPosition
-  if (input.toPosition !== undefined) {
-    const siblings = await db.card.findMany({
-      where: { boardId: targetBoardId, stageId: input.toStageId, archivedAt: null },
-      select: { id: true, position: true },
+  // The move — card placement + resequence + card_moved Interaction + audit —
+  // must be ONE transaction so a mid-way failure can never leave a silently
+  // moved card with no timeline/audit trail (golden rules #2/#5, mirrors
+  // `moveFamily`). Compose when already inside a caller's transaction (e.g.
+  // `applyQuickAction`): only open a new one when handed a top-level client.
+  const exec = async (tx: Db): Promise<CardSummary> => {
+    // First place the card on the target stage (so it is part of the sibling
+    // set), then resequence when an explicit position was requested.
+    const landingPosition =
+      input.toPosition ?? (await nextCardPosition(tx, targetBoardId, input.toStageId))
+    await tx.card.update({
+      where: { id: card.id },
+      data: {
+        stageId: input.toStageId,
+        position: landingPosition,
+        ...(isCrossBoard ? { boardId: targetBoardId } : {}),
+      },
     })
-    const writes = resequence(siblings, card.id, input.toPosition - 1)
-    for (const w of writes) {
-      await db.card.update({ where: { id: w.id }, data: { position: w.position } })
+
+    let position = landingPosition
+    if (input.toPosition !== undefined) {
+      const siblings = await tx.card.findMany({
+        where: { boardId: targetBoardId, stageId: input.toStageId, archivedAt: null },
+        select: { id: true, position: true },
+      })
+      const writes = resequence(siblings, card.id, input.toPosition - 1)
+      for (const w of writes) {
+        await tx.card.update({ where: { id: w.id }, data: { position: w.position } })
+      }
+      position = writes.find((w) => w.id === card.id)?.position ?? landingPosition
     }
-    position = writes.find((w) => w.id === card.id)?.position ?? landingPosition
+
+    const updated = await tx.card.findFirst({
+      where: { id: card.id, archivedAt: null },
+      select: cardSelect,
+    })
+    if (!updated) throw new BusinessError('CARD_NOT_FOUND', 'Card not found')
+
+    await tx.interaction.create({
+      data: {
+        id: createId(),
+        type: 'card_moved',
+        contactId: card.contactId,
+        occurredAt: new Date(),
+        summary: `Card: → ${toStage.name}`,
+        payload: {
+          event: 'card.moved',
+          cardId: card.id,
+          boardId: targetBoardId,
+          fromBoardId,
+          fromStageId,
+          toStageId: input.toStageId,
+          ...(isCrossBoard ? { crossBoard: true } : {}),
+        },
+        createdById: ctx.actorId,
+        updatedById: ctx.actorId,
+      },
+    })
+
+    await writeAuditLogEntry(tx, {
+      actorId: ctx.actorId,
+      requestId: ctx.requestId,
+      action: 'card.moved',
+      target: { type: 'Card', id: card.id },
+      before: { boardId: fromBoardId, stageId: fromStageId, position: card.position },
+      after: { boardId: targetBoardId, stageId: input.toStageId, position },
+    })
+    return updated
   }
 
-  const updated = await db.card.findFirst({
-    where: { id: card.id, archivedAt: null },
-    select: cardSelect,
-  })
-  if (!updated) throw new BusinessError('CARD_NOT_FOUND', 'Card not found')
-
-  await db.interaction.create({
-    data: {
-      id: createId(),
-      type: 'card_moved',
-      contactId: card.contactId,
-      occurredAt: new Date(),
-      summary: `Card: → ${toStage.name}`,
-      payload: {
-        event: 'card.moved',
-        cardId: card.id,
-        boardId: targetBoardId,
-        fromBoardId,
-        fromStageId,
-        toStageId: input.toStageId,
-        ...(isCrossBoard ? { crossBoard: true } : {}),
-      },
-      createdById: ctx.actorId,
-      updatedById: ctx.actorId,
-    },
-  })
-
-  await writeAuditLogEntry(db, {
-    actorId: ctx.actorId,
-    requestId: ctx.requestId,
-    action: 'card.moved',
-    target: { type: 'Card', id: card.id },
-    before: { boardId: fromBoardId, stageId: fromStageId, position: card.position },
-    after: { boardId: targetBoardId, stageId: input.toStageId, position },
-  })
-  return updated
+  return '$transaction' in db ? db.$transaction((tx) => exec(tx)) : exec(db)
 }
 
 export async function updateCard(

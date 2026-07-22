@@ -892,13 +892,21 @@ export async function channelSummaryForContact(
     if (!emailLatest || r.occurredAt > emailLatest) emailLatest = r.occurredAt
   }
 
-  let missed = 0
+  // A single Aircall call is stored as MANY `call` Interactions (one per
+  // webhook event: created/ringing/answered/hungup/ended/voicemail). Collapse
+  // by `aircallCallId` — as `callsForContact` does — so the KPI reflects
+  // distinct calls, not raw event rows (a missed call otherwise counts 2×).
+  const callIds = new Set<string>()
+  const missedCallIds = new Set<string>()
   let callLatest: Date | null = null
   for (const r of calls) {
     const p = asObject(r.payload)
-    if (classifyOutcome(p) === 'missed') missed += 1
+    const cid = asString(p['aircallCallId']) ?? `single:${r.occurredAt.toISOString()}`
+    callIds.add(cid)
+    if (classifyOutcome(p) === 'missed') missedCallIds.add(cid)
     if (!callLatest || r.occurredAt > callLatest) callLatest = r.occurredAt
   }
+  const missed = missedCallIds.size
 
   const trengoConvs = new Set<string>()
   let trengoLatest: Date | null = null
@@ -917,7 +925,7 @@ export async function channelSummaryForContact(
       latestAt: emailLatest,
     },
     calls: {
-      recentCount: calls.length,
+      recentCount: callIds.size,
       missedCount: missed,
       latestAt: callLatest,
     },

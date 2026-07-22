@@ -54,7 +54,14 @@ function getExpectedToken(): string | null {
 }
 
 export function leadIdempotencyKey(input: LeadInputT): string {
-  const ident = input.email?.toLowerCase().trim() ?? input.phone?.trim() ?? ''
+  // Fall back email → phone → name so two different identity-less enquirers
+  // (no email/phone) don't collapse onto one key and get silently deduped.
+  // `||` (not `??`) so an empty-string email/phone is treated as absent.
+  const ident =
+    input.email?.toLowerCase().trim() ||
+    input.phone?.trim() ||
+    input.name?.trim().toLowerCase() ||
+    ''
   const notesHash = createHash('sha256')
     .update(input.notes ?? '')
     .digest('hex')

@@ -72,7 +72,11 @@ export async function resolveOrCreateContactForMediAccount(
 
   const byEmail: MediContactCandidate[] = email
     ? await db.contact.findMany({
-        where: { email, deletedAt: null },
+        // Case-insensitive: contacts are stored email-as-typed (mixed case),
+        // so an exact lowercased match would miss `John.Smith@x.com` and create
+        // a duplicate on this automated dedupe path (matches the lead + Slack
+        // matchers which all use `mode: 'insensitive'`).
+        where: { email: { equals: email, mode: 'insensitive' }, deletedAt: null },
         select,
         orderBy: { createdAt: 'asc' },
       })
