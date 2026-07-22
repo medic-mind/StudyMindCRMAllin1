@@ -93,6 +93,10 @@ const CARD_DELETE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'manager',
 ])
 const LABEL_DELETE_ROLES = BOARD_MANAGE_ROLES
+// Clearing an ENTIRE board (archives every card at once) is the most
+// destructive board action, so it is CEO-only (operator direction) and the UI
+// double-verifies with a puzzle + typed board-name confirmation.
+const BOARD_CLEAR_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['ceo'])
 
 function assertBoardManage(role: UserRole): void {
   if (!BOARD_MANAGE_ROLES.has(role)) {
@@ -841,13 +845,33 @@ const cardRouter = router({
   }),
 
   // Clear the whole board: soft-archive every live card in one audited
-  // operation (reversible mechanics; contacts + history untouched). Manager+
-  // — same tier as card.delete; the UI confirms before calling (§3).
+  // operation (reversible mechanics; contacts + history untouched). CEO-only
+  // (operator direction) + double-verified: the caller must echo the board's
+  // exact name (server-checked here) on top of the UI puzzle (§3 — destructive
+  // bulk action, belt and braces).
   clearBoard: auditedProcedure
-    .input(z.object({ boardId: z.string() }))
+    .input(z.object({ boardId: z.string(), confirmation: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      assertCardDelete(user.role)
+      if (!BOARD_CLEAR_ROLES.has(user.role)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only the CEO can clear an entire board',
+        })
+      }
+      const board = await ctx.db.board.findFirst({
+        where: { id: input.boardId, archivedAt: null },
+        select: { name: true },
+      })
+      if (!board) throw new TRPCError({ code: 'NOT_FOUND', message: 'Board not found' })
+      // Second verification: the typed confirmation must match the board name
+      // (case-insensitive, trimmed) — a wrong board can't be cleared by mistake.
+      if (input.confirmation.trim().toLowerCase() !== board.name.trim().toLowerCase()) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Confirmation text does not match the board name',
+        })
+      }
       try {
         const res = await clearBoardCards(ctx.db, input.boardId, {
           actorId: user.id,

@@ -147,7 +147,9 @@ export default async function BoardPage({ params, searchParams }: PageProps) {
           </Link>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
-          {canDeleteCard ? (
+          {/* Clearing a whole board is CEO-only (operator direction) and is
+              double-verified with a puzzle in the button below. */}
+          {role === 'ceo' ? (
             <ClearBoardButton
               boardId={board.id}
               boardName={board.name}
