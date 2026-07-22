@@ -111,19 +111,29 @@ export default authMiddleware((req) => {
     | null
 
   if (!session && !isPublicPath(pathname)) {
+    // NEVER redirect an /api request to the sign-in HTML page — the caller
+    // expects JSON and a 307→HTML surfaces as "Unexpected token '<' … not valid
+    // JSON". Return a clean 401 instead; the tRPC/route handler's own auth still
+    // applies. Only page navigations bounce to /sign-in.
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    }
     const signInUrl = new URL('/sign-in', req.nextUrl.origin)
     signInUrl.searchParams.set('callbackUrl', req.nextUrl.pathname + req.nextUrl.search)
     return NextResponse.redirect(signInUrl)
   }
 
   // Force-reset gate: a user holding mustResetPassword can only reach the
-  // change-password page and the sign-out path. ADR 0010, chunk 7.
+  // change-password page. It must NOT redirect /api requests to HTML — the
+  // change-password form itself calls tRPC (`/api/trpc/account.changePassword`),
+  // and redirecting that to the HTML page is what produced "Unexpected token
+  // '<' … not valid JSON" on Save. Exempt ALL /api (mirroring the MFA gate);
+  // the mutations enforce their own auth server-side. ADR 0010, chunk 7.
   if (
     session?.user?.mustResetPassword &&
     !isPublicPath(pathname) &&
     pathname !== '/account/change-password' &&
-    pathname !== '/api/auth/signout' &&
-    !pathname.startsWith('/api/auth/')
+    !pathname.startsWith('/api/')
   ) {
     return NextResponse.redirect(new URL('/account/change-password', req.nextUrl.origin))
   }
