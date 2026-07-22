@@ -142,7 +142,7 @@ export function BoardCard({
       ref={dragRef}
       style={{ ...dragStyle, borderLeftColor: borderColor }}
       {...dragHandleProps}
-      className={`group relative rounded-lg border border-neutral-200 border-l-[3px] bg-white p-3 text-sm shadow-card transition-shadow hover:shadow-card-hover ${dragHandleProps ? 'touch-none' : ''}`}
+      className={`group relative rounded-lg border border-neutral-200 border-l-[3px] bg-white p-2.5 text-sm shadow-card transition-shadow hover:shadow-card-hover ${dragHandleProps ? 'touch-none' : ''}`}
     >
       {/* Whole-card click target. Sits behind the per-card controls so
        * those still receive their own clicks. */}

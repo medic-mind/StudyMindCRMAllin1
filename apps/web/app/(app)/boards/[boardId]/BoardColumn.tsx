@@ -115,7 +115,7 @@ export function BoardColumn({
       style={{ borderTop: `3px solid ${colour}` }}
       aria-label={`${stage.name} column`}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-neutral-100 bg-white px-3 py-2.5">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-neutral-100 bg-white px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span
             className="inline-block size-2.5 shrink-0 rounded-full"
@@ -135,7 +135,9 @@ export function BoardColumn({
             No cards in {stage.name} yet.
           </div>
         ) : (
-          <ul className="flex-1 space-y-2 p-2">
+          // The card list is the per-column vertical scroller (headers + add
+          // button stay fixed). min-h-0 lets a flex child actually scroll.
+          <ul data-col-scroll className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-1.5">
             {cards.map((c) => (
               <SortableCard
                 key={c.id}
@@ -158,7 +160,7 @@ export function BoardColumn({
         )}
       </SortableContext>
       {canWrite ? (
-        <div className="border-t border-neutral-100 bg-white p-2">
+        <div className="shrink-0 border-t border-neutral-100 bg-white p-2">
           <AddCardButton
             boardId={boardId}
             stages={stages}

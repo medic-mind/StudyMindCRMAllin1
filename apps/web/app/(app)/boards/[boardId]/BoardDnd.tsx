@@ -28,7 +28,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import type { CardFaceKey } from '@/lib/board/card-face'
-import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icon'
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+} from '@/components/ui/icon'
 import { trpc } from '@/lib/trpc/client'
 
 import { BoardColumn } from './BoardColumn'
@@ -133,17 +138,41 @@ export function BoardDnd({
   // already work). Buttons only show when the board actually overflows.
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [overflowsX, setOverflowsX] = useState(false)
+  const [overflowsY, setOverflowsY] = useState(false)
+  const colScrollers = () =>
+    Array.from(
+      scrollRef.current?.querySelectorAll<HTMLElement>('[data-col-scroll]') ?? [],
+    )
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const check = () => setOverflowsX(el.scrollWidth > el.clientWidth + 4)
+    const check = () => {
+      setOverflowsX(el.scrollWidth > el.clientWidth + 4)
+      // Vertical overflow is per-column now (each column's card list scrolls).
+      // The rail shows when ANY column is taller than the view.
+      setOverflowsY(colScrollers().some((c) => c.scrollHeight > c.clientHeight + 4))
+    }
     check()
     const ro = new ResizeObserver(check)
     ro.observe(el)
-    return () => ro.disconnect()
-  }, [stages.length])
+    // Card add/remove/move changes a column's height → re-check vertical overflow.
+    const mo = new MutationObserver(check)
+    mo.observe(el, { childList: true, subtree: true })
+    return () => {
+      ro.disconnect()
+      mo.disconnect()
+    }
+  }, [stages.length, cards.length])
   function scrollColumns(direction: -1 | 1) {
-    scrollRef.current?.scrollBy({ left: direction * 336, behavior: 'smooth' })
+    // One column-width (≈ column + gap) per click.
+    scrollRef.current?.scrollBy({ left: direction * 272, behavior: 'smooth' })
+  }
+  function scrollVertical(direction: -1 | 1) {
+    // Each column scrolls its own cards (Todoist-style, headers stay put); the
+    // rail scrolls every column in parallel so it reads as one board up/down.
+    const cols = colScrollers()
+    const step = Math.max(240, (scrollRef.current?.clientHeight ?? 480) * 0.8)
+    for (const c of cols) c.scrollBy({ top: direction * step, behavior: 'smooth' })
   }
 
   // Reconcile server → local whenever the card set meaningfully changes. The
@@ -314,62 +343,62 @@ export function BoardDnd({
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
+      {/* Horizontal scroll bar FIXED TO THE TOP of the board (columns → ←). */}
+      {overflowsX ? (
+        <HScrollBar position="top" onLeft={() => scrollColumns(-1)} onRight={() => scrollColumns(1)} />
+      ) : null}
+
       <div className="relative">
-        {overflowsX ? (
+        {/* Vertical up/down controls ALWAYS on the LEFT and RIGHT of the board
+            (the operator ask). Shown whenever a column is taller than the view;
+            they scroll the board up/down so you never hunt for the scrollbar. */}
+        {overflowsY ? (
           <>
-            <button
-              type="button"
-              aria-label="Scroll boards left"
-              onClick={() => scrollColumns(-1)}
-              className="absolute left-1 top-1/2 z-20 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-neutral-200 bg-white/95 text-neutral-600 shadow-md backdrop-blur transition-colors hover:bg-neutral-50 hover:text-neutral-900"
-            >
-              <ChevronLeftIcon size={18} />
-            </button>
-            <button
-              type="button"
-              aria-label="Scroll boards right"
-              onClick={() => scrollColumns(1)}
-              className="absolute right-1 top-1/2 z-20 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-neutral-200 bg-white/95 text-neutral-600 shadow-md backdrop-blur transition-colors hover:bg-neutral-50 hover:text-neutral-900"
-            >
-              <ChevronRightIcon size={18} />
-            </button>
+            <VScrollRail side="left" onUp={() => scrollVertical(-1)} onDown={() => scrollVertical(1)} />
+            <VScrollRail side="right" onUp={() => scrollVertical(-1)} onDown={() => scrollVertical(1)} />
           </>
         ) : null}
-        {/* Bounded height so the horizontal scrollbar sits at the bottom of the
-            board area (on-screen), not pushed to the bottom of a tall page as
-            columns fill with cards. Tall columns scroll vertically inside this
-            box; many columns scroll horizontally — both stay in view. */}
+        {/* Fixed-height board that fills the viewport: the row scrolls only
+            HORIZONTALLY (columns), while each column scrolls its own cards
+            vertically (Todoist-style — headers stay put, nothing is clipped).
+            Denser columns + gap (zoomed out) so many more cards/columns show at
+            once. Side padding leaves room for the vertical rails. */}
         <div
           ref={scrollRef}
-          className="flex max-h-[calc(100dvh-13rem)] gap-4 overflow-auto pb-2"
+          className="flex h-[calc(100dvh-13.5rem)] gap-3 overflow-x-auto overflow-y-hidden px-9 pb-2"
         >
           {stages.map((stage) => (
             <div
               key={stage.id}
               data-stage-col={stage.id}
-              className="min-w-[300px] max-w-[320px] flex-1"
+              className="h-full min-w-[248px] max-w-[264px] flex-1"
             >
-            <BoardColumn
-              boardId={boardId}
-              stage={stage}
-              cards={byStage.get(stage.id) ?? []}
-              stages={stageOptions}
-              crossBoardStages={crossBoardStages}
-              quickActions={quickActions}
-              labels={labels}
-              cardFields={cardFields}
-              canWrite={canWrite}
-              canComment={canComment}
-              canDeleteCard={canDeleteCard}
-              currentUserName={currentUserName}
-              onLocalMove={moveCardLocal}
-              onLocalRevert={revertLocalMove}
-              onCardCreated={addCardLocal}
-            />
+              <BoardColumn
+                boardId={boardId}
+                stage={stage}
+                cards={byStage.get(stage.id) ?? []}
+                stages={stageOptions}
+                crossBoardStages={crossBoardStages}
+                quickActions={quickActions}
+                labels={labels}
+                cardFields={cardFields}
+                canWrite={canWrite}
+                canComment={canComment}
+                canDeleteCard={canDeleteCard}
+                currentUserName={currentUserName}
+                onLocalMove={moveCardLocal}
+                onLocalRevert={revertLocalMove}
+                onCardCreated={addCardLocal}
+              />
             </div>
           ))}
         </div>
       </div>
+
+      {/* Horizontal scroll bar FIXED TO THE BOTTOM of the board. */}
+      {overflowsX ? (
+        <HScrollBar position="bottom" onLeft={() => scrollColumns(-1)} onRight={() => scrollColumns(1)} />
+      ) : null}
       <DragOverlay>
         {activeCard ? (
           <div className="rounded-md border border-primary-300 bg-white p-3 text-sm font-medium text-neutral-900 shadow-lg">
@@ -378,5 +407,72 @@ export function BoardDnd({
         ) : null}
       </DragOverlay>
     </DndContext>
+  )
+}
+
+/** Horizontal scroll control (columns left/right), fixed above or below the
+ *  board so it is always reachable without hunting for the scrollbar. */
+function HScrollBar({
+  position,
+  onLeft,
+  onRight,
+}: {
+  position: 'top' | 'bottom'
+  onLeft: () => void
+  onRight: () => void
+}) {
+  const btn =
+    'grid h-7 w-10 place-items-center rounded-md border border-neutral-200 bg-white text-neutral-600 shadow-sm transition-colors hover:bg-neutral-50 hover:text-neutral-900'
+  return (
+    <div className={`flex items-center justify-center gap-2 ${position === 'top' ? 'mb-1.5' : 'mt-1.5'}`}>
+      <button type="button" aria-label="Scroll columns left" onClick={onLeft} className={btn}>
+        <ChevronLeftIcon size={16} />
+      </button>
+      <span className="select-none text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+        Scroll columns
+      </span>
+      <button type="button" aria-label="Scroll columns right" onClick={onRight} className={btn}>
+        <ChevronRightIcon size={16} />
+      </button>
+    </div>
+  )
+}
+
+/** Vertical up/down control pinned to the left or right edge of the board, so
+ *  scrolling a tall column is always one click away (the operator ask). */
+function VScrollRail({
+  side,
+  onUp,
+  onDown,
+}: {
+  side: 'left' | 'right'
+  onUp: () => void
+  onDown: () => void
+}) {
+  const btn =
+    'grid h-9 w-9 place-items-center rounded-full border border-neutral-200 bg-white/95 text-neutral-600 shadow-md backdrop-blur transition-colors hover:bg-neutral-50 hover:text-neutral-900'
+  return (
+    <div
+      className={`pointer-events-none absolute top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1.5 ${
+        side === 'left' ? 'left-0' : 'right-0'
+      }`}
+    >
+      <button
+        type="button"
+        aria-label="Scroll up"
+        onClick={onUp}
+        className={`pointer-events-auto ${btn}`}
+      >
+        <ChevronUpIcon size={18} />
+      </button>
+      <button
+        type="button"
+        aria-label="Scroll down"
+        onClick={onDown}
+        className={`pointer-events-auto ${btn}`}
+      >
+        <ChevronDownIcon size={18} />
+      </button>
+    </div>
   )
 }
