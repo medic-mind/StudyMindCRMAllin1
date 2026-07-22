@@ -116,7 +116,10 @@ function makeCtx(opts: { role?: UserRole; conversations?: ConvRow[] }): TrpcCont
     },
   }
 
-  const user: SessionUser = { id: 'u_me', email: 'me@studymind.co.uk', role: opts.role ?? 'sales_executive' }
+  // Default to a manager — these tests exercise folder/pagination logic, which
+  // is role-agnostic; a manager sees every mailbox so the per-mailbox access
+  // scope (tested separately in account-access.test.ts) doesn't filter them out.
+  const user: SessionUser = { id: 'u_me', email: 'me@studymind.co.uk', role: opts.role ?? 'manager' }
   return {
     user,
     requestId: 'req_1',

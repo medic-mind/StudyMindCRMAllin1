@@ -131,6 +131,12 @@ function makeCtx(opts: { role?: UserRole; head?: Head | null }): {
         status: 'connected',
       }),
     },
+    // The acting user (u_me) is a member of this shared inbox — so the
+    // per-mailbox access check passes while the send still goes out as the
+    // mailbox owner (u_owner), exactly the shared-inbox model (ADR 0021).
+    mailAccountMember: {
+      findFirst: async () => ({ mailAccountId: 'acc_1', userId: 'u_me' }),
+    },
     interaction: {
       findFirst: async () => ({
         payload: {

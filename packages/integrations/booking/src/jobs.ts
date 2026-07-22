@@ -32,6 +32,9 @@ interface PullSummary {
   processed: number
   pages: number
   drained: boolean
+  /** Poison rows skipped this run (bad data), surfaced in the summary so a
+   *  climbing count is visible without freezing the sync. */
+  skipped: number
 }
 
 async function runResourcePull<T extends { updatedAt: Date }>(
@@ -58,7 +61,7 @@ async function runResourcePull<T extends { updatedAt: Date }>(
     update: cursorData,
   })
 
-  return { processed: res.processed, pages: res.pages, drained: res.drained }
+  return { processed: res.processed, pages: res.pages, drained: res.drained, skipped: res.skipped }
 }
 
 async function auditSyncRun(jobId: string, summary: PullSummary): Promise<void> {

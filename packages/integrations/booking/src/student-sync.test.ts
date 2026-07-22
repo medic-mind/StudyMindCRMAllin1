@@ -107,6 +107,48 @@ describe('drainIncremental', () => {
     expect(res.newState.updatedSince?.toISOString()).toBe('2026-03-01T00:00:00.000Z')
   })
 
+  it('isolates a poison row — skips it, still processes the rest, advances the cursor', async () => {
+    const seen: string[] = []
+    const res = await drainIncremental<Item>({
+      state: start,
+      maxPages: 25,
+      fetchPage: async () =>
+        page(
+          [
+            { externalId: 'ok1', updatedAt: new Date('2026-02-01T00:00:00Z') },
+            { externalId: 'poison', updatedAt: new Date('2026-02-15T00:00:00Z') },
+            { externalId: 'ok2', updatedAt: new Date('2026-03-01T00:00:00Z') },
+          ],
+          null,
+          false,
+        ),
+      processItem: async (i) => {
+        if (i.externalId === 'poison') throw new Error('boom')
+        seen.push(i.externalId)
+      },
+    })
+    expect(seen).toEqual(['ok1', 'ok2'])
+    expect(res.processed).toBe(2)
+    expect(res.skipped).toBe(1)
+    expect(res.drained).toBe(true)
+    // The high-water mark still advanced — the poison row did not freeze it.
+    expect(res.newState.updatedSince?.toISOString()).toBe('2026-03-01T00:00:00.000Z')
+  })
+
+  it('aborts (throws) when EVERY row on a page fails — systemic, must retry not skip', async () => {
+    await expect(
+      drainIncremental<Item>({
+        state: start,
+        maxPages: 25,
+        fetchPage: async () =>
+          page([{ externalId: 'x', updatedAt: new Date('2026-02-01T00:00:00Z') }], null, false),
+        processItem: async () => {
+          throw new Error('db down')
+        },
+      }),
+    ).rejects.toThrow(/all 1 rows/)
+  })
+
   it('walks multiple pages via the cursor within one run', async () => {
     const pages: Record<string, Page<Item>> = {
       START: page([{ externalId: 'a', updatedAt: new Date('2026-02-01T00:00:00Z') }], 'C1', true),

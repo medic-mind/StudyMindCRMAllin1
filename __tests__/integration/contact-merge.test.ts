@@ -51,8 +51,41 @@ function makeFakeDb(initial: {
   interactions: Interaction[]
   familyMembers: FamilyMember[]
   families: Family[]
+  cards?: Array<{ id: string; contactId: string }>
+  gcCustomers?: Array<{ id: string; contactId: string }>
 }) {
-  const state = initial
+  const state = { cards: [], gcCustomers: [], ...initial } as typeof initial & {
+    cards: Array<{ id: string; contactId: string }>
+    gcCustomers: Array<{ id: string; contactId: string }>
+  }
+
+  // A functional contactId-keyed store for the simple 1:N re-parents we assert.
+  const simpleStore = (rows: Array<{ contactId: string }>) => ({
+    updateMany: async ({ where, data }: any) => {
+      let count = 0
+      for (const r of rows) {
+        if (r.contactId === where.contactId) {
+          r.contactId = data.contactId
+          count++
+        }
+      }
+      return { count }
+    },
+    findMany: async () => [] as any[],
+    deleteMany: async () => ({ count: 0 }),
+  })
+
+  // Every other relation the merge re-parents is a no-op on this test's data.
+  const emptyStore = {
+    updateMany: async () => ({ count: 0 }),
+    deleteMany: async () => ({ count: 0 }),
+    findMany: async () => [] as any[],
+    findFirst: async () => null,
+    findUnique: async () => null,
+    update: async () => null,
+    delete: async () => null,
+    create: async () => null,
+  }
 
   const contactStore = {
     findUnique: async ({ where, include }: any) => {
@@ -136,23 +169,44 @@ function makeFakeDb(initial: {
     },
   }
 
-  const $transaction = async <T,>(cb: (tx: unknown) => Promise<T>): Promise<T> =>
-    cb({
-      contact: contactStore,
-      interaction: interactionStore,
-      familyMember: familyMemberStore,
-      family: familyStore,
-    })
+  const stores = {
+    contact: contactStore,
+    interaction: interactionStore,
+    familyMember: familyMemberStore,
+    family: familyStore,
+    // Functional (asserted): the ghost-card / lost-GoCardless-link bug.
+    card: simpleStore(state.cards),
+    gcCustomer: simpleStore(state.gcCustomers),
+    // No-op on this test's data — present so the merge's exhaustive re-parenting
+    // doesn't hit an undefined delegate.
+    conversation: emptyStore,
+    contactFieldSuggestion: emptyStore,
+    safeguardingFlag: emptyStore,
+    contactDocument: emptyStore,
+    bookingLesson: emptyStore,
+    bookingHoursTransaction: emptyStore,
+    bookingCreditTransaction: emptyStore,
+    uploadedInvoice: emptyStore,
+    mandateSetupLink: emptyStore,
+    invoicingCustomer: emptyStore,
+    complaint: emptyStore,
+    campStripePurchase: emptyStore,
+    campBookingRecord: emptyStore,
+    contactCompany: emptyStore,
+    contactSubject: emptyStore,
+    contactLabel: emptyStore,
+    businessAccountContact: emptyStore,
+    webinarEnrollment: emptyStore,
+    contactBookingProfile: emptyStore,
+    contactRiskReview: emptyStore,
+    contactLink: emptyStore,
+  }
+
+  const $transaction = async <T,>(cb: (tx: unknown) => Promise<T>): Promise<T> => cb(stores)
 
   return {
     state,
-    db: {
-      contact: contactStore,
-      interaction: interactionStore,
-      familyMember: familyMemberStore,
-      family: familyStore,
-      $transaction,
-    } as any,
+    db: { ...stores, $transaction } as any,
   }
 }
 
@@ -193,6 +247,8 @@ describe('mergeContacts', () => {
       ],
       familyMembers: [{ id: 'm1', familyId: 'fam1', contactId: 'loser' }],
       families: [{ id: 'fam1', billingContactId: 'loser' }],
+      cards: [{ id: 'card1', contactId: 'loser' }],
+      gcCustomers: [{ id: 'gc1', contactId: 'loser' }],
     })
 
     const res = await mergeContacts(db, {
@@ -205,6 +261,10 @@ describe('mergeContacts', () => {
     expect(state.interactions.some((i) => (i.payload as any).event === 'contact.merged')).toBe(true)
     expect(state.familyMembers[0]?.contactId).toBe('survivor')
     expect(state.families[0]?.billingContactId).toBe('survivor')
+    // The card + GoCardless customer must move to the survivor too, not orphan
+    // on the soft-deleted loser (the ghost-card / lost-DD-link bug).
+    expect(state.cards[0]?.contactId).toBe('survivor')
+    expect(state.gcCustomers[0]?.contactId).toBe('survivor')
     expect(state.contacts.find((c) => c.id === 'loser')?.deletedAt).not.toBeNull()
   })
 

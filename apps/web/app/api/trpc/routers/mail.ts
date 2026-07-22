@@ -33,6 +33,7 @@ import {
 } from '@studymind/integration-gmail/client'
 
 import { displayMessageBody } from '@/lib/format/html-text'
+import { canAccessMailAccount } from '@/lib/mail/account-access'
 import { getMailSyncProvider } from '@/lib/mail/get-sync-provider'
 import {
   auditedProcedure,
@@ -158,6 +159,10 @@ async function resolveEmailThread(
       })
     }
   }
+  // The thread belongs to a mailbox — enforce the caller may access it before
+  // returning an actionable ref (every thread.* action + reply/forward flows
+  // through here).
+  await assertCanAccessMailAccount(ctx, requireUser(ctx), mailAccountId)
   return {
     id: head.id,
     externalThreadId: head.externalThreadId,
@@ -337,6 +342,7 @@ async function resolveGmailAccount(
   if (!acc.ownerUserId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'This mailbox has no connected owner.' })
   }
+  await assertCanAccessMailAccount(ctx, requireUser(ctx), mailAccountId)
   return { ownerUserId: acc.ownerUserId, address: acc.address }
 }
 
@@ -373,6 +379,35 @@ async function visibleGmailAccountIds(
     orderBy: [{ ownerKind: 'asc' }, { address: 'asc' }],
   })
   return rows.map((r) => r.id)
+}
+
+/** Assert the caller may read/act on ONE specific mail account — owner, shared
+ *  member, or a manager. The same predicate `visibleGmailAccountIds` uses for
+ *  listings; the boundary must also hold on per-account reads/sends/mutations,
+ *  otherwise any staffer can read or send from any mailbox by id. */
+async function assertCanAccessMailAccount(
+  ctx: TrpcContext,
+  me: ReturnType<typeof requireUser>,
+  mailAccountId: string,
+): Promise<void> {
+  if (await canAccessMailAccount(ctx.db, me, mailAccountId)) return
+  throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this mailbox.' })
+}
+
+/** Where-fragment scoping a Conversation query to the accounts the caller may
+ *  see. An explicit account is access-checked; without one, a manager sees all
+ *  and everyone else only their visible set (never every mailbox). */
+async function mailAccountScopeWhere(
+  ctx: TrpcContext,
+  me: ReturnType<typeof requireUser>,
+  mailAccountId: string | null | undefined,
+): Promise<Record<string, unknown>> {
+  if (mailAccountId) {
+    await assertCanAccessMailAccount(ctx, me, mailAccountId)
+    return { mailAccountId }
+  }
+  if (MANAGE_SHARED_ROLES.has(me.role)) return {}
+  return { mailAccountId: { in: await visibleGmailAccountIds(ctx, me) } }
 }
 
 /** Our own addresses for this account (mailbox address + send-as aliases), used
@@ -563,7 +598,7 @@ export const mailRouter = router({
         where: {
           provider: 'email',
           isTrashed: false,
-          ...(input.mailAccountId ? { mailAccountId: input.mailAccountId } : {}),
+          ...(await mailAccountScopeWhere(ctx, me, input.mailAccountId)),
           NOT: { tags: { isEmpty: true } },
         },
         select: { tags: true },
@@ -636,8 +671,10 @@ export const mailRouter = router({
     .query(async ({ ctx, input }) => {
       const me = requireUser(ctx)
       assertStaff(me.role)
-      const base: Record<string, unknown> = { provider: 'email' }
-      if (input.mailAccountId) base['mailAccountId'] = input.mailAccountId
+      const base: Record<string, unknown> = {
+        provider: 'email',
+        ...(await mailAccountScopeWhere(ctx, me, input.mailAccountId)),
+      }
       const unread = (folder: (typeof GMAIL_FOLDERS)[number]) =>
         ctx.db.conversation.count({
           where: { ...base, AND: [buildGmailFolderWhere(folder), { unreadCount: { gt: 0 } }] },
@@ -688,8 +725,10 @@ export const mailRouter = router({
         const me = requireUser(ctx)
         assertStaff(me.role)
 
-        const where: Record<string, unknown> = { provider: 'email' }
-        if (input.mailAccountId) where['mailAccountId'] = input.mailAccountId
+        const where: Record<string, unknown> = {
+          provider: 'email',
+          ...(await mailAccountScopeWhere(ctx, me, input.mailAccountId)),
+        }
         // Compose folder + label + cursor as AND clauses so none clobbers another.
         const and: unknown[] = []
         if (input.label) {
@@ -787,6 +826,7 @@ export const mailRouter = router({
         }
 
         if (input.mailAccountId) {
+          await assertCanAccessMailAccount(ctx, me, input.mailAccountId)
           const res = await searchOne(input.mailAccountId)
           // Preserve Gmail's relevance order.
           res.rows.sort(
@@ -1008,6 +1048,7 @@ export const mailRouter = router({
     .mutation(async ({ ctx, input }) => {
       const me = requireUser(ctx)
       assertCanMutate(me.role)
+      await assertCanAccessMailAccount(ctx, me, input.mailAccountId)
       const account = await ctx.db.mailAccount.findFirst({
         where: { id: input.mailAccountId, deletedAt: null },
         select: {

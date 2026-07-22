@@ -14,6 +14,9 @@ export interface Page<T> {
   data: T[]
   nextCursor: string | null
   hasMore: boolean
+  /** Rows on this page that failed to map (deterministically bad data) and were
+   *  skipped so one poison row can't freeze the whole resource pull (§8). */
+  skipped?: number
 }
 
 // -----------------------------------------------------------------------------

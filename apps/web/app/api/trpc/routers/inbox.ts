@@ -12,6 +12,7 @@ import { z } from 'zod'
 
 import { cleanChannelName } from '@studymind/integration-trengo/channels'
 
+import { canAccessMailAccount } from '@/lib/mail/account-access'
 import {
   auditedProcedure,
   protectedProcedure,
@@ -321,6 +322,13 @@ export const inboxRouter = router({
           },
         })
         if (!head) throw new TRPCError({ code: 'NOT_FOUND' })
+
+        // Per-mailbox access boundary: an email head exposes the mailbox's
+        // bodies + mailAccountId, so enforce the caller may see that mailbox
+        // (owner / shared member / manager) — not just that they're staff.
+        if (head.provider === 'email' && !(await canAccessMailAccount(ctx.db, user, head.mailAccountId))) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this mailbox.' })
+        }
 
         // ADR 0021 Phase 3b — email heads join their messages on
         // `payload.gmailThreadId`; Trengo heads on `payload.ticketId`.

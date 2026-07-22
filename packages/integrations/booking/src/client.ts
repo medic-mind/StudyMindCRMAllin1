@@ -130,10 +130,25 @@ export function createClient(opts: BookingClientOptions = {}): BookingClient {
       has_more?: boolean
     }
     const raw = json.data ?? []
+    // Map defensively — a single row with an unknown enum / malformed required
+    // date makes the mapper throw (fail-closed, §8). Skip THAT row rather than
+    // rejecting the whole page: an eager `raw.map(map)` let one poison row throw
+    // the drain, so its `step.run` retried and failed forever and the keyset
+    // cursor never advanced — freezing the entire resource's sync indefinitely.
+    const mapped: TDomain[] = []
+    let skipped = 0
+    for (const item of raw) {
+      try {
+        mapped.push(map(item))
+      } catch {
+        skipped += 1
+      }
+    }
     return {
-      data: raw.map(map),
+      data: mapped,
       nextCursor: json.next_cursor ?? null,
       hasMore: json.has_more ?? false,
+      skipped,
     }
   }
 

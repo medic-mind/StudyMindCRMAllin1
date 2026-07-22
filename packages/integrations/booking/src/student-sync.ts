@@ -45,6 +45,9 @@ export interface DrainResult {
   pages: number
   newState: SyncState
   drained: boolean
+  /** Rows dropped (map failure on the page + per-item processing failure) so a
+   *  single poison row can't halt the drain and freeze the cursor. */
+  skipped: number
 }
 
 export async function drainIncremental<T extends { updatedAt: Date }>(opts: {
@@ -58,15 +61,33 @@ export async function drainIncremental<T extends { updatedAt: Date }>(opts: {
   let maxSeen: Date | null = updatedSince
   let processed = 0
   let pages = 0
+  let skipped = 0
   let drained = false
 
   while (pages < opts.maxPages) {
     const page = await opts.fetchPage({ updatedSince, cursor })
     pages += 1
+    skipped += page.skipped ?? 0
+    let pageFailures = 0
     for (const item of page.data) {
-      await opts.processItem(item)
-      processed += 1
-      if (!maxSeen || item.updatedAt > maxSeen) maxSeen = item.updatedAt
+      try {
+        await opts.processItem(item)
+        processed += 1
+        if (!maxSeen || item.updatedAt > maxSeen) maxSeen = item.updatedAt
+      } catch {
+        // Isolate a single poison row (deterministically un-processable) so it
+        // can't halt the whole drain and freeze the cursor.
+        pageFailures += 1
+        skipped += 1
+      }
+    }
+    // If EVERY row on a non-empty page failed, that's systemic (DB outage, not
+    // one bad row) — abort so the Inngest step RETRIES rather than skipping the
+    // page and advancing the cursor past good data.
+    if (page.data.length > 0 && pageFailures === page.data.length) {
+      throw new Error(
+        `booking sync: all ${page.data.length} rows on a page failed to process`,
+      )
     }
     if (page.hasMore && page.nextCursor) {
       cursor = page.nextCursor
@@ -79,7 +100,7 @@ export async function drainIncremental<T extends { updatedAt: Date }>(opts: {
   const newState: SyncState = drained
     ? { updatedSince: maxSeen, cursor: null }
     : { updatedSince, cursor }
-  return { processed, pages, newState, drained }
+  return { processed, pages, newState, drained, skipped }
 }
 
 // -----------------------------------------------------------------------------
