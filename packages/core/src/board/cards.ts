@@ -77,7 +77,10 @@ async function resolveStageAnyBoard(
   stageId: string,
 ): Promise<{ id: string; name: string; boardId: string }> {
   const stage = await db.pipelineStage.findFirst({
-    where: { id: stageId, archivedAt: null },
+    // Reject a stage on an ARCHIVED board too — otherwise a cross-board move /
+    // quick-action could land the card on an invisible board (`board.get` 404s
+    // it), effectively losing the card until the board is un-archived.
+    where: { id: stageId, archivedAt: null, board: { archivedAt: null } },
     select: { id: true, name: true, boardId: true },
   })
   if (!stage || !stage.boardId) {

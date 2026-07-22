@@ -629,6 +629,9 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           subject,
           senderName,
           bodyHtml,
+          // Raw Gmail message labels (incl. UNREAD) so the per-message/contact
+          // view can derive read state; without it every email read as "read".
+          labels: message.labelIds ?? [],
           attachments: attachmentRefs,
         },
       },
@@ -665,6 +668,9 @@ async function processMessage(input: ProcessMessageInput): Promise<void> {
           subject,
           senderName,
           bodyHtml,
+          // Raw Gmail message labels (incl. UNREAD) so the per-message/contact
+          // view can derive read state; without it every email read as "read".
+          labels: message.labelIds ?? [],
           attachments: attachmentRefs,
         },
       },

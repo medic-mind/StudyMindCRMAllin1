@@ -65,6 +65,7 @@ export const EVENT_NAMES = [
   // Contact documents (small attachments stored in Postgres).
   'contact.document_added',
   'contact.document_removed',
+  'contact.document_downloaded',
   // Call summary on a contact (not a card) + multi-channel fan-out.
   'contact.call_summary_added',
   'contact.call_summary_sent',

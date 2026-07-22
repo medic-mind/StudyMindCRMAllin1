@@ -27,6 +27,9 @@ export interface OutboundAttachment {
 
 export interface SendReplyInput {
   agentId: string
+  /** The specific connected mailbox to send AS — selects that mailbox's own
+   *  OAuth token. Omit for the agent's default mailbox. */
+  fromAddress?: string | undefined
   threadId: string
   subject: string
   body: string
@@ -271,9 +274,12 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
     attachments: input.attachments,
   })
 
-  // 4. Send.
+  // 4. Send — as the SPECIFIC mailbox (its own OAuth token), not the agent's
+  //    default. Without `address`, a reply to a non-default connected inbox
+  //    authenticates as the wrong account and Gmail 404s the foreign thread id.
   const client = await createClientForAgent({
     agentId: input.agentId,
+    address: input.fromAddress,
     purpose: 'gmail.outbound_reply',
     requestId: input.requestId,
   })
@@ -451,6 +457,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
 
   const client = await createClientForAgent({
     agentId: input.agentId,
+    address: input.fromAddress,
     purpose: 'gmail.outbound_compose',
     requestId: input.requestId,
   })

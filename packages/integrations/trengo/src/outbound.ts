@@ -57,6 +57,17 @@ export async function sendMessage(input: SendMessageInput): Promise<SendMessageR
   let interactionId: string
   if (existing) {
     interactionId = existing.id
+    // Already delivered on a prior attempt — do NOT call Trengo again. Trengo's
+    // message API has no idempotency key, so re-sending (e.g. the retry cron
+    // re-running a row whose send succeeded but whose status update didn't)
+    // would double-message the customer. Only pending_send rows are re-sent.
+    const p = (existing.payload ?? {}) as Record<string, unknown>
+    if (p['status'] === 'sent' || p['trengoMessageId'] != null) {
+      return {
+        interactionId,
+        trengoMessageId: typeof p['trengoMessageId'] === 'number' ? p['trengoMessageId'] : null,
+      }
+    }
   } else {
     const created = await db.interaction.create({
       data: {

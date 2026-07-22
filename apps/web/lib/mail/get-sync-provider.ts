@@ -40,6 +40,7 @@ export async function getMailSyncProvider(
       provider: true,
       ownerUserId: true,
       status: true,
+      address: true,
     },
   })
   if (!account) {
@@ -66,6 +67,7 @@ export async function getMailSyncProvider(
       return createGmailMailSyncProvider({
         accountId: account.id,
         agentId: account.ownerUserId,
+        ...(account.address ? { address: account.address } : {}),
         clientOptions: {
           ...(input.purpose ? { purpose: input.purpose } : {}),
           ...(input.requestId ? { requestId: input.requestId } : {}),

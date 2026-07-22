@@ -345,6 +345,9 @@ async function processBackfillMessage(
     subject,
     senderName,
     bodyHtml,
+    // Raw Gmail message labels (incl. UNREAD) — parity with the live sync so the
+    // per-message/contact view can derive read state.
+    labels: message.labelIds ?? [],
     attachments: attachmentRefs,
   }
 

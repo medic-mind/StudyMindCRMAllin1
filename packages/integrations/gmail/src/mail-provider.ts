@@ -32,6 +32,10 @@ export interface CreateGmailMailSyncProviderOptions {
   accountId: string
   /** The owning User.id (carries OAuth context). */
   agentId: string
+  /** The specific mailbox address — selects THIS mailbox's own OAuth token
+   *  rather than the agent's default mailbox, so actions on a non-default
+   *  connected inbox hit the right Google account (not a foreign thread id). */
+  address?: string
   /** Overrides for the underlying Gmail SDK client (tests). */
   clientOptions?: Pick<CreateGmailClientOptions, 'factory' | 'refreshToken' | 'purpose' | 'requestId'>
 }
@@ -65,6 +69,7 @@ export function createGmailMailSyncProvider(
     if (!cached) {
       cached = createClientForAgent({
         agentId: opts.agentId,
+        ...(opts.address ? { address: opts.address } : {}),
         ...(opts.clientOptions ?? {}),
       })
     }

@@ -1319,7 +1319,7 @@ export const mailRouter = router({
 
         const account = await ctx.db.mailAccount.findUnique({
           where: { id: head.mailAccountId },
-          select: { ownerUserId: true, signatureHtml: true },
+          select: { ownerUserId: true, signatureHtml: true, address: true },
         })
         if (!account?.ownerUserId) {
           throw new TRPCError({
@@ -1372,6 +1372,7 @@ export const mailRouter = router({
         })
         await sendReply({
           agentId: account.ownerUserId,
+          fromAddress: account.address ?? undefined,
           threadId: head.externalThreadId,
           subject: replySubject(msg.subject),
           body: bodies.text,
