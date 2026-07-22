@@ -73,6 +73,7 @@ function lead(partial: Partial<NormalisedLead>): NormalisedLead {
     email: null,
     phone: null,
     phoneE164: null,
+    phoneAssumedCountry: null,
     message: null,
     parentName: null,
     preferredWhen: null,

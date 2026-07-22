@@ -173,13 +173,19 @@ async function firstStageOf(db: PrismaClient, boardId: string): Promise<string |
 }
 
 /**
- * Resolve the board + first stage a lead should land on. `free_resources`
- * routes to the dedicated Free Resources board when it exists, otherwise it
- * gracefully falls back to the default Sales Pipeline so a lead is never lost.
+ * Resolve the board + first stage a lead should land on. Precedence:
+ *   1. `free_resources` classification ALWAYS wins → the Free Resources board
+ *      (operator's explicit rule: timewasters/freebies go there regardless).
+ *   2. else the lead SOURCE's configured target board (e.g. the ANZ website's
+ *      LeadSource → the ANZ Sales Pipeline board), when it is active + has a
+ *      landing stage.
+ *   3. else the default Sales Pipeline board.
+ * Every step falls back to the next so a lead is never lost.
  */
 async function resolveLeadDestination(
   db: PrismaClient,
   kind: LeadClassification['destination'],
+  preferredBoardId?: string | null,
 ): Promise<{ boardId: string; stageId: string } | null> {
   if (kind === 'free_resources') {
     const free = await db.board.findFirst({
@@ -191,6 +197,18 @@ async function resolveLeadDestination(
       if (stageId) return { boardId: free.id, stageId }
     }
     // Fall through to the sales board if Free Resources isn't set up yet.
+  } else if (preferredBoardId) {
+    // The lead source pinned a board (e.g. ANZ website → ANZ pipeline). Use it
+    // only when it's a real active board with a landing stage; otherwise fall
+    // through to the default so a misconfigured source never drops leads.
+    const preferred = await db.board.findFirst({
+      where: { id: preferredBoardId, archivedAt: null },
+      select: { id: true },
+    })
+    if (preferred) {
+      const stageId = await firstStageOf(db, preferred.id)
+      if (stageId) return { boardId: preferred.id, stageId }
+    }
   }
 
   const board =
@@ -235,16 +253,20 @@ export async function processLead(
   // 1. Re-normalise the stored raw payload (deterministic; no extra column).
   const normalised = normaliseLead(lead.rawPayload as unknown as RawLeadInput)
 
-  // 2. Forced brand from the lead source, then deterministic classification.
+  // 2. Forced brand + target board from the lead source, then deterministic
+  // classification. The source's targetBoardId pins its leads to a board (e.g.
+  // the ANZ website → the ANZ Sales Pipeline) unless the lead is free-resources.
   let forcedBrandId: string | null = null
   let siteName: string | null = null
+  let sourceTargetBoardId: string | null = null
   if (lead.sourceId) {
     const src = await db.leadSource.findUnique({
       where: { id: lead.sourceId },
-      select: { defaultBrandId: true, name: true },
+      select: { defaultBrandId: true, name: true, targetBoardId: true },
     })
     forcedBrandId = src?.defaultBrandId ?? null
     siteName = src?.name ?? null
+    sourceTargetBoardId = src?.targetBoardId ?? null
   }
   const ruleset = await loadRuleset(db)
   const classification = classifyLead(normalised, ruleset, { forcedBrandId })
@@ -299,8 +321,14 @@ export async function processLead(
     }
   }
   if (!dialCountry) {
+    // Never read the country back out of a UK-ASSUMED +44 (a bare 0…/7… national
+    // number normalisePhone optimistically mapped to +44): that was a circular
+    // GB confirmation that pre-empted the AI fallback and locked foreign leads
+    // to +44 whenever no form country was given and IP geo failed. Only trust an
+    // explicitly-international number here.
     dialCountry =
-      dialCountryFromPhone(normalised.phoneE164) ?? dialCountryFromPhone(normalised.phone)
+      (normalised.phoneAssumedCountry ? null : dialCountryFromPhone(normalised.phoneE164)) ??
+      dialCountryFromPhone(normalised.phone)
     if (dialCountry) countrySource = 'phone_dial'
   }
   if (!dialCountry && ai?.countryCode) {
@@ -310,16 +338,18 @@ export async function processLead(
   if (countrySource) {
     logger.info({ leadId, country: dialCountry?.iso2, countrySource }, 'lead.country_resolved')
   }
-  // normalisePhone optimistically treats a leading-0 national number as UK
-  // (+44, our home market). When the resolved country says otherwise,
-  // recompose with the real dial code so a French "06…" never becomes "+446…".
+  // normalisePhone optimistically maps a bare national number (leading 0 OR a
+  // leading-7 UK mobile) to +44. When the resolved country (form → IP → AI) says
+  // otherwise, recompose with the real dial code so a French "06…" becomes
+  // "+336…" and a US "702…" becomes "+1702…", not "+44…". Only recompose a
+  // GUESSED +44 (assumedCountry === 'GB'); an explicitly-typed international
+  // number is authoritative and never rewritten.
   let formPhoneE164 = normalised.phoneE164
   if (
-    formPhoneE164?.startsWith('+44') &&
+    normalised.phoneAssumedCountry === 'GB' &&
     dialCountry &&
     dialCountry.dial !== '44' &&
-    normalised.phone &&
-    normalised.phone.replace(/[^\d+]/gu, '').startsWith('0')
+    normalised.phone
   ) {
     formPhoneE164 = composePhoneE164(dialCountry, normalised.phone) ?? formPhoneE164
   }
@@ -468,7 +498,11 @@ export async function processLead(
     return { leadId, action: 'discarded', status: 'dismissed', contactId: null, cardId: null }
   }
 
-  const destination = await resolveLeadDestination(db, classification.destination)
+  const destination = await resolveLeadDestination(
+    db,
+    classification.destination,
+    sourceTargetBoardId,
+  )
 
   // Card enrichment shared by both create paths: the detected Subject becomes
   // a Subject tag (find-or-create) so the board groups by topic, and a

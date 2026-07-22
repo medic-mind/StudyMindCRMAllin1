@@ -440,7 +440,10 @@ export const leadRouter = router({
       assertCanManageSources(user.role)
       const rows = await ctx.db.leadSource.findMany({
         orderBy: [{ archivedAt: 'asc' }, { createdAt: 'desc' }],
-        include: { defaultBrand: { select: { id: true, name: true, color: true } } },
+        include: {
+          defaultBrand: { select: { id: true, name: true, color: true } },
+          targetBoard: { select: { id: true, name: true } },
+        },
       })
       return rows.map((s) => ({
         id: s.id,
@@ -452,6 +455,8 @@ export const leadRouter = router({
         leadCount: s.leadCount,
         lastLeadAt: s.lastLeadAt,
         defaultBrand: s.defaultBrand,
+        targetBoardId: s.targetBoardId,
+        targetBoard: s.targetBoard,
         createdAt: s.createdAt,
       }))
     }),
@@ -500,6 +505,7 @@ export const leadRouter = router({
           id: z.string(),
           name: z.string().trim().min(1).max(80).optional(),
           defaultBrandId: z.string().nullable().optional(),
+          targetBoardId: z.string().nullable().optional(),
           active: z.boolean().optional(),
         }),
       )
@@ -511,9 +517,21 @@ export const leadRouter = router({
           select: { id: true },
         })
         if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+        // Validate the target board is a real, active board (never trust the
+        // client). Null clears the pin (back to classifier-decided routing).
+        if (input.targetBoardId) {
+          const board = await ctx.db.board.findFirst({
+            where: { id: input.targetBoardId, archivedAt: null },
+            select: { id: true },
+          })
+          if (!board) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Target board not found' })
+          }
+        }
         const data: Record<string, unknown> = { updatedById: user.id }
         if (input.name !== undefined) data['name'] = input.name
         if (input.defaultBrandId !== undefined) data['defaultBrandId'] = input.defaultBrandId
+        if (input.targetBoardId !== undefined) data['targetBoardId'] = input.targetBoardId
         if (input.active !== undefined) data['active'] = input.active
         await ctx.db.leadSource.update({ where: { id: input.id }, data })
         await ctx.audit({

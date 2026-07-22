@@ -26,6 +26,19 @@ describe('normalisePhone', () => {
   it('returns null for an unconvertible value', () => {
     expect(normalisePhone('hello').e164).toBeNull()
   })
+
+  it('flags UK-national ASSUMPTIONS (bare 0…/7…) as assumedCountry GB', () => {
+    // No country signal — the +44 is a guess the router may override from the IP.
+    expect(normalisePhone('07700 900123').assumedCountry).toBe('GB')
+    expect(normalisePhone('7700 900123').assumedCountry).toBe('GB')
+  })
+
+  it('treats explicitly-international numbers as assumedCountry null (never overridden)', () => {
+    expect(normalisePhone('+447123456789').assumedCountry).toBeNull()
+    expect(normalisePhone('0044 7700 900123').assumedCountry).toBeNull()
+    expect(normalisePhone('44 7700 900123').assumedCountry).toBeNull()
+    expect(normalisePhone('+33612345678').assumedCountry).toBeNull()
+  })
 })
 
 describe('normaliseLead — webhook: mappings (the user’s forms)', () => {

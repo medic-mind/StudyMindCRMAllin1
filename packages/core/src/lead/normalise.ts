@@ -313,30 +313,43 @@ export function extractPreferredWhen(values: string[]): string | null {
  * is never silently lost (live bug: a number the strict rules rejected
  * vanished from the contact and the pipeline card entirely).
  */
-export function normalisePhone(input: string): { e164: string | null; display: string } {
+export function normalisePhone(input: string): {
+  e164: string | null
+  display: string
+  /**
+   * 'GB' when the E.164 was produced by ASSUMING a UK national number (a bare
+   * `0…` or leading-`7` shape with no country signal) rather than an explicit
+   * international number. The lead pipeline uses this so it never trusts a
+   * guessed `+44` when resolving the caller's real country from the IP — a
+   * foreign national number must not be locked to GB. Null when the number was
+   * explicitly international (`+…`, `00…`, bare `44…`).
+   */
+  assumedCountry: 'GB' | null
+} {
   const display = input.trim()
   const cleaned = display.replace(/[^\d+]/gu, '')
-  if (E164_RE.test(cleaned)) return { e164: cleaned, display }
+  if (E164_RE.test(cleaned)) return { e164: cleaned, display, assumedCountry: null }
   if (cleaned.startsWith('00')) {
     const candidate = '+' + cleaned.slice(2)
-    if (E164_RE.test(candidate)) return { e164: candidate, display }
+    if (E164_RE.test(candidate)) return { e164: candidate, display, assumedCountry: null }
   }
   // UK national format: 0 + 9–10 digits (mobiles 11 total, some landlines 10).
+  // ASSUMPTION — no country was given; recorded so IP/AI can override.
   if (cleaned.startsWith('0') && (cleaned.length === 10 || cleaned.length === 11)) {
     const candidate = '+44' + cleaned.slice(1)
-    if (E164_RE.test(candidate)) return { e164: candidate, display }
+    if (E164_RE.test(candidate)) return { e164: candidate, display, assumedCountry: 'GB' }
   }
-  // Country code typed without the +/00 (e.g. "44 7700 900123").
+  // Country code typed without the +/00 (e.g. "44 7700 900123") — explicit.
   if (cleaned.startsWith('44') && cleaned.length >= 11 && cleaned.length <= 13) {
     const candidate = '+' + cleaned
-    if (E164_RE.test(candidate)) return { e164: candidate, display }
+    if (E164_RE.test(candidate)) return { e164: candidate, display, assumedCountry: null }
   }
-  // UK mobile with the leading 0 dropped (e.g. "7700 900123").
+  // UK mobile with the leading 0 dropped (e.g. "7700 900123") — ASSUMPTION.
   if (cleaned.startsWith('7') && cleaned.length === 10) {
     const candidate = '+44' + cleaned
-    if (E164_RE.test(candidate)) return { e164: candidate, display }
+    if (E164_RE.test(candidate)) return { e164: candidate, display, assumedCountry: 'GB' }
   }
-  return { e164: null, display }
+  return { e164: null, display, assumedCountry: null }
 }
 
 function slugify(s: string): string {
@@ -568,6 +581,7 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
     email,
     phone: phoneRes?.display ?? null,
     phoneE164: phoneRes?.e164 ?? null,
+    phoneAssumedCountry: phoneRes?.assumedCountry ?? null,
     message: found.message ?? null,
     parentName: found.parentName ?? null,
     preferredWhen,

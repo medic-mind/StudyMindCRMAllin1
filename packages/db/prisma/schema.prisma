@@ -1024,6 +1024,8 @@ model Board {
   stages       PipelineStage[]
   cards        Card[]
   quickActions BoardQuickAction[]
+  /// Lead sources routed to this board (ADR 0023 amendment — per-source board).
+  leadSources  LeadSource[]       @relation("LeadSourceTargetBoard")
 
   @@index([archivedAt])
 }
@@ -2500,6 +2502,12 @@ model LeadSource {
   keyLast4       String
   /// Forces this brand regardless of domain detection (optional override).
   defaultBrandId String?
+  /// Pins leads from this source (e.g. the ANZ website's Contact-Form-7 key) to
+  /// a specific board — the ANZ Sales Pipeline. Null = default routing (the
+  /// classifier decides sales vs free-resources). Free-resources leads always
+  /// override to the Free Resources board regardless of this. SetNull so
+  /// archiving/deleting a board never breaks the source.
+  targetBoardId  String?
   active         Boolean   @default(true)
   /// Denormalised counter for the Integrations dashboard.
   leadCount      Int       @default(0)
@@ -2512,10 +2520,12 @@ model LeadSource {
   archivedAt  DateTime?
 
   defaultBrand Company? @relation("LeadSourceBrand", fields: [defaultBrandId], references: [id], onDelete: SetNull)
+  targetBoard  Board?   @relation("LeadSourceTargetBoard", fields: [targetBoardId], references: [id], onDelete: SetNull)
   leads        Lead[]
 
   @@index([active])
   @@index([defaultBrandId])
+  @@index([targetBoardId])
 }
 
 /// domain → Company. Editable from the CRM so a new sister brand routes

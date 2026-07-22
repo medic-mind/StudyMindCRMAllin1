@@ -52,6 +52,10 @@ export const NormalisedLead = z.object({
   phone: z.string().nullable(),
   /** Strict E.164 when we could confidently normalise, else null. */
   phoneE164: z.string().nullable(),
+  /** 'GB' when phoneE164 was produced by ASSUMING a UK national number (no
+   *  country signal), so the router must not trust that +44 when resolving the
+   *  caller's real country from the IP. Null when explicitly international. */
+  phoneAssumedCountry: z.enum(['GB']).nullable().default(null),
   message: z.string().nullable(),
   parentName: z.string().nullable(),
   /** A date/time the enquirer picked on the form (e.g. a "preferred call

@@ -49,6 +49,13 @@ export function LeadIngestionPanel() {
 
   const utils = trpc.useUtils()
   const sources = trpc.lead.sources.list.useQuery()
+  const boards = trpc.board.list.useQuery()
+  const update = trpc.lead.sources.update.useMutation({
+    onSuccess: async () => {
+      await utils.lead.sources.list.invalidate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not update the source'),
+  })
 
   const create = trpc.lead.sources.create.useMutation({
     onSuccess: async (r) => {
@@ -174,6 +181,7 @@ export function LeadIngestionPanel() {
                 <Th>Source</Th>
                 <Th>Key</Th>
                 <Th>Brand</Th>
+                <Th>Board</Th>
                 <Th>Leads</Th>
                 <Th>State</Th>
                 <Th></Th>
@@ -185,6 +193,28 @@ export function LeadIngestionPanel() {
                   <Td className="font-medium text-neutral-900">{s.name}</Td>
                   <Td className="font-mono text-xs text-neutral-500">…{s.keyLast4}</Td>
                   <Td>{s.defaultBrand?.name ?? <span className="text-neutral-400">auto</span>}</Td>
+                  <Td>
+                    {s.archived ? (
+                      <span className="text-neutral-400">{s.targetBoard?.name ?? '—'}</span>
+                    ) : (
+                      <select
+                        aria-label={`Target board for ${s.name}`}
+                        className="h-7 max-w-[9rem] rounded border border-neutral-200 bg-white px-1 text-xs text-neutral-700 disabled:opacity-50"
+                        value={s.targetBoardId ?? ''}
+                        disabled={update.isPending}
+                        onChange={(e) =>
+                          update.mutate({ id: s.id, targetBoardId: e.target.value || null })
+                        }
+                      >
+                        <option value="">Default (auto)</option>
+                        {(boards.data ?? []).map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </Td>
                   <Td className="tabular-nums">{s.leadCount}</Td>
                   <Td>
                     {s.archived ? (
@@ -236,7 +266,7 @@ export function LeadIngestionPanel() {
               ))}
               {(sources.data ?? []).length === 0 ? (
                 <Tr>
-                  <Td colSpan={6} className="text-sm text-neutral-500">
+                  <Td colSpan={7} className="text-sm text-neutral-500">
                     No API keys yet. Create one above, then paste the endpoint + key into your
                     Contact Form 7 webhook.
                   </Td>
@@ -244,6 +274,12 @@ export function LeadIngestionPanel() {
               ) : null}
             </Tbody>
           </Table>
+          <p className="border-t border-neutral-100 px-3 py-2 text-xs text-neutral-500">
+            <strong>Board</strong> pins this site&apos;s enquiries to a pipeline (e.g. the ANZ
+            website → the ANZ Sales Pipeline). Leave it on <em>Default (auto)</em> to let the
+            classifier decide. Free-resources / freebie enquiries always go to the Free Resources
+            board regardless of this setting.
+          </p>
         </Card>
       </div>
     </section>
