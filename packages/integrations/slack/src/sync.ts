@@ -26,6 +26,8 @@
 // messages. We keep the overlap window bounded so unmatched messages aren't
 // re-classified by the AI too many times (§32 cost control).
 
+import { recordCronRun } from '@studymind/core/observability/cron-heartbeat'
+import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import {
@@ -53,15 +55,17 @@ function positiveEnvNumber(name: string, fallback: number): number {
  *  a failed tick (deploy, rate-limit storm) self-heals on the next one; the
  *  overlap costs only cheap DB dedupe checks, never AI re-spend. */
 const LOOKBACK_MIN = positiveEnvNumber('SLACK_SYNC_LOOKBACK_MINUTES', 120)
-/** Pages of history per channel per run (100 msgs/page). */
-const MAX_PAGES = 3
+/** Runaway guard on the lookback-window walk. We paginate the window to
+ *  EXHAUSTION (the old 3-page cap silently dropped older messages on busy
+ *  channels — an audit-confirmed "not all messages" cause); this only bounds a
+ *  pathological cursor. 50 × 100 = 5 000 msgs/channel/tick. */
+const WINDOW_MAX_PAGES = 50
 /** Old-thread scan: how far back a thread ROOT may sit and still have fresh
  *  replies picked up by the pull. */
 const THREAD_SCAN_DAYS = positiveEnvNumber('SLACK_SYNC_THREAD_SCAN_DAYS', 7)
-/** Pages of history inspected by the old-thread scan (roots only, no AI). */
-const THREAD_SCAN_PAGES = 2
-/** Old threads with fresh replies walked per channel per tick. */
-const OLD_THREADS_PER_CHANNEL = 15
+/** Pages of recent history inspected to find old roots with fresh replies
+ *  (roots only, no AI). Raised from 2 so busy channels' roots aren't missed. */
+const THREAD_SCAN_PAGES = 10
 
 interface PullLogger {
   info?: (obj: unknown, msg?: string) => void
@@ -128,10 +132,22 @@ async function pullChannel(input: {
   let processed = 0
   let matched = 0
 
-  // 1. Everything inside the lookback window (roots + their replies).
+  // 1. Everything inside the lookback window — paginate to EXHAUSTION (bounded
+  //    only by the runaway guard). Page 0 failing means the channel is
+  //    unreadable (revoked access / missing scope) → rethrow so the caller
+  //    reports it as a failed channel. A LATER page failing is a transient
+  //    mid-walk error (429 storm): break, keep what we got, and still run the
+  //    old-thread scan below.
   let cursor: string | undefined
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const res = await deps.fetchHistory(channelId, sinceUnix, cursor)
+  for (let page = 0; page < WINDOW_MAX_PAGES; page += 1) {
+    let res: SlackHistoryResponse
+    try {
+      res = await deps.fetchHistory(channelId, sinceUnix, cursor)
+    } catch (err) {
+      if (page === 0) throw err
+      input.logger?.warn?.({ channelId, page, err }, 'slack sync: window page fetch failed')
+      break
+    }
     for (const m of res.messages ?? []) {
       try {
         const r = await deps.processMessage(channelId, m)
@@ -145,19 +161,27 @@ async function pullChannel(input: {
     if (!cursor) break
   }
 
-  // 2. Fresh replies on threads whose root pre-dates the window.
+  // 2. Fresh replies on threads whose root pre-dates the window. Walk EVERY
+  //    qualifying root found in the scan (the old 15-thread slice dropped
+  //    replies on busy channels — audit-confirmed).
   const scanOldest = sinceUnix - THREAD_SCAN_DAYS * 86_400
   const oldRoots: SlackHistoryMessage[] = []
   let scanCursor: string | undefined
   for (let page = 0; page < THREAD_SCAN_PAGES; page += 1) {
-    const res = await deps.fetchHistory(channelId, scanOldest, scanCursor)
+    let res: SlackHistoryResponse
+    try {
+      res = await deps.fetchHistory(channelId, scanOldest, scanCursor)
+    } catch (err) {
+      input.logger?.warn?.({ channelId, page, err }, 'slack sync: thread-scan page fetch failed')
+      break
+    }
     for (const m of res.messages ?? []) {
       if (isOldThreadWithFreshReplies(m, sinceUnix)) oldRoots.push(m)
     }
     scanCursor = res.has_more ? res.response_metadata?.next_cursor : undefined
     if (!scanCursor) break
   }
-  for (const root of oldRoots.slice(0, OLD_THREADS_PER_CHANNEL)) {
+  for (const root of oldRoots) {
     try {
       const r = await deps.walkOldThread(channelId, root, sinceUnix)
       processed += r.processed
@@ -171,6 +195,31 @@ async function pullChannel(input: {
   }
 
   return { processed, matched }
+}
+
+/** Walk ONE channel with the real Slack-backed deps, isolating failure. Used by
+ *  the cron/on-demand functions so each channel is its own short Inngest step
+ *  (the whole-workspace-in-one-step design timed out on real workspaces). */
+export async function syncOneChannel(input: {
+  token: string
+  channelId: string
+  sinceUnix: number
+  requestId: string
+  logger?: PullLogger
+}): Promise<{ channelId: string; processed: number; matched: number; failed: boolean }> {
+  const deps = realDeps(input.token, input.requestId)
+  try {
+    const r = await pullChannel({
+      channelId: input.channelId,
+      sinceUnix: input.sinceUnix,
+      deps,
+      logger: input.logger,
+    })
+    return { channelId: input.channelId, processed: r.processed, matched: r.matched, failed: false }
+  } catch (err) {
+    input.logger?.warn?.({ channelId: input.channelId, err }, 'slack sync: channel walk failed')
+    return { channelId: input.channelId, processed: 0, matched: 0, failed: true }
+  }
 }
 
 export interface PullResult {
@@ -231,10 +280,30 @@ export const slackSyncMessages = inngest.createFunction(
       logger.warn('SLACK_BOT_TOKEN not set; skipping slack sync')
       return { skipped: true, reason: 'no_token' as const }
     }
-    const sinceUnix = Math.floor((Date.now() - LOOKBACK_MIN * 60_000) / 1000)
-    const res = await step.run('pull', async () =>
-      pullRecentSlack({ token, sinceUnix, requestId: 'slack-sync', logger }),
+    // Pull every member channel as ITS OWN short step, so no single step
+    // exceeds Inngest's execution budget (the whole-workspace-in-one-step
+    // design timed out and never committed — the audit's root cause for "not
+    // all messages pulled"). sinceUnix is fixed in a step so retries reuse the
+    // same window.
+    const sinceUnix = await step.run('window', async () =>
+      Math.floor((Date.now() - LOOKBACK_MIN * 60_000) / 1000),
     )
+    const channels = await step.run('list-channels', async () => listIngestChannelIds({ token }))
+    let processed = 0
+    let matched = 0
+    const failedChannels: string[] = []
+    for (const channelId of channels) {
+      const r = await step.run(`channel-${channelId}`, async () =>
+        syncOneChannel({ token, channelId, sinceUnix, requestId: 'slack-sync', logger }),
+      )
+      processed += r.processed
+      matched += r.matched
+      if (r.failed) failedChannels.push(channelId)
+    }
+    await step.run('heartbeat', async () =>
+      recordCronRun(db, { functionId: 'slack/sync-messages', success: true, durationMs: 0 }),
+    )
+    const res = { channels: channels.length, processed, matched, failedChannels }
     logger.info(res, 'slack sync-messages complete')
     return res
   },
@@ -256,12 +325,23 @@ export const slackSyncNow = inngest.createFunction(
     const requested = Number(
       (event.data as { lookbackMinutes?: number } | undefined)?.lookbackMinutes,
     )
-    const lookbackMin =
-      Number.isFinite(requested) && requested > 0 ? requested : LOOKBACK_MIN
-    const sinceUnix = Math.floor((Date.now() - lookbackMin * 60_000) / 1000)
-    const res = await step.run('pull', async () =>
-      pullRecentSlack({ token, sinceUnix, requestId: 'slack-sync-now', logger }),
+    const lookbackMin = Number.isFinite(requested) && requested > 0 ? requested : LOOKBACK_MIN
+    const sinceUnix = await step.run('window', async () =>
+      Math.floor((Date.now() - lookbackMin * 60_000) / 1000),
     )
+    const channels = await step.run('list-channels', async () => listIngestChannelIds({ token }))
+    let processed = 0
+    let matched = 0
+    const failedChannels: string[] = []
+    for (const channelId of channels) {
+      const r = await step.run(`channel-${channelId}`, async () =>
+        syncOneChannel({ token, channelId, sinceUnix, requestId: 'slack-sync-now', logger }),
+      )
+      processed += r.processed
+      matched += r.matched
+      if (r.failed) failedChannels.push(channelId)
+    }
+    const res = { channels: channels.length, processed, matched, failedChannels }
     logger.info(res, 'slack sync-now complete')
     return res
   },

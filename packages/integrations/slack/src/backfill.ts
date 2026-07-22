@@ -41,6 +41,7 @@ import { SLACK_API_BASE, listIngestChannelIds } from './client'
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isCallLogChannel, isComplaintChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
+import { isSkippableSubtype } from './message-filter'
 import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
   resolveSlackLinkTarget,
@@ -90,10 +91,6 @@ export interface SlackHistoryResponse {
   has_more?: boolean
   response_metadata?: { next_cursor?: string }
 }
-
-// Matches the live ingestion gate (ADR 0034 amendment) — the matcher's
-// unambiguous rule is the real safety, not the AI's self-confidence.
-const MATCH_THRESHOLD = 0.5
 
 export const slackBackfillRequested = inngest.createFunction(
   {
@@ -248,8 +245,9 @@ export const slackBackfillRequested = inngest.createFunction(
 
 /** Attempts per Slack read call. conversations.history/replies are Tier-3
  *  rate-limited (~50/min); a workspace-wide pull WILL hit 429s, and the old
- *  behaviour (throw on the first one) killed the whole tick. */
-const SLACK_GET_ATTEMPTS = 4
+ *  behaviour (throw on the first one) killed the whole tick. Raised to ride out
+ *  sustained Tier-3 storms rather than dropping a channel's tail. */
+const SLACK_GET_ATTEMPTS = 6
 /** Cap on a single Retry-After wait so a step never hangs on a hostile value. */
 const SLACK_GET_MAX_WAIT_S = 60
 /** Wait when Slack sends a 429 with no usable Retry-After header. */
@@ -461,7 +459,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   if (
     message.type !== 'message' ||
     !message.text ||
-    message.subtype ||
+    isSkippableSubtype(message.subtype) ||
     message.bot_id ||
     message.app_id
   ) {
@@ -647,18 +645,17 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     }
   }
 
-  if (parsed.confidence < MATCH_THRESHOLD) {
-    // Below the AI's confidence floor — park for human triage rather than drop.
-    await parkUnassignedSummary({ message, channelId, parsed, senderName })
-    return { matched: false }
-  }
-
-  // Shared resolver: Contact (email → phone → name) else B2B account (§12).
+  // NB: AI confidence is NOT a gate here. The matcher's unambiguous rule is the
+  // real safety (ADR 0034), and the onboarding tiers below read the message's
+  // OWN identity (phone/email/name), which a low AI confidence has no bearing
+  // on. Gating on confidence used to park a low-confidence message that still
+  // carried a clear phone/name — the audit's parked-backlog root cause. So we
+  // try to resolve/onboard regardless, and park ONLY when nothing keys.
   let target = await resolveSlackLinkTarget(parsed.candidateContactIdentifier)
   if (!target) {
-    // The AI named someone but nothing matches — onboard from the AI's
-    // identity (it reads lower-case names and odd formats the rules miss)
-    // under the same ADR 0043 tiers before parking.
+    // Onboard from the message's identity (AI-extracted + a deterministic
+    // scan) — the AI reads lower-case names and odd formats the rules miss —
+    // under the ADR 0043 tiers before parking.
     target = await autoOnboardContactForSlackMessage({
       messageText: message.text,
       phone: parsed.candidateContactIdentifier.phone ?? signals.phone,
@@ -674,8 +671,8 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     })
   }
   if (!target) {
-    // Still nothing to key on — park; the relink cron keeps retrying (§12).
-    await parkUnassignedSummary({ message, channelId, parsed, senderName })
+    // Nothing to key on — park; the relink cron keeps retrying (§12).
+    await parkUnassignedSummary({ message, channelId, parsed, senderName, channelName })
     return { matched: false }
   }
 
@@ -734,14 +731,16 @@ async function parkUnassignedSummary(input: {
   channelId: string
   parsed: SlackSummary
   senderName: string | null
+  channelName?: string | null
 }): Promise<void> {
-  const { message, channelId, parsed, senderName } = input
+  const { message, channelId, parsed, senderName, channelName = null } = input
   await db.unassignedSummary.upsert({
     where: { slackTs_channelId: { slackTs: message.ts, channelId } },
     create: {
       id: createId(),
       slackTs: message.ts,
       channelId,
+      channelName,
       parsed: parsed as unknown as object,
       confidence: parsed.confidence,
       messageText: message.text ?? null,
@@ -752,6 +751,8 @@ async function parkUnassignedSummary(input: {
       confidence: parsed.confidence,
       messageText: message.text ?? null,
       senderName,
+      // Back-fill the name on re-park if it was missing before.
+      ...(channelName ? { channelName } : {}),
     },
   })
 }

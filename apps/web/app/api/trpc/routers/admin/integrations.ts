@@ -174,7 +174,10 @@ const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
     label: 'Slack',
     description: 'Channel summaries (one-way today). CLAUDE.md §12.',
     envVars: ['SLACK_SIGNING_SECRET', 'SLACK_BOT_TOKEN'],
-    cronFunctionIds: [],
+    // The pull (every 15 min) + the auto-link drain (every 30 min). Both emit a
+    // CronRun heartbeat so this panel shows they are actually executing — the
+    // #1 thing to check when "nothing is being pulled / assigned".
+    cronFunctionIds: ['slack/sync-messages', 'slack/relink-unassigned'],
     perAgentTokens: null,
     runbook: '/docs/runbooks/secret-rotation.md',
     setupSteps: [

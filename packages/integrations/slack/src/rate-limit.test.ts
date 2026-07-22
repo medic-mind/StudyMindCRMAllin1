@@ -74,6 +74,6 @@ describe('slack read calls under rate limiting', () => {
     )
 
     await expect(fetchHistory('token', 'C1', 0, undefined)).rejects.toThrow(/http_429/)
-    expect(calls).toBe(4)
+    expect(calls).toBe(6)
   })
 })

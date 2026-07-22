@@ -139,6 +139,11 @@ export async function autoOnboardContactForSlackMessage(input: {
     ? splitDisplayName(decision.name)
     : { firstName: null, lastName: null }
 
+  const hasFullName =
+    (input.allowNameOnly ?? false) &&
+    !!decision.name &&
+    decision.name.trim().split(/\s+/u).length >= 2
+
   // Tier 1 — phone: the shared call resolver (dedupe, fill-blanks, shared-line
   // park, §41.1).
   if (decision.phoneE164) {
@@ -147,8 +152,12 @@ export async function autoOnboardContactForSlackMessage(input: {
       { phoneE164: decision.phoneE164, firstName, lastName, email: decision.email },
       { referralSource: 'Slack call summary', actorId: null, requestId: input.requestId },
     )
-    if (!res.contactId) return null
-    return targetForContactId(res.contactId)
+    if (res.contactId) return targetForContactId(res.contactId)
+    // res.contactId === null ⇒ a SHARED line (§41.1): never guess which
+    // sibling. But a unique email or a full name is a genuinely different
+    // person we can still onboard — fall through. A phone-only shared line
+    // (no email, no name) parks.
+    if (!decision.email && !hasFullName) return null
   }
 
   // Tier 2 — email: attach to the most recently active contact on that email
@@ -172,6 +181,11 @@ export async function autoOnboardContactForSlackMessage(input: {
       return targetForContactId(existing.id)
     }
   }
+
+  // Defensive: never create an identity-less contact. (Unreachable when
+  // onboardDecision did its job, but a shared-line fallthrough must still have
+  // left an email or a full name.)
+  if (!decision.email && !hasFullName) return null
 
   // Create (email tier with no match, or the full-name-only tier — two
   // same-named contacts already failed the unique-name pass upstream, and per

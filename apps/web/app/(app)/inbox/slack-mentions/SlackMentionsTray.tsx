@@ -20,9 +20,23 @@ const SENTIMENT_TONE: Record<string, 'success' | 'neutral' | 'danger'> = {
   negative: 'danger',
 }
 
-export function SlackMentionsTray() {
+export function SlackMentionsTray({ canManage = false }: { canManage?: boolean }) {
   const utils = trpc.useUtils()
-  const listQuery = trpc.slackSummary.unassigned.list.useQuery({ limit: 50 })
+  // The Sync/Re-run jobs are async and drain in the background well after the
+  // mutation returns. Poll the list+count for a window after firing one, so the
+  // tray visibly shrinks as rows are assigned instead of a single stale refresh.
+  const [pollUntil, setPollUntil] = useState(0)
+  const polling = pollUntil > Date.now()
+  function startPolling() {
+    setPollUntil(Date.now() + 120_000)
+  }
+  const listQuery = trpc.slackSummary.unassigned.list.useQuery(
+    { limit: 50 },
+    { refetchInterval: polling ? 4000 : false },
+  )
+  trpc.slackSummary.unassigned.count.useQuery(undefined, {
+    refetchInterval: polling ? 4000 : false,
+  })
   const diagnostics = trpc.slackSummary.unassigned.diagnostics.useQuery(undefined, {
     staleTime: 5 * 60_000,
   })
@@ -60,49 +74,52 @@ export function SlackMentionsTray() {
         mentions that resolve to one customer link themselves, and dead/noise rows are dismissed
         automatically. What lands here is genuinely ambiguous (e.g. two customers with the same
         name) — assign it, or clear it in bulk below.
+        {polling ? ' Refreshing…' : ''}
       </p>
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          disabled={syncNow.isPending}
-          onClick={async () => {
-            try {
-              const r = await syncNow.mutateAsync({ lookbackHours: 24 })
-              if (r.configured) {
-                toast.success('Pulling recent Slack messages from all channels — this can take a minute.')
-                setTimeout(() => void refresh(), 6000)
-              } else {
-                toast.error('Slack isn’t configured (SLACK_BOT_TOKEN missing).')
+      {canManage ? (
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={syncNow.isPending}
+            onClick={async () => {
+              try {
+                const r = await syncNow.mutateAsync({ lookbackHours: 24 })
+                if (r.configured) {
+                  toast.success('Pulling recent Slack messages from all channels — this can take a minute.')
+                  startPolling()
+                } else {
+                  toast.error('Slack isn’t configured (SLACK_BOT_TOKEN missing).')
+                }
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Could not start the Slack sync')
               }
-            } catch (e) {
-              toast.error(e instanceof Error ? e.message : 'Could not start the Slack sync')
-            }
-          }}
-        >
-          {syncNow.isPending ? 'Syncing…' : 'Sync from Slack now'}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          disabled={relinkNow.isPending}
-          onClick={async () => {
-            try {
-              await relinkNow.mutateAsync()
-              toast.success(
-                'Re-running Slack matching now — newly matched mentions will appear shortly.',
-              )
-              setTimeout(() => void refresh(), 4000)
-            } catch (e) {
-              toast.error(e instanceof Error ? e.message : 'Could not start re-matching')
-            }
-          }}
-        >
-          {relinkNow.isPending ? 'Starting…' : 'Re-run matching now'}
-        </Button>
-      </div>
+            }}
+          >
+            {syncNow.isPending ? 'Syncing…' : 'Sync from Slack now'}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={relinkNow.isPending}
+            onClick={async () => {
+              try {
+                await relinkNow.mutateAsync()
+                toast.success(
+                  'Re-running Slack matching now — matched mentions will disappear from here as they link.',
+                )
+                startPolling()
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Could not start re-matching')
+              }
+            }}
+          >
+            {relinkNow.isPending ? 'Starting…' : 'Re-run matching now'}
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 

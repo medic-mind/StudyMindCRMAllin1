@@ -317,41 +317,14 @@ export const slackEventReceived = inngest.createFunction(
       }
     }
 
-    // 2. If confidence below threshold, park as UnassignedSummary and stop.
-    if (parsed.confidence < SLACK_MATCH_THRESHOLD) {
-      await step.run('park-unassigned', async () =>
-        db.unassignedSummary.upsert({
-          where: { slackTs_channelId: { slackTs: message.ts, channelId: message.channel } },
-          create: {
-            id: createId(),
-            slackTs: message.ts,
-            channelId: message.channel,
-            parsed: parsed as unknown as object,
-            confidence: parsed.confidence,
-            messageText: message.text,
-            senderName,
-          },
-          update: {
-            parsed: parsed as unknown as object,
-            confidence: parsed.confidence,
-            messageText: message.text,
-            senderName,
-          },
-        }),
-      )
-      await step.run('mark-processed', async () => {
-        await db.providerEvent.update({
-          where: { id: providerEventRowId },
-          data: { processedAt: new Date() },
-        })
-      })
-      return { ok: true, parked: true, confidence: parsed.confidence }
-    }
-
-    // 3. High confidence — match to ONE contact (email → phone → unambiguous
-    //    name), else ONE B2B account (school / partnership); else onboard from
-    //    the AI's identity under the ADR 0043 tiers (the AI reads lower-case
-    //    names and odd formats the rules miss). Only true dead-ends park.
+    // 2. Match to ONE contact (email → phone → unambiguous name), else ONE
+    //    B2B account, else onboard from the message's identity under the ADR
+    //    0043 tiers. AI confidence is NOT a gate: the matcher's unambiguous
+    //    rule is the real safety (ADR 0034), and onboarding reads the message's
+    //    OWN phone/email/name, which a low AI confidence has no bearing on.
+    //    Gating on confidence used to park a low-confidence message carrying a
+    //    clear phone/name — the audit's parked-backlog root cause. Only true
+    //    dead-ends (no identity at all) park.
     const target = await step.run('match-target', async () => {
       const resolvedTarget = await resolveSlackLinkTarget(parsed.candidateContactIdentifier)
       if (resolvedTarget) return resolvedTarget
@@ -375,7 +348,9 @@ export const slackEventReceived = inngest.createFunction(
     })
 
     if (!target) {
-      // Confidence said yes but no match in our DB — also park.
+      // No identity keyed and nothing to onboard on — park; the relink cron
+      // keeps retrying, and channelName is stored so its call-log decision is
+      // deterministic without a live conversations.info call.
       await step.run('park-no-match', async () =>
         db.unassignedSummary.upsert({
           where: { slackTs_channelId: { slackTs: message.ts, channelId: message.channel } },
@@ -383,6 +358,7 @@ export const slackEventReceived = inngest.createFunction(
             id: createId(),
             slackTs: message.ts,
             channelId: message.channel,
+            channelName,
             parsed: parsed as unknown as object,
             confidence: parsed.confidence,
             messageText: message.text,
@@ -393,6 +369,7 @@ export const slackEventReceived = inngest.createFunction(
             confidence: parsed.confidence,
             messageText: message.text,
             senderName,
+            ...(channelName ? { channelName } : {}),
           },
         }),
       )

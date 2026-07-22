@@ -3306,12 +3306,18 @@ model UnassignedSummary {
   /// before it is assigned to a contact (ADR 0034).
   messageText  String?
   senderName   String?
+  /// Human-readable channel name resolved at park time, so the relink cron's
+  /// call-log-channel decision (name-only onboarding) is deterministic even
+  /// when a later conversations.info call is missing-scope / rate-limited.
+  channelName  String?
   createdAt    DateTime  @default(now())
   resolvedAt   DateTime?
   resolvedById String?
 
   @@unique([slackTs, channelId])
   @@index([resolvedAt])
+  /// Keyset paging by the relink drain (id asc, resolvedAt null).
+  @@index([resolvedAt, id])
 }
 
 model SlackPost {

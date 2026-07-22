@@ -16,6 +16,7 @@ import { createId } from '@paralleldrive/cuid2'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 import { logger } from '@studymind/core/logger'
+import { recordCronRun } from '@studymind/core/observability/cron-heartbeat'
 import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
@@ -101,9 +102,14 @@ export function candidateFromParsed(parsed: unknown): ParsedCandidate {
   }
 }
 
-/** How many open rows to scan per tick — bounded so a large backlog drains over
- *  a few ticks rather than in one long transaction. */
-export const RELINK_BATCH = 200
+/** Rows per batch. Kept modest so ONE batch is a short, self-contained unit of
+ *  work that fits inside a single Inngest step (each batch is its own memoized
+ *  step.run — the previous single-giant-step design blew the per-step execution
+ *  budget on a real backlog and never committed). */
+export const RELINK_BATCH = 100
+/** Max batches (hence steps) per function invocation. batches × BATCH = rows
+ *  drained per run; the recurring cron picks up any remainder next tick. */
+export const RELINK_MAX_BATCHES = 25
 
 /** Cap on thread-parent Slack API fetches per tick (conversations.replies is
  *  rate-limited). The rest of the backlog is retried on the next tick. */
@@ -136,79 +142,91 @@ async function threadParentTextForRow(row: {
   return resolveThreadParentText({ channelId: row.channelId, threadTs })
 }
 
-/** Total open rows scanned per tick (paged in RELINK_BATCH chunks). The old
- *  behaviour re-read only the OLDEST batch every tick, so a head-of-queue of
- *  unlinkable rows starved everything behind it — the "250+ stuck" failure. */
-export const RELINK_SCAN_CAP = 2000
+export interface RelinkBatchResult {
+  scanned: number
+  linked: number
+  dismissed: number
+  errors: number
+  /** Id of the last row examined — the keyset cursor for the next batch. */
+  lastId: string | null
+  /** True when this batch reached the end of the open backlog. */
+  done: boolean
+}
 
 /**
- * One pass over open parked rows: re-run the resolver and auto-link the
- * unambiguous ones. Shared by the recurring cron and the on-demand button.
- * `actorId` tags the audit row with which path triggered it. Each row is
- * error-isolated — one poisoned row must never abort the drain (that
- * previously froze the whole backlog behind the first throwing row).
+ * Process ONE batch of open parked rows AFTER `afterId` (keyset paging on
+ * `id asc`), re-running the resolver and auto-linking (or auto-dismissing) each.
+ *
+ * Keyset via an explicit `id > afterId` predicate (NOT Prisma cursor+skip) so
+ * paging never breaks when the cursor row resolves and leaves the
+ * `resolvedAt: null` set mid-drain. Each row is error-isolated — one poisoned
+ * row must never abort the batch. Designed to be ONE Inngest step; the caller
+ * loops batches across memoized steps so no single step exceeds the execution
+ * budget (the previous whole-backlog-in-one-step design timed out).
  */
-export async function relinkParkedRowsOnce(
+export async function relinkParkedRowsBatch(
   actorId: string,
-): Promise<{ scanned: number; linked: number; dismissed: number; errors: number }> {
-  let scanned = 0
+  afterId: string | null,
+): Promise<RelinkBatchResult> {
+  // Own-brand catalogue is process-cached; load once per batch so the name
+  // re-scan filters out "Medic Mind" & co exactly like the live ingest paths.
+  const brands = await loadOwnBrands()
+  const rows: RelinkRow[] = await db.unassignedSummary.findMany({
+    where: { resolvedAt: null, ...(afterId ? { id: { gt: afterId } } : {}) },
+    orderBy: { id: 'asc' },
+    take: RELINK_BATCH,
+    select: {
+      id: true,
+      slackTs: true,
+      channelId: true,
+      channelName: true,
+      parsed: true,
+      confidence: true,
+      messageText: true,
+      senderName: true,
+      createdAt: true,
+    },
+  })
+  if (rows.length === 0) {
+    return { scanned: 0, linked: 0, dismissed: 0, errors: 0, lastId: afterId, done: true }
+  }
+
   let linked = 0
   let dismissed = 0
   let errors = 0
   let threadBudget = RELINK_THREAD_FETCHES
-  let cursorId: string | null = null
-  // Own-brand catalogue is process-cached; load once per tick so the name
-  // re-scan filters out "Medic Mind" & co exactly like the live ingest paths.
-  const brands = await loadOwnBrands()
-
-  while (scanned < RELINK_SCAN_CAP) {
-    const rows: RelinkRow[] = await db.unassignedSummary.findMany({
-      where: { resolvedAt: null },
-      orderBy: { id: 'asc' },
-      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-      take: RELINK_BATCH,
-      select: {
-        id: true,
-        slackTs: true,
-        channelId: true,
-        parsed: true,
-        confidence: true,
-        messageText: true,
-        senderName: true,
-        createdAt: true,
-      },
-    })
-    if (rows.length === 0) break
-    cursorId = rows[rows.length - 1]!.id
-
-    for (const row of rows) {
-      scanned += 1
-      try {
-        const outcome = await relinkOneRow(row, actorId, brands, () => {
-          if (threadBudget <= 0) return false
-          threadBudget -= 1
-          return true
-        })
-        if (outcome === 'linked') linked += 1
-        else if (outcome === 'dismissed') dismissed += 1
-      } catch (err) {
-        errors += 1
-        logger.warn(
-          { rowId: row.id, channelId: row.channelId, err },
-          'slack relink: row failed — continuing with the rest',
-        )
-      }
+  for (const row of rows) {
+    try {
+      const outcome = await relinkOneRow(row, actorId, brands, () => {
+        if (threadBudget <= 0) return false
+        threadBudget -= 1
+        return true
+      })
+      if (outcome === 'linked') linked += 1
+      else if (outcome === 'dismissed') dismissed += 1
+    } catch (err) {
+      errors += 1
+      logger.warn(
+        { rowId: row.id, channelId: row.channelId, err },
+        'slack relink: row failed — continuing with the rest',
+      )
     }
-    if (rows.length < RELINK_BATCH) break
   }
-
-  return { scanned, linked, dismissed, errors }
+  return {
+    scanned: rows.length,
+    linked,
+    dismissed,
+    errors,
+    lastId: rows[rows.length - 1]!.id,
+    done: rows.length < RELINK_BATCH,
+  }
 }
 
 interface RelinkRow {
   id: string
   slackTs: string
   channelId: string
+  channelName: string | null
   parsed: unknown
   confidence: number | null
   messageText: string | null
@@ -287,7 +305,17 @@ async function relinkOneRow(
     // forever. Name-only creation unlocks in a call-log channel OR when the AI
     // was confident about the customer it named (operator direction 2026-07:
     // trust the AI's good guess). Shared lines stay parked (§41.1).
-    const { channelName } = await resolveSlackNames({ channelId: row.channelId })
+    // Prefer the channel name stored at park time; only resolve live when it is
+    // absent, back-filling the row so the call-log-channel decision is
+    // deterministic thereafter (a missing/rate-limited conversations.info scope
+    // must not permanently block the name-only tier).
+    let channelName = row.channelName ?? null
+    if (channelName == null) {
+      channelName = (await resolveSlackNames({ channelId: row.channelId })).channelName
+      if (channelName) {
+        await db.unassignedSummary.update({ where: { id: row.id }, data: { channelName } })
+      }
+    }
     const aiWasConfident = row.confidence != null && row.confidence >= AI_CONFIDENT_THRESHOLD
     if (!target && row.messageText) {
       target = await autoOnboardContactForSlackMessage({
@@ -446,11 +474,31 @@ export const slackRelinkUnassigned = inngest.createFunction(
   },
   { cron: '*/15 * * * *' },
   async ({ step, logger }) => {
-    const result = await step.run('relink', async () =>
-      relinkParkedRowsOnce('system:slack/relink-unassigned'),
-    )
+    // Drain across many SHORT, memoized steps (one 100-row batch per step), so
+    // no single step exceeds Inngest's execution budget (the whole-backlog-in-
+    // one-step design timed out and never committed). Keyset paging continues
+    // after the previous batch's lastId, so linked/dismissed rows leaving the
+    // open set never break paging.
+    let afterId: string | null = null
+    const result = { scanned: 0, linked: 0, dismissed: 0, errors: 0, batches: 0 }
+    for (let i = 0; i < RELINK_MAX_BATCHES; i += 1) {
+      const cursor = afterId
+      const batch: RelinkBatchResult = await step.run(`relink-batch-${i}`, async () =>
+        relinkParkedRowsBatch('system:slack/relink-unassigned', cursor),
+      )
+      result.scanned += batch.scanned
+      result.linked += batch.linked
+      result.dismissed += batch.dismissed
+      result.errors += batch.errors
+      result.batches += 1
+      if (batch.done) break
+      afterId = batch.lastId
+    }
     const retro = await step.run('retro-stamp-school-mentions', async () =>
       retroStampSchoolMentionsOnce(),
+    )
+    await step.run('heartbeat', async () =>
+      recordCronRun(db, { functionId: 'slack/relink-unassigned', success: true, durationMs: 0 }),
     )
     logger.info({ ...result, ...retro }, 'slack relink-unassigned complete')
     return { ...result, ...retro }
@@ -459,7 +507,7 @@ export const slackRelinkUnassigned = inngest.createFunction(
 
 /**
  * On-demand twin of the cron — fired by the "Re-run Slack matching now" button
- * (tRPC `slackSummary.unassigned.relinkNow`). Same two passes, immediately.
+ * (tRPC `slackSummary.unassigned.relinkNow`). Same paged drain, immediately.
  */
 export const slackRelinkNow = inngest.createFunction(
   {
@@ -474,7 +522,21 @@ export const slackRelinkNow = inngest.createFunction(
       typeof (event.data as { actorId?: string })?.actorId === 'string'
         ? (event.data as { actorId: string }).actorId
         : 'system:slack/relink-now'
-    const result = await step.run('relink', async () => relinkParkedRowsOnce(actorId))
+    let afterId: string | null = null
+    const result = { scanned: 0, linked: 0, dismissed: 0, errors: 0, batches: 0 }
+    for (let i = 0; i < RELINK_MAX_BATCHES; i += 1) {
+      const cursor = afterId
+      const batch: RelinkBatchResult = await step.run(`relink-batch-${i}`, async () =>
+        relinkParkedRowsBatch(actorId, cursor),
+      )
+      result.scanned += batch.scanned
+      result.linked += batch.linked
+      result.dismissed += batch.dismissed
+      result.errors += batch.errors
+      result.batches += 1
+      if (batch.done) break
+      afterId = batch.lastId
+    }
     const retro = await step.run('retro-stamp-school-mentions', async () =>
       retroStampSchoolMentionsOnce(),
     )
