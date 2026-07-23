@@ -199,7 +199,7 @@ export function BoardDnd({
             c.description ?? '',
             c.priority ?? '',
             c.subject?.id ?? '',
-            c.labels.length,
+            c.labels.map((l) => l.id).join(','),
             c.assigneeId ?? '',
             c.dueAt ? new Date(c.dueAt).getTime() : '',
             c.scheduledCallAt ? new Date(c.scheduledCallAt).getTime() : '',

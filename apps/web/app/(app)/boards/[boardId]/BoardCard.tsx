@@ -24,6 +24,7 @@ import {
 } from '@/lib/format/schedule-urgency'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
+import { CardLabelQuickAdd } from './CardLabelQuickAdd'
 import { CardModal } from './CardModal'
 import { MoveCardMenu } from './MoveCardMenu'
 import { QuickActionButtons } from './QuickActionButtons'
@@ -225,6 +226,15 @@ export function BoardCard({
                 {l.name}
               </span>
             ))}
+          {/* Quick-add a label without opening the card (ops request). Lives in
+              the click-through body, so it re-enables pointer events + stops
+              propagation itself. */}
+          {canWrite && cardFaceHas(cardFields, 'labels') ? (
+            <CardLabelQuickAdd
+              cardId={card.id}
+              currentLabelIds={card.labels.map((l) => l.id)}
+            />
+          ) : null}
         </div>
         {/* Note preview — first 2 lines of the card description so the
             agent gets context at a glance. */}

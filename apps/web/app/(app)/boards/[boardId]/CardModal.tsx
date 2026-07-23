@@ -176,6 +176,17 @@ export function CardModal({
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-neutral-900/40 p-4 sm:items-center sm:p-8"
       onClick={onClose}
+      // The modal is portaled to <body>, but React still bubbles its events up
+      // the COMPONENT tree — through the draggable board card that renders it.
+      // Without stopping them here, typing Space in the description (or any
+      // field) reached the card's @dnd-kit keyboard sensor, which read Space as
+      // "pick up this card": a phantom drag preview (the contact's name) popped
+      // up and the keystroke never reached the field. Stop keyboard + pointer
+      // events at the modal root so fields type normally and no stray drag
+      // starts. Escape-to-close is a document listener, so it still fires.
+      onKeyDown={(e) => e.stopPropagation()}
+      onKeyUp={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
     >
       <div
         role="dialog"

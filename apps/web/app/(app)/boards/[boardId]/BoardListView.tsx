@@ -123,7 +123,7 @@ export function BoardListView({
             c.dueAt ? new Date(c.dueAt).getTime() : '',
             c.scheduledCallAt ? new Date(c.scheduledCallAt).getTime() : '',
             c.lastActivityAt ? new Date(c.lastActivityAt).getTime() : '',
-            c.labels.length,
+            c.labels.map((l) => l.id).join(','),
           ].join(':'),
         )
         .join('|'),
