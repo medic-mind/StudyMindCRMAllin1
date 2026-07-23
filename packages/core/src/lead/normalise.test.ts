@@ -165,6 +165,63 @@ describe('normaliseLead — preferred date/time + subject', () => {
     })
     expect(out.preferredWhen).toBe('2026-06-12T16:00')
   })
+
+  // The exact Medic Mind "Consultation" CF7 shape: a separate "Call day" (a
+  // natural-language, year-less date) and "Call time" (a range) — these were
+  // silently dropped, so a requested call never reached the board.
+  it('combines a "Call day" natural date + "Call time" range (Medic Mind form)', () => {
+    const out = normaliseLead(
+      {
+        fields: {
+          'your-name': 'Shamin Anari',
+          email: 'anarishamin@gmail.com',
+          'call-day': 'Friday 24 Jul',
+          'call-time': '10:00-10:30',
+          'interested-in': '1-1 Tutoring',
+        },
+      },
+      { now: new Date('2026-07-23T09:00:00Z') },
+    )
+    expect(out.preferredWhen).toBe('2026-07-24T10:00')
+  })
+
+  it('infers the year for a year-less "Call day" (rolls to next year if passed)', () => {
+    const jan = normaliseLead(
+      { fields: { email: 'a@b.test', 'call-day': '5 January', 'call-time': '2pm' } },
+      { now: new Date('2026-07-23T09:00:00Z') },
+    )
+    // 5 Jan has already passed in July → next year.
+    expect(jan.preferredWhen).toBe('2027-01-05T14:00')
+  })
+
+  it('resolves a bare weekday "Call day" to the next occurrence', () => {
+    // 2026-07-23 is a Thursday → next Monday is 2026-07-27.
+    const out = normaliseLead(
+      { fields: { email: 'a@b.test', 'call-day': 'Monday', 'call-time': '09:30' } },
+      { now: new Date('2026-07-23T09:00:00Z') },
+    )
+    expect(out.preferredWhen).toBe('2026-07-27T09:30')
+  })
+})
+
+describe('extractPreferredWhen — date/time assembly', () => {
+  const now = new Date('2026-07-23T09:00:00Z')
+
+  it('takes the start of a time range', () => {
+    expect(extractPreferredWhen(['Friday 24 Jul', '10:00-10:30'], now)).toBe('2026-07-24T10:00')
+  })
+
+  it('reads "July 24th" (month-first) with an explicit year', () => {
+    expect(extractPreferredWhen(['July 24th 2026', '3pm'], now)).toBe('2026-07-24T15:00')
+  })
+
+  it('returns just the date when no time is present', () => {
+    expect(extractPreferredWhen(['24 Jul'], now)).toBe('2026-07-24')
+  })
+
+  it('returns null when nothing date-like is present', () => {
+    expect(extractPreferredWhen(['as soon as possible', '10am'], now)).toBeNull()
+  })
 })
 
 describe('normaliseLead — country field + URL message guard', () => {
