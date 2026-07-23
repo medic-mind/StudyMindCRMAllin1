@@ -209,7 +209,7 @@ export function BoardCard({
               .map((t) => (
                 <span
                   key={t}
-                  className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-inset ring-amber-100"
+                  className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600 ring-1 ring-inset ring-neutral-200"
                   title="What they enquired about"
                 >
                   {t}
