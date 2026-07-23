@@ -12,10 +12,12 @@ import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { PhoneIcon } from '@/components/ui/icon'
+import { filterCardsByQuery } from '@/lib/board/card-search'
 import { formatLondon } from '@/lib/format/london-time'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
+import { BoardSearch } from './BoardSearch'
 import { CardModal } from './CardModal'
 import { MoveCardMenu } from './MoveCardMenu'
 import { QuickActionButtons } from './QuickActionButtons'
@@ -105,6 +107,7 @@ export function BoardListView({
 }: Props) {
   const [cards, setCards] = useState<CardData[]>(() => [...initialCards])
   const [openCardId, setOpenCardId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
   // Reconcile server → local on any meaningful change (mirrors BoardDnd) so a
   // move/refresh elsewhere is reflected without clobbering optimistic moves.
@@ -152,18 +155,26 @@ export function BoardListView({
     }
   }
 
+  // Search filters only what's shown; `cards` (and moves) are untouched.
+  const visibleCards = useMemo(() => filterCardsByQuery(cards, query), [cards, query])
   const byStage = useMemo(() => {
     const map = new Map<string, CardData[]>()
     for (const s of stages) map.set(s.id, [])
-    for (const c of cards) map.get(c.stageId)?.push(c)
+    for (const c of visibleCards) map.get(c.stageId)?.push(c)
     return map
-  }, [cards, stages])
+  }, [visibleCards, stages])
 
   const now = new Date()
   const colCount = canWrite ? 7 : 6
 
   return (
     <div className="space-y-6">
+      <BoardSearch
+        value={query}
+        onChange={setQuery}
+        matchCount={visibleCards.length}
+        totalCount={cards.length}
+      />
       {stages.map((stage) => {
         const stageCards = byStage.get(stage.id) ?? []
         const dot = resolveStageColor(stage.color)
@@ -228,7 +239,7 @@ export function BoardListView({
                               .map((t) => (
                                 <span
                                   key={t}
-                                  className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-inset ring-amber-100"
+                                  className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600 ring-1 ring-inset ring-neutral-200"
                                   title="What they enquired about"
                                 >
                                   {t}
