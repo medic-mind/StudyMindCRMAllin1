@@ -18,7 +18,10 @@ import {
   londonWallToUtc,
   utcToLondonWall,
 } from '@/lib/format/london-time'
+import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { trpc } from '@/lib/trpc/client'
+
+import { CardLabelsEditor } from './CardLabelsEditor'
 
 interface Card {
   id: string
@@ -212,21 +215,9 @@ export function CardSidebar({ card, canWrite }: Props) {
         <Badge tone="neutral">{card.stage.name}</Badge>
       </Section>
 
-      {card.labels.length > 0 && (
-        <Section label="Labels">
-          <div className="flex flex-wrap gap-1">
-            {card.labels.map((l) => (
-              <span
-                key={l.id}
-                className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
-                style={{ backgroundColor: l.color }}
-              >
-                {l.name}
-              </span>
-            ))}
-          </div>
-        </Section>
-      )}
+      <Section label="Labels">
+        <CardLabelsEditor cardId={card.id} labels={card.labels} canWrite={canWrite} />
+      </Section>
 
       <Section label="Board">
         <Link
@@ -245,21 +236,17 @@ export function CardSidebar({ card, canWrite }: Props) {
           >
             {card.contactName}
           </Link>
+          {/* Copyable phone/email affordances (the phone menu carries the
+              "Copy number" action the team asked for) instead of bare links. */}
           {card.contactEmail && (
-            <a
-              href={`mailto:${card.contactEmail}`}
-              className="block break-all text-xs text-neutral-600 hover:underline"
-            >
-              {card.contactEmail}
-            </a>
+            <div className="text-xs">
+              <EmailLink email={card.contactEmail} />
+            </div>
           )}
           {card.contactPhone && (
-            <a
-              href={`tel:${card.contactPhone}`}
-              className="block font-mono text-xs text-neutral-600 hover:underline"
-            >
-              {card.contactPhone}
-            </a>
+            <div className="text-xs">
+              <PhoneLink phone={card.contactPhone} />
+            </div>
           )}
         </div>
       </Section>
