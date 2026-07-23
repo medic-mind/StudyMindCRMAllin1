@@ -8,6 +8,8 @@
 import * as Sentry from '@sentry/nextjs'
 import { useEffect } from 'react'
 
+import { isChunkLoadError, reloadForStaleChunk } from '@/components/shell/chunk-reloader'
+
 interface Props {
   error: Error & { digest?: string }
   reset: () => void
@@ -16,6 +18,9 @@ interface Props {
 export default function GlobalError({ error, reset }: Props) {
   useEffect(() => {
     Sentry.captureException(error)
+    // A stale-chunk error can't be fixed by reset() (it re-attempts the missing
+    // chunk) — force a full reload to pick up the new build.
+    if (isChunkLoadError(error)) reloadForStaleChunk()
   }, [error])
 
   return (
@@ -41,22 +46,38 @@ export default function GlobalError({ error, reset }: Props) {
               request id: {error.digest}
             </p>
           ) : null}
-          <button
-            type="button"
-            onClick={reset}
-            style={{
-              alignSelf: 'flex-start',
-              border: '1px solid #1d4ed8',
-              background: '#1d4ed8',
-              color: 'white',
-              padding: '6px 12px',
-              borderRadius: 6,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
-            Try again
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              onClick={reset}
+              style={{
+                border: '1px solid #1d4ed8',
+                background: '#1d4ed8',
+                color: 'white',
+                padding: '6px 12px',
+                borderRadius: 6,
+                fontSize: 14,
+                cursor: 'pointer',
+              }}
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{
+                border: '1px solid #cbd5e1',
+                background: 'white',
+                color: '#0f172a',
+                padding: '6px 12px',
+                borderRadius: 6,
+                fontSize: 14,
+                cursor: 'pointer',
+              }}
+            >
+              Reload page
+            </button>
+          </div>
         </div>
       </body>
     </html>

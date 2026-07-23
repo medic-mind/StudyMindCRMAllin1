@@ -203,8 +203,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // (which renders on EVERY navigation) costs one round-trip, not three. A
   // count failure must never take down the shell.
   const caller = await createServerCaller()
+  // Neither the logo nor the complaints badge may take down the whole shell —
+  // a transient DB hiccup on either must degrade gracefully, not blank every
+  // page for the user (defence against a post-login "nothing loads" screen).
   const [branding, activeComplaints] = await Promise.all([
-    getBrandingLogoMeta(db),
+    getBrandingLogoMeta(db).catch(() => ({
+      hasLogo: false as const,
+      contentType: null,
+      version: null,
+    })),
     caller.complaint.activeCount().catch(() => 0),
   ])
   if (activeComplaints > 0) {
