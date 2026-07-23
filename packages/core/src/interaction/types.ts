@@ -97,6 +97,10 @@ export const InteractionListMeta = z.object({
   status: z.string().nullable(),
   /** Human-readable last send error, when the row is a failed outbound. */
   error: z.string().nullable(),
+  /** Origin of the row when it matters for display — e.g. `google_voice` for a
+   *  call/message ingested from Google Voice (vs an Aircall call), so the UI can
+   *  tag "non-Aircall" calls. Null for the common case. */
+  source: z.string().nullable(),
 })
 export type InteractionListMeta = z.infer<typeof InteractionListMeta>
 

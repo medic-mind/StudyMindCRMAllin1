@@ -28,6 +28,7 @@ describe('timelineLabel', () => {
           durationSec: 130,
           status: null,
           error: null,
+          source: null,
         },
       }),
     )
@@ -35,11 +36,35 @@ describe('timelineLabel', () => {
     expect(l.tone).toBe('call')
   })
 
+  it('tags a Google Voice call so it reads as non-Aircall', () => {
+    const l = timelineLabel(
+      item({
+        type: 'call',
+        meta: {
+          channel: null,
+          direction: 'inbound',
+          durationSec: 0,
+          status: null,
+          error: null,
+          source: 'google_voice',
+        },
+      }),
+    )
+    expect(l.label).toBe('Inbound call · Google Voice')
+  })
+
   it('labels a WhatsApp message by channel', () => {
     const l = timelineLabel(
       item({
         type: 'message',
-        meta: { channel: 'whatsapp', direction: null, durationSec: null, status: 'sent', error: null },
+        meta: {
+          channel: 'whatsapp',
+          direction: null,
+          durationSec: null,
+          status: 'sent',
+          error: null,
+          source: null,
+        },
       }),
     )
     expect(l.label).toBe('WhatsApp message')

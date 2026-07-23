@@ -12,9 +12,36 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { toast } from 'sonner'
 
 import { useComposeEmail } from '@/components/mail/compose-email'
 import { ChevronDownIcon, MailIcon, PhoneIcon } from '@/components/ui/icon'
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    /* fall through to the legacy path */
+  }
+  // Fallback for non-secure contexts / older browsers.
+  try {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.position = 'fixed'
+    el.style.opacity = '0'
+    document.body.appendChild(el)
+    el.focus()
+    el.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(el)
+    return ok
+  } catch {
+    return false
+  }
+}
 
 function looksUK(phone: string): boolean {
   return phone.startsWith('+44')
@@ -143,6 +170,23 @@ export function PhoneLink({ phone }: { phone: string | null | undefined }) {
               }}
               className="z-[9999] w-56 overflow-hidden rounded-lg border border-neutral-200 bg-white text-left shadow-xl"
             >
+              {/* Copy the raw number — the top ask from the team, who could not
+                  select the number out of the button. Works everywhere PhoneLink
+                  is used (board cards, Contacts / Accounts tables). */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  const ok = await copyToClipboard(phone)
+                  setOpen(false)
+                  if (ok) toast.success(`Copied ${phone}`)
+                  else toast.error('Could not copy the number')
+                }}
+                className="block w-full border-b border-neutral-100 px-3 py-2 text-left text-xs font-medium text-neutral-900 transition-colors hover:bg-neutral-50"
+              >
+                Copy number
+                <span className="ml-1 select-all font-mono text-neutral-500">{phone}</span>
+              </button>
               <a
                 role="menuitem"
                 href={`tel:${phone}`}

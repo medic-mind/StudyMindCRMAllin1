@@ -23,7 +23,17 @@ import { BoardViewToggle } from './BoardViewToggle'
 
 export const dynamic = 'force-dynamic'
 
-const CAN_WRITE = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+// Every staff role can add / move / action cards — the same set the tRPC
+// router's CARD_WRITE_ROLES allows. Virtual Assistant was missing here, so the
+// UI hid Add-card / move / quick-actions from them even though the server would
+// have accepted it (§20 — VA ≡ Sales Executive since 2026-07).
+const CAN_WRITE = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 const CAN_MANAGE = new Set(['ceo', 'senior_manager'])
 // Hard-deleting a card is Manager+ (CARD_DELETE_ROLES in the tRPC router).
 const CAN_DELETE_CARD = new Set(['ceo', 'senior_manager', 'manager'])

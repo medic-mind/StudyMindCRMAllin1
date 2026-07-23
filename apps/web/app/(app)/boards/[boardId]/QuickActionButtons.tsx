@@ -36,6 +36,11 @@ interface Props {
    * a failed quick action never leaves the card stranded/vanished until a
    * manual refresh. */
   onLocalRevert?: () => void
+  /** Called after a successful apply. Used by the card modal (which has no
+   * board-local optimistic state) to close itself + refresh the board so the
+   * card visibly lands in its new column — otherwise a quick action "from
+   * inside" the modal appeared to do nothing. */
+  onApplied?: () => void
 }
 
 function chipStyle(color: string | null): React.CSSProperties {
@@ -57,6 +62,7 @@ export function QuickActionButtons({
   actions,
   onLocalMove,
   onLocalRevert,
+  onApplied,
 }: Props) {
   const utils = trpc.useUtils()
   const apply = trpc.card.applyQuickAction.useMutation({
@@ -78,6 +84,9 @@ export function QuickActionButtons({
         utils.card.get.invalidate({ id: cardId }),
         utils.card.quickActions.list.invalidate(),
       ])
+      // Surfaces without board-local optimistic state (the card modal) reconcile
+      // here so the move is actually reflected.
+      onApplied?.()
     },
     onError: (e) => {
       // Snap the optimistic move back (the local snapshot restores it) — no

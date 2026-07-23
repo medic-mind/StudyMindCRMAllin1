@@ -40,6 +40,7 @@ function deriveMeta(type: InteractionType, payload: unknown): InteractionListMet
   const channel = str(p['channel'])
   const direction = str(p['direction'])
   const durationSec = num(p['durationSec'])
+  const source = str(p['source'])
   const rawStatus = str(p['status'])
   const lastError = p['lastError'] as { message?: unknown } | undefined
   const errorMessage =
@@ -52,7 +53,7 @@ function deriveMeta(type: InteractionType, payload: unknown): InteractionListMet
   const status =
     rawStatus === 'pending_send' ? (errorMessage ? 'failed' : 'sending') : rawStatus
 
-  if (!channel && !direction && durationSec === null && !status && !errorMessage) {
+  if (!channel && !direction && durationSec === null && !status && !errorMessage && !source) {
     return undefined
   }
   return {
@@ -61,6 +62,7 @@ function deriveMeta(type: InteractionType, payload: unknown): InteractionListMet
     durationSec,
     status: type === 'message' || type === 'email_sent' ? status : null,
     error: errorMessage,
+    source,
   }
 }
 

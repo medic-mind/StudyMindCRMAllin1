@@ -110,11 +110,14 @@ export function timelineLabel(item: InteractionListItem): TimelineLabel {
         meta?.durationSec != null && meta.durationSec > 0
           ? ` · ${formatDuration(meta.durationSec)}`
           : ''
-      return { label: `${dir}${dur}`, tone: 'call' }
+      // Tag non-Aircall calls so the team can tell where a call came from.
+      const via = meta?.source === 'google_voice' ? ' · Google Voice' : ''
+      return { label: `${dir}${dur}${via}`, tone: 'call' }
     }
     case 'message': {
       const ch = meta?.channel ? (CHANNEL_LABEL[meta.channel] ?? meta.channel) : null
-      return { label: ch ? `${ch} message` : 'Message', tone: 'message' }
+      const via = meta?.source === 'google_voice' ? ' · Google Voice' : ''
+      return { label: `${ch ? `${ch} message` : 'Message'}${via}`, tone: 'message' }
     }
     case 'email_received':
       return { label: 'Email received', tone: 'email' }

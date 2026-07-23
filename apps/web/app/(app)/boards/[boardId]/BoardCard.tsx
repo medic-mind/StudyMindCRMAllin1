@@ -17,6 +17,11 @@ import { PhoneIcon } from '@/components/ui/icon'
 import { EmailLink, PhoneLink } from '@/components/shared/channel-links'
 import { formatLondon } from '@/lib/format/london-time'
 import { formatRelativeTime } from '@/lib/format/relative-time'
+import {
+  scheduleUrgency,
+  URGENCY_CHIP_CLASS,
+  URGENCY_LABEL,
+} from '@/lib/format/schedule-urgency'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
 import { CardModal } from './CardModal'
@@ -233,26 +238,32 @@ export function BoardCard({
         {/* Scheduled call is the headline metadata on these boards — give it
             its own row at a readable size (was lost in the meta strip
             previously). Past times go red; future times stay primary. */}
-        {cardFaceHas(cardFields, 'scheduledCall') && card.scheduledCallAt ? (
-          <div className="mt-2">
-            <span
-              className={
-                new Date(card.scheduledCallAt).getTime() < now.getTime()
-                  ? 'inline-flex items-center gap-1.5 rounded-md bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-inset ring-red-100'
-                  : 'inline-flex items-center gap-1.5 rounded-md bg-primary-50 px-2 py-0.5 text-[11px] font-semibold text-primary-700 ring-1 ring-inset ring-primary-100'
-              }
-              title="Scheduled call (UK time)"
-            >
-              <PhoneIcon size={11} />
-              {formatLondon(card.scheduledCallAt, {
-                day: '2-digit',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </span>
-          </div>
-        ) : null}
+        {cardFaceHas(cardFields, 'scheduledCall') && card.scheduledCallAt
+          ? (() => {
+              // Todoist-style urgency colour so it's obvious which calls need
+              // doing: overdue red · today orange · tomorrow amber · this week
+              // blue · later neutral.
+              const urgency = scheduleUrgency(new Date(card.scheduledCallAt), now)
+              const label = URGENCY_LABEL[urgency]
+              return (
+                <div className="mt-2">
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${URGENCY_CHIP_CLASS[urgency]}`}
+                    title="Scheduled call (UK time)"
+                  >
+                    <PhoneIcon size={11} />
+                    {label ? `${label} · ` : ''}
+                    {formatLondon(card.scheduledCallAt, {
+                      day: '2-digit',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+              )
+            })()
+          : null}
         {/* Tertiary meta — assignee + due + last activity. Small, even
             spacing, no emoji so the row is uniform. */}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-neutral-500">

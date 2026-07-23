@@ -13,6 +13,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 
 import { CommentThread } from '@/components/thread/CommentThread'
@@ -78,6 +79,16 @@ export function CardModal({
   const [editingDesc, setEditingDesc] = useState(false)
   const [descDraft, setDescDraft] = useState('')
   const closeRef = useRef<HTMLButtonElement>(null)
+  // Portal target guard (SSR-safe). The modal MUST be portaled to <body>: it is
+  // rendered inside the draggable board-card <li>, whose dnd-kit pointer /
+  // keyboard listeners otherwise intercept clicks + keystrokes on the modal's
+  // inputs — which is why the fields wouldn't accept typing.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  // Keep the latest onClose without making the Esc listener re-subscribe (and
+  // re-steal focus) on every parent re-render.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   const cardQuery = trpc.card.get.useQuery({ id: cardId }, { enabled: open })
   const commentsQuery = trpc.card.comments.list.useQuery({ cardId }, { enabled: open })
@@ -92,6 +103,29 @@ export function CardModal({
     },
     onError: (e) => toast.error(e.message ?? 'Could not delete card'),
   })
+  // Archive = the reversible "remove this card" every card-writer can do (a
+  // Sales Exec / VA who made a card by mistake had no way to get rid of it —
+  // only Manager+ saw the hard Delete). Soft-archives; contact + history stay.
+  const archiveCardMutation = trpc.card.archive.useMutation({
+    onSuccess: async () => {
+      toast.success('Card removed from the board')
+      await utils.card.list.invalidate()
+      onClose()
+      router.refresh()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not remove card'),
+  })
+  async function onArchive() {
+    const name = cardQuery.data?.contactName ?? 'this card'
+    const ok = await confirm({
+      title: `Remove the card for ${name} from the board?`,
+      body: 'The card is archived (reversible) — the contact and the card history on the contact timeline are kept.',
+      confirmLabel: 'Remove card',
+      tone: 'danger',
+    })
+    if (!ok) return
+    archiveCardMutation.mutate({ id: cardId })
+  }
   async function onDelete() {
     const name = cardQuery.data?.contactName ?? 'this card'
     const ok = await confirm({
@@ -116,14 +150,18 @@ export function CardModal({
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onCloseRef.current()
     }
     document.addEventListener('keydown', onKey)
-    closeRef.current?.focus()
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open])
+  // Move focus to Close ONCE when the modal opens — not on every re-render
+  // (which previously yanked focus out of whatever field the user was typing in).
+  useEffect(() => {
+    if (open) closeRef.current?.focus()
+  }, [open])
 
-  if (!open) return null
+  if (!open || !mounted) return null
 
   const card = cardQuery.data
   const comments: ThreadComment[] = (commentsQuery.data ?? []).map((c) => ({
@@ -134,7 +172,7 @@ export function CardModal({
     occurredAt: c.occurredAt,
   }))
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-neutral-900/40 p-4 sm:p-8"
       onClick={onClose}
@@ -175,6 +213,17 @@ export function CardModal({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={onArchive}
+                disabled={archiveCardMutation.isPending || !card}
+                className="rounded px-2 py-1 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-50"
+                title="Remove this card from the board (reversible)"
+              >
+                {archiveCardMutation.isPending ? 'Removing…' : 'Remove'}
+              </button>
+            ) : null}
             {canDeleteCard ? (
               <button
                 type="button"
@@ -215,6 +264,13 @@ export function CardModal({
                       cardId={card.id}
                       currentStageId={card.stageId}
                       actions={quickActions}
+                      // No board-local optimistic state here — close + refresh so
+                      // the card actually lands in its new column (the quick
+                      // action "did nothing" from inside the modal before).
+                      onApplied={() => {
+                        onClose()
+                        router.refresh()
+                      }}
                     />
                   ) : null}
                   <div className="max-w-xs">
@@ -334,7 +390,8 @@ export function CardModal({
           />
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
