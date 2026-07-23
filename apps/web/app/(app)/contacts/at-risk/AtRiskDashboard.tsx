@@ -51,7 +51,13 @@ interface Counts {
   total: number
 }
 
-const CAN_REVIEW = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+const CAN_REVIEW = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 export function AtRiskDashboard({
   items,

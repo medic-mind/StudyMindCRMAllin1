@@ -14,7 +14,14 @@ import { LeadsTray } from './LeadsTray'
 
 export const dynamic = 'force-dynamic'
 
-const WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+// §20: VA ≡ Sales Executive, and the lead router's LEAD_WRITE_ROLES includes VA.
+const WRITE_ROLES = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 export default async function LeadsPage() {
   const me = await getCurrentUser()

@@ -21,7 +21,15 @@ interface SP {
   days?: string
 }
 
-const ACTION_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+// Virtual Assistant ≡ Sales Executive (§20) and the calls router's APPLY_ROLES
+// already allows VA — so the UI must too, otherwise VAs can't action missed calls.
+const ACTION_ROLES = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 export default async function MissedCallsPage({
   searchParams,

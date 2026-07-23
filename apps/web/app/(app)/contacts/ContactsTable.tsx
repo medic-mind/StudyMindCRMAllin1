@@ -125,8 +125,8 @@ function formatKind(kind: string): string {
 }
 
 const CAN_DELETE = new Set(['ceo', 'senior_manager', 'manager'])
-const CAN_PUSH = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
-const CAN_LABEL = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
+const CAN_PUSH = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
+const CAN_LABEL = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: Props) {
   const router = useRouter()
