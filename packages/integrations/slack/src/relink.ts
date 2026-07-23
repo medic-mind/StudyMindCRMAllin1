@@ -184,6 +184,32 @@ export interface RelinkBatchResult {
  * loops batches across memoized steps so no single step exceeds the execution
  * budget (the previous whole-backlog-in-one-step design timed out).
  */
+/**
+ * Dismiss ONE parked row unconditionally (idempotent on `resolvedAt: null`).
+ * The full-auto safety net: called when `relinkOneRow` neither linked nor
+ * dismissed a row (it threw), so a poison row can never keep the tray from
+ * draining to zero. Reversible — sets `resolvedAt` only, never deletes.
+ */
+async function forceDismissParkedRow(
+  rowId: string,
+  channelId: string,
+  actorId: string,
+  reason: string,
+): Promise<void> {
+  const res = await db.unassignedSummary.updateMany({
+    where: { id: rowId, resolvedAt: null },
+    data: { resolvedAt: new Date() },
+  })
+  if (res.count === 0) return // already resolved by a concurrent pass
+  await writeAuditLogEntry(db, {
+    actorId,
+    action: 'slack_summary.dismissed',
+    target: { type: 'UnassignedSummary', id: rowId },
+    requestId: `slack-relink:${rowId}`,
+    after: { auto: true, reason, channelId },
+  })
+}
+
 export async function relinkParkedRowsBatch(
   actorId: string,
   afterId: string | null,
@@ -219,8 +245,9 @@ export async function relinkParkedRowsBatch(
   let errors = 0
   let threadBudget = RELINK_THREAD_FETCHES
   for (const row of rows) {
+    let outcome: RelinkOutcome | 'error' = 'parked'
     try {
-      const outcome = await relinkOneRow(
+      outcome = await relinkOneRow(
         row,
         actorId,
         brands,
@@ -231,14 +258,39 @@ export async function relinkParkedRowsBatch(
         },
         fullAuto,
       )
-      if (outcome === 'linked') linked += 1
-      else if (outcome === 'dismissed') dismissed += 1
     } catch (err) {
       errors += 1
+      outcome = 'error'
       logger.warn(
         { rowId: row.id, channelId: row.channelId, err },
         'slack relink: row failed — continuing with the rest',
       )
+    }
+    if (outcome === 'linked') {
+      linked += 1
+      continue
+    }
+    if (outcome === 'dismissed') {
+      dismissed += 1
+      continue
+    }
+    // 'parked' (full-auto off) or 'error' (the resolver threw). In full-auto we
+    // NEVER leave a row behind — force-dismiss it so the tray truly drains to
+    // zero even for a poison row that throws every time (the reason a backlog
+    // could sit un-drained forever). Dismiss is reversible (resolvedAt only).
+    if (fullAuto) {
+      try {
+        await forceDismissParkedRow(
+          row.id,
+          row.channelId,
+          actorId,
+          outcome === 'error' ? 'error' : 'auto_dismiss_unlinked',
+        )
+        dismissed += 1
+      } catch (e2) {
+        // Only a DB-write failure reaches here — leave it for the next tick.
+        logger.warn({ rowId: row.id, err: e2 }, 'slack relink: force-dismiss failed')
+      }
     }
   }
   return {
