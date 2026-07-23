@@ -387,6 +387,9 @@ export async function processLead(
     inferredPhone,
     fallbackPhone,
   ])
+  // Match the primary phone OR an additional point of contact (ContactChannel)
+  // with the same number, so a re-enquiry from a 2nd/work number attaches to
+  // the existing contact instead of creating a duplicate.
   const phoneWhere =
     phoneMatch.exact.length || phoneMatch.suffix
       ? {
@@ -398,6 +401,32 @@ export async function processLead(
             ...(phoneMatch.suffix
               ? [{ phoneE164: { endsWith: phoneMatch.suffix } }]
               : []),
+            ...(phoneMatch.exact.length
+              ? [
+                  {
+                    contactChannels: {
+                      some: {
+                        kind: 'phone' as const,
+                        value: { in: phoneMatch.exact },
+                        deletedAt: null,
+                      },
+                    },
+                  },
+                ]
+              : []),
+            ...(phoneMatch.suffix
+              ? [
+                  {
+                    contactChannels: {
+                      some: {
+                        kind: 'phone' as const,
+                        value: { endsWith: phoneMatch.suffix },
+                        deletedAt: null,
+                      },
+                    },
+                  },
+                ]
+              : []),
           ],
         }
       : null
@@ -407,7 +436,22 @@ export async function processLead(
   const [byEmail, byPhone] = await Promise.all([
     email
       ? db.contact.findMany({
-          where: { email: { equals: email, mode: 'insensitive' }, deletedAt: null },
+          // Primary email OR an additional email point of contact.
+          where: {
+            deletedAt: null,
+            OR: [
+              { email: { equals: email, mode: 'insensitive' } },
+              {
+                contactChannels: {
+                  some: {
+                    kind: 'email',
+                    value: { equals: email, mode: 'insensitive' },
+                    deletedAt: null,
+                  },
+                },
+              },
+            ],
+          },
           select: { id: true },
           orderBy: { updatedAt: 'desc' },
           take: 5,

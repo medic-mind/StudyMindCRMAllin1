@@ -27,6 +27,7 @@ import { SlackProbeButton } from './SlackProbeButton'
 import { TrengoImportButton } from './TrengoImportButton'
 import { TrengoProbeButton } from './TrengoProbeButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
+import { LeadCallTimeBackfillButton } from './LeadCallTimeBackfillButton'
 import { LeadMaintenanceButton } from './LeadMaintenanceButton'
 
 const BACKFILL_PROVIDERS = new Set(['gmail', 'aircall', 'trengo', 'slack'])
@@ -184,7 +185,8 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
         <div className="space-y-8">
           {provider === 'lead' ? (
             <>
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-end gap-2">
+                <LeadCallTimeBackfillButton />
                 <LeadMaintenanceButton />
               </div>
               <LeadIngestionPanel />

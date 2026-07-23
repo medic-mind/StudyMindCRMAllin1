@@ -395,6 +395,26 @@ export const leadRouter = router({
   }),
 
   /**
+   * Retroactive scheduled-call-time repair (operator button on the Lead webhook
+   * integration page): re-parses every existing lead's stored payload with the
+   * improved "Call day"/"Call time" parser and sets the backing pipeline card's
+   * scheduled call where it is still blank. Self-rescheduling; idempotent.
+   */
+  backfillCallTimes: auditedProcedure.mutation(async ({ ctx }) => {
+    const user = requireUser(ctx)
+    assertCanManageSources(user.role)
+    const { inngest } = await import('@studymind/jobs')
+    const jobId = `lctbf_${Date.now().toString(36)}_${user.id.slice(-6)}`
+    await inngest.send({ name: 'leads/backfill-call-times.requested', data: { jobId } })
+    await ctx.audit({
+      action: 'lead.call_times_backfill_requested',
+      target: { type: 'System', id: jobId },
+      after: { initiatedBy: user.id },
+    })
+    return { ok: true as const }
+  }),
+
+  /**
    * Integrations "Test Lead Generator". Pushes a synthetic Contact-Form-7-shape
    * submission through the exact same ingest path as the public endpoint
    * (normalise → persist → classify), so an admin can prove the pipeline is

@@ -86,7 +86,16 @@ export async function resolveOrCreateContactForCall(
   }
 
   const contacts = await db.contact.findMany({
-    where: { phoneE164: phone, deletedAt: null },
+    // Match the number against the PRIMARY phone OR any additional point of
+    // contact (ContactChannel) — so a call to someone's 2nd/work number links
+    // to the right contact instead of creating a duplicate.
+    where: {
+      deletedAt: null,
+      OR: [
+        { phoneE164: phone },
+        { contactChannels: { some: { kind: 'phone', value: phone, deletedAt: null } } },
+      ],
+    },
     select: {
       id: true,
       firstName: true,

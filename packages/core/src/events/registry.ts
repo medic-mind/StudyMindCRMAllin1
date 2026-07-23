@@ -249,6 +249,9 @@ export const EVENT_NAMES = [
   // (operator-triggered from the Lead webhook integration page).
   'lead.maintenance_requested',
   'lead.maintenance_completed',
+  // Retroactive scheduled-call-time repair onto existing lead cards.
+  'lead.call_times_backfill_requested',
+  'lead.call_times_backfilled',
   'lead.source_archived',
   'lead.source_deleted',
   'lead.rule_created',
@@ -704,6 +707,10 @@ export const INNGEST_EVENT_NAMES = [
   'lead/classify.requested',
   // Retroactive country/name repair walk (self-rescheduling batches).
   'lead/backfill-countries.requested',
+  // Retroactive scheduled-call-time repair: re-parse existing leads' raw
+  // payloads (with the improved "Call day"/"Call time" parser) and set the
+  // card's scheduled call where it's still blank. Self-rescheduling batches.
+  'leads/backfill-call-times.requested',
   // Medi Platform account sync (ADR 0037): the POST /api/contacts receiver
   // persists a `medi` ProviderEvent then hands off async Contact onboarding.
   'medi/account.received',
