@@ -113,3 +113,41 @@ describe('planAutoMerges', () => {
     ).toEqual([])
   })
 })
+
+describe('planAutoMerges — full automation ({ includeAmbiguous: true })', () => {
+  it('merges the WHOLE cluster into its oldest member (no manual queue)', () => {
+    // A phone-only match with different names is merged too — no human step.
+    const plans = planAutoMerges(
+      [
+        { id: 'mum', email: null, phoneE164: '+447700900111', name: 'Jane Doe' },
+        { id: 'son', email: null, phoneE164: '07700900111', name: 'Tom Doe' },
+      ],
+      { includeAmbiguous: true },
+    )
+    expect(plans).toEqual([{ survivorId: 'mum', loserIds: ['son'] }])
+  })
+
+  it('collapses a transitive cluster into one merge onto the oldest', () => {
+    const plans = planAutoMerges(
+      [
+        { id: 'old', email: 'jo@x.com', phoneE164: '+447700900111', name: 'Jo Bloggs' },
+        { id: 'new', email: 'jo@x.com', phoneE164: null, name: 'Jo Bloggs' },
+        { id: 'landline', email: null, phoneE164: '07700900111', name: 'Other Person' },
+      ],
+      { includeAmbiguous: true },
+    )
+    expect(plans).toEqual([{ survivorId: 'old', loserIds: ['new', 'landline'] }])
+  })
+
+  it('still returns nothing when there are no shared keys', () => {
+    expect(
+      planAutoMerges(
+        [
+          { id: 'a', email: 'a@x.com', phoneE164: null, name: 'A' },
+          { id: 'b', email: 'b@x.com', phoneE164: null, name: 'B' },
+        ],
+        { includeAmbiguous: true },
+      ),
+    ).toEqual([])
+  })
+})

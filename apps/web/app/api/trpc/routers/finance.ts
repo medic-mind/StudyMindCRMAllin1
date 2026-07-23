@@ -1622,6 +1622,25 @@ export const financeRouter = router({
             })
           }
 
+          // Log the send on the case comms history, mirroring sendCaseMessage,
+          // so contact-panel recovery sends appear in the case's message log
+          // (they were previously invisible there). The send already succeeded
+          // above (a failure throws before this point).
+          await ctx.db.ddCaseMessage.create({
+            data: {
+              id: createId(),
+              caseId: current.id,
+              channel: input.channel,
+              templateId: input.templateId ?? null,
+              step: current.escalationStep,
+              toAddress: input.channel === 'email' ? contact.email! : contact.phoneE164!,
+              subject: input.channel === 'email' ? (input.subject?.trim() ?? null) : null,
+              body: input.body,
+              status: 'sent',
+              error: null,
+            },
+          })
+
           await ctx.audit({
             action: 'direct_debit.recovery_sent',
             target: { type: 'DirectDebitCase', id: input.gcSubscriptionId },

@@ -40,9 +40,14 @@ describe('parseMoneyToMinor', () => {
 
 describe('parseDepositFromNotes', () => {
   it('pulls the deposit out of free-text notes', () => {
-    expect(parseDepositFromNotes('Paid Initial £500')).toBe(50000)
-    expect(parseDepositFromNotes('deposit £750 received')).toBe(75000)
-    expect(parseDepositFromNotes('Availed of our Research Program £500')).toBe(50000)
+    expect(parseDepositFromNotes('Paid Initial £500')).toEqual({ value: 50000, labelled: true })
+    expect(parseDepositFromNotes('deposit £750 received')).toEqual({ value: 75000, labelled: true })
+    // A bare £ figure with no deposit label is reported as unlabelled — the
+    // caller only trusts it for a part-payment booking.
+    expect(parseDepositFromNotes('Availed of our Research Program £500')).toEqual({
+      value: 50000,
+      labelled: false,
+    })
     expect(parseDepositFromNotes('no money here')).toBeNull()
     expect(parseDepositFromNotes(null)).toBeNull()
   })

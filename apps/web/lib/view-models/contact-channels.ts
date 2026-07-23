@@ -901,7 +901,13 @@ export async function channelSummaryForContact(
   let callLatest: Date | null = null
   for (const r of calls) {
     const p = asObject(r.payload)
-    const cid = asString(p['aircallCallId']) ?? `single:${r.occurredAt.toISOString()}`
+    // aircallCallId is persisted as a JSON NUMBER, so asString() returned null
+    // and every event row fell into a unique bucket — defeating the collapse and
+    // double-counting each call. Key by the numeric id (`ac:<id>`, matching
+    // callsForContact); a withheld-number call with no id falls back to its
+    // timestamp (this KPI query does not select the row id).
+    const acid = asNumber(p['aircallCallId'])
+    const cid = acid != null ? `ac:${acid}` : `single:${r.occurredAt.toISOString()}`
     callIds.add(cid)
     if (classifyOutcome(p) === 'missed') missedCallIds.add(cid)
     if (!callLatest || r.occurredAt > callLatest) callLatest = r.occurredAt

@@ -196,12 +196,18 @@ export function classifyLead(
   // URL — the bare-"book" tier reads this so "book a call" never trips it.
   const productSignals =
     `${lead.landingSlug ?? ''} ${lead.formTitle ?? ''} ${prods.join(' ')} ${lead.requestedSubject ?? ''} ${nameText} ${extraText}`.toLowerCase()
+  // A bare "book" is a free-resource product token ("GAMSAT Book"), but the
+  // verb phrase "book a call / consultation / slot …" is a high-intent SALES
+  // action that must NOT route to Free Resources — even when it appears in a
+  // landing slug ("book-a-call") or form title, which productSignals includes.
+  const bookVerbPhrase =
+    /\bbook[- ]?(a|an|my|your|the|our|now|call|consultation|consult|slot|appointment|session|meeting|demo|place|seat|trial)\b/u
   const looksFree =
     cats.includes(FREE_RESOURCES_CATEGORY) ||
     /\b(free[- ]?resources?|free[- ]?downloads?|downloads?|freebies?|cheat[- ]?sheets?|free[- ]?guides?|free[- ]?e-?books?|free[- ]?books?|e-?books?|guide[- ]?books?|workbooks?|lead[- ]?magnets?|free[- ]?webinars?|free[- ]?tasters?|sample[- ]?papers?|past[- ]?papers?|revision[- ]?notes?)\b/u.test(
       everything,
     ) ||
-    /\bbooks?\b/u.test(productSignals)
+    (/\bbooks?\b/u.test(productSignals) && !bookVerbPhrase.test(productSignals))
   const destination: LeadClassification['destination'] = looksFree ? 'free_resources' : 'sales'
   if (looksFree) reasons.push('Routed to Free Resources board')
 

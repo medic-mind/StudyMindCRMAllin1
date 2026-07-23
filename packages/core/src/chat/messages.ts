@@ -29,13 +29,14 @@ function userDisplayName(u: { name: string | null; email: string } | null): stri
   return (u.name ?? '').trim() || u.email
 }
 
-async function requireOpenChannel(db: Db, channelId: string): Promise<void> {
+async function requireOpenChannel(db: Db, channelId: string): Promise<{ kind: string }> {
   const channel = await db.chatChannel.findUnique({
     where: { id: channelId },
-    select: { id: true, archivedAt: true },
+    select: { id: true, archivedAt: true, kind: true },
   })
   if (!channel) throw new BusinessError('CHANNEL_NOT_FOUND', 'Channel not found')
   if (channel.archivedAt) throw new BusinessError('CHANNEL_ARCHIVED', 'Channel is archived')
+  return { kind: channel.kind }
 }
 
 /**
@@ -73,7 +74,7 @@ export async function sendMessage(
   }
   if (body.length > MAX_BODY) throw new BusinessError('MESSAGE_EMPTY', 'Message is too long')
 
-  await requireOpenChannel(db, input.channelId)
+  const channel = await requireOpenChannel(db, input.channelId)
 
   let parentId: string | null = null
   if (input.parentId) {
@@ -92,6 +93,19 @@ export async function sendMessage(
   const mentionIds = extractMentionUserIds(body)
   const refs = extractRefs(body)
 
+  // A private channel / DM must not notify (nor leak content to) a non-member.
+  // Public channels are open to all staff and auto-join on post, so a mentioned
+  // teammate legitimately has no membership row yet — never filter those.
+  let effectiveMentionIds = mentionIds
+  if (mentionIds.length > 0 && channel.kind !== 'public') {
+    const members = await db.chatChannelMember.findMany({
+      where: { channelId: input.channelId, userId: { in: mentionIds } },
+      select: { userId: true },
+    })
+    const memberSet = new Set(members.map((m) => m.userId))
+    effectiveMentionIds = mentionIds.filter((u) => memberSet.has(u))
+  }
+
   await db.chatMessage.create({
     data: {
       id,
@@ -100,10 +114,10 @@ export async function sendMessage(
       body,
       parentId,
       createdAt: now,
-      ...(mentionIds.length > 0
+      ...(effectiveMentionIds.length > 0
         ? {
             mentions: {
-              create: mentionIds.map((userId) => ({
+              create: effectiveMentionIds.map((userId) => ({
                 id: createId(),
                 userId,
                 channelId: input.channelId,
@@ -170,7 +184,7 @@ export async function sendMessage(
     editedAt: null,
     deletedAt: null,
     createdAt: now,
-    mentionUserIds: mentionIds,
+    mentionUserIds: effectiveMentionIds,
     refs: refs
       .map((r) => refViews.get(`${r.type}:${r.id}`))
       .filter((x): x is ChatRefView => x != null),
@@ -216,8 +230,39 @@ export async function editMessage(
   const mentionIds = extractMentionUserIds(body)
   const refs = extractRefs(body)
 
-  // Replace the mention + ref sets to match the new body.
-  await db.chatMention.deleteMany({ where: { messageId: input.id } })
+  // Set-diff the mentions so UNCHANGED @mentions keep their row (and its
+  // readAt). Deleting + recreating every mention reset read-state on all of
+  // them and re-notified recipients on any edit. Only remove mentions that are
+  // gone and add ones that are new. Refs carry no read-state, so replace them.
+  const existingMentions = await db.chatMention.findMany({
+    where: { messageId: input.id },
+    select: { userId: true },
+  })
+  const existingIds = new Set(existingMentions.map((m) => m.userId))
+  const newIds = new Set(mentionIds)
+  const toRemove = [...existingIds].filter((u) => !newIds.has(u))
+  let toAdd = mentionIds.filter((u) => !existingIds.has(u))
+  // Same private-channel/DM guard as sendMessage: a newly-added @mention must
+  // not reach a non-member. Public channels never filter.
+  if (toAdd.length > 0) {
+    const channel = await db.chatChannel.findUnique({
+      where: { id: message.channelId },
+      select: { kind: true },
+    })
+    if (channel && channel.kind !== 'public') {
+      const members = await db.chatChannelMember.findMany({
+        where: { channelId: message.channelId, userId: { in: toAdd } },
+        select: { userId: true },
+      })
+      const memberSet = new Set(members.map((m) => m.userId))
+      toAdd = toAdd.filter((u) => memberSet.has(u))
+    }
+  }
+  if (toRemove.length > 0) {
+    await db.chatMention.deleteMany({
+      where: { messageId: input.id, userId: { in: toRemove } },
+    })
+  }
   await db.chatMessageRef.deleteMany({ where: { messageId: input.id } })
 
   await db.chatMessage.update({
@@ -225,10 +270,10 @@ export async function editMessage(
     data: {
       body,
       editedAt,
-      ...(mentionIds.length > 0
+      ...(toAdd.length > 0
         ? {
             mentions: {
-              create: mentionIds.map((userId) => ({
+              create: toAdd.map((userId) => ({
                 id: createId(),
                 userId,
                 channelId: message.channelId,

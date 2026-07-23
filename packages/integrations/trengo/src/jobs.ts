@@ -635,19 +635,40 @@ async function upsertTrengoInteraction(
   if (isInboundMessage && !contactId && !familyId) {
     const phone = input.envelope.data.contact?.phone?.trim() ?? null
     const email = input.envelope.data.contact?.email?.trim().toLowerCase() ?? null
-    const created = await db.lead.create({
-      data: {
-        id: createId(),
-        source: 'trengo',
-        rawPayload: input.envelope as unknown as object,
-        phoneE164: phone,
-        email,
-        name: input.envelope.data.contact?.name ?? null,
-      },
-      select: { id: true },
-    })
-    leadCreated = true
-    leadId = created.id
+    // Reuse an existing unmatched Trengo lead for this sender (deduped on
+    // phone/email) instead of creating a fresh Lead for EVERY inbound message —
+    // mirroring the backfill's behaviour. A fully-anonymous sender (no phone
+    // AND no email) still gets its own lead per conversation.
+    const existingLead =
+      phone || email
+        ? await db.lead.findFirst({
+            where: {
+              source: 'trengo',
+              OR: [
+                ...(phone ? [{ phoneE164: phone }] : []),
+                ...(email ? [{ email }] : []),
+              ],
+            },
+            select: { id: true },
+          })
+        : null
+    if (existingLead) {
+      leadId = existingLead.id
+    } else {
+      const created = await db.lead.create({
+        data: {
+          id: createId(),
+          source: 'trengo',
+          rawPayload: input.envelope as unknown as object,
+          phoneE164: phone,
+          email,
+          name: input.envelope.data.contact?.name ?? null,
+        },
+        select: { id: true },
+      })
+      leadCreated = true
+      leadId = created.id
+    }
   }
 
   const dbType = mapTrengoEventToDbType(input.eventName)

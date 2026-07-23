@@ -343,9 +343,30 @@ export const complaintRouter = router({
       const user = requireUser(ctx)
       const existing = await ctx.db.complaint.findFirst({
         where: { id: input.id, deletedAt: null },
-        select: { id: true },
+        select: { id: true, status: true },
       })
       if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
+      // Keep resolvedAt/resolvedById consistent with the status the same way
+      // the dedicated resolve/reopen procedures do — otherwise a complaint
+      // moved to resolved/dismissed via update() had status set but resolvedAt
+      // null, so it vanished from the resolution-time + resolved-count metrics.
+      // Only stamp on a genuine transition INTO a terminal state, and clear on a
+      // transition OUT; an unrelated edit that re-passes the same status is a
+      // no-op so resolvedAt is never bumped.
+      const TERMINAL_STATUSES = new Set(['resolved', 'dismissed'])
+      let resolvedTransition: {
+        resolvedAt?: Date | null
+        resolvedById?: string | null
+      } = {}
+      if (input.status !== undefined && input.status !== existing.status) {
+        const wasTerminal = TERMINAL_STATUSES.has(existing.status)
+        const willBeTerminal = TERMINAL_STATUSES.has(input.status)
+        if (!wasTerminal && willBeTerminal) {
+          resolvedTransition = { resolvedAt: new Date(), resolvedById: user.id }
+        } else if (wasTerminal && !willBeTerminal) {
+          resolvedTransition = { resolvedAt: null, resolvedById: null }
+        }
+      }
       await ctx.db.complaint.update({
         where: { id: input.id },
         data: {
@@ -353,6 +374,7 @@ export const complaintRouter = router({
           ...(input.severity !== undefined ? { severity: input.severity } : {}),
           ...(input.category !== undefined ? { category: input.category } : {}),
           ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+          ...resolvedTransition,
           updatedById: user.id,
         },
       })

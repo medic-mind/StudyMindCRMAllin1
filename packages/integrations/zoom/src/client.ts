@@ -56,7 +56,13 @@ let cached: CachedToken | null = null
 export async function getAccessToken(config?: ZoomConfig, now = Date.now()): Promise<string> {
   const cfg = config ?? readZoomConfig()
   if (!cfg) throw new ZoomApiError(0, 'Zoom is not configured (set ZOOM_ACCOUNT_ID/CLIENT_ID/SECRET).')
-  const key = `${cfg.accountId}:${cfg.clientId}`
+  // Include the client secret in the cache key so rotating ONLY the secret
+  // (account id + client id unchanged) invalidates the cached token instead of
+  // serving a stale one until it expires. Hashed so the plaintext secret is not
+  // retained as a module-level string.
+  const key = createHmac('sha256', 'zoom')
+    .update(`${cfg.accountId}:${cfg.clientId}:${cfg.clientSecret}`)
+    .digest('hex')
   if (cached && cached.key === key && cached.expiresAt > now + 60_000) return cached.token
 
   const basic = Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString('base64')

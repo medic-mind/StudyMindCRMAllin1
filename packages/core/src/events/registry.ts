@@ -297,6 +297,9 @@ export const EVENT_NAMES = [
   // a case (Phase 3b). Audited; also logged as an email_sent Interaction.
   'direct_debit.recovery_sent',
   'stripe.payment_unresolved',
+  // A Payment Link checkout mapped its Stripe customer to the Family the agent
+  // chose at link creation (metadata.familyId), resolving the charge (§8).
+  'stripe.checkout_session_linked',
   'gocardless.redirect_flow.created',
   'gocardless.reconcile.late_failure_recovered',
   // Direct Debit operating system (ADR 0038). The *.created/cancelled/… rows

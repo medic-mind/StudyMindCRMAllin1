@@ -74,6 +74,13 @@ export const customerRiskRouter = router({
           ...(input.view === 'flagged' ? { riskReview: { status: 'flagged' } } : {}),
           ...(input.view === 'dismissed' ? { riskReview: { status: 'dismissed' } } : {}),
         },
+        // Risk (deriveHoursRisk) is computed in JS and can't be filtered in SQL,
+        // so the scan is bounded. Order idle-first — customers with the oldest /
+        // no recent lesson are the strongest at-risk signal — with a stable id
+        // tiebreak, so the bound (below) drops the LEAST-likely-at-risk rows
+        // deterministically rather than an arbitrary unordered slice that could
+        // silently omit high-risk customers.
+        orderBy: [{ lastLessonAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
         select: {
           id: true,
           firstName: true,
@@ -89,7 +96,10 @@ export const customerRiskRouter = router({
             select: { status: true, note: true, reviewedAt: true, reviewedById: true },
           },
         },
-        take: 5000,
+        // Comfortably above any realistic count of customers holding booked
+        // hours, so truncation effectively never bites; combined with the
+        // idle-first order above, any drop is the least-at-risk tail.
+        take: 20000,
       })
 
       // Active complaints for the scanned customers (open | in_progress), so the

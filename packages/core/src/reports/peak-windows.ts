@@ -56,7 +56,25 @@ export function inSeason(w: PeakWindowDef, month: number, day: number): boolean 
 
 /** Does a single instant fall within this peak window? */
 export function instantMatchesWindow(w: PeakWindowDef, t: PeakInstant): boolean {
-  if (w.year != null && w.year !== t.year) return false
+  if (w.year != null) {
+    const s = ordinal(w.startMonth, w.startDay)
+    const e = ordinal(w.endMonth, w.endDay)
+    const d = ordinal(t.month, t.day)
+    if (s <= e) {
+      // Non-wrapping season: the whole season is in the pinned calendar year.
+      if (t.year !== w.year) return false
+    } else {
+      // Wrapping season (e.g. Nov → Feb): the pre-wrap stretch (>= start) is in
+      // w.year; the post-wrap stretch (<= end) rolls into w.year + 1. Applying a
+      // flat year equality mislabelled the Jan/Feb portion. Instants outside the
+      // season fall through (inSeason rejects them below).
+      if (d >= s) {
+        if (t.year !== w.year) return false
+      } else if (d <= e) {
+        if (t.year !== w.year + 1) return false
+      }
+    }
+  }
   if (w.endHour <= w.startHour) return false
   if (t.hour < w.startHour || t.hour >= w.endHour) return false
   if (!w.daysOfWeek.includes(t.dow)) return false

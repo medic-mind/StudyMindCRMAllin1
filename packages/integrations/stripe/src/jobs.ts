@@ -17,6 +17,7 @@ import {
   recordUnresolvedStripePayment,
   resolveAiProductSuggestion,
   resolveFamilyByStripeCustomer,
+  resolveUnresolvedStripePayment,
   revertStripePayment,
   syncStripeInvoice,
   syncStripePayment,
@@ -40,6 +41,10 @@ const HANDLED_TYPES = new Set<string>([
   // never double-counted across overlapping event types.
   'charge.succeeded',
   'charge.refunded',
+  // Payment Links carry metadata { familyId, contactId, agentId, reason }
+  // (CLAUDE.md §8). This event carries that mapping so a payment-link charge
+  // reconciles to the right Family instead of stranding in the unresolved tray.
+  'checkout.session.completed',
 ])
 
 /** Active product catalogue, fed to the deterministic product classifier. */
@@ -102,6 +107,83 @@ export const stripeEventReceived = inngest.createFunction(
       const fresh = await stripe.events.retrieve(eventId)
       return fresh
     })
+
+    // 1b. Payment Link completion → connect the Stripe customer to the Family
+    //     the agent chose at link-creation time (session.metadata.familyId), so
+    //     this checkout's charge resolves. Stripe gives no ordering (§8), so the
+    //     charge may already have landed unresolved — retro-resolve it too.
+    if (refetched.type === 'checkout.session.completed') {
+      const session = refetched.data.object as {
+        id: string
+        customer: string | { id: string } | null
+        metadata?: Record<string, string> | null
+      }
+      const linked = await step.run('link-checkout-session', async () => {
+        const familyId = session.metadata?.['familyId'] ?? null
+        const customerId =
+          typeof session.customer === 'string'
+            ? session.customer
+            : (session.customer?.id ?? null)
+        if (!familyId || !customerId) {
+          return { linked: false as const, reason: 'no_family_or_customer' }
+        }
+        const family = await db.family.findFirst({
+          where: { id: familyId, deletedAt: null },
+          select: { id: true },
+        })
+        if (!family) return { linked: false as const, reason: 'family_not_found' }
+
+        // Idempotent mapping: any future charge for this customer auto-resolves.
+        const existingMap = await db.stripeCustomer.findUnique({
+          where: { stripeCustomerId: customerId },
+          select: { id: true },
+        })
+        if (!existingMap) {
+          await db.stripeCustomer.create({
+            data: { id: createId(), familyId, stripeCustomerId: customerId, createdById: null },
+          })
+        }
+
+        // Retro-resolve any charge that arrived before this session event.
+        const pending = await db.unresolvedStripePayment.findMany({
+          where: { stripeCustomerId: customerId, status: 'pending' },
+          select: { id: true },
+        })
+        let resolvedPayments = 0
+        for (const row of pending) {
+          const r = await resolveUnresolvedStripePayment(db, {
+            id: row.id,
+            familyId,
+            actorId: 'system:stripe/checkout.session.completed',
+          })
+          if (r.ok) resolvedPayments += 1
+        }
+        return { linked: true as const, familyId, customerId, resolvedPayments }
+      })
+
+      if (linked.linked) {
+        await writeAuditLogEntry(db, {
+          actorId: null,
+          action: 'stripe.checkout_session_linked',
+          target: { type: 'Family', id: linked.familyId },
+          requestId: eventId,
+          after: {
+            stripeCustomerId: linked.customerId,
+            resolvedPayments: linked.resolvedPayments,
+          },
+        })
+      } else {
+        logger.info({ eventId, reason: linked.reason }, 'checkout.session.completed not linked')
+      }
+
+      await step.run('mark-processed-checkout', async () => {
+        await db.providerEvent.update({
+          where: { id: data.providerEventRowId },
+          data: { processedAt: new Date() },
+        })
+      })
+      return { ok: true, ...linked }
+    }
 
     // 2. Persist into our normalised mirror tables. The mapper is keyed on
     //    Stripe object ids so retries are safe.
@@ -208,13 +290,18 @@ export const stripeEventReceived = inngest.createFunction(
       }
 
       if (refetched.type === 'customer.subscription.updated') {
-        const sub = refetched.data.object as {
+        const snapshot = refetched.data.object as {
           id: string
           customer: string | { id: string }
-          status: string
-          current_period_end: number | null
         }
-        const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer.id
+        const customerId =
+          typeof snapshot.customer === 'string' ? snapshot.customer : snapshot.customer.id
+        // `events.retrieve` returns the subscription AS IT WAS when the event
+        // fired — a stale snapshot. Stripe gives no ordering guarantee
+        // (CLAUDE.md §8), so a delayed/out-of-order past_due event could roll a
+        // recovered `active` subscription backwards. Refetch the LIVE object for
+        // its current status + period end.
+        const sub = await createClient().subscriptions.retrieve(snapshot.id)
         const result = await syncStripeSubscription(db, {
           stripeId: sub.id,
           stripeCustomerId: customerId,

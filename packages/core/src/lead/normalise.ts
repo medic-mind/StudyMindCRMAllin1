@@ -404,7 +404,10 @@ export function extractPreferredWhen(values: string[], now?: Date): string | nul
   let time: string | null = null
   for (const v of values) {
     if (!date) date = extractDate(v, now)
-    if (!time) time = extractTime(v)
+    // Strip any date substring before reading a time, otherwise a pure date
+    // like "12.05.2008" is mis-parsed as 12:05 (its own separators) and yields
+    // a bogus scheduled-call time.
+    if (!time) time = extractTime(v.replace(ISO_DATE_RE, ' ').replace(DMY_RE, ' '))
   }
   if (!date) return null
   return time ? `${date}T${time}` : date
@@ -545,6 +548,11 @@ export function normaliseLead(input: RawLeadInput, opts?: { now?: Date }): Norma
         // A dotted IPv4 ("198.51.100.24") is digits-and-dots too — never a
         // phone number; it stays available for the clientIp sniff below.
         !IPV4_RE.test(e.value.trim()) &&
+        // A whole-value dashed/dotted date ("2008-05-12", "12.05.2008") is
+        // digits-and-separators too — a DOB field on a non-standard key was
+        // being stored as Contact.phoneE164. extractDate validates day/month,
+        // so a real dash-grouped phone (invalid as a date) is never dropped.
+        !(/^[\d/.-]+$/u.test(e.value.trim()) && extractDate(e.value.trim()) !== null) &&
         PHONE_RE.test(e.value.replace(/\s/gu, '')),
     )
     if (hit) {

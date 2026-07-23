@@ -215,7 +215,10 @@ export async function reconcileFamily(
   }
 
   // ---------------------------------------------------------------------------
-  // Leg 4 — churned + active subscription. §41.2.
+  // Leg 4 — churned family that still has an active means to be charged. §41.2:
+  // a churned Family may have neither an active Stripe subscription NOR an active
+  // GoCardless mandate. Both surface under the same category (with distinct
+  // context hashes so they are separate rows).
   // ---------------------------------------------------------------------------
   if (family.state === 'churned') {
     const activeSubs = (await db.stripeSubscription.findMany({
@@ -233,6 +236,26 @@ export async function reconcileFamily(
           'churned_with_active_subscription',
           familyId,
           activeSubs.map((s) => s.id).sort().join(','),
+        ]),
+      })
+    }
+
+    const activeMandates = await db.gcMandate.findMany({
+      where: { familyId, deletedAt: null, state: { in: ['active'] } },
+      select: { id: true },
+    })
+
+    if (activeMandates.length > 0) {
+      const mandateIds = activeMandates.map((m) => m.id)
+      discrepancies.push({
+        familyId,
+        category: 'churned_with_active_subscription',
+        summary: `Family is churned but has ${activeMandates.length} active GoCardless mandate(s)`,
+        payload: { mandateIds },
+        contextHash: hashContext([
+          'churned_with_active_mandate',
+          familyId,
+          mandateIds.slice().sort().join(','),
         ]),
       })
     }

@@ -176,6 +176,14 @@ function makeCtx(
         return { id: data.id }
       },
     },
+    // Stages are board-scoped (ADR 0018): create binds to the default board,
+    // archive cascades to the stage's cards.
+    board: {
+      findFirst: async () => ({ id: 'board_default' }),
+    },
+    card: {
+      updateMany: async () => ({ count: 0 }),
+    },
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(db),
   }
 

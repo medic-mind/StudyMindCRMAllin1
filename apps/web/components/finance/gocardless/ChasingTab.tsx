@@ -132,7 +132,7 @@ export function RecoveryCasesSection({ canWrite }: { canWrite: boolean }) {
                   </Td>
                   <Td className="whitespace-nowrap text-xs text-neutral-600">
                     {r.messageCount > 0
-                      ? `Step ${r.escalationStep} · ${r.messageCount} sent`
+                      ? `Step ${r.escalationStep + 1} · ${r.messageCount} sent`
                       : 'Nothing sent yet'}
                     {(r.status === 'new' || r.status === 'chasing' || r.status === 'escalated') &&
                     r.nextAutoMessageAt ? (

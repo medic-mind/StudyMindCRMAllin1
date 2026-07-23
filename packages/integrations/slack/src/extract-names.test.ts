@@ -15,6 +15,20 @@ describe('extractNameCandidates', () => {
     expect(extractNameCandidates('Called back, no answer')).toEqual([])
   })
 
+  it('a leading verb absorbed into a sentence-start run still yields the name', () => {
+    // "Called"/"Met"/"Rang" are capitalised at sentence start and get absorbed
+    // into the proper-noun run; we additionally emit the run minus its first
+    // token as a rescue candidate (matcher is unambiguous-only, so it's safe).
+    expect(extractNameCandidates('Called Priya Sharma about the mocks')).toContain(
+      'Priya Sharma',
+    )
+    expect(extractNameCandidates('Met John Smith earlier today')).toContain('John Smith')
+    // A genuine sentence-start name is unaffected — the full run is still first.
+    expect(extractNameCandidates('Priya Sharma called about the deposit')[0]).toBe(
+      'Priya Sharma',
+    )
+  })
+
   it('a whole-message bare name IS a candidate (terse thread header)', () => {
     expect(extractNameCandidates('Sampada')).toEqual(['Sampada'])
     expect(extractNameCandidates('Sampada Neupane')).toEqual(['Sampada Neupane'])

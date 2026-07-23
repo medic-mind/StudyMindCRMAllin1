@@ -281,7 +281,12 @@ function mergeEvent(
       if (!existing.lastOutboundAt || occurredAt > existing.lastOutboundAt) {
         patch.lastOutboundAt = occurredAt
       }
-      if (existing.unreadCount > 0) patch.unreadCount = 0
+      // Only clear the unread badge when this outbound POST-DATES the last
+      // inbound (symmetric with the inbound branch's staleness gate). A stale /
+      // out-of-order outbound event must not zero unread messages that arrived
+      // after it. Equality clears (outbound wins at an equal timestamp).
+      const postDatesInbound = !existing.lastInboundAt || occurredAt >= existing.lastInboundAt
+      if (postDatesInbound && existing.unreadCount > 0) patch.unreadCount = 0
       break
     }
     case 'ticket.closed':

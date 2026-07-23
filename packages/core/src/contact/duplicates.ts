@@ -104,24 +104,42 @@ export interface AutoMergePlan {
   loserIds: string[]
 }
 
+export interface PlanAutoMergesOptions {
+  /**
+   * When true, auto-merge the ENTIRE duplicate cluster — every contact sharing
+   * an email OR a phone — with no human step, so nothing is ever parked for
+   * manual review (operator decision, 2026-07, ADR 0047 amendment). When false
+   * (default) only *confidently the same person* subgroups merge and a
+   * phone-only/different-name pair (a possible shared family landline, §41.1) is
+   * left for the manual `/contacts/duplicates` page.
+   */
+  includeAmbiguous?: boolean
+}
+
 /**
- * Decide which duplicates are safe to merge WITHOUT human review (ADR 0047 —
- * operator-authorised auto-merge). We only auto-merge contacts that are
- * *confidently the same person*:
+ * Decide which duplicates to merge WITHOUT human review (ADR 0047 —
+ * operator-authorised auto-merge).
+ *
+ * By default we only auto-merge contacts that are *confidently the same person*:
  *   - they share a normalised email (near-certain — a re-enquiry, a second
  *     record for the same inbox), OR
  *   - they share a phone AND a matching name (a shared family landline alone is
  *     NOT enough — §41.1 — two different people can share it, so the name has
  *     to agree too).
- *
  * Within a raw duplicate cluster we build the "same-person" subgraph from those
- * edges and keep only the component that contains the survivor (the oldest
- * contact, so the longest-lived record and its history survive). Anything in the
- * cluster NOT confidently connected to the survivor — e.g. a phone-only match
- * with a different name — is left out, so it still surfaces on the manual
- * `/contacts/duplicates` review page. Pure: the caller executes the merges.
+ * edges and emit a merge per component (oldest member survives). Anything NOT
+ * confidently connected — e.g. a phone-only match with a different name — is
+ * left for the manual `/contacts/duplicates` page.
+ *
+ * With `{ includeAmbiguous: true }` the WHOLE cluster is merged into its oldest
+ * member with no human step — full automation, no manual review queue. The
+ * oldest contact survives so the longest-lived record and its history are kept.
+ * Pure: the caller executes the merges.
  */
-export function planAutoMerges(rows: ReadonlyArray<DupContactRow>): AutoMergePlan[] {
+export function planAutoMerges(
+  rows: ReadonlyArray<DupContactRow>,
+  opts: PlanAutoMergesOptions = {},
+): AutoMergePlan[] {
   const byId = new Map<string, DupContactRow>()
   for (const r of rows) byId.set(r.id, r)
 
@@ -129,6 +147,13 @@ export function planAutoMerges(rows: ReadonlyArray<DupContactRow>): AutoMergePla
   for (const clusterIds of clusterDuplicates(rows)) {
     const members = clusterIds.map((id) => byId.get(id)!).filter(Boolean)
     if (members.length < 2) continue
+
+    // Full-automation mode: the whole cluster is one merge. `members` is
+    // oldest-first, so members[0] survives.
+    if (opts.includeAmbiguous) {
+      plans.push({ survivorId: members[0]!.id, loserIds: members.slice(1).map((m) => m.id) })
+      continue
+    }
 
     // Union-find over confident same-person edges, scoped to this cluster.
     const parent = new Map<string, string>()
@@ -164,15 +189,22 @@ export function planAutoMerges(rows: ReadonlyArray<DupContactRow>): AutoMergePla
       }
     }
 
-    // Survivor = the oldest member (input is oldest-first). Auto-merge only the
-    // members confidently in the survivor's component.
-    const survivorId = members[0]!.id
-    const survivorRoot = find(survivorId)
-    const loserIds = members
-      .slice(1)
-      .filter((m) => find(m.id) === survivorRoot)
-      .map((m) => m.id)
-    if (loserIds.length > 0) plans.push({ survivorId, loserIds })
+    // A single loose cluster can contain MORE THAN ONE confident-merge
+    // component. Emit a merge for EVERY component with 2+ members — not only the
+    // one containing the cluster's oldest member — otherwise a confident
+    // duplicate pair that excludes members[0] is silently never merged.
+    // `members` is oldest-first, so the first id seen for each root is that
+    // component's oldest → it survives (preserving the oldest-survives rule).
+    const groups = new Map<string, string[]>()
+    for (const m of members) {
+      const root = find(m.id)
+      const g = groups.get(root)
+      if (g) g.push(m.id)
+      else groups.set(root, [m.id])
+    }
+    for (const ids of groups.values()) {
+      if (ids.length >= 2) plans.push({ survivorId: ids[0]!, loserIds: ids.slice(1) })
+    }
   }
   return plans
 }

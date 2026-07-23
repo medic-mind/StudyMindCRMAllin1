@@ -181,7 +181,14 @@ export async function softDeleteCategory(
     baseWhere['payload'] = { path: ['recordingS3Key'], not: null as unknown as undefined }
   } else if (category === 'callTranscript') {
     baseWhere['type'] = { in: [...CALL_INTERACTION_TYPES] }
-    baseWhere['payload'] = { path: ['transcript'], not: null as unknown as undefined }
+    // Transcripts are stored under `transcriptText` by the Aircall pipeline
+    // (jobs.ts / backfill.ts) and under `transcript` by the Google Voice
+    // handler. Match either so the 12-month transcript retention actually
+    // sweeps Aircall calls (the dominant source) and not only Google Voice.
+    baseWhere['OR'] = [
+      { payload: { path: ['transcriptText'], not: null as unknown as undefined } },
+      { payload: { path: ['transcript'], not: null as unknown as undefined } },
+    ]
   } else if (category === 'generalNote') {
     baseWhere['type'] = { in: [...NOTE_INTERACTION_TYPES] }
   }

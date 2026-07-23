@@ -14,6 +14,10 @@ export interface MailSendAs {
 function clean(html: string | null | undefined): string | null {
   if (!html) return null
   const trimmed = html.trim()
+  // A signature can be image/table-only (a logo, a rendered banner) with no
+  // text at all — keep it. Only the tag-strip check below would otherwise
+  // discard it as "empty".
+  if (/<(img|table|picture|svg|hr)\b/i.test(trimmed)) return trimmed
   // Strip an HTML body that is visually empty (e.g. "<div><br></div>").
   const textual = trimmed.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim()
   return textual.length > 0 ? trimmed : null

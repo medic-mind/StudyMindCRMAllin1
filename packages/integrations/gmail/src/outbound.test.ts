@@ -57,9 +57,16 @@ vi.mock('@studymind/db', () => {
         }),
       },
       contact: {
-        findMany: vi.fn(async (args: { where: { email: { in: string[] } } }) => {
-          return ROWS.contacts.filter((c) => args.where.email.in.includes(c.email))
-        }),
+        findMany: vi.fn(
+          async (args: {
+            where: { OR: Array<{ email: { equals: string; mode: string } }> }
+          }) => {
+            // Case-insensitive OR match (sendReply / sendEmail now match a
+            // mixed-case contact email via `{ email: { equals, mode } }`).
+            const wanted = args.where.OR.map((o) => o.email.equals.toLowerCase())
+            return ROWS.contacts.filter((c) => wanted.includes(c.email.toLowerCase()))
+          },
+        ),
       },
       interaction: {
         create: vi.fn(async (args: { data: Record<string, unknown> }) => {

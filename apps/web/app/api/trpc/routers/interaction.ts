@@ -435,19 +435,30 @@ export const interactionRouter = router({
         }
 
         const payload = (seed.payload ?? {}) as Record<string, unknown>
-        const threadId = typeof payload['threadId'] === 'string' ? payload['threadId'] : null
+        // The Gmail sync (jobs.ts / backfill.ts) — the only producer of
+        // email_received Interactions — writes `gmailThreadId`, `from` as a
+        // string[] of addresses, and `messageIdHeader`. Read those keys.
+        const threadId = typeof payload['gmailThreadId'] === 'string' ? payload['gmailThreadId'] : null
         const subject =
           typeof payload['subject'] === 'string' ? payload['subject'] : seed.summary ?? ''
+        const fromArr = Array.isArray(payload['from'])
+          ? (payload['from'] as unknown[]).filter((x): x is string => typeof x === 'string')
+          : []
         const fromAddress =
-          typeof payload['from'] === 'string'
-            ? payload['from']
+          fromArr[0] ??
+          (typeof payload['from'] === 'string'
+            ? (payload['from'] as string)
             : typeof payload['fromAddress'] === 'string'
               ? (payload['fromAddress'] as string)
-              : null
+              : null)
         const toRaw = Array.isArray(payload['to']) ? (payload['to'] as unknown[]) : []
         const ccRaw = Array.isArray(payload['cc']) ? (payload['cc'] as unknown[]) : []
         const originalMessageId =
-          typeof payload['messageId'] === 'string' ? payload['messageId'] : undefined
+          typeof payload['messageIdHeader'] === 'string'
+            ? payload['messageIdHeader']
+            : typeof payload['messageId'] === 'string'
+              ? payload['messageId']
+              : undefined
         const originalBody =
           typeof payload['body'] === 'string' ? payload['body'] : ''
 

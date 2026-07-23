@@ -222,15 +222,38 @@ export async function upsertStudent(
     contactId = action.contactId
     // Fill identity fields only when empty — never clobber hand-curated CRM
     // data (CLAUDE.md §3). Always refresh booking-derived metrics + the link.
+    //
+    // `linked` is only populated for a `use` (bookingContactId) match. For a
+    // `link` (email/phone) match it is null, so we must read the CANDIDATE
+    // contact's CURRENT values — otherwise every `?? student.*` fill-blank
+    // overwrites the curated CRM row with the booking site's values.
+    const existing =
+      action.kind === 'use'
+        ? linked
+        : await db.contact.findUnique({
+            where: { id: contactId },
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneE164: true,
+              dateOfBirth: true,
+              country: true,
+            },
+          })
+    const effectiveDob = existing?.dateOfBirth ?? student.dateOfBirth
     await db.contact.update({
       where: { id: contactId },
       data: {
-        firstName: linked?.firstName ?? student.firstName,
-        lastName: linked?.lastName ?? student.lastName,
-        email: linked?.email ?? student.email,
-        phoneE164: linked?.phoneE164 ?? student.phoneE164,
-        dateOfBirth: linked?.dateOfBirth ?? student.dateOfBirth,
-        country: linked?.country ?? student.country,
+        firstName: existing?.firstName ?? student.firstName,
+        lastName: existing?.lastName ?? student.lastName,
+        email: existing?.email ?? student.email,
+        phoneE164: existing?.phoneE164 ?? student.phoneE164,
+        dateOfBirth: effectiveDob,
+        // Recompute from the DOB actually stored, so a student who GAINS a
+        // date of birth is correctly (re)flagged as a minor.
+        isMinor: isMinor(effectiveDob, now),
+        country: existing?.country ?? student.country,
         ...summary,
       },
     })

@@ -321,7 +321,9 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
       ? []
       : await db.contact.findMany({
           where: {
-            email: { in: recipients },
+            // Contact.email may be stored mixed-case; recipients are lowercased.
+            // Match case-insensitively so a reply lands on the real contact.
+            OR: recipients.map((a) => ({ email: { equals: a, mode: 'insensitive' as const } })),
             deletedAt: null,
           },
           select: { id: true, email: true },
@@ -339,7 +341,10 @@ export async function sendReply(input: SendReplyInput): Promise<SendReplyResult>
             summary: `Reply: ${input.subject}`,
             payload: {
               event: 'email.sent',
-              threadId: input.threadId,
+              // Thread views (emailThreadsForContact, mail.thread.get) filter on
+              // gmailThreadId — the live sync's key. Writing `threadId` hid the
+              // CRM-sent reply from every thread view.
+              gmailThreadId: input.threadId,
               gmailMessageId: sent.id,
               toAddresses: input.toAddresses,
               cc: input.cc ?? [],
@@ -488,7 +493,11 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     recipients.length === 0
       ? []
       : await db.contact.findMany({
-          where: { email: { in: recipients }, deletedAt: null },
+          where: {
+            // Case-insensitive so a mixed-case contact email still matches.
+            OR: recipients.map((a) => ({ email: { equals: a, mode: 'insensitive' as const } })),
+            deletedAt: null,
+          },
           select: { id: true, email: true },
         })
 

@@ -83,14 +83,23 @@ export function parseMoneyToMinor(raw: string | null | undefined): number {
 
 /** Pull the deposit actually received out of free-text notes — "Paid Initial
  *  £500", "deposit £750", a bare "£500". Returns minor units, or null. */
-export function parseDepositFromNotes(notes: string | null | undefined): number | null {
+/**
+ * A deposit figure read from the notes, tagged with whether it was LABELLED
+ * (named as a deposit/initial/paid figure) or a BARE `£` amount. The caller
+ * trusts a labelled figure for any payment type, but only trusts a bare figure
+ * for a part-payment booking — otherwise a stray `£` (e.g. "Booking fee £200
+ * paid separately") on a SETTLED booking overstates the outstanding balance.
+ */
+export function parseDepositFromNotes(
+  notes: string | null | undefined,
+): { value: number; labelled: boolean } | null {
   if (!notes) return null
   const labelled = notes.match(
     /(?:paid\s*initial|initial\s*payment|initial|deposit|paid)\D{0,8}£?\s*([\d,]+(?:\.\d+)?)/iu,
   )
-  if (labelled?.[1]) return parseMoneyToMinor(labelled[1])
+  if (labelled?.[1]) return { value: parseMoneyToMinor(labelled[1]), labelled: true }
   const bare = notes.match(/£\s*([\d,]+(?:\.\d+)?)/u)
-  if (bare?.[1]) return parseMoneyToMinor(bare[1])
+  if (bare?.[1]) return { value: parseMoneyToMinor(bare[1]), labelled: false }
   return null
 }
 
@@ -219,10 +228,15 @@ export function parseInstalmentCsv(text: string): ParsedCampBooking[] {
     const weeks = clean(at(row, idx.weeks))
 
     const fromNotes = parseDepositFromNotes(notes)
+    const partial = isPartialPaymentType(paymentType)
+    // A labelled notes deposit is trusted for any payment type; a BARE `£`
+    // figure only counts as the deposit for a part-payment booking (otherwise a
+    // stray amount overstates the outstanding on a settled booking). Settled
+    // bookings with no trusted deposit are paid in full (deposit = total).
     const depositPaidMinor =
-      fromNotes != null
-        ? fromNotes
-        : isPartialPaymentType(paymentType)
+      fromNotes != null && (fromNotes.labelled || partial)
+        ? fromNotes.value
+        : partial
           ? DEFAULT_DEPOSIT_MINOR
           : totalDueMinor
 

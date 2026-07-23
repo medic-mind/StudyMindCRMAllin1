@@ -358,7 +358,13 @@ export const reportsRouter = router({
           }),
           ctx.db.interaction.count({
             where: {
-              type: 'family_state_changed',
+              // Actual churn transitions. `family_state_changed` rows are the
+              // at-risk system's toggles (payload.to is only 'at_risk'/'active',
+              // never 'churned'), so counting them overstated churn. A move into
+              // a churned stage writes `family_pipeline_moved` with
+              // payload.toState='churned' (CLAUDE.md §6.4).
+              type: 'family_pipeline_moved',
+              payload: { path: ['toState'], equals: 'churned' },
               occurredAt: { gte: input.from, lte: periodTo },
             },
           }),

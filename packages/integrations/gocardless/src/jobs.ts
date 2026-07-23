@@ -72,6 +72,7 @@ const INTERACTION_KEYS = new Set<string>([
   'payments/confirmed',
   'payments/failed',
   'payments/late_failure_settled',
+  'payments/charged_back',
   'mandates/active',
   'mandates/cancelled',
   'mandates/replaced',
@@ -231,9 +232,14 @@ export const gocardlessEventReceived = inngest.createFunction(
           confirmedAt: isConfirmed ? occurredAt : undefined,
         })
 
-        // Late-failure reversal — CLAUDE.md §9.
+        // Post-confirmation reversal — a late failure OR a chargeback. Both
+        // claw back an already-collected payment, so both must revert the
+        // mirrored Payment + reopen its allocations (§9). Mirrors the cron's
+        // `status === 'failed' || status === 'charged_back'` logic; keyed on the
+        // refetched canonical status so out-of-order delivery still reverses.
+        // revertGcPayment is idempotent, so a redundant fire is a no-op.
         let reversal: { reopenedAllocations: number } | null = null
-        if (rawEvent.action === 'late_failure_settled') {
+        if (rawEvent.action === 'late_failure_settled' || mappedStatus === 'charged_back') {
           const r = await revertGcPayment(db, { gcPaymentId: p.id, occurredAt })
           reversal = { reopenedAllocations: r.reopenedAllocations }
         }
@@ -436,6 +442,9 @@ function buildInteractionSummary(
   if (persisted.kind === 'payment') {
     if (type === 'payments/late_failure_settled') {
       return 'GoCardless payment reverted by late failure'
+    }
+    if (type === 'payments/charged_back') {
+      return 'GoCardless payment charged back (reversed)'
     }
     if (type === 'payments/confirmed') return 'GoCardless payment confirmed'
     if (type === 'payments/failed') return 'GoCardless payment failed'

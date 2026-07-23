@@ -111,6 +111,17 @@ export function extractNameCandidates(text: string): string[] {
   for (const run of runs) {
     if (run.tokens.length >= 2 && run.tokens.length <= 3) {
       multi.push(run.tokens.join(' '))
+      // A sentence-starting run can absorb a leading verb ("Called Priya
+      // Sharma", "Met John Smith", "Rang Bilal Khan") because the capitalised
+      // verb looks like a proper noun, so the full run never matches. Emit the
+      // run with its first token dropped as an EXTRA rescue candidate while
+      // KEEPING the full run — matchContactByCandidate is unambiguous-only, so
+      // the extra candidate can never mislink; it only adds a match path (and a
+      // real sentence-start name like "Priya Sharma called…" still matches on
+      // its full run first).
+      if (run.startsSentence && !wholeMessageIsRun) {
+        multi.push(run.tokens.slice(1).join(' '))
+      }
     } else if (run.tokens.length === 1) {
       const token = run.tokens[0]!
       if (run.startsSentence && !wholeMessageIsRun) continue // "Spoke to…", "Called her…"

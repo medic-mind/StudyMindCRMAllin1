@@ -12,9 +12,12 @@ export interface CampPurchaseDetection {
 }
 
 // "summer camp", "summercamp", "summer-camp" (any whitespace/hyphen run).
-const SUMMER_CAMP_RE = /summer[\s-]*camp/i
-// "work experience", "work-experience", "workexperience".
-const WORK_EXPERIENCE_RE = /work[\s-]*experience/i
+// The trailing \b rejects "Summer Campaign" / "Summer Camping".
+const SUMMER_CAMP_RE = /\bsummer[\s-]*camps?\b/i
+// "work experience", "work-experience", "workexperience". The LEADING \b is
+// essential — without it "coursework experience" / "framework experience" /
+// "homework experience" match on the "work" suffix of the preceding word.
+const WORK_EXPERIENCE_RE = /\bwork[\s-]*experiences?\b/i
 
 export function detectCampPurchase(productText: string | null | undefined): CampPurchaseDetection {
   const text = (productText ?? '').trim()

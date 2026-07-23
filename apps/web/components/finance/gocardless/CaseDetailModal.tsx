@@ -572,7 +572,7 @@ function AutomaticRecoveryPanel({ detail: d, onChange }: { detail: Detail; onCha
               : !d.autoChase
                 ? 'Paused'
                 : d.setupLinkUrl
-                  ? `Step ${d.escalationStep} · ${
+                  ? `Step ${d.escalationStep + 1} · ${
                       d.nextAutoMessageAt ? `next ${formatDate(d.nextAutoMessageAt)}` : 'scheduling'
                     }`
                   : 'Needs re-signup link'}

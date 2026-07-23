@@ -150,7 +150,11 @@ export const contactRouter = router({
         orderBy = [{ lastLessonAt: { sort: dir, nulls: 'last' } }, { id: 'desc' }]
         break
       default:
-        orderBy = [{ createdAt: dir }, { id: 'desc' }]
+        // The id tiebreak must track the sort direction so it agrees with the
+        // keyset cursor below (asc branch uses `id > cursor`, desc uses `<`).
+        // A hardcoded `id: desc` skipped/duplicated equal-createdAt rows across
+        // pages when sorting ascending.
+        orderBy = [{ createdAt: dir }, { id: dir }]
     }
 
     const lastLessonCutoff =

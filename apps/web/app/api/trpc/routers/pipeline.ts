@@ -134,7 +134,19 @@ const stagesRouter = router({
       const user = requireUser(ctx)
       assertCanManage(user.role)
 
+      // Stages are board-scoped (ADR 0018). A stage created with a null board
+      // never appears on any board, so bind the new stage to the default board
+      // and scope the name/position checks to that board.
+      const defaultBoard = await ctx.db.board.findFirst({
+        where: { isDefault: true, archivedAt: null },
+        orderBy: { position: 'asc' },
+        select: { id: true },
+      })
+      if (!defaultBoard) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'No default board configured' })
+      }
       const all = await ctx.db.pipelineStage.findMany({
+        where: { boardId: defaultBoard.id },
         select: {
           id: true,
           name: true,
@@ -172,6 +184,7 @@ const stagesRouter = router({
           color: input.color,
           position,
           isClosed: input.isClosed,
+          boardId: defaultBoard.id,
           createdById: user.id,
         },
         select: {
@@ -395,6 +408,12 @@ const stagesRouter = router({
             data: { stageId: input.reassignFamiliesTo },
           })
         }
+        // Archive the stage's board cards too (mirrors board.stages.archive).
+        // Leaving them behind orphans live cards on an archived stage.
+        await tx.card.updateMany({
+          where: { stageId: input.id, archivedAt: null },
+          data: { archivedAt: now },
+        })
         await tx.pipelineStage.update({
           where: { id: input.id },
           data: { archivedAt: now },

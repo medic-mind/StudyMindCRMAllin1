@@ -306,10 +306,21 @@ async function createUserWithCredentials(
         updatedById: actor.id,
       },
     })
-  } else if (args.name && !existing.name) {
+  } else {
+    // Reviving an existing incomplete row (e.g. one previously soft-deleted or
+    // deactivated that never had a password set). Clear the tombstones
+    // UNCONDITIONALLY so the freshly provisioned account is actually usable —
+    // otherwise the invite succeeds but the user stays hidden + sign-in-blocked
+    // — and fill a newly supplied name.
     await ctx.db.user.update({
       where: { id: existing.id },
-      data: { name: args.name, updatedById: actor.id },
+      data: {
+        deletedAt: null,
+        deactivatedAt: null,
+        deactivationReason: null,
+        ...(args.name && !existing.name ? { name: args.name } : {}),
+        updatedById: actor.id,
+      },
     })
   }
 
@@ -1371,8 +1382,23 @@ export const adminUsersRouter = router({
       ].filter((id): id is string => Boolean(id))
       try {
         await ctx.db.$transaction(async (tx) => {
-          if (cipherIds.length > 0) {
-            await tx.encryptedField.deleteMany({ where: { id: { in: cipherIds } } })
+          // Per-mailbox Gmail refresh tokens live on GmailMailbox
+          // (`refreshTokenCipherId`, multi-account §14), NOT on the User row, so
+          // they must be crypto-shredded here too — otherwise erasure leaves
+          // working Google tokens decryptable. Include soft-deleted mailboxes;
+          // their tokens are still valid at Google.
+          const mailboxes = await tx.gmailMailbox.findMany({
+            where: { agentId: user.id },
+            select: { refreshTokenCipherId: true },
+          })
+          const allCipherIds = [
+            ...cipherIds,
+            ...mailboxes
+              .map((m) => m.refreshTokenCipherId)
+              .filter((id): id is string => Boolean(id)),
+          ]
+          if (allCipherIds.length > 0) {
+            await tx.encryptedField.deleteMany({ where: { id: { in: allCipherIds } } })
           }
           // Hard delete — FK children cascade, Card.assignee nulls (SetNull).
           await tx.user.delete({ where: { id: user.id } })

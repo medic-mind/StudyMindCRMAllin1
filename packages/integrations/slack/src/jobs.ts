@@ -398,8 +398,23 @@ export const slackEventReceived = inngest.createFunction(
 
     // 4. Write the slack_summary Interaction (idempotent on event_id).
     const interaction = await step.run('upsert-interaction', async () => {
+      // Dedup on the webhook event id OR the (slackTs, channelId) pair — the
+      // pull/backfill/relink paths key on the latter (they have no webhook
+      // eventId), so checking slackEventId alone let a message ingested by one
+      // path be re-created as a duplicate slack_summary by another.
       const existing = await db.interaction.findFirst({
-        where: { payload: { path: ['slackEventId'], equals: eventId } },
+        where: {
+          type: 'slack_summary',
+          OR: [
+            { payload: { path: ['slackEventId'], equals: eventId } },
+            {
+              AND: [
+                { payload: { path: ['slackTs'], equals: message.ts } },
+                { payload: { path: ['channelId'], equals: message.channel } },
+              ],
+            },
+          ],
+        },
         select: { id: true },
       })
       if (existing) return existing

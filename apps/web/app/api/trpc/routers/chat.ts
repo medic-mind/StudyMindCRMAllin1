@@ -336,6 +336,9 @@ export const chatRouter = router({
   members: protectedProcedure
     .input(z.object({ channelId: z.string() }))
     .query(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      // Only members may read a private-channel/DM roster (names + emails).
+      await assertCanAccessChannel(ctx, input.channelId, user.id)
       const rows = await ctx.db.chatChannelMember.findMany({
         where: { channelId: input.channelId },
         select: { userId: true, role: true },
@@ -606,6 +609,9 @@ export const chatRouter = router({
         select: messageSelect,
       })
       if (!root) throw new TRPCError({ code: 'NOT_FOUND' })
+      // Gate private-channel/DM content behind membership, like listMessages/
+      // listPins/pin. root carries channelId (messageSelect), so no extra query.
+      await assertCanAccessChannel(ctx, root.channelId, user.id)
 
       const replies = await ctx.db.chatMessage.findMany({
         where: { parentId: input.rootId },
@@ -644,6 +650,17 @@ export const chatRouter = router({
         parentId: input.parentId ?? null,
         attachments,
       })
+      // The activity hint is broadcast to every signed-in staff member (the SSE
+      // route is not per-channel scoped), so the body preview must NOT ride
+      // along for a private channel or DM — that would leak private content to
+      // non-members. Public channels are open to all staff, so the preview is
+      // fine there; members of private channels fetch the content via the
+      // membership-gated thread/listMessages reads.
+      const channel = await ctx.db.chatChannel.findUnique({
+        where: { id: message.channelId },
+        select: { kind: true },
+      })
+      const previewAllowed = channel?.kind === 'public'
       emitChatActivity({
         kind: 'message',
         channelId: message.channelId,
@@ -654,9 +671,10 @@ export const chatRouter = router({
         mentionUserIds: message.mentionUserIds,
         // One-line preview for the desktop notification; tokens render as
         // readable labels (@Name / #Ref) rather than raw <@id> markers.
-        preview:
-          bodyToPlainText(input.body).slice(0, 140) ||
-          (attachments.length > 0 ? '📎 Attachment' : ''),
+        preview: previewAllowed
+          ? bodyToPlainText(input.body).slice(0, 140) ||
+            (attachments.length > 0 ? '📎 Attachment' : '')
+          : null,
       })
       return message
     } catch (err) {

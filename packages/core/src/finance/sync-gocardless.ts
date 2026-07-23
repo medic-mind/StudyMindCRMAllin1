@@ -225,7 +225,14 @@ export async function revertGcPayment(
     return { paymentId: payment.id, familyId: payment.familyId, reopenedAllocations: 0 }
   }
 
-  const deleted = await db.allocation.deleteMany({ where: { paymentId: payment.id } })
+  // Soft-delete, never hard-delete (CLAUDE.md §3/§19): the reconcile engine
+  // already excludes `deletedAt != null` allocations, so this reopens them for
+  // re-allocation exactly as a hard delete did — but keeps the history + audit
+  // trail of what was originally allocated against this now-reversed payment.
+  const deleted = await db.allocation.updateMany({
+    where: { paymentId: payment.id, deletedAt: null },
+    data: { deletedAt: input.occurredAt },
+  })
 
   await db.payment.update({
     where: { id: payment.id },

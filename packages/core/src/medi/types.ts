@@ -12,6 +12,8 @@
 
 import { z } from 'zod'
 
+import { composePhoneE164, findDialCountry } from '../lead/dial-codes'
+
 /** One human in the payload — the account holder, or a named related contact. */
 const partySchema = z
   .object({
@@ -87,15 +89,39 @@ function normaliseEmail(value: string | null | undefined): string | null {
   return v
 }
 
-/** Coerce to E.164: strip spaces, ensure a leading `+`, require >= 7 digits. */
-function normalisePhoneE164(value: string | null | undefined): string | null {
+/**
+ * Coerce to E.164. Strips ALL non-digits (never keep dashes/parens in the
+ * stored number), handles the '+' / '00' international forms, and — for a bare
+ * national number — composes with the supplied country's dial code (dropping
+ * the trunk 0) so "07700 900123" + GB → "+447700900123" rather than the
+ * undialable "+07700900123".
+ */
+function normalisePhoneE164(
+  value: string | null | undefined,
+  country?: string | null,
+): string | null {
   if (!value) return null
-  const stripped = String(value).replace(/\s+/g, '').trim()
-  if (stripped.length === 0) return null
-  const withPlus = stripped.startsWith('+') ? stripped : `+${stripped.replace(/^00/, '')}`
-  const digits = withPlus.replace(/[^\d]/g, '')
-  if (digits.length < 7 || digits.length > 15) return null
-  return withPlus
+  const raw = String(value).trim()
+  if (raw.length === 0) return null
+  const allDigits = raw.replace(/\D/g, '')
+  if (allDigits.length === 0) return null
+
+  // Explicit international form: '+…' or a '00…' prefix already carries the
+  // country code — sanitise to +<digits>.
+  if (raw.startsWith('+') || allDigits.startsWith('00')) {
+    const d = allDigits.replace(/^00/, '')
+    return d.length >= 7 && d.length <= 15 ? `+${d}` : null
+  }
+
+  // National number: compose with the country's dial code when we can resolve
+  // one (composePhoneE164 drops the trunk 0 and prepends the code).
+  const dc = country ? findDialCountry(country) : null
+  if (dc) return composePhoneE164(dc, raw)
+
+  // No country context — best effort so the value is never lost: store the
+  // sanitised digits with a leading '+'. A bare national number can't be turned
+  // into a correct E.164 without a country, but this at least keeps digits only.
+  return allDigits.length >= 7 && allDigits.length <= 15 ? `+${allDigits}` : null
 }
 
 /** Split a display name into first / last on the first space. */
@@ -118,13 +144,15 @@ function normaliseParty(party: {
   name?: string | null
   email?: string | null
   phone?: string | null
+  phone_country?: string | null
+  country?: string | null
 }): NormalisedMediParty {
   const { firstName, lastName } = splitName(party.name)
   return {
     firstName,
     lastName,
     email: normaliseEmail(party.email),
-    phoneE164: normalisePhoneE164(party.phone),
+    phoneE164: normalisePhoneE164(party.phone, party.phone_country ?? party.country ?? null),
   }
 }
 

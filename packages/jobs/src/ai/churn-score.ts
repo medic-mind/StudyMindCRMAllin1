@@ -6,8 +6,6 @@
 // recompute the at-risk derivation (CLAUDE.md §6.4). The high-risk families
 // surface on the at-risk dashboard for a human to action.
 
-import { createId } from '@paralleldrive/cuid2'
-
 import {
   buildChurnScorePrompt,
   CHURN_SCORE_PROMPT_VERSION,
@@ -94,11 +92,13 @@ export const aiScoreChurnRisk = inngest.createFunction(
     let scored = 0
 
     for (const family of families) {
-      const result = await step.run(`score-${family.id}`, async () => {
-        const now = new Date()
-        const signals = await buildSignals(family.id, now)
+      // Keep the (paid) AI call in its own step so a retry of the persistence
+      // step below never re-spends on the model — Inngest replays a completed
+      // step from cache rather than re-running it.
+      const out = await step.run(`score-ai-${family.id}`, async () => {
+        const signals = await buildSignals(family.id, new Date())
         const prompt = buildChurnScorePrompt({ signals })
-        const out = await runStructured({
+        return runStructured({
           task: 'churn_score',
           promptVersion: prompt.promptVersion,
           schema: churnScoreSchema,
@@ -108,11 +108,27 @@ export const aiScoreChurnRisk = inngest.createFunction(
           model: 'gpt-4o-mini',
           ctx: { familyId: family.id },
         })
+      })
 
-        await db.churnScore.create({
-          data: {
-            id: createId(),
+      const result = await step.run(`score-persist-${family.id}`, async () => {
+        const now = new Date()
+        // Deterministic per-(family, day) id + upsert so a retry converges on
+        // the same row instead of inserting a duplicate ChurnScore (the nightly
+        // cadence is already one score per family per day). Matches the
+        // requestId key format used below.
+        const scoreId = `churn:${family.id}:${now.toISOString().slice(0, 10)}`
+        await db.churnScore.upsert({
+          where: { id: scoreId },
+          create: {
+            id: scoreId,
             familyId: family.id,
+            score: out.score,
+            drivers: out.drivers,
+            rationale: out.rationale,
+            scoredAt: now,
+            promptVersion: CHURN_SCORE_PROMPT_VERSION,
+          },
+          update: {
             score: out.score,
             drivers: out.drivers,
             rationale: out.rationale,
@@ -130,7 +146,7 @@ export const aiScoreChurnRisk = inngest.createFunction(
         // Recompute at-risk derivation now that a fresh churn score has
         // landed. CLAUDE.md §6.4. Idempotent — only writes on transition.
         await recomputeAtRiskForFamily(db, family.id, {
-          requestId: `churn:${family.id}:${now.toISOString().slice(0, 10)}`,
+          requestId: scoreId,
         })
 
         return { scored: true as const }

@@ -1,14 +1,18 @@
 // Automatic duplicate-contact merging (ADR 0047 — operator-authorised, an
 // explicit exception to the §3 "humans confirm every merge" rule).
 //
-// We only auto-merge contacts that are *confidently the same person* — a shared
-// email, or a shared phone AND matching name (a shared family landline alone is
-// never enough, §41.1). The decision is the pure `planAutoMerges`; this service
-// does the I/O: load candidate contacts, run each plan through the audited
-// `mergeContacts`, skip (never fail) on a restricted-access conflict so the
-// unattended job leaves those for a human. Genuinely ambiguous duplicates that
-// this declines to touch still surface on `/contacts/duplicates` for manual
-// review.
+// FULLY automatic (operator decision, 2026-07): EVERY duplicate cluster — any
+// contacts sharing an email OR a phone — is merged into its oldest member with
+// NO human approval step, so there is no manual review queue. The decision is
+// the pure `planAutoMerges({ includeAmbiguous: true })`; this service does the
+// I/O: load candidate contacts, run each plan through the audited
+// `mergeContacts`, and skip (never fail) on a restricted-access conflict. The
+// only human control is the `CONTACTS_AUTO_MERGE=off` kill-switch (the "final
+// final" backstop) — nothing is parked for per-merge approval.
+//
+// Note (§41.1): a phone-only match with different names (a possible shared
+// family landline) is now merged too. If that produces bad merges, set the
+// service back to confident-only by dropping `includeAmbiguous`.
 //
 // Shared by the recurring `contacts/auto-merge-duplicates` cron and the
 // Manager+ "Run now" tRPC action.
@@ -58,7 +62,8 @@ export async function runAutoMergeDuplicates(
     phoneE164: c.phoneE164,
     name: [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || null,
   }))
-  const plans = planAutoMerges(rows)
+  // Full automation: merge every duplicate cluster, no manual review queue.
+  const plans = planAutoMerges(rows, { includeAmbiguous: true })
 
   let merged = 0
   let skipped = 0

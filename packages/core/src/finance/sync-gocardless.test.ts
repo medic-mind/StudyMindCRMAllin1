@@ -69,14 +69,23 @@ function makeFakeDb() {
       },
     },
     allocation: {
-      deleteMany: ({ where }: { where: { paymentId: string } }) => {
-        const before = allocations.length
-        for (let i = allocations.length - 1; i >= 0; i--) {
-          if (allocations[i]!['paymentId'] === where.paymentId) {
-            allocations.splice(i, 1)
+      // Reversal soft-deletes allocations (sets deletedAt) rather than removing
+      // them, so history + audit survive; reconcile excludes deletedAt != null.
+      updateMany: ({
+        where,
+        data,
+      }: {
+        where: { paymentId: string; deletedAt: null }
+        data: { deletedAt: Date }
+      }) => {
+        let count = 0
+        for (const a of allocations) {
+          if (a['paymentId'] === where.paymentId && (a['deletedAt'] ?? null) === null) {
+            a['deletedAt'] = data.deletedAt
+            count += 1
           }
         }
-        return Promise.resolve({ count: before - allocations.length })
+        return Promise.resolve({ count })
       },
     },
     financialAccount: {
@@ -141,7 +150,10 @@ describe('GoCardless late-failure reversal', () => {
     expect(result.reopenedAllocations).toBe(1)
     expect(payments[0]!['reverted']).toBe(true)
     expect(payments[0]!['revertedAt']).toEqual(new Date('2026-05-02T09:00:00Z'))
-    expect(allocations).toHaveLength(0)
+    // Soft-deleted (not removed): the row survives with deletedAt stamped so
+    // history is preserved; reconcile excludes it via deletedAt != null.
+    expect(allocations).toHaveLength(1)
+    expect(allocations[0]!['deletedAt']).toEqual(new Date('2026-05-02T09:00:00Z'))
     expect(financialAccounts).toHaveLength(1)
     expect(financialAccounts[0]!['status']).toBe('reverted_payment_pending_action')
   })

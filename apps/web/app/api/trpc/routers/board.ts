@@ -325,7 +325,8 @@ const boardStagesRouter = router({
       })
       await ctx.audit({
         action: 'pipeline.stage.reordered',
-        target: { type: 'PipelineStage', id: input.boardId },
+        // The reorder is board-scoped: the id is a Board, not a PipelineStage.
+        target: { type: 'Board', id: input.boardId },
         before: { order: active.map((s) => s.id) },
         after: { order: input.orderedIds },
       })
