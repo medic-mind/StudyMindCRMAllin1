@@ -177,6 +177,16 @@ enum ContactKind {
   unclassified
 }
 
+/// Kind of an additional point of contact (ContactChannel). The single
+/// `Contact.email` / `Contact.phoneE164` stay the PRIMARY (matching) values;
+/// these capture the extra ways to reach a contact (a second mobile, a work
+/// email, a WhatsApp/Instagram handle). Closed set — fail closed (§8).
+enum ContactChannelKind {
+  email
+  phone
+  other
+}
+
 enum UserRole {
   // Canonical sales-CRM roles (ADR 0014). New code uses these values.
   ceo
@@ -615,6 +625,10 @@ model Contact {
   familyMembers      FamilyMember[]
   billingForFamily   Family[]                 @relation("BillingContact")
   interactions       Interaction[]            @relation("ContactInteractions")
+  /// Additional points of contact — extra emails, phone numbers and other
+  /// handles beyond the primary `email`/`phoneE164` (which stay the matching
+  /// source of truth). Managed on the contact page. See ContactChannel.
+  contactChannels    ContactChannel[]
   /// Conversation heads (ADR 0020) — first-class Trengo tickets reaching
   /// this contact. The bodies of each message still live in `interactions`.
   conversations      Conversation[]           @relation("ContactConversations")
@@ -682,6 +696,34 @@ model Contact {
   @@index([kind])
   @@index([bookingStatus])
   @@index([bookingContactId])
+}
+
+/// An additional point of contact for a Contact — a second phone number, a
+/// work/secondary email, or another handle (WhatsApp, Instagram, …). The
+/// primary `Contact.email` / `Contact.phoneE164` remain the matching source of
+/// truth (lead dedup, call matching); these are supplementary, managed on the
+/// contact page. Soft-deleted like everything else (§19).
+model ContactChannel {
+  id        String             @id
+  contactId String
+  contact   Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  kind      ContactChannelKind
+  /// Email address, E.164 phone, or free-text handle for `other`. Normalised
+  /// at the app layer (email lowercased, phone → E.164 where possible).
+  value     String
+  /// Optional human label — "Mum's mobile", "Work email", "WhatsApp".
+  label     String?
+  /// Manual ordering within the contact's list (lower first).
+  sortOrder Int                @default(0)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  @@index([contactId])
+  @@index([kind, value])
 }
 
 /// Manual triage state for the hours-risk system (CLAUDE.md §6.4 — the *risk*

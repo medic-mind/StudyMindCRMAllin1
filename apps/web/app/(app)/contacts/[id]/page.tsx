@@ -23,6 +23,7 @@ import { Card } from '@/components/ui/card'
 import {
   ActivityIcon,
   AlertTriangleIcon,
+  AtSignIcon,
   CalendarIcon,
   CoinsIcon,
   FileTextIcon,
@@ -52,6 +53,7 @@ import { EmailSection } from './sections/EmailSection'
 import { ForwardingSection } from './sections/ForwardingSection'
 import { LinkedContactsSection } from './sections/LinkedContactsSection'
 import { MailchimpPushButton } from './sections/MailchimpPushButton'
+import { PointsOfContactSection } from './sections/PointsOfContactSection'
 import { SlackSection } from './sections/SlackSection'
 import { TrengoSection } from './sections/TrengoSection'
 
@@ -163,6 +165,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   // (every section still renders below). Anchors land below the sticky bar via
   // the SectionCard heading's scroll-mt.
   const sectionNav: Array<[string, string]> = [
+    ['section-points', 'Contact points'],
     ['section-links', 'Linked'],
     ['section-booking', 'Booking'],
     ['section-complaints', 'Complaints'],
@@ -329,6 +332,19 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
             ))}
           </nav>
           <ContactSearchBar contactId={contact.id} />
+
+          <SectionCard
+            id="section-points"
+            title="Points of contact"
+            icon={<AtSignIcon size={16} />}
+          >
+            <PointsOfContactSection
+              contactId={contact.id}
+              primaryEmail={contact.email}
+              primaryPhone={contact.phoneE164}
+              canWrite={Boolean(me)}
+            />
+          </SectionCard>
 
           <SectionCard id="section-links" title="Linked contacts" icon={<UsersIcon size={16} />}>
             <LinkedContactsSection contactId={contact.id} />

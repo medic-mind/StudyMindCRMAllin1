@@ -93,6 +93,9 @@ export function AddCardButton({
   const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
+  // Extra phone numbers for a brand-new contact — saved as additional points of
+  // contact (ContactChannel) after the card + contact are created.
+  const [extraPhones, setExtraPhones] = useState<string[]>([])
   const [kind, setKind] = useState<ContactRole>('unclassified')
 
   // Existing-contact search.
@@ -127,8 +130,12 @@ export function AddCardButton({
   // Display fields captured at submit time, merged with the server id in
   // onSuccess to build the optimistic card (avoids reading state mid-reset).
   const pending = useRef<Omit<CreatedCard, 'id' | 'stageId' | 'contactId'> | null>(null)
+  // Extra phone numbers captured at submit time, saved onto the new contact
+  // once we have its id (in create.onSuccess).
+  const pendingExtraPhones = useRef<string[]>([])
 
   const utils = trpc.useUtils()
+  const addPoint = trpc.contact.points.add.useMutation()
   const create = trpc.card.create.useMutation({
     onSuccess: (data) => {
       if (pending.current) {
@@ -140,6 +147,12 @@ export function AddCardButton({
         })
       }
       pending.current = null
+      // Persist any extra numbers as additional points of contact (best-effort;
+      // a failure here never blocks the card the agent just created).
+      for (const value of pendingExtraPhones.current) {
+        addPoint.mutate({ contactId: data.contactId, kind: 'phone', value })
+      }
+      pendingExtraPhones.current = []
       toast.success('Card created')
       reset()
       setOpen(false)
@@ -170,6 +183,7 @@ export function AddCardButton({
     setLastName('')
     setEmail('')
     setPhone('')
+    setExtraPhones([])
     setKind('parent')
     setContactQuery('')
     setContactId(null)
@@ -219,6 +233,7 @@ export function AddCardButton({
       displayName = existing?.name || contactQuery.trim() || 'Contact'
       displayEmail = existing?.email ?? null
       displayPhone = null
+      pendingExtraPhones.current = []
     } else {
       if (!firstName.trim() && !lastName.trim() && !email.trim()) {
         toast.error('Enter at least a name or email for the new contact')
@@ -236,6 +251,7 @@ export function AddCardButton({
       displayName = `${firstName.trim()} ${lastName.trim()}`.trim() || email.trim() || 'New contact'
       displayEmail = email.trim() || null
       displayPhone = phone.trim() || null
+      pendingExtraPhones.current = extraPhones.map((p) => p.trim()).filter(Boolean)
     }
 
     let resolvedSubjectId: string | undefined
@@ -380,6 +396,38 @@ export function AddCardButton({
                         onChange={(e) => setEmail(e.target.value)}
                       />
                       <PhoneInput value={phone} onChange={setPhone} />
+                      {/* Extra numbers — saved as additional points of contact
+                          on the new contact. */}
+                      {extraPhones.map((val, i) => (
+                        <div key={i} className="flex items-start gap-1.5">
+                          <div className="min-w-0 flex-1">
+                            <PhoneInput
+                              value={val}
+                              onChange={(v) =>
+                                setExtraPhones((prev) => prev.map((p, j) => (j === i ? v : p)))
+                              }
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExtraPhones((prev) => prev.filter((_, j) => j !== i))
+                            }
+                            aria-label="Remove this number"
+                            className="mt-1 rounded p-1.5 text-neutral-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                          >
+                            <XIcon size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setExtraPhones((prev) => [...prev, ''])}
+                        className="inline-flex items-center gap-1 self-start rounded-md border border-dashed border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-500 transition-colors hover:border-primary-300 hover:text-primary-700"
+                      >
+                        <PlusIcon size={13} />
+                        Add another number
+                      </button>
                       <Select value={kind} onChange={(e) => setKind(e.target.value as ContactRole)}>
                         <option value="unclassified">Unclassified</option>
                         <option value="parent">Parent</option>

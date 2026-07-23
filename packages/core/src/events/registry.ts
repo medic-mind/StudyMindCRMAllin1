@@ -67,6 +67,11 @@ export const EVENT_NAMES = [
   'contact.document_added',
   'contact.document_removed',
   'contact.document_downloaded',
+  // Additional points of contact — extra emails / phones / other handles
+  // beyond the primary email/phoneE164 (ContactChannel).
+  'contact.point_added',
+  'contact.point_updated',
+  'contact.point_removed',
   // Call summary on a contact (not a card) + multi-channel fan-out.
   'contact.call_summary_added',
   'contact.call_summary_sent',

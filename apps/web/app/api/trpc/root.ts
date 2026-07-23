@@ -24,6 +24,7 @@ import { contactRouter } from './routers/contact'
 import { contactDuplicatesRouter } from './routers/contact-duplicates'
 import { contactBookingRouter } from './routers/contact-booking'
 import { contactChannelsRouter } from './routers/contact-channels'
+import { contactPointsRouter } from './routers/contact-points'
 
 // `contact.channels.*` namespace lives in its own file (ADR 0017) to keep
 // the contact router focused on CRUD. We merge it under `contact` at the
@@ -44,6 +45,7 @@ const contactWithChannels = router({
   callSummary: contactRouter.callSummary,
   mailchimp: contactRouter.mailchimp,
   channels: contactChannelsRouter,
+  points: contactPointsRouter,
   booking: contactBookingRouter,
   duplicates: contactDuplicatesRouter,
 })

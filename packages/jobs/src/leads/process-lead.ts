@@ -525,6 +525,17 @@ export async function processLead(
   const preferredWhen = normalised.preferredWhen ?? aiPreferredWhen
   const scheduledCallAt = londonWallToUtc(preferredWhen)
 
+  // Card note preview: put the enquiry itself on the card so the board shows
+  // what the lead asked about at a glance. Lead cards previously carried no
+  // description, so nothing previewed. Prefer the enquirer's own message; fall
+  // back to the detected subject (+ preferred time) when the form had none.
+  const cardDescription =
+    normalised.message?.trim() ||
+    [classification.subject, preferredWhen ? `Preferred call: ${preferredWhen}` : null]
+      .filter(Boolean)
+      .join(' · ') ||
+    undefined
+
   if (plan.kind === 'reenquiry') {
     const contactId = plan.contactId
     const ctx = { actorId: ACTOR_ID, requestId: lead.id }
@@ -641,6 +652,7 @@ export async function processLead(
             contact: { contactId },
             subjectId,
             scheduledCallAt,
+            description: cardDescription,
           },
           ctx,
         )
