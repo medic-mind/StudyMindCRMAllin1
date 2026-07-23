@@ -79,25 +79,33 @@ export const costRouter = router({
       if (!READ_ROLES.has(user.role)) {
         throw new TRPCError({ code: 'FORBIDDEN' })
       }
-      if (!process.env['S3_COST_REPORTS_BUCKET']) {
-        return { reports: [] as Array<{
+      const empty = {
+        reports: [] as Array<{
           weekIso: string
           s3Key: string
           signedUrl: string
           lastModified: string | null
           markdown: string
-        }> }
+        }>,
       }
-      const keys = await listCostReports(input.limit)
-      const reports = await Promise.all(
-        keys.map(async (k) => ({
-          weekIso: k.weekIso,
-          s3Key: k.s3Key,
-          signedUrl: await signCostReportUrl(k.s3Key),
-          lastModified: k.lastModified ? k.lastModified.toISOString() : null,
-          markdown: await getCostReportMarkdown(k.s3Key),
-        })),
-      )
-      return { reports }
+      if (!process.env['S3_COST_REPORTS_BUCKET']) return empty
+      // The S3 archive is OPTIONAL infra — a misconfigured bucket / creds /
+      // region must not crash the Cost report page (it falls back to the live
+      // aggregator). Treat any S3 failure as "no archive yet".
+      try {
+        const keys = await listCostReports(input.limit)
+        const reports = await Promise.all(
+          keys.map(async (k) => ({
+            weekIso: k.weekIso,
+            s3Key: k.s3Key,
+            signedUrl: await signCostReportUrl(k.s3Key),
+            lastModified: k.lastModified ? k.lastModified.toISOString() : null,
+            markdown: await getCostReportMarkdown(k.s3Key),
+          })),
+        )
+        return { reports }
+      } catch {
+        return empty
+      }
     }),
 })
