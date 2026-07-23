@@ -251,7 +251,9 @@ export async function processLead(
   }
 
   // 1. Re-normalise the stored raw payload (deterministic; no extra column).
-  const normalised = normaliseLead(lead.rawPayload as unknown as RawLeadInput)
+  //    `now` lets the deterministic parser resolve year-less / weekday call
+  //    dates ("Friday 24 Jul", "Monday") to a concrete future date.
+  const normalised = normaliseLead(lead.rawPayload as unknown as RawLeadInput, { now })
 
   // 2. Forced brand + target board from the lead source, then deterministic
   // classification. The source's targetBoardId pins its leads to a board (e.g.

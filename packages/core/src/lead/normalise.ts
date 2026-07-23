@@ -119,22 +119,42 @@ const SYNONYMS = {
     'date',
     'time',
     'datetime',
+    'day',
     'preferred-date',
     'preferred-time',
+    'preferred-day',
     'preferred-datetime',
     'preferred-call-time',
+    'preferred-call-day',
     'preferred-time-to-call',
     'best-time-to-call',
     'best-time',
+    'best-day',
+    // "Call day" / "Call time" is the exact shape Medic Mind's Consultation
+    // CF7 form submits — both halves must be collected so a "Friday 24 Jul" +
+    // "10:00-10:30" selection reaches the card's scheduled-call chip.
+    'call-day',
+    'call-date',
     'call-time',
+    'callback-day',
     'callback-time',
+    'call-back-day',
+    'call-back-time',
+    'contact-day',
+    'contact-time',
     'appointment',
+    'appointment-date',
+    'appointment-day',
     'appointment-time',
     'slot',
+    'booking-date',
+    'booking-day',
     'booking-time',
     'your-date',
+    'your-day',
     'your-time',
     'your-preferred-time',
+    'your-preferred-day',
   ],
   // A country field — name or ISO code. Used for phone dial-code composing.
   country: ['country', 'your-country', 'country-code', 'country-of-residence', 'nationality'],
@@ -238,13 +258,71 @@ const DMY_RE = /\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b/u
 const TIME_RE = /\b(\d{1,2})[:.](\d{2})\s*(am|pm)?\b/iu
 const TIME_AMPM_RE = /\b(\d{1,2})\s*(am|pm)\b/iu
 
+// Natural-language dates ("24 Jul", "July 24th", "Friday 24 July 2026"). The
+// month word may be an abbreviation or full name; a leading weekday word and an
+// optional ordinal suffix are ignored. `MONTH_ALT` feeds both orderings.
+const MONTH_ALT =
+  'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t)?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+const NAT_DMY_RE = new RegExp(
+  String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(${MONTH_ALT})\b(?:[\s,]+(\d{4}))?`,
+  'iu',
+)
+const NAT_MDY_RE = new RegExp(
+  String.raw`\b(${MONTH_ALT})\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:[\s,]+(\d{4}))?`,
+  'iu',
+)
+const WEEKDAY_RE = /\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/iu
+const MONTH3: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+}
+const WEEKDAY3: Record<string, number> = {
+  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
 }
 
-/** Extract a "YYYY-MM-DD" date from free text. UK reading (D/M/Y) for the
- * ambiguous slash form. Returns null when no plausible date is present. */
-function extractDate(raw: string): string | null {
+/** Reference calendar day (Y/M/D) from a `now`, in UTC — used only to pick the
+ * year for a year-less date, so sub-day timezone drift is irrelevant. */
+function refDay(now: Date): { y: number; m: number; d: number } {
+  return { y: now.getUTCFullYear(), m: now.getUTCMonth() + 1, d: now.getUTCDate() }
+}
+
+/** Build "YYYY-MM-DD", inferring the year for a year-less natural date: use the
+ * current year, or roll to next year if that day has already passed (forms ask
+ * for FUTURE call times). Returns null without a reference (year unknowable). */
+function assembleNaturalDate(
+  day: number,
+  month: number,
+  year: number | null,
+  now?: Date,
+): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  if (year != null) return `${year}-${pad2(month)}-${pad2(day)}`
+  if (!now) return null
+  const ref = refDay(now)
+  let y = ref.y
+  // Compare (month, day) to today; if strictly earlier in the year, use next.
+  if (month < ref.m || (month === ref.m && day < ref.d)) y += 1
+  return `${y}-${pad2(month)}-${pad2(day)}`
+}
+
+/** The next calendar date (today-inclusive) matching a weekday, as YYYY-MM-DD. */
+function nextWeekdayDate(now: Date, target: number): string {
+  const base = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const cur = new Date(base).getUTCDay()
+  const add = (target - cur + 7) % 7 // 0 = today
+  const d = new Date(base + add * 86_400_000)
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`
+}
+
+/** Extract a "YYYY-MM-DD" date from free text. Handles ISO, UK D/M/Y slash
+ * dates, natural-language dates ("Friday 24 Jul", "July 24th 2026"), and — as a
+ * last resort with a `now` reference — a bare weekday ("Monday" → next Monday).
+ * Returns null when no plausible date is present. */
+function extractDate(raw: string, now?: Date): string | null {
   const iso = ISO_DATE_RE.exec(raw)
   if (iso) {
     const [, y, m, d] = iso
@@ -260,6 +338,33 @@ function extractDate(raw: string): string | null {
     const mm = Number(m)
     if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
       return `${y}-${pad2(mm)}-${pad2(dd)}`
+    }
+  }
+  // Natural language — "24 Jul[y] [2026]" then "Jul[y] 24[th] [2026]".
+  const nd = NAT_DMY_RE.exec(raw)
+  if (nd) {
+    const month = MONTH3[nd[2]!.slice(0, 3).toLowerCase()]
+    if (month) {
+      const got = assembleNaturalDate(Number(nd[1]), month, nd[3] ? Number(nd[3]) : null, now)
+      if (got) return got
+    }
+  }
+  const nm = NAT_MDY_RE.exec(raw)
+  if (nm) {
+    const month = MONTH3[nm[1]!.slice(0, 3).toLowerCase()]
+    if (month) {
+      const got = assembleNaturalDate(Number(nm[2]), month, nm[3] ? Number(nm[3]) : null, now)
+      if (got) return got
+    }
+  }
+  // Bare weekday ("call day: Monday") — only resolvable with a reference date,
+  // and only for a SHORT, dedicated day-field value: a long message that merely
+  // mentions a weekday ("I emailed you on Monday") must never set a call time.
+  if (now && raw.trim().length <= 25) {
+    const wd = WEEKDAY_RE.exec(raw)
+    if (wd) {
+      const target = WEEKDAY3[wd[1]!.slice(0, 3).toLowerCase()]
+      if (target != null) return nextWeekdayDate(now, target)
     }
   }
   return null
@@ -294,11 +399,11 @@ function extractTime(raw: string): string | null {
  * combine. Returns null when no usable date is present (a lone time with no
  * date is not actionable on a calendar).
  */
-export function extractPreferredWhen(values: string[]): string | null {
+export function extractPreferredWhen(values: string[], now?: Date): string | null {
   let date: string | null = null
   let time: string | null = null
   for (const v of values) {
-    if (!date) date = extractDate(v)
+    if (!date) date = extractDate(v, now)
     if (!time) time = extractTime(v)
   }
   if (!date) return null
@@ -396,7 +501,7 @@ function collectUtm(fields: Record<string, string>, url: string | null): Utm | n
   return Object.keys(utm).length > 0 ? (utm as Utm) : null
 }
 
-export function normaliseLead(input: RawLeadInput): NormalisedLead {
+export function normaliseLead(input: RawLeadInput, opts?: { now?: Date }): NormalisedLead {
   const meta = input.meta ?? {}
   const headers = input.headers ?? {}
 
@@ -533,7 +638,7 @@ export function normaliseLead(input: RawLeadInput): NormalisedLead {
   // scanning the message body so "call me Tuesday at 3pm" still lands.
   const whenValues = entries.filter((e) => roleForKey(e.key, e.type) === 'when').map((e) => e.value)
   if (found.message) whenValues.push(found.message)
-  const preferredWhen = extractPreferredWhen(whenValues)
+  const preferredWhen = extractPreferredWhen(whenValues, opts?.now)
   // A subject/topic dropdown selection, if present.
   const requestedSubject = found.subject ? found.subject.trim().slice(0, 120) : null
   // Country (form-selected). Resolved to a dial code downstream.
