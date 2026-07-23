@@ -174,17 +174,21 @@ export function CardModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-neutral-900/40 p-4 sm:p-8"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-neutral-900/40 p-4 sm:items-center sm:p-8"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Card detail"
-        className="grid w-full max-w-4xl overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl lg:grid-cols-[minmax(0,1fr)_18rem]"
+        // Bounded height + a sticky header so the modal is usable (and the
+        // Close button always reachable) on any screen: the whole card scrolls
+        // internally instead of pushing the page, and a save/refresh can't
+        // leave it in a cramped, half-rendered state.
+        className="grid max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-y-auto rounded-lg border border-neutral-200 bg-white shadow-xl lg:grid-cols-[minmax(0,1fr)_18rem]"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="col-span-full flex items-start justify-between gap-3 border-b border-neutral-100 px-5 py-3">
+        <header className="sticky top-0 z-10 col-span-full flex items-start justify-between gap-3 border-b border-neutral-100 bg-white px-5 py-3">
           <div className="min-w-0">
             {card ? (
               <>

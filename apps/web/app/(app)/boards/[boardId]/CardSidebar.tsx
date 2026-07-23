@@ -13,6 +13,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
+import { DateTimePicker } from '@/components/ui/datetime-picker'
 import {
   formatLondon,
   londonWallToUtc,
@@ -149,28 +150,17 @@ export function CardSidebar({ card, canWrite }: Props) {
 
       <Section label="Call time">
         {canWrite ? (
-          <div className="space-y-1">
-            <input
-              type="datetime-local"
-              value={utcToLondonWall(card.scheduledCallAt)}
-              onChange={(e) =>
-                update.mutate({
-                  id: card.id,
-                  // The picker value is read as Europe/London wall-clock and
-                  // stored UTC (CLAUDE.md §29).
-                  scheduledCallAt: e.target.value
-                    ? londonWallToUtc(e.target.value)
-                    : null,
-                })
-              }
-              className="w-full rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
-            />
-            <p className="text-[10px] text-neutral-400">
-              {card.scheduledCallAt
-                ? `${formatLondon(card.scheduledCallAt)} · UK time`
-                : 'UK time (Europe/London)'}
-            </p>
-          </div>
+          <DateTimePicker
+            value={utcToLondonWall(card.scheduledCallAt)}
+            onChange={(wall) =>
+              update.mutate({
+                id: card.id,
+                // The picker value is read as Europe/London wall-clock and
+                // stored UTC (CLAUDE.md §29).
+                scheduledCallAt: wall ? londonWallToUtc(wall) : null,
+              })
+            }
+          />
         ) : card.scheduledCallAt ? (
           <p className="text-sm text-neutral-800">
             {formatLondon(card.scheduledCallAt)}

@@ -72,6 +72,25 @@ export const PHONE_COUNTRIES: PhoneCountry[] = COUNTRIES.filter((c) => DIAL[c.co
   dial: DIAL[c.code]!,
 }))
 
+/**
+ * Countries pinned to the top of the picker, in this order. Most StudyMind
+ * contacts are UK-based, so GB leads; the rest are the next-most-common markets
+ * (Ireland, the US, ANZ, Canada, India) so an agent rarely has to scroll for
+ * them. Ops feedback, 2026-07. Search results are NOT reordered — this only
+ * shapes the default (unsearched) list.
+ */
+export const PINNED_DIAL_ISOS = ['gb', 'ie', 'us', 'au', 'nz', 'ca', 'in'] as const
+
+/** The picker's default order: pinned countries first, then the rest A→Z. */
+export function orderedPhoneCountries(): PhoneCountry[] {
+  const pinnedSet = new Set<string>(PINNED_DIAL_ISOS)
+  const pinned = PINNED_DIAL_ISOS.map((iso) =>
+    PHONE_COUNTRIES.find((c) => c.code === iso),
+  ).filter((c): c is PhoneCountry => Boolean(c))
+  const rest = PHONE_COUNTRIES.filter((c) => !pinnedSet.has(c.code))
+  return [...pinned, ...rest]
+}
+
 const DIAL_TO_COUNTRY: Map<string, PhoneCountry> = (() => {
   const map = new Map<string, PhoneCountry>()
   for (const c of PHONE_COUNTRIES) {
@@ -115,4 +134,40 @@ export function composePhone(iso: string, national: string): string {
   const nat = digitsOnly(national).replace(/^0+/, '')
   if (!dial || nat.length === 0) return ''
   return `+${dial}${nat}`
+}
+
+/**
+ * Filter the country dial-code list for the searchable picker (phone-input.tsx).
+ * Matches how a user actually searches (feedback from ops, 2026-07):
+ *   - a NUMERIC query ("3", "+44", "44") filters by dialling code — codes that
+ *     START with the digits first, then codes that merely contain them. So
+ *     typing "3" surfaces +30/+31/+33/… and typing "44" jumps to the UK.
+ *   - a TEXT query ("fra", "united") filters by country name (prefix first,
+ *     then substring) or exact ISO code.
+ * Empty query returns the full alphabetical list unchanged.
+ */
+export function filterPhoneCountries(query: string): PhoneCountry[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return PHONE_COUNTRIES
+
+  // Treat "+44", "44", "0044" etc. as a dial-code search.
+  if (/^\+?\d+$/.test(q)) {
+    const digits = q.replace(/^\+/, '').replace(/^0+/, '') || q.replace(/\D/g, '')
+    const starts: PhoneCountry[] = []
+    const contains: PhoneCountry[] = []
+    for (const c of PHONE_COUNTRIES) {
+      if (c.dial.startsWith(digits)) starts.push(c)
+      else if (c.dial.includes(digits)) contains.push(c)
+    }
+    return [...starts, ...contains]
+  }
+
+  const starts: PhoneCountry[] = []
+  const contains: PhoneCountry[] = []
+  for (const c of PHONE_COUNTRIES) {
+    const name = c.name.toLowerCase()
+    if (c.code === q || name.startsWith(q)) starts.push(c)
+    else if (name.includes(q)) contains.push(c)
+  }
+  return [...starts, ...contains]
 }

@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { DateTimePicker } from '@/components/ui/datetime-picker'
 import { Field } from '@/components/ui/field'
 import { PlusIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
@@ -508,23 +509,19 @@ export function AddCardButton({
                       </Select>
                     </Field>
 
-                    <Field label="Call time" hint="Date & time · UK (Europe/London)">
-                      <Input
-                        type="datetime-local"
-                        value={callWall}
-                        onChange={(e) => setCallWall(e.target.value)}
-                      />
+                    <Field label="Stage">
+                      <Select value={stageId} onChange={(e) => setStageId(e.target.value)}>
+                        {stages.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </Select>
                     </Field>
                   </div>
 
-                  <Field label="Stage">
-                    <Select value={stageId} onChange={(e) => setStageId(e.target.value)}>
-                      {stages.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </Select>
+                  <Field label="Call time" hint="When to call — date & time, UK (Europe/London)">
+                    <DateTimePicker value={callWall} onChange={setCallWall} />
                   </Field>
                 </div>
 
