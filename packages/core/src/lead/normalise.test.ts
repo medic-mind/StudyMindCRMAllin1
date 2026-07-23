@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { extractPreferredWhen, normaliseLead, normalisePhone } from './normalise'
+import {
+  extractPreferredWhen,
+  isUpcomingCallWhenValue,
+  normaliseLead,
+  normalisePhone,
+} from './normalise'
 
 describe('normalisePhone', () => {
   it('keeps a valid E.164 number', () => {
@@ -201,6 +206,53 @@ describe('normaliseLead — preferred date/time + subject', () => {
       { now: new Date('2026-07-23T09:00:00Z') },
     )
     expect(out.preferredWhen).toBe('2026-07-27T09:30')
+  })
+
+  // Robustness: a call day/time posted under GENERIC field names (CF7 auto-names
+  // like text-456) is rescued deterministically — no AI, no synonym match.
+  it('rescues a call day/time from generic field names', () => {
+    const out = normaliseLead(
+      {
+        fields: {
+          'your-name': 'Shamin Anari',
+          email: 'anarishamin@gmail.com',
+          'text-456': 'Friday 24 Jul',
+          'text-789': '10:00-10:30',
+        },
+      },
+      { now: new Date('2026-07-23T09:00:00Z') },
+    )
+    expect(out.preferredWhen).toBe('2026-07-24T10:00')
+  })
+
+  it('never treats a date of birth as a call time', () => {
+    // Semantic key → denylisted.
+    expect(
+      normaliseLead(
+        { fields: { email: 'a@b.test', 'date-of-birth': '12/05/2008' } },
+        { now: new Date('2026-07-23T09:00:00Z') },
+      ).preferredWhen,
+    ).toBeNull()
+    // Generic key but a far-past date → rejected by the upcoming-date guard.
+    expect(
+      normaliseLead(
+        { fields: { email: 'a@b.test', 'text-99': '12/05/2008' } },
+        { now: new Date('2026-07-23T09:00:00Z') },
+      ).preferredWhen,
+    ).toBeNull()
+  })
+})
+
+describe('isUpcomingCallWhenValue', () => {
+  const now = new Date('2026-07-23T09:00:00Z')
+  it('accepts an upcoming natural date and a lone time', () => {
+    expect(isUpcomingCallWhenValue('Friday 24 Jul', now)).toBe(true)
+    expect(isUpcomingCallWhenValue('10:00-10:30', now)).toBe(true)
+  })
+  it('rejects a far-past date (a DOB) and non-date/time values', () => {
+    expect(isUpcomingCallWhenValue('12/05/2008', now)).toBe(false)
+    expect(isUpcomingCallWhenValue('0-5 hours', now)).toBe(false)
+    expect(isUpcomingCallWhenValue('Shamin Anari', now)).toBe(false)
   })
 })
 

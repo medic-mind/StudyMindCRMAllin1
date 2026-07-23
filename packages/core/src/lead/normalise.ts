@@ -413,6 +413,40 @@ export function extractPreferredWhen(values: string[], now?: Date): string | nul
   return time ? `${date}T${time}` : date
 }
 
+// Field-key patterns that legitimately carry a date but are NEVER a call time
+// — so the generic-field value sniff (below) skips them: date of birth, age,
+// and system timestamps. `date`/`time`/`day` are NOT here — those are real
+// when-synonyms handled by the role pass.
+const NON_CALL_DATE_KEY_RE =
+  /(birth|dob|d-o-b|\bage\b|created|submitted|timestamp|sent-at|received|expir|anniversar|updated|start-date|end-date|registered)/u
+
+/**
+ * True when a dedicated field's value looks like a plausible UPCOMING call
+ * date/time. Rescues a call day/time posted under a GENERIC field name the
+ * synonym list can't recognise (e.g. CF7 `text-456` = "Friday 24 Jul"), so the
+ * time still lands WITHOUT any AI — the deterministic back-fill relies on this
+ * too. A far-past date (a DOB like "12/05/2008") is rejected via the `now`
+ * reference; a lone time is allowed (a sibling field supplies the date).
+ */
+export function isUpcomingCallWhenValue(value: string, now?: Date): boolean {
+  const v = value.trim()
+  if (v.length === 0 || v.length > 40) return false
+  const date = extractDate(v, now)
+  const time = extractTime(v.replace(ISO_DATE_RE, ' ').replace(DMY_RE, ' '))
+  if (!date && !time) return false
+  if (date && now) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(date)
+    if (m) {
+      const dateMs = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+      const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+      // Reject a date more than 2 days in the past — a call day is upcoming; a
+      // date years ago is a DOB, not a call time.
+      if (dateMs < todayMs - 2 * 86_400_000) return false
+    }
+  }
+  return true
+}
+
 /**
  * Best-effort E.164. Confident for: `+…`, `00…` international, UK
  * `0…`-prefixed (10–11 digits), bare `44…` country-coded, and bare UK
@@ -645,6 +679,19 @@ export function normaliseLead(input: RawLeadInput, opts?: { now?: Date }): Norma
   // value (not just the first) and assemble a single instant. Falls back to
   // scanning the message body so "call me Tuesday at 3pm" still lands.
   const whenValues = entries.filter((e) => roleForKey(e.key, e.type) === 'when').map((e) => e.value)
+  // Fallback: rescue a call day/time posted under a GENERIC field name the
+  // synonym list can't recognise (e.g. CF7 `text-456`). Scan every remaining
+  // unassigned, non-denylisted field for a date-/time-shaped upcoming value, so
+  // the requested call time lands deterministically — no AI, and the back-fill
+  // (which re-runs this normaliser) benefits too. Explicit when-fields come
+  // FIRST in the list, so they always win in extractPreferredWhen.
+  for (const e of entries) {
+    if (assigned.has(e.rawKey)) continue
+    if (isNoise(e.key)) continue
+    if (roleForKey(e.key, e.type) === 'when') continue // already collected above
+    if (NON_CALL_DATE_KEY_RE.test(e.key)) continue
+    if (isUpcomingCallWhenValue(e.value, opts?.now)) whenValues.push(e.value)
+  }
   if (found.message) whenValues.push(found.message)
   const preferredWhen = extractPreferredWhen(whenValues, opts?.now)
   // A subject/topic dropdown selection, if present.
