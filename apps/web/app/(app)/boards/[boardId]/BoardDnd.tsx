@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import type { CardFaceKey } from '@/lib/board/card-face'
+import { filterCardsByQuery } from '@/lib/board/card-search'
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -37,6 +38,7 @@ import {
 import { trpc } from '@/lib/trpc/client'
 
 import { BoardColumn } from './BoardColumn'
+import { BoardSearch } from './BoardSearch'
 
 interface StageOption {
   id: string
@@ -128,6 +130,7 @@ export function BoardDnd({
 }: Props) {
   const [cards, setCards] = useState<CardData[]>(() => [...initialCards])
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
   // Snapshot of card state taken just before an optimistic move, so a failed
   // mutation can revert. A kanban only ever has one move in flight at a time.
   const preMoveSnapshot = useRef<CardData[] | null>(null)
@@ -278,12 +281,16 @@ export function BoardDnd({
     },
   })
 
+  // Search filters the DISPLAYED cards only — the underlying `cards` state (and
+  // every move/optimistic update) is untouched, so clearing the box restores
+  // the full board instantly.
+  const visibleCards = useMemo(() => filterCardsByQuery(cards, query), [cards, query])
   const byStage = useMemo(() => {
     const map = new Map<string, CardData[]>()
     for (const s of stages) map.set(s.id, [])
-    for (const c of cards) map.get(c.stageId)?.push(c)
+    for (const c of visibleCards) map.get(c.stageId)?.push(c)
     return map
-  }, [cards, stages])
+  }, [visibleCards, stages])
 
   const activeCard = activeId ? (cards.find((c) => c.id === activeId) ?? null) : null
 
@@ -343,6 +350,12 @@ export function BoardDnd({
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
+      <BoardSearch
+        value={query}
+        onChange={setQuery}
+        matchCount={visibleCards.length}
+        totalCount={cards.length}
+      />
       {/* Horizontal scroll bar FIXED TO THE TOP of the board (columns → ←). */}
       {overflowsX ? (
         <HScrollBar position="top" onLeft={() => scrollColumns(-1)} onRight={() => scrollColumns(1)} />
@@ -365,7 +378,7 @@ export function BoardDnd({
             once. Side padding leaves room for the vertical rails. */}
         <div
           ref={scrollRef}
-          className="flex h-[calc(100dvh-13.5rem)] gap-3 overflow-x-auto overflow-y-hidden px-9 pb-2"
+          className="flex h-[calc(100dvh-16.5rem)] gap-3 overflow-x-auto overflow-y-hidden px-9 pb-2"
         >
           {stages.map((stage) => (
             <div
