@@ -15,6 +15,7 @@ export const EVENT_NAMES = [
   'contact.created',
   'contact.updated',
   'contact.merged',
+  'contact.read_minor',
   'family.created',
   'family.state_changed',
   'family.billing_contact_changed',

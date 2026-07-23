@@ -6,6 +6,8 @@ import type { Prisma } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { writeAuditLogEntry } from '@studymind/audit'
+
 import { phoneSearchDigitRuns } from '@studymind/core/contact/phone-search'
 import { BusinessError } from '@studymind/core/errors'
 
@@ -387,6 +389,17 @@ export const contactRouter = router({
         },
       })
       if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+      // §20.1 / §21: every read of a MINOR's profile is audited (this query
+      // returns dateOfBirth + isMinor). Queries don't run auditMiddleware, so
+      // write the audit row directly. Non-minor reads are not audited.
+      if (row.isMinor) {
+        await writeAuditLogEntry(ctx.db, {
+          actorId: requireUser(ctx).id,
+          action: 'contact.read_minor',
+          target: { type: 'Contact', id: row.id },
+          purpose: input.purpose ?? 'contact.read',
+        })
+      }
       const enquiryTypes = (await loadContactEnquiryTypes(ctx.db, [row.id])).get(row.id) ?? []
       return toContactDetail(row, enquiryTypes)
     }),

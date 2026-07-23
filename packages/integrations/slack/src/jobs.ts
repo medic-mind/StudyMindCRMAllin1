@@ -205,7 +205,21 @@ export const slackEventReceived = inngest.createFunction(
       const target = rulesTarget
       const interaction = await step.run('upsert-interaction-rules', async () => {
         const existing = await db.interaction.findFirst({
-          where: { payload: { path: ['slackEventId'], equals: eventId } },
+          where: {
+            type: 'slack_summary',
+            // Match this event id OR the (slackTs, channelId) key the pull /
+            // backfill write (they set no slackEventId) — so a message the pull
+            // ingested first isn't re-created as a duplicate by the webhook.
+            OR: [
+              { payload: { path: ['slackEventId'], equals: eventId } },
+              {
+                AND: [
+                  { payload: { path: ['slackTs'], equals: message.ts } },
+                  { payload: { path: ['channelId'], equals: message.channel } },
+                ],
+              },
+            ],
+          },
           select: { id: true },
         })
         if (existing) return existing

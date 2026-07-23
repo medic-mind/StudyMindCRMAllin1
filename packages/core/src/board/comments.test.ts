@@ -41,9 +41,17 @@ function makeDb() {
         return data
       },
       findMany: async ({ where }: { where: Row }) =>
-        interactions.filter(
-          (i) => i.type === where.type && (where.deletedAt === null ? i.deletedAt == null : true),
-        ),
+        interactions.filter((i) => {
+          if (i.type !== where.type) return false
+          if (where.deletedAt === null && i.deletedAt != null) return false
+          // Honour the JSONB `payload.path cardId equals` filter the query now
+          // uses (server-side cardId filtering) — mirrors the real DB.
+          const p = where.payload as { path?: string[]; equals?: unknown } | undefined
+          if (p?.path?.[0] === 'cardId') {
+            return (i.payload as { cardId?: unknown } | null)?.cardId === p.equals
+          }
+          return true
+        }),
     },
     auditLogEntry: {
       findFirst: async () => null,

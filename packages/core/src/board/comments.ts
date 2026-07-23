@@ -105,8 +105,15 @@ export async function listCardComments(
   db: Db,
   input: { cardId: string },
 ): Promise<CardComment[]> {
-  const rows = await db.interaction.findMany({
-    where: { type: 'card_comment', deletedAt: null },
+  // Filter by cardId server-side on the JSONB path — scanning EVERY card_comment
+  // across all boards and filtering in JS grew unbounded with total comment
+  // volume on a hot path (opening any card modal).
+  const forCard = await db.interaction.findMany({
+    where: {
+      type: 'card_comment',
+      deletedAt: null,
+      payload: { path: ['cardId'], equals: input.cardId },
+    },
     orderBy: { occurredAt: 'asc' },
     select: {
       id: true,
@@ -115,10 +122,6 @@ export async function listCardComments(
       contactId: true,
       createdById: true,
     },
-  })
-  const forCard = rows.filter((r) => {
-    const payload = r.payload as { cardId?: unknown } | null
-    return payload != null && payload.cardId === input.cardId
   })
 
   const authorIds = [
