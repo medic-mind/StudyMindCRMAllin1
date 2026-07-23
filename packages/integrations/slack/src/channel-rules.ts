@@ -8,6 +8,12 @@
 // to re-type it. Matching is by name substring so renames/new channels
 // (#b2bcomplaints, #complaint-escalations) keep working with no code change.
 
+import {
+  parseStructuredComplaint,
+  structuredComplaintDescription,
+  structuredComplaintTitle,
+  type StructuredComplaint,
+} from './complaint-parse'
 import { SLACK_EMOJI_CODE_RE, slackTextToPlain } from './extract'
 
 /** A mention is "live" (worth auto-raising as a fresh complaint the moment it
@@ -90,12 +96,24 @@ export interface ComplaintDraft {
   title: string
   description: string
   category: string | null
+  /** The parsed labelled fields when the message is the team's structured
+   *  complaint-call format — the executor matches the customer on the CLIENT
+   *  email/phone/name from here. Null for free-text messages. */
+  structured: StructuredComplaint | null
 }
 
-/** Title = the message's first meaningful line (the team's call-log format
- *  leads with "Name +44… Medic Mind"); description = the whole plain text.
- *  :emoji: shortcodes (the team's :gb:/:large_purple_circle: markers) are
- *  stripped — they are routing decoration, not complaint content. */
+/**
+ * Turn a complaint-channel message into a Complaint draft.
+ *
+ * When the message is the team's structured call format (Client Name and
+ * Number / Client Email / Complaint / Suggested Solution / Actions …) we parse
+ * it into a CLEAN title ("Complaint — <client name>") and a readable, sectioned
+ * description — instead of the old behaviour that used the first line ("Client
+ * Name and Number: …") as the title and dumped the whole blob as the body.
+ * Free-text messages fall back to first-line/whole-text. `:emoji:` shortcodes
+ * (the team's :gb:/:large_purple_circle: routing markers) are stripped either
+ * way — they are decoration, not complaint content.
+ */
 export function buildComplaintDraft(input: {
   messageText: string
   aiCategory: string | null | undefined
@@ -103,6 +121,20 @@ export function buildComplaintDraft(input: {
   const plain = slackTextToPlain(input.messageText)
     .replace(SLACK_EMOJI_CODE_RE, ' ')
     .replace(/[ \t]{2,}/gu, ' ')
+  const category = input.aiCategory
+    ? (SLACK_CATEGORY_TO_COMPLAINT[input.aiCategory] ?? null)
+    : null
+
+  const structured = parseStructuredComplaint(plain)
+  if (structured) {
+    return {
+      title: structuredComplaintTitle(structured),
+      description: structuredComplaintDescription(structured),
+      category,
+      structured,
+    }
+  }
+
   const firstLine =
     plain
       .split('\n')
@@ -111,6 +143,7 @@ export function buildComplaintDraft(input: {
   return {
     title: (firstLine || 'Complaint call summary (Slack)').slice(0, 200),
     description: plain.trim().slice(0, 4000),
-    category: input.aiCategory ? (SLACK_CATEGORY_TO_COMPLAINT[input.aiCategory] ?? null) : null,
+    category,
+    structured: null,
   }
 }

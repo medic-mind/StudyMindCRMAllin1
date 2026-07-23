@@ -13,6 +13,12 @@ export const SLACK_TOPICS = [
       'Where EVERY call summary recorded in the CRM is posted (your #callsummaries channel) — self-send and VA hand-off alike (ADR 0039). The post is flagged as already sent to the customer, or as needing VA action.',
   },
   {
+    key: 'complaint_call_summary',
+    label: 'Complaint call summaries',
+    description:
+      'Where a complaint LOGGED IN THE CRM is posted (your #complaintcallsummaries channel) — the structured summary (client details, the complaint, severity/category). The reverse of the Slack→CRM import, so logging a complaint here and typing one in Slack do the same thing.',
+  },
+  {
     key: 'google_voice',
     label: 'Google Voice alerts',
     description:

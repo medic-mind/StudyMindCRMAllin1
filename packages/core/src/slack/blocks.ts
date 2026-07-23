@@ -90,3 +90,74 @@ export function buildCallSummarySlackBlocks(args: CallSummarySlackBlockArgs): un
 export function buildCallSummarySlackText(args: CallSummarySlackBlockArgs): string {
   return `${buildCallSummaryHeadline(args)}\n\n${args.body}\n\n${args.contactUrl}`
 }
+
+// -----------------------------------------------------------------------------
+// Complaint fan-out (CRM → #complaintcallsummaries). The reverse of the
+// Slack→CRM complaint import: a complaint LOGGED IN THE CRM is announced to the
+// operator-routed complaint channel in the same structured shape.
+// -----------------------------------------------------------------------------
+
+export interface ComplaintSlackArgs {
+  contactName: string
+  contactEmail?: string | null
+  contactPhone?: string | null
+  title: string
+  /** Full complaint body (narrative + suggested solution + actions). */
+  description?: string | null
+  category?: string | null
+  severity?: string | null
+  contactUrl: string
+  authorName?: string | null
+}
+
+/** "Vyshale Arulalagan — vyvarul@gmail.com — +1647…" (present parts only). */
+function complaintClientLine(args: ComplaintSlackArgs): string {
+  return [args.contactName, args.contactPhone, args.contactEmail]
+    .filter((p): p is string => Boolean(p && p.trim()))
+    .join(' — ')
+}
+
+function complaintMeta(args: ComplaintSlackArgs): string | null {
+  const parts = [
+    args.category ? `Category: ${args.category}` : null,
+    args.severity ? `Severity: ${args.severity}` : null,
+  ].filter((p): p is string => Boolean(p))
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+/** Block Kit payload for a complaint logged in the CRM. */
+export function buildComplaintSlackBlocks(args: ComplaintSlackArgs): unknown[] {
+  const blocks: unknown[] = [
+    { type: 'section', text: { type: 'mrkdwn', text: `*🚩 Complaint logged — ${complaintClientLine(args)}*` } },
+  ]
+  const meta = complaintMeta(args)
+  if (meta) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: meta }] })
+  blocks.push({ type: 'divider' })
+  const body = (args.description && args.description.trim()) || args.title
+  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: body.slice(0, 2900) } })
+  if (args.authorName && args.authorName.trim()) {
+    blocks.push({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `Logged by ${args.authorName.trim()} · <${args.contactUrl}|Open in CRM>` }],
+    })
+  } else {
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `<${args.contactUrl}|Open in CRM>` }] })
+  }
+  return blocks
+}
+
+/** Plain-text fallback used as the message `text` alongside the blocks. */
+export function buildComplaintSlackText(args: ComplaintSlackArgs): string {
+  const meta = complaintMeta(args)
+  const body = (args.description && args.description.trim()) || args.title
+  return [
+    `🚩 Complaint logged — ${complaintClientLine(args)}`,
+    meta,
+    '',
+    body,
+    '',
+    args.contactUrl,
+  ]
+    .filter((l) => l !== null)
+    .join('\n')
+}

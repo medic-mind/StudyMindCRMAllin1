@@ -18,9 +18,31 @@ import { db } from '@studymind/db'
 
 import {
   buildComplaintDraft,
+  isComplaintChannel,
   resolveComplaintAutoRaiseCutoff,
   shouldAutoRaiseComplaint,
 } from './channel-rules'
+import type { StructuredComplaint } from './complaint-parse'
+import { matchContactByCandidate, type MatchCandidate } from './match'
+
+/**
+ * Resolve the customer from the parsed CLIENT identity (email → phone → name,
+ * then the guardian's phone/name). These are the authoritative details the
+ * agent typed into the summary, so a match here beats the generic mention link.
+ * Unambiguous-only (§3) — matchContactByCandidate returns null on ambiguity.
+ */
+async function matchContactFromStructured(s: StructuredComplaint): Promise<string | null> {
+  const candidates: MatchCandidate[] = [
+    { name: s.clientName, email: s.clientEmail, phone: s.clientPhone },
+    { name: s.guardianName, phone: s.guardianPhone },
+  ]
+  for (const c of candidates) {
+    if (!c.name && !c.email && !c.phone) continue
+    const out = await matchContactByCandidate(db, c)
+    if (out.contactId) return out.contactId
+  }
+  return null
+}
 
 export interface AutoComplaintInput {
   contactId: string | null | undefined
@@ -48,10 +70,36 @@ export async function maybeRaiseComplaintFromSlack(
   const now = input.now ?? new Date()
   const cutoff =
     input.cutoff ?? resolveComplaintAutoRaiseCutoff(process.env['COMPLAINT_AUTO_RAISE_CUTOFF_DATE'])
+
+  // Cheap channel gate before any parse / DB match.
+  if (!isComplaintChannel(input.channelName)) return { raised: false, complaintId: null }
+
+  const sourceKey = `slack:${input.channelId}:${input.slackTs}`
+  const existing = await db.complaint
+    .findUnique({ where: { sourceKey }, select: { id: true } })
+    .catch(() => null)
+  if (existing) return { raised: false, complaintId: existing.id }
+
+  // Parse the message into a (possibly structured) draft, then resolve the
+  // customer. Prefer a contact matched on the parsed CLIENT identity over the
+  // generic mention link so the complaint lands on the right person — the
+  // authoritative details ("Client Email: …", "Client Name and Number: …") are
+  // in the summary itself.
+  const draft = buildComplaintDraft({
+    messageText: input.messageText,
+    aiCategory: input.aiCategory ?? null,
+  })
+  let contactId: string | null = input.contactId ?? null
+  if (draft.structured) {
+    const better = await matchContactFromStructured(draft.structured).catch(() => null)
+    if (better) contactId = better
+  }
+
+  // Full gate: complaint channel + recency/cutoff + a contact to log against.
   if (
     !shouldAutoRaiseComplaint({
       channelName: input.channelName,
-      contactId: input.contactId,
+      contactId,
       occurredAt: input.occurredAt,
       now,
       cutoff,
@@ -59,25 +107,14 @@ export async function maybeRaiseComplaintFromSlack(
   ) {
     return { raised: false, complaintId: null }
   }
-  const contactId = input.contactId!
-  const sourceKey = `slack:${input.channelId}:${input.slackTs}`
+  const cId = contactId!
 
   try {
-    const existing = await db.complaint.findUnique({
-      where: { sourceKey },
-      select: { id: true },
-    })
-    if (existing) return { raised: false, complaintId: existing.id }
-
-    const draft = buildComplaintDraft({
-      messageText: input.messageText,
-      aiCategory: input.aiCategory ?? null,
-    })
     const id = createId()
     await db.complaint.create({
       data: {
         id,
-        contactId,
+        contactId: cId,
         title: draft.title,
         description: draft.description,
         status: 'open',
@@ -93,7 +130,7 @@ export async function maybeRaiseComplaintFromSlack(
       data: {
         id: createId(),
         type: 'note',
-        contactId,
+        contactId: cId,
         occurredAt: input.occurredAt,
         summary: noteSummary.length > 120 ? `${noteSummary.slice(0, 117)}…` : noteSummary,
         payload: {
@@ -114,7 +151,7 @@ export async function maybeRaiseComplaintFromSlack(
       action: 'complaint.created',
       target: { type: 'Complaint', id },
       requestId: sourceKey,
-      after: { contactId, sourceKey, auto: true, channelName: input.channelName },
+      after: { contactId: cId, sourceKey, auto: true, channelName: input.channelName },
     })
     return { raised: true, complaintId: id }
   } catch (err) {

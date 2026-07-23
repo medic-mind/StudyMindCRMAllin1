@@ -4,8 +4,38 @@ import {
   buildCallSummaryHeadline,
   buildCallSummarySlackBlocks,
   buildCallSummarySlackText,
+  buildComplaintSlackText,
   resolveButtonUrl,
 } from './blocks'
+
+describe('buildComplaintSlackText (CRM → #complaintcallsummaries)', () => {
+  it('leads with the client identity, then meta, then the body', () => {
+    const text = buildComplaintSlackText({
+      contactName: 'Vyshale Arulalagan',
+      contactEmail: 'vyvarul@gmail.com',
+      contactPhone: '+16479012817',
+      title: 'Complaint — Vyshale Arulalagan',
+      description: 'Parent unhappy about scheduling.\n\nActions: find a 2nd tutor',
+      category: 'Scheduling',
+      severity: 'medium',
+      contactUrl: 'https://crm/contacts/c1',
+      authorName: 'Minette',
+    })
+    expect(text).toContain('Complaint logged — Vyshale Arulalagan — +16479012817 — vyvarul@gmail.com')
+    expect(text).toContain('Category: Scheduling · Severity: medium')
+    expect(text).toContain('Parent unhappy about scheduling')
+    expect(text).toContain('https://crm/contacts/c1')
+  })
+
+  it('falls back to the title when there is no description', () => {
+    const text = buildComplaintSlackText({
+      contactName: 'Jane Doe',
+      title: 'Complaint — Jane Doe',
+      contactUrl: 'https://crm/contacts/c2',
+    })
+    expect(text).toContain('Complaint — Jane Doe')
+  })
+})
 
 describe('resolveButtonUrl', () => {
   it('substitutes the contactUrl placeholder', () => {
