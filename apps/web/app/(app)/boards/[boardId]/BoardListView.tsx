@@ -71,6 +71,7 @@ interface QuickAction {
   targetStageId: string
   targetStageName: string
   targetBoardName: string | null
+  isCheckbox: boolean
 }
 
 interface Props {

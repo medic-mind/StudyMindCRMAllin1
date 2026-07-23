@@ -32,6 +32,9 @@ export interface QuickActionSummary {
   targetBoardName: string | null
   targetStageName: string
   commentTemplate: string | null
+  /** Render as a Todoist-style tick-circle on the card face (the primary "done"
+   *  action) instead of a chip. */
+  isCheckbox: boolean
   sortOrder: number
   archived: boolean
 }
@@ -44,6 +47,7 @@ function summary(row: {
   targetStageId: string
   targetBoardId: string | null
   commentTemplate: string | null
+  isCheckbox: boolean
   sortOrder: number
   archivedAt: Date | null
   targetStage: { id: string; name: string; boardId: string | null }
@@ -60,6 +64,7 @@ function summary(row: {
     targetBoardName: null,
     targetStageName: row.targetStage.name,
     commentTemplate: row.commentTemplate,
+    isCheckbox: row.isCheckbox,
     sortOrder: row.sortOrder,
     archived: row.archivedAt != null,
   }

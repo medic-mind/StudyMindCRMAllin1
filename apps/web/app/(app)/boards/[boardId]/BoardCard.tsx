@@ -24,6 +24,7 @@ import {
 } from '@/lib/format/schedule-urgency'
 
 import { resolveStageColor } from '../../pipeline/stage-color'
+import { CardCompleteCircle } from './CardCompleteCircle'
 import { CardLabelQuickAdd } from './CardLabelQuickAdd'
 import { CardModal } from './CardModal'
 import { MoveCardMenu } from './MoveCardMenu'
@@ -50,6 +51,8 @@ interface QuickAction {
   targetStageId: string
   targetStageName: string
   targetBoardName: string | null
+  /** Render as a Todoist tick-circle on the card face instead of a chip. */
+  isCheckbox: boolean
 }
 
 interface CardData {
@@ -143,6 +146,14 @@ export function BoardCard({
 
   const borderColor = stageColor ? resolveStageColor(stageColor) : 'transparent'
 
+  // The board's designated tick-circle action (seeded as "Call completed")
+  // renders as a Todoist-style circle by the card name; the rest stay as chips.
+  // Hide the circle once the card already sits on that action's target stage.
+  const checkboxAction = quickActions.find((a) => a.isCheckbox)
+  const showCircle =
+    canWrite && checkboxAction != null && checkboxAction.targetStageId !== stageId
+  const chipActions = quickActions.filter((a) => !a.isCheckbox)
+
   return (
     <li
       ref={dragRef}
@@ -160,8 +171,18 @@ export function BoardCard({
       />
       <div className="relative z-10 pointer-events-none">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 truncate text-[13px] font-semibold text-neutral-900 group-hover:text-primary-700">
-            {card.contactName}
+          <div className="flex min-w-0 items-start gap-2">
+            {showCircle && checkboxAction ? (
+              <CardCompleteCircle
+                cardId={card.id}
+                action={checkboxAction}
+                onLocalMove={onLocalMove}
+                onLocalRevert={onLocalRevert}
+              />
+            ) : null}
+            <div className="min-w-0 truncate text-[13px] font-semibold text-neutral-900 group-hover:text-primary-700">
+              {card.contactName}
+            </div>
           </div>
           {cardFaceHas(cardFields, 'priority') &&
             card.priority != null &&
@@ -328,11 +349,11 @@ export function BoardCard({
           per-card affordances left, separated from the card body by a
           hairline so they read as "controls" rather than "more info". */}
       <div className="relative z-10 mt-2.5 space-y-1.5 border-t border-neutral-100 pt-2">
-        {canWrite && quickActions.length > 0 ? (
+        {canWrite && chipActions.length > 0 ? (
           <QuickActionButtons
             cardId={card.id}
             currentStageId={stageId}
-            actions={quickActions}
+            actions={chipActions}
             onLocalMove={onLocalMove}
             onLocalRevert={onLocalRevert}
           />

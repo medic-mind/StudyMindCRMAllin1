@@ -23,6 +23,9 @@ interface QuickAction {
   targetStageId: string
   targetStageName: string
   targetBoardName: string | null
+  /** Present on the shared shape; unused here (the card face renders the
+   *  tick-circle action separately). */
+  isCheckbox?: boolean
 }
 
 interface Props {

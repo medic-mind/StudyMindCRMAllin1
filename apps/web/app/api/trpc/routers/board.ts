@@ -1146,6 +1146,7 @@ const QuickActionCreateInput = z.object({
     .optional(),
   targetStageId: z.string(),
   commentTemplate: z.string().trim().max(2000).optional(),
+  isCheckbox: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(10_000).optional(),
 })
 
@@ -1159,6 +1160,7 @@ const QuickActionUpdateInput = z.object({
     .nullish(),
   targetStageId: z.string().optional(),
   commentTemplate: z.string().trim().max(2000).nullish(),
+  isCheckbox: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(10_000).optional(),
 })
 
@@ -1200,6 +1202,13 @@ const boardQuickActionRouter = router({
       throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' })
     }
     const id = createId()
+    // At most one tick-circle action per board — clear any existing one first.
+    if (input.isCheckbox) {
+      await ctx.db.boardQuickAction.updateMany({
+        where: { boardId: input.boardId, isCheckbox: true },
+        data: { isCheckbox: false },
+      })
+    }
     const row = await ctx.db.boardQuickAction.create({
       data: {
         id,
@@ -1209,6 +1218,7 @@ const boardQuickActionRouter = router({
         targetStageId: input.targetStageId,
         targetBoardId: stage.boardId === input.boardId ? null : stage.boardId,
         commentTemplate: input.commentTemplate ?? null,
+        isCheckbox: input.isCheckbox ?? false,
         sortOrder: input.sortOrder ?? 100,
         createdById: user.id,
         updatedById: user.id,
@@ -1250,6 +1260,13 @@ const boardQuickActionRouter = router({
       }
       targetBoardId = stage.boardId === before.boardId ? null : stage.boardId
     }
+    // At most one tick-circle action per board — clear any existing one first.
+    if (input.isCheckbox) {
+      await ctx.db.boardQuickAction.updateMany({
+        where: { boardId: before.boardId, isCheckbox: true, id: { not: input.id } },
+        data: { isCheckbox: false },
+      })
+    }
     const after = await ctx.db.boardQuickAction.update({
       where: { id: input.id },
       data: {
@@ -1259,6 +1276,7 @@ const boardQuickActionRouter = router({
           ? { targetStageId: input.targetStageId, targetBoardId }
           : {}),
         commentTemplate: input.commentTemplate,
+        ...(input.isCheckbox !== undefined ? { isCheckbox: input.isCheckbox } : {}),
         ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
         updatedById: user.id,
       },

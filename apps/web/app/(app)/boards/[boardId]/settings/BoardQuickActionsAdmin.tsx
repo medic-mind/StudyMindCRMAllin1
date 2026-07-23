@@ -35,6 +35,7 @@ interface QuickAction {
   targetStageName: string
   targetBoardName: string | null
   commentTemplate: string | null
+  isCheckbox: boolean
   sortOrder: number
   archived: boolean
 }
@@ -244,6 +245,7 @@ function QuickActionEditor({
   const [color, setColor] = useState(action?.color ?? DEFAULT_COLORS[0]!)
   const [targetStageId, setTargetStageId] = useState(action?.targetStageId ?? '')
   const [commentTemplate, setCommentTemplate] = useState(action?.commentTemplate ?? '')
+  const [isCheckbox, setIsCheckbox] = useState(action?.isCheckbox ?? false)
   const [sortOrder, setSortOrder] = useState(action?.sortOrder ?? 100)
   const [busy, setBusy] = useState(false)
 
@@ -272,6 +274,7 @@ function QuickActionEditor({
           color,
           targetStageId,
           commentTemplate: commentTemplate.trim() || undefined,
+          isCheckbox,
           sortOrder,
         })
         toast.success('Action created')
@@ -282,6 +285,7 @@ function QuickActionEditor({
           color,
           targetStageId,
           commentTemplate: commentTemplate.trim() || null,
+          isCheckbox,
           sortOrder,
         })
         toast.success('Action updated')
@@ -366,6 +370,21 @@ function QuickActionEditor({
           placeholder="e.g. Called twice — no answer / left voicemail."
         />
       </Field>
+      <label className="flex cursor-pointer items-start gap-2 text-sm text-neutral-700">
+        <input
+          type="checkbox"
+          checked={isCheckbox}
+          onChange={(e) => setIsCheckbox(e.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-neutral-300 text-emerald-600 focus:ring-emerald-500"
+        />
+        <span>
+          Show as a tick-circle on each card
+          <span className="mt-0.5 block text-xs font-normal text-neutral-500">
+            Renders as a Todoist-style circle by the card name instead of a chip. Only one action
+            per board can be the tick-circle; turning this on clears it from any other action.
+          </span>
+        </span>
+      </label>
       <div className="flex flex-wrap items-center gap-2 pt-1">
         <Button type="button" onClick={save} disabled={busy || !label.trim() || !targetStageId}>
           {busy ? 'Saving…' : 'Save'}

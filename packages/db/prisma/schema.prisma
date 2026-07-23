@@ -1097,6 +1097,11 @@ model BoardQuickAction {
   /// Optional comment template added to the card (and recorded on the
   /// backing contact's timeline) when the action fires.
   commentTemplate String?
+  /// When true this action renders as a Todoist-style tick-circle on the card
+  /// face (instead of a chip) — the card's primary "done" affordance. At most
+  /// one per board should be the checkbox; the default board seeds "Call
+  /// completed" as it.
+  isCheckbox      Boolean @default(false)
   sortOrder       Int     @default(0)
 
   createdAt   DateTime  @default(now())
