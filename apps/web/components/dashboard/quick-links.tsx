@@ -10,7 +10,6 @@ import {
   BarChartIcon,
   BuildingIcon,
   CalendarIcon,
-  CoinsIcon,
   FileTextIcon,
   GitBranchIcon,
   InboxIcon,
@@ -44,7 +43,6 @@ const LINKS: readonly QuickLink[] = [
   { href: '/boards', label: 'Boards', icon: GitBranchIcon },
   { href: '/camps', label: 'Summer Camps', icon: CalendarIcon },
   { href: '/webinars', label: 'Webinars', icon: CalendarIcon },
-  { href: '/finance', label: 'Finance', icon: CoinsIcon, financeOnly: true },
   { href: '/direct-debits', label: 'Direct Debits', icon: RepeatIcon, financeOnly: true },
   { href: '/reports', label: 'Reports', icon: BarChartIcon },
 ]

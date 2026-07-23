@@ -36,8 +36,8 @@ const SHARED_TOKEN_BACKFILL = new Set(['aircall', 'slack'])
 const VIEW_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
 const TEST_ROLES = new Set(['ceo', 'senior_manager'])
 
+// Stripe removed (2026-07) — no longer a surfaced integration.
 const PROVIDERS = [
-  'stripe',
   'gocardless',
   'aircall',
   'trengo',

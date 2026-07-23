@@ -7,29 +7,23 @@ const ZERO: QueueCounts = {
   leadsToTriage: 0,
   openComplaints: 0,
   slackMentions: 0,
-  financeDiscrepancies: 0,
   directDebitIssues: 0,
-  unresolvedPayments: 0,
 }
 
 describe('buildQueueCards', () => {
-  it('hides finance queues from non-finance roles', () => {
+  it('hides the finance queue from non-finance roles', () => {
     const cards = buildQueueCards(ZERO, 'sales_executive')
     const keys = cards.map((c) => c.key)
-    expect(keys).not.toContain('financeDiscrepancies')
     expect(keys).not.toContain('directDebitIssues')
-    expect(keys).not.toContain('unresolvedPayments')
     // Universal queues are still present.
     expect(keys).toContain('missedCalls')
     expect(keys).toContain('leadsToTriage')
   })
 
-  it('shows finance queues to finance roles', () => {
+  it('shows the finance queue to finance roles', () => {
     for (const role of ['ceo', 'senior_manager', 'manager'] as const) {
       const keys = buildQueueCards(ZERO, role).map((c) => c.key)
-      expect(keys).toContain('financeDiscrepancies')
       expect(keys).toContain('directDebitIssues')
-      expect(keys).toContain('unresolvedPayments')
     }
   })
 

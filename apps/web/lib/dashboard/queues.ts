@@ -33,9 +33,7 @@ export interface QueueCounts {
   leadsToTriage: number
   openComplaints: number
   slackMentions: number
-  financeDiscrepancies: number
   directDebitIssues: number
-  unresolvedPayments: number
 }
 
 const FINANCE_ROLES: ReadonlySet<UserRole> = new Set([
@@ -62,9 +60,9 @@ const QUEUE_DEFS: readonly QueueDef[] = [
   { key: 'leadsToTriage', label: 'Leads to triage', href: '/leads', icon: 'userPlus', activeTone: 'warn' },
   { key: 'openComplaints', label: 'Open complaints', href: '/complaints', icon: 'alertTriangle', activeTone: 'danger' },
   { key: 'slackMentions', label: 'Slack mentions', href: '/inbox/slack-mentions', icon: 'hash', activeTone: 'info' },
-  { key: 'financeDiscrepancies', label: 'Finance discrepancies', href: '/finance', icon: 'coins', activeTone: 'warn', roles: FINANCE_ROLES },
+  // Finance-reconciliation + unresolved-payment queues removed with the Stripe
+  // finance surface (2026-07). Direct Debit issues is the live money queue.
   { key: 'directDebitIssues', label: 'Direct Debit issues', href: '/direct-debits/issues', icon: 'repeat', activeTone: 'danger', roles: FINANCE_ROLES },
-  { key: 'unresolvedPayments', label: 'Unresolved payments', href: '/finance/unresolved-payments', icon: 'coins', activeTone: 'warn', roles: FINANCE_ROLES },
 ]
 
 /**

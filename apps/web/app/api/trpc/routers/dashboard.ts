@@ -20,7 +20,7 @@ import {
   type MissedCallReviewRow,
 } from '@studymind/core/calls'
 import { deriveHoursRisk, type HoursRiskLevel } from '@studymind/core/contact'
-import { listUnresolvedStripePayments, resolveDdIssueCutoff } from '@studymind/core/finance'
+import { resolveDdIssueCutoff } from '@studymind/core/finance'
 
 import {
   buildQueueCards,
@@ -196,15 +196,6 @@ async function loadAtRiskCustomers(
   }
 }
 
-/** Count of successful Stripe charges not yet linked to a Family (ADR 0030). */
-async function loadUnresolvedPaymentCount(db: PrismaClient): Promise<number> {
-  try {
-    return (await listUnresolvedStripePayments(db)).length
-  } catch {
-    return 0
-  }
-}
-
 export const dashboardRouter = router({
   summary: protectedProcedure
     .input(z.object({}).optional())
@@ -221,9 +212,7 @@ export const dashboardRouter = router({
         openComplaints,
         leadsToTriage,
         slackMentions,
-        financeDiscrepancies,
         directDebitIssues,
-        unresolvedPayments,
         missedCalls,
         atRisk,
       ] = await Promise.all([
@@ -232,11 +221,9 @@ export const dashboardRouter = router({
         db.complaint.count({ where: { deletedAt: null, status: { in: ['open', 'in_progress'] } } }),
         db.lead.count({ where: { deletedAt: null, status: 'needs_triage' } }),
         db.unassignedSummary.count({ where: { resolvedAt: null } }),
-        isFinance
-          ? db.reconciliationDiscrepancy.count({
-              where: { resolvedAt: null, category: { notIn: [...DD_CATEGORIES] } },
-            })
-          : Promise.resolve(0),
+        // Finance-reconciliation discrepancies + unresolved Stripe payments were
+        // removed with the Stripe finance surface (2026-07). Direct Debit issues
+        // is the live money queue.
         isFinance
           ? db.reconciliationDiscrepancy.count({
               where: {
@@ -253,7 +240,6 @@ export const dashboardRouter = router({
               },
             })
           : Promise.resolve(0),
-        isFinance ? loadUnresolvedPaymentCount(db) : Promise.resolve(0),
         loadMissedCallCount(db, now),
         loadAtRiskCustomers(db, now),
       ])
@@ -265,9 +251,7 @@ export const dashboardRouter = router({
         leadsToTriage,
         openComplaints,
         slackMentions,
-        financeDiscrepancies,
         directDebitIssues,
-        unresolvedPayments,
       }
       const queues: QueueCard[] = buildQueueCards(queueCounts, role)
 

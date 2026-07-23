@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button'
 import { trpc } from '@/lib/trpc/client'
 
 type Provider =
-  | 'stripe'
   | 'gocardless'
   | 'aircall'
   | 'trengo'

@@ -210,12 +210,6 @@ export default async function FamilyDetailPage({
               {data.openDiscrepancies.length}
             </span>
           </span>
-          <Link
-            href={`/finance?familyId=${data.id}`}
-            className="text-xs font-normal normal-case text-neutral-600 hover:underline"
-          >
-            View on finance →
-          </Link>
         </h2>
         <div className="mt-2 rounded-md border border-neutral-200 bg-white">
           {data.openDiscrepancies.length === 0 ? (

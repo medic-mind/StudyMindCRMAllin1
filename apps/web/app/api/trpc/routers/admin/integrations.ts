@@ -35,8 +35,12 @@ const TEST_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'senior_manager',
 ])
 
+// Stripe removed from the Integrations catalog at the operator's request
+// (2026-07) — StudyMind no longer surfaces Stripe as a configurable integration.
+// The /api/webhooks/stripe handler + reconciliation stay wired (forward-only,
+// §19) so any events still received are recorded; Stripe is simply no longer
+// shown or managed here.
 const PROVIDERS = [
-  'stripe',
   'gocardless',
   'aircall',
   'trengo',
@@ -51,7 +55,6 @@ export type Provider = (typeof PROVIDERS)[number]
 // Grouping for the Integrations index so the catalog reads by purpose rather
 // than as one flat grid (UI organising only — no behaviour change).
 const PROVIDER_CATEGORY: Record<Provider, string> = {
-  stripe: 'Payments & finance',
   gocardless: 'Payments & finance',
   aircall: 'Communications',
   trengo: 'Communications',
@@ -85,30 +88,6 @@ interface ProviderConfig {
 // page reads from PROVIDER_CONFIG. Keeping both in this one file makes the
 // "add an integration" change a single-PR diff.
 const PROVIDER_CONFIG: Record<Provider, ProviderConfig> = {
-  stripe: {
-    label: 'Stripe',
-    description:
-      'Subscriptions, one-off charges, refunds, payment links. CLAUDE.md §8.',
-    envVars: ['STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET'],
-    cronFunctionIds: [],
-    perAgentTokens: null,
-    runbook: '/docs/runbooks/secret-rotation.md',
-    setupSteps: [
-      {
-        title: 'Create the webhook endpoint',
-        body: 'In the Stripe dashboard → Developers → Webhooks → Add endpoint, point at https://<your-host>/api/webhooks/stripe and subscribe to invoice.*, customer.subscription.*, charge.*, checkout.session.completed.',
-      },
-      {
-        title: 'Copy the signing secret',
-        body: 'Copy the whsec_ value into STRIPE_WEBHOOK_SECRET in Railway.',
-      },
-      {
-        title: 'Add the API keys',
-        body: 'Settings → Developers → API keys. Paste the secret key into STRIPE_SECRET_KEY and the publishable key into STRIPE_PUBLISHABLE_KEY.',
-      },
-    ],
-    providerDashboardUrl: 'https://dashboard.stripe.com/webhooks',
-  },
   gocardless: {
     label: 'GoCardless',
     description: 'Bacs Direct Debit, late-failure reversals. CLAUDE.md §9.',
