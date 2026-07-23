@@ -524,3 +524,94 @@ export async function autoOpenRecoveryCases(
 
   return { plansOpened, defaultersOpened }
 }
+
+// -----------------------------------------------------------------------------
+// Identify the customers on already-open recovery cases. A case opened before
+// its GoCardless customer was linked to a CRM contact (or before the contact
+// existed) shows as "Unknown" in the chase list. This resolves the contact —
+// via the case's gcCustomer, its plan's gcCustomer, or its family's billing
+// contact — and backfills contactId + a blank chaseEmail/chasePhone, so the
+// chase-up worklist shows real people. Idempotent; safe to re-run.
+// -----------------------------------------------------------------------------
+
+export interface BackfillCaseContactsResult {
+  updated: number
+}
+
+export async function backfillRecoveryCaseContacts(
+  db: DbClient,
+  opts: { limit?: number } = {},
+): Promise<BackfillCaseContactsResult> {
+  const cases = await db.directDebitCase.findMany({
+    where: {
+      deletedAt: null,
+      contactId: null,
+      status: { notIn: [...CASE_CLOSED_STATUSES] },
+    },
+    select: {
+      id: true,
+      gcSubscriptionId: true,
+      gcCustomerId: true,
+      familyId: true,
+      chaseEmail: true,
+      chasePhoneE164: true,
+    },
+    take: opts.limit ?? 1000,
+  })
+
+  let updated = 0
+  for (const c of cases) {
+    let contactId: string | null = null
+
+    // 1. Directly via the case's GoCardless customer.
+    if (c.gcCustomerId) {
+      const cust = await db.gcCustomer.findFirst({
+        where: { gcCustomerId: c.gcCustomerId },
+        select: { contactId: true },
+      })
+      contactId = cust?.contactId ?? null
+    }
+    // 2. Via the plan's customer.
+    if (!contactId && c.gcSubscriptionId) {
+      const sub = await db.gcSubscription.findFirst({
+        where: { gcSubscriptionId: c.gcSubscriptionId },
+        select: { gcCustomerId: true },
+      })
+      if (sub?.gcCustomerId) {
+        const cust = await db.gcCustomer.findFirst({
+          where: { gcCustomerId: sub.gcCustomerId },
+          select: { contactId: true },
+        })
+        contactId = cust?.contactId ?? null
+      }
+    }
+    // 3. Via the family's billing contact.
+    if (!contactId && c.familyId) {
+      const fam = await db.family.findFirst({
+        where: { id: c.familyId, deletedAt: null },
+        select: { billingContactId: true },
+      })
+      contactId = fam?.billingContactId ?? null
+    }
+    if (!contactId) continue
+
+    const contact = await db.contact.findFirst({
+      where: { id: contactId, deletedAt: null },
+      select: { email: true, phoneE164: true },
+    })
+    await db.directDebitCase.update({
+      where: { id: c.id },
+      data: {
+        contactId,
+        // Fill-blank only — never clobber a staff-set chase address.
+        ...(!c.chaseEmail && contact?.email ? { chaseEmail: contact.email } : {}),
+        ...(!c.chasePhoneE164 && contact?.phoneE164
+          ? { chasePhoneE164: contact.phoneE164 }
+          : {}),
+      },
+    })
+    updated += 1
+  }
+
+  return { updated }
+}

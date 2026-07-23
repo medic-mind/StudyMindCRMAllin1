@@ -28,8 +28,15 @@ import {
   paymentsForFamily,
   paymentSummaryForFamily,
   resolveUnresolvedStripePayment,
+  linkUnlinkedGcCustomers,
 } from '@studymind/core/finance'
 import { roleCan } from '@studymind/core/auth/policies'
+import {
+  autoOpenRecoveryCases,
+  backfillRecoveryCaseContacts,
+  flagDefaulters,
+  flagPlanIssues,
+} from '@studymind/jobs/finance/flag-dd-defaulters'
 
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 import {
@@ -625,6 +632,49 @@ export const financeRouter = router({
         }),
 
       // ---- Automated chasing (ADR 0045) -----------------------------------
+
+      /**
+       * On-demand engine for the Issues chase-up list (Manager+). Presses "Scan
+       * now" and, without waiting for the nightly reconcile→scan cron (which a
+       * self-hosted Inngest often does not deliver), we:
+       *   1. link unlinked GoCardless customers to CRM contacts (identify them),
+       *   2. recompute the defaulter / cancelled-underpaid / behind-schedule
+       *      sets and raise discrepancies,
+       *   3. auto-open a recovery case for every post-cutoff issue (auto-send
+       *      OFF, no link, so nothing sends until staff arm it — §3), and
+       *   4. backfill the contact identity on any case still showing "Unknown".
+       * So one click populates the chase-up worklist with everyone behind on /
+       * not making / underpaying their Direct Debit, each identified.
+       */
+      scanNow: auditedProcedure.mutation(async ({ ctx }) => {
+        assertFinanceRole(requireUser(ctx))
+        const now = new Date()
+        const cutoff = resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE)
+        const linked = await linkUnlinkedGcCustomers(ctx.db)
+        const def = await flagDefaulters(ctx.db, now, cutoff)
+        const plan = await flagPlanIssues(ctx.db, now, cutoff)
+        const opened = await autoOpenRecoveryCases(ctx.db, now, cutoff)
+        const identified = await backfillRecoveryCaseContacts(ctx.db)
+        const casesOpened = opened.plansOpened + opened.defaultersOpened
+        await ctx.audit({
+          action: 'direct_debit.issues_scanned',
+          target: { type: 'DirectDebitCase', id: `scan:${now.toISOString().slice(0, 10)}` },
+          after: {
+            customersLinked: linked.linked,
+            newlyDefaulted: def.newlyDefaulted.length,
+            newlyPlanIssues: plan.newlyFlagged.length,
+            casesOpened,
+            casesIdentified: identified.updated,
+          },
+        })
+        return {
+          customersLinked: linked.linked,
+          casesOpened,
+          casesIdentified: identified.updated,
+          defaulters: def.newlyDefaulted.length,
+          planIssues: plan.newlyFlagged.length,
+        }
+      }),
 
       /** The chase workspace: cases with their automation state. Reads open to
        *  all staff; the money-adjacent writes below stay Manager+. */

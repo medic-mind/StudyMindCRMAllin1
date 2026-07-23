@@ -291,6 +291,9 @@ export const EVENT_NAMES = [
   'direct_debit.case_chase_exhausted',
   'direct_debit.case_auto_resolved',
   'direct_debit.case_marked_up_to_date',
+  // On-demand "Scan now" on the Issues tab: link customers + recompute the
+  // defaulter/shortfall/arrears sets + auto-open + identify recovery cases.
+  'direct_debit.issues_scanned',
   // Recovery-comms templates (Phase 3): staff-authored reminder / legal copy.
   'dd_recovery_template.created',
   'dd_recovery_template.updated',

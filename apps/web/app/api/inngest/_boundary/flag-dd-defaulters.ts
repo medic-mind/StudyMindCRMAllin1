@@ -14,6 +14,7 @@ import { resolveDdIssueCutoff } from '@studymind/core/finance'
 import { resolveTopicChannelId } from '@studymind/core/slack'
 import {
   autoOpenRecoveryCases,
+  backfillRecoveryCaseContacts,
   flagDefaulters,
   flagPlanIssues,
 } from '@studymind/jobs/finance/flag-dd-defaulters'
@@ -72,6 +73,8 @@ export const flagDdDefaultersNightly = inngest.createFunction(
     const opened = await step.run('auto-open-recovery-cases', () =>
       autoOpenRecoveryCases(db, new Date(), cutoff),
     )
+    // Identify any case still showing "Unknown" now customers may be linked.
+    await step.run('identify-recovery-cases', () => backfillRecoveryCaseContacts(db))
 
     const newlyShortfall = planResult.newlyFlagged.filter((p) => p.kind === 'shortfall').length
     const newlyArrears = planResult.newlyFlagged.filter((p) => p.kind === 'arrears').length

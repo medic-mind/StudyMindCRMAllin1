@@ -41,6 +41,22 @@ export function RecoveryCasesSection({ canWrite }: { canWrite: boolean }) {
   const list = trpc.finance.directDebit.cases.chaseList.useQuery({ view })
   const refresh = () => utils.finance.directDebit.cases.chaseList.invalidate()
 
+  // On-demand engine: link customers + detect defaulters/underpayers/arrears +
+  // auto-open + identify their recovery cases, then refresh every issues query.
+  const scan = trpc.finance.directDebit.cases.scanNow.useMutation({
+    onSuccess: (r) => {
+      const bits = [
+        r.casesOpened > 0 ? `${r.casesOpened} added to chase` : null,
+        r.customersLinked > 0 ? `${r.customersLinked} customer(s) identified` : null,
+        r.casesIdentified > 0 ? `${r.casesIdentified} case(s) named` : null,
+      ].filter(Boolean)
+      toast.success(bits.length > 0 ? bits.join(' · ') : 'Up to date — no new issues found')
+      // Refresh the whole Direct Debits workspace (chase list + detected issues).
+      void utils.finance.directDebit.invalidate()
+    },
+    onError: (e) => toast.error(e.message ?? 'Could not scan for issues'),
+  })
+
   const rows = list.data ?? []
 
   return (
@@ -71,7 +87,17 @@ export function RecoveryCasesSection({ canWrite }: { canWrite: boolean }) {
           ))}
         </div>
         {canWrite ? (
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => scan.mutate()}
+              disabled={scan.isPending}
+              title="Find everyone behind on / not making / underpaying their Direct Debit and add them to the chase list, identified"
+            >
+              {scan.isPending ? 'Scanning…' : 'Scan for issues'}
+            </Button>
             <Button type="button" size="sm" onClick={() => setAdding((a) => !a)}>
               {adding ? 'Close' : 'Add a person'}
             </Button>
@@ -97,7 +123,7 @@ export function RecoveryCasesSection({ canWrite }: { canWrite: boolean }) {
               : view === 'needs_link'
                 ? 'Nothing waiting for a link.'
                 : view === 'open'
-                  ? 'Nobody is being chased right now. Add a person, or start one from a detected issue below.'
+                  ? 'Nobody is being chased yet. Press "Scan for issues" to auto-add everyone behind on, not making, or underpaying their Direct Debit — or add a person by hand.'
                   : 'Nothing here.'}
           </p>
         ) : (

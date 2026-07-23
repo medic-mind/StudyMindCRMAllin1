@@ -19,7 +19,7 @@ vi.mock('@studymind/core/finance', async (importActual) => {
   return { ...actual, listPlanShortfalls, listActivePlanArrears, listDefaulters }
 })
 
-import { autoOpenRecoveryCases } from './flag-dd-defaulters'
+import { autoOpenRecoveryCases, backfillRecoveryCaseContacts } from './flag-dd-defaulters'
 
 const NOW = new Date('2026-08-01T12:00:00Z')
 const AFTER_CUTOFF = new Date('2026-07-15T00:00:00Z')
@@ -147,5 +147,84 @@ describe('autoOpenRecoveryCases', () => {
     expect(created[0]!.contactId).toBe('bc-fam2')
     expect(created[0]!.sendEmails).toBe(false)
     expect(created[0]!.setupLinkUrl).toBeNull()
+  })
+})
+
+interface CaseRow {
+  id: string
+  gcSubscriptionId: string | null
+  gcCustomerId: string | null
+  familyId: string | null
+  chaseEmail: string | null
+  chasePhoneE164: string | null
+}
+
+function makeBackfillDb(opts: {
+  cases: CaseRow[]
+  customerContactId?: string | null
+  contact?: { email: string | null; phoneE164: string | null } | null
+}) {
+  const updates: Array<{ id: string; data: Record<string, unknown> }> = []
+  const db = {
+    directDebitCase: {
+      findMany: async () => opts.cases,
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        updates.push({ id: where.id, data })
+        return data
+      },
+    },
+    gcCustomer: {
+      findFirst: async () => ({ contactId: opts.customerContactId ?? null }),
+    },
+    gcSubscription: { findFirst: async () => null },
+    family: { findFirst: async () => null },
+    contact: { findFirst: async () => opts.contact ?? null },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any
+  return { db, updates }
+}
+
+describe('backfillRecoveryCaseContacts', () => {
+  it('identifies a case via its GoCardless customer and fills contact + chase details', async () => {
+    const { db, updates } = makeBackfillDb({
+      cases: [
+        { id: 'case1', gcSubscriptionId: null, gcCustomerId: 'CU1', familyId: null, chaseEmail: null, chasePhoneE164: null },
+      ],
+      customerContactId: 'c1',
+      contact: { email: 'c1@example.com', phoneE164: '+447700900123' },
+    })
+    const res = await backfillRecoveryCaseContacts(db)
+    expect(res.updated).toBe(1)
+    expect(updates[0]!.data['contactId']).toBe('c1')
+    expect(updates[0]!.data['chaseEmail']).toBe('c1@example.com')
+    expect(updates[0]!.data['chasePhoneE164']).toBe('+447700900123')
+  })
+
+  it('leaves a case whose customer is still unlinked untouched (stays "Unknown")', async () => {
+    const { db, updates } = makeBackfillDb({
+      cases: [
+        { id: 'case2', gcSubscriptionId: null, gcCustomerId: 'CU2', familyId: null, chaseEmail: null, chasePhoneE164: null },
+      ],
+      customerContactId: null,
+    })
+    const res = await backfillRecoveryCaseContacts(db)
+    expect(res.updated).toBe(0)
+    expect(updates).toHaveLength(0)
+  })
+
+  it('never overwrites a staff-set chase email (fill-blank only)', async () => {
+    const { db, updates } = makeBackfillDb({
+      cases: [
+        { id: 'case3', gcSubscriptionId: null, gcCustomerId: 'CU3', familyId: null, chaseEmail: 'manual@x.com', chasePhoneE164: null },
+      ],
+      customerContactId: 'c3',
+      contact: { email: 'c3@example.com', phoneE164: '+447700900999' },
+    })
+    const res = await backfillRecoveryCaseContacts(db)
+    expect(res.updated).toBe(1)
+    expect(updates[0]!.data['contactId']).toBe('c3')
+    // chaseEmail was already set — must not be clobbered.
+    expect(updates[0]!.data['chaseEmail']).toBeUndefined()
+    expect(updates[0]!.data['chasePhoneE164']).toBe('+447700900999')
   })
 })
