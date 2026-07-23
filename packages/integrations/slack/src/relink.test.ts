@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest'
 
-import { candidateFromParsed, isUnrescuableParkedRow } from './relink'
+import { candidateFromParsed, isUnrescuableParkedRow, resolveUnlinkedOutcome } from './relink'
 
 const NO_CANDIDATE = { name: null, email: null, phone: null }
 const NO_SIGNALS = { email: null, phone: null }
+
+const SUBSTANTIVE_NAMELESS = {
+  candidate: NO_CANDIDATE,
+  messageText: 'Customer is very unhappy about the refund, please advise urgently',
+  extractedNames: [] as string[],
+  textSignals: NO_SIGNALS,
+}
+const UNRESCUABLE = {
+  candidate: NO_CANDIDATE,
+  messageText: '👍',
+  extractedNames: [] as string[],
+  textSignals: NO_SIGNALS,
+}
 
 describe('candidateFromParsed', () => {
   it('reads the stored slack-summary extraction', () => {
@@ -103,5 +116,32 @@ describe('isUnrescuableParkedRow', () => {
         textSignals: { email: 'paula@example.com', phone: null },
       }),
     ).toBe(false)
+  })
+})
+
+describe('resolveUnlinkedOutcome (tray policy)', () => {
+  it('full-auto ON: dismisses a substantive nameless row (no human queue)', () => {
+    expect(resolveUnlinkedOutcome(true, SUBSTANTIVE_NAMELESS)).toEqual({
+      dismiss: true,
+      reason: 'auto_dismiss_unlinked',
+    })
+  })
+
+  it('full-auto OFF: keeps a substantive nameless row for a human (§3)', () => {
+    expect(resolveUnlinkedOutcome(false, SUBSTANTIVE_NAMELESS)).toEqual({
+      dismiss: false,
+      reason: null,
+    })
+  })
+
+  it('always dismisses an unrescuable row, regardless of mode', () => {
+    expect(resolveUnlinkedOutcome(true, UNRESCUABLE)).toEqual({
+      dismiss: true,
+      reason: 'unrescuable',
+    })
+    expect(resolveUnlinkedOutcome(false, UNRESCUABLE)).toEqual({
+      dismiss: true,
+      reason: 'unrescuable',
+    })
   })
 })

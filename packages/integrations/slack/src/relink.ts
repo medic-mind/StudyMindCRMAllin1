@@ -22,6 +22,7 @@ import { inngest } from '@studymind/jobs'
 
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isCallLogChannel } from './channel-rules'
+import { slackTrayFullAuto } from './config'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { extractContactSignals, extractNameCandidates, slackTsToDate } from './extract'
 import {
@@ -60,6 +61,25 @@ export function isUnrescuableParkedRow(input: {
   const text = input.messageText?.trim() ?? ''
   if (text.length === 0) return true
   return isSkippableSlackNoise(text)
+}
+
+export type UnlinkedReason = 'unrescuable' | 'auto_dismiss_unlinked'
+
+/**
+ * Decide what to do with a parked row the matcher could NOT link. Pure so the
+ * policy is unit-tested in isolation.
+ *   - Always dismiss an unrescuable row (no identity + dead/noise text).
+ *   - In full-auto mode (default, operator direction 2026-07) ALSO dismiss a
+ *     substantive-but-nameless row, so the tray never holds a human queue.
+ *   - Otherwise keep it parked for a human (§3).
+ */
+export function resolveUnlinkedOutcome(
+  fullAuto: boolean,
+  unrescuableInput: Parameters<typeof isUnrescuableParkedRow>[0],
+): { dismiss: boolean; reason: UnlinkedReason | null } {
+  if (isUnrescuableParkedRow(unrescuableInput)) return { dismiss: true, reason: 'unrescuable' }
+  if (fullAuto) return { dismiss: true, reason: 'auto_dismiss_unlinked' }
+  return { dismiss: false, reason: null }
 }
 
 /** Outcome of processing one parked row. */
@@ -191,17 +211,26 @@ export async function relinkParkedRowsBatch(
     return { scanned: 0, linked: 0, dismissed: 0, errors: 0, lastId: afterId, done: true }
   }
 
+  // Resolve the tray policy once per batch. Full-auto (default) means no row is
+  // left parked for a human — unlinkable rows are auto-dismissed.
+  const fullAuto = slackTrayFullAuto()
   let linked = 0
   let dismissed = 0
   let errors = 0
   let threadBudget = RELINK_THREAD_FETCHES
   for (const row of rows) {
     try {
-      const outcome = await relinkOneRow(row, actorId, brands, () => {
-        if (threadBudget <= 0) return false
-        threadBudget -= 1
-        return true
-      })
+      const outcome = await relinkOneRow(
+        row,
+        actorId,
+        brands,
+        () => {
+          if (threadBudget <= 0) return false
+          threadBudget -= 1
+          return true
+        },
+        fullAuto,
+      )
       if (outcome === 'linked') linked += 1
       else if (outcome === 'dismissed') dismissed += 1
     } catch (err) {
@@ -245,6 +274,7 @@ async function relinkOneRow(
   actorId: string,
   brands: OwnBrands,
   takeThreadBudget: () => boolean,
+  fullAuto: boolean,
 ): Promise<RelinkOutcome> {
   {
     const cand = candidateFromParsed(row.parsed)
@@ -329,17 +359,17 @@ async function relinkOneRow(
     }
 
     if (!target) {
-      // Nothing linked. If the row is genuinely unrescuable (no identity + dead
-      // or pure-noise text) auto-dismiss it so the tray reflects real work; a
-      // substantive nameless message stays parked for a human (§3).
-      if (
-        isUnrescuableParkedRow({
-          candidate,
-          messageText: row.messageText,
-          extractedNames,
-          textSignals: { email: fromText.email, phone: fromText.phone },
-        })
-      ) {
+      // Nothing linked. Decide whether to auto-dismiss (default full-auto: every
+      // unlinkable row is dismissed so the tray never holds a human queue) or —
+      // when full-auto is off — keep a substantive nameless message for a human
+      // (§3) and only dismiss the truly unrescuable (no identity + dead/noise).
+      const { dismiss, reason } = resolveUnlinkedOutcome(fullAuto, {
+        candidate,
+        messageText: row.messageText,
+        extractedNames,
+        textSignals: { email: fromText.email, phone: fromText.phone },
+      })
+      if (dismiss) {
         await db.unassignedSummary.update({
           where: { id: row.id },
           data: { resolvedAt: new Date() },
@@ -349,7 +379,7 @@ async function relinkOneRow(
           action: 'slack_summary.dismissed',
           target: { type: 'UnassignedSummary', id: row.id },
           requestId: `slack-relink:${row.id}`,
-          after: { auto: true, reason: 'unrescuable', channelId: row.channelId },
+          after: { auto: true, reason, channelId: row.channelId },
         })
         return 'dismissed'
       }
