@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 
 import { trpc } from '@/lib/trpc/client'
 
-import { resolveStageColor } from '../../pipeline/stage-color'
+import { resolveStageColor, stageColorTint } from '../../pipeline/stage-color'
 
 interface QuickAction {
   id: string
@@ -43,16 +43,15 @@ interface Props {
   onApplied?: () => void
 }
 
+// Calm, tinted chip — a soft colour wash + matching border instead of a loud,
+// fully-saturated pill (the "tacky" look ops flagged, 2026-07). The colour is
+// still carried by a solid dot + the tint so each action stays recognisable.
+// Colours may be hex (#10b981) or a Tailwind token (emerald-500); resolve both.
 function chipStyle(color: string | null): React.CSSProperties {
   if (!color) return {}
-  // Colours may be hex (#10b981) or a Tailwind token (emerald-500) depending
-  // on where the row came from — resolve both; raw tokens are not valid CSS
-  // and silently rendered the chips grey.
-  const css = resolveStageColor(color)
   return {
-    backgroundColor: css,
-    color: '#ffffff',
-    borderColor: css,
+    backgroundColor: stageColorTint(color, 0.12),
+    borderColor: stageColorTint(color, 0.35),
   }
 }
 
@@ -117,7 +116,7 @@ export function QuickActionButtons({
             }
             apply.mutate({ cardId, quickActionId: action.id })
           }}
-          className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-[11px] font-medium text-neutral-800 hover:brightness-95 disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-[11px] font-medium text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60"
           style={chipStyle(action.color)}
           title={
             action.targetBoardName
@@ -125,6 +124,13 @@ export function QuickActionButtons({
               : `→ ${action.targetStageName}`
           }
         >
+          {action.color ? (
+            <span
+              aria-hidden
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: resolveStageColor(action.color) }}
+            />
+          ) : null}
           {action.label}
         </button>
       ))}

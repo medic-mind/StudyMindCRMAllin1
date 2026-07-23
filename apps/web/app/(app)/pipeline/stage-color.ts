@@ -82,3 +82,24 @@ export function resolveStageColor(color: string): string {
   // Unknown token — fall back to neutral. Stays visible, never throws.
   return '#737373'
 }
+
+/** Expand a 3- or 6-digit hex to its {r,g,b} channels. */
+function hexChannels(hex: string): { r: number; g: number; b: number } {
+  let h = hex.replace('#', '')
+  if (h.length === 3) h = h[0]! + h[0]! + h[1]! + h[1]! + h[2]! + h[2]!
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  }
+}
+
+/**
+ * A soft `rgba()` tint of a stage/label colour — for calm chip backgrounds and
+ * borders instead of loud, fully-saturated pills. Accepts the same token-or-hex
+ * value resolveStageColor does.
+ */
+export function stageColorTint(color: string, alpha: number): string {
+  const { r, g, b } = hexChannels(resolveStageColor(color))
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
