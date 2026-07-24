@@ -32,6 +32,12 @@ export {
   type UpsertGcSubscriptionInput,
 } from './gc-mirror'
 export {
+  gcCustomerDisplayName,
+  resolveOrCreateContactForGcCustomer,
+  type GcOnboardOptions,
+  type GcOnboardResult,
+} from './gc-onboard'
+export {
   classifyProductFromText,
   resolveAiProductSuggestion,
   AI_PRODUCT_CONFIDENCE_THRESHOLD,

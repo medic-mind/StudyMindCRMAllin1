@@ -22,11 +22,17 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import {
   chaseAutoResolved,
   decideChaseTick,
+  linkUnlinkedGcCustomers,
   nextChaseAt,
   renderRecoveryTemplate,
   renderRecoveryLetterPdf,
+  resolveDdIssueCutoff,
   type ChaseTemplateRef,
 } from '@studymind/core/finance'
+import {
+  autoOpenRecoveryCases,
+  backfillRecoveryCaseContacts,
+} from '@studymind/jobs/finance/flag-dd-defaulters'
 import { inngest } from '@studymind/jobs'
 import { sendSystemEmail } from '@studymind/integration-gmail/system-send'
 import { outbound as trengoOutbound } from '@studymind/integration-trengo'
@@ -50,6 +56,34 @@ export const ddChaseTick = inngest.createFunction(
   { cron: '0 * * * *' },
   async ({ logger }) => {
     const now = new Date()
+
+    // Keep the recovery worklist self-populating + self-identifying every hour,
+    // with zero button presses (the `finance/reconcile.completed` chain that
+    // normally drives this often never fires on a self-hosted Inngest). This
+    // links unlinked GoCardless customers, opens a recovery case for every
+    // post-cutoff detected issue, and identifies any case still showing
+    // "Unknown" — auto-onboarding a CRM contact from the GoCardless customer
+    // when they were never in the CRM (the operator ask). Best-effort: a failure
+    // here must never block the chase engine below, so we log and carry on.
+    try {
+      const cutoff = resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE)
+      const linked = await linkUnlinkedGcCustomers(db)
+      const opened = await autoOpenRecoveryCases(db, now, cutoff)
+      const identified = await backfillRecoveryCaseContacts(db)
+      logger.info(
+        {
+          linked: linked.linked,
+          casesOpened: opened.plansOpened + opened.defaultersOpened,
+          casesIdentified: identified.updated,
+        },
+        'dd-chase: recovery worklist populated',
+      )
+    } catch (err) {
+      logger.error(
+        { err: err instanceof Error ? err.message : String(err) },
+        'dd-chase: recovery worklist population failed (chasing continues)',
+      )
+    }
 
     // Plain awaits, not step.run: step results are JSON-serialised, which
     // turns the Date columns the engine compares on into strings. The whole

@@ -10,7 +10,7 @@
 // Runs after `finance/reconcile-all-families` completes (§17.3) so the
 // invoice/payment state it reads is consistent.
 
-import { resolveDdIssueCutoff } from '@studymind/core/finance'
+import { linkUnlinkedGcCustomers, resolveDdIssueCutoff } from '@studymind/core/finance'
 import { resolveTopicChannelId } from '@studymind/core/slack'
 import {
   autoOpenRecoveryCases,
@@ -61,6 +61,9 @@ export const flagDdDefaultersNightly = inngest.createFunction(
     // Historic pre-go-live issues (bulk GoCardless import) are held off the
     // dashboard "Needs attention" queue via the cutoff (ADR 0045 amendment).
     const cutoff = resolveDdIssueCutoff(process.env.DD_ISSUES_CUTOFF_DATE)
+    // Link unlinked GoCardless customers to their CRM contact first, so the
+    // recovery cases opened below are identified from the start.
+    await step.run('link-gc-customers', () => linkUnlinkedGcCustomers(db))
     const result = await step.run('flag-defaulters', () => flagDefaulters(db, new Date(), cutoff))
     const planResult = await step.run('flag-plan-issues', () =>
       flagPlanIssues(db, new Date(), cutoff),
