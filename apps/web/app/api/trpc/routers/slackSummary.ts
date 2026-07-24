@@ -253,16 +253,32 @@ export const slackSummaryRouter = router({
       const user = requireUser(ctx)
       assertCanTriage(user.role)
       const { relinkParkedRowsBatch } = await import('@studymind/integration-slack/relink')
-      // Bounded per call (≈300 rows) so the request never times out; the tray
-      // loops until `remaining` is 0.
-      const MAX_BATCHES = 3
+      // Clear the WHOLE open backlog per call (up to 1000 rows / 10 batches), so
+      // a single tray visit drains a typical backlog to zero; the tray still
+      // loops until `remaining` is 0 for anything larger. DB-only
+      // (`threadFetches: 0`) so it stays fast, and `forceFullAuto` overrides the
+      // `SLACK_TRAY_FULL_AUTO` kill-switch — the operator opened the tray, so it
+      // clears to zero regardless of how the flag is set (a mis-set flag was a
+      // possible reason the 553 backlog persisted). Per-batch try/catch so one
+      // failing batch can't abort the whole drain — it stops and reports
+      // progress, and the tray/cron retry the remainder.
+      const MAX_BATCHES = 10
       let afterId: string | null = null
-      const totals = { scanned: 0, linked: 0, dismissed: 0 }
+      const totals = { scanned: 0, linked: 0, dismissed: 0, errors: 0 }
       for (let i = 0; i < MAX_BATCHES; i += 1) {
-        const batch = await relinkParkedRowsBatch(user.id, afterId, { threadFetches: 0 })
+        let batch
+        try {
+          batch = await relinkParkedRowsBatch(user.id, afterId, {
+            threadFetches: 0,
+            forceFullAuto: true,
+          })
+        } catch {
+          break
+        }
         totals.scanned += batch.scanned
         totals.linked += batch.linked
         totals.dismissed += batch.dismissed
+        totals.errors += batch.errors
         if (batch.done) break
         afterId = batch.lastId
       }

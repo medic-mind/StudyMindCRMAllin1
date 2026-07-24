@@ -26,6 +26,7 @@ import { slackTrayFullAuto } from './config'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { parseCallLogClient } from './complaint-parse'
 import { extractContactSignals, extractNameCandidates, slackTsToDate } from './extract'
+import { resolveUnlinkedOutcome } from './finalize'
 import {
   resolveSlackLinkTarget,
   resolveSlackLinkTargetFromNames,
@@ -33,55 +34,15 @@ import {
   targetForeignKey,
 } from './link-target'
 import { resolveSlackNames, resolveThreadParentText } from './names'
-import { isSkippableSlackNoise } from './noise'
 import { isOwnBrandName, loadOwnBrands, type OwnBrands } from './own-brands'
 import { buildSlackPermalink } from './permalink'
 import type { SlackEventEnvelope } from './types'
 
-/**
- * A parked row is UNRESCUABLE when there is genuinely nothing to match on and
- * never will be: no AI candidate name/email/phone, no name extractable from the
- * archived text (after own-brand filtering), no email/phone in the text, and the
- * text is either empty or pure Slack noise (an ack, an emoji, a bare link). A
- * human could not action such a row either, so the relink cron auto-dismisses it
- * (audited) to keep the tray a live worklist rather than an ever-growing
- * graveyard — the "smart dismiss" half of triage. A substantive but nameless
- * message (a real note that just doesn't name anyone the matcher can read) is
- * NOT unrescuable — it stays for a human to assign by hand (§3). Pure so it is
- * unit-tested in isolation.
- */
-export function isUnrescuableParkedRow(input: {
-  candidate: { name: string | null; email: string | null; phone: string | null }
-  messageText: string | null
-  extractedNames: readonly string[]
-  textSignals: { email: string | null; phone: string | null }
-}): boolean {
-  if (input.candidate.name || input.candidate.email || input.candidate.phone) return false
-  if (input.extractedNames.length > 0) return false
-  if (input.textSignals.email || input.textSignals.phone) return false
-  const text = input.messageText?.trim() ?? ''
-  if (text.length === 0) return true
-  return isSkippableSlackNoise(text)
-}
-
-export type UnlinkedReason = 'unrescuable' | 'auto_dismiss_unlinked'
-
-/**
- * Decide what to do with a parked row the matcher could NOT link. Pure so the
- * policy is unit-tested in isolation.
- *   - Always dismiss an unrescuable row (no identity + dead/noise text).
- *   - In full-auto mode (default, operator direction 2026-07) ALSO dismiss a
- *     substantive-but-nameless row, so the tray never holds a human queue.
- *   - Otherwise keep it parked for a human (§3).
- */
-export function resolveUnlinkedOutcome(
-  fullAuto: boolean,
-  unrescuableInput: Parameters<typeof isUnrescuableParkedRow>[0],
-): { dismiss: boolean; reason: UnlinkedReason | null } {
-  if (isUnrescuableParkedRow(unrescuableInput)) return { dismiss: true, reason: 'unrescuable' }
-  if (fullAuto) return { dismiss: true, reason: 'auto_dismiss_unlinked' }
-  return { dismiss: false, reason: null }
-}
+// The pure tray-policy decision (`isUnrescuableParkedRow` / `resolveUnlinkedOutcome`)
+// now lives in `finalize.ts`, shared with the source-side ingest finalizer, and
+// is re-exported here so callers + the existing unit tests keep importing it
+// from `./relink`.
+export { isUnrescuableParkedRow, resolveUnlinkedOutcome } from './finalize'
 
 /** Outcome of processing one parked row. */
 type RelinkOutcome = 'linked' | 'dismissed' | 'parked'
@@ -135,6 +96,14 @@ export const RELINK_MAX_BATCHES = 25
 /** Cap on thread-parent Slack API fetches per tick (conversations.replies is
  *  rate-limited). The rest of the backlog is retried on the next tick. */
 export const RELINK_THREAD_FETCHES = 40
+
+/** Cap on DISTINCT channel-name (conversations.info) resolutions per batch on
+ *  the request-time sync drain (which has no thread budget). Bounds worst-case
+ *  latency so the drain can't stall, while still letting the call-log name-only
+ *  onboarding tier work for legacy null-channelName rows (they cluster in a
+ *  handful of #…summaries channels, and the resolver caches per channel). The
+ *  cron path resolves every channel (unbounded). */
+export const RELINK_SYNC_CHANNEL_NAME_API = 25
 
 /** Cap on account-linked contacts scanned per tick for the retro-stamp pass.
  *  The junction is small relative to interactions; this bound is a safety net. */
@@ -220,7 +189,7 @@ async function forceDismissParkedRow(
 export async function relinkParkedRowsBatch(
   actorId: string,
   afterId: string | null,
-  opts?: { threadFetches?: number },
+  opts?: { threadFetches?: number; forceFullAuto?: boolean },
 ): Promise<RelinkBatchResult> {
   // Own-brand catalogue is process-cached; load once per batch so the name
   // re-scan filters out "Medic Mind" & co exactly like the live ingest paths.
@@ -246,14 +215,32 @@ export async function relinkParkedRowsBatch(
   }
 
   // Resolve the tray policy once per batch. Full-auto (default) means no row is
-  // left parked for a human — unlinkable rows are auto-dismissed.
-  const fullAuto = slackTrayFullAuto()
+  // left parked for a human — unlinkable rows are auto-dismissed. `forceFullAuto`
+  // overrides the env kill-switch: an operator-triggered drain ALWAYS clears the
+  // tray to zero regardless of `SLACK_TRAY_FULL_AUTO`, so a mis-set flag can
+  // never be the reason the backlog persists (the "553 still here" bug).
+  const fullAuto = opts?.forceFullAuto ?? slackTrayFullAuto()
   let linked = 0
   let dismissed = 0
   let errors = 0
   // Thread-parent fetches hit the (rate-limited) Slack API; a synchronous
-  // request-time drain passes 0 to stay DB-only and fast.
+  // request-time drain passes 0 to stay DB-free of that expensive per-row call.
   let threadBudget = opts?.threadFetches ?? RELINK_THREAD_FETCHES
+  // Channel-name (conversations.info) resolution is cheap (cached per channel)
+  // but still a Slack call, so the request-time drain (no thread budget) bounds
+  // it to RELINK_SYNC_CHANNEL_NAME_API distinct channels — enough to unlock the
+  // call-log name-only onboarding tier for legacy null-channelName rows without
+  // ever stalling; the cron resolves every channel. `channelsSeen` makes a
+  // repeat channel free (it hits the resolver's cache) rather than re-charging.
+  let channelNameBudget = threadBudget > 0 ? Number.POSITIVE_INFINITY : RELINK_SYNC_CHANNEL_NAME_API
+  const channelsSeen = new Set<string>()
+  const takeChannelNameApi = (channelId: string): boolean => {
+    if (channelsSeen.has(channelId)) return true
+    if (channelNameBudget <= 0) return false
+    channelNameBudget -= 1
+    channelsSeen.add(channelId)
+    return true
+  }
   for (const row of rows) {
     let outcome: RelinkOutcome | 'error' = 'parked'
     try {
@@ -267,6 +254,7 @@ export async function relinkParkedRowsBatch(
           return true
         },
         fullAuto,
+        takeChannelNameApi,
       )
     } catch (err) {
       errors += 1
@@ -337,6 +325,7 @@ async function relinkOneRow(
   brands: OwnBrands,
   takeThreadBudget: () => boolean,
   fullAuto: boolean,
+  takeChannelNameApi: (channelId: string) => boolean,
 ): Promise<RelinkOutcome> {
   {
     const cand = candidateFromParsed(row.parsed)
@@ -407,7 +396,15 @@ async function relinkOneRow(
     // deterministic thereafter (a missing/rate-limited conversations.info scope
     // must not permanently block the name-only tier).
     let channelName = row.channelName ?? null
-    if (channelName == null) {
+    // Resolve the channel name via conversations.info when the per-batch budget
+    // allows (unbounded on the cron; capped on the request-time drain so it can
+    // never stall). This unlocks the call-log name-only onboarding tier for a
+    // legacy null-channelName row — the cron and the tray-open drain both
+    // ONBOARD such a row into a real contact rather than dismissing it. When the
+    // budget is spent the row keeps null and still links on any email/phone/name
+    // match, else auto-dismisses in full-auto. Backfill the resolved name so a
+    // later pass never re-resolves it.
+    if (channelName == null && takeChannelNameApi(row.channelId)) {
       channelName = (await resolveSlackNames({ channelId: row.channelId })).channelName
       if (channelName) {
         await db.unassignedSummary.update({ where: { id: row.id }, data: { channelName } })

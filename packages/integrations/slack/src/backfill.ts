@@ -42,6 +42,7 @@ import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isCallLogChannel, isComplaintChannel, isThreadReplyMessage } from './channel-rules'
 import { parseCallLogClient } from './complaint-parse'
 import { maybeRaiseComplaintFromSlack } from './complaints'
+import { finalizeUnresolvedMention } from './finalize'
 import { isSkippableSubtype } from './message-filter'
 import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
@@ -682,8 +683,23 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     })
   }
   if (!target) {
-    // Nothing to key on — park; the relink cron keeps retrying (§12).
-    await parkUnassignedSummary({ message, channelId, parsed, senderName, channelName })
+    // Nothing to key on. Record the archive AND, in full-auto (default), resolve
+    // it in the same write so the message never enters the human triage queue
+    // (operator direction 2026-07 — no mention waits for a human). The
+    // kill-switch keeps a substantive nameless row for a human (§3).
+    await finalizeUnresolvedMention({
+      slackTs: message.ts,
+      channelId,
+      channelName: channelName ?? null,
+      parsed,
+      confidence: parsed.confidence,
+      messageText: message.text ?? null,
+      senderName,
+      extractedNames: nameCandidates,
+      textSignals: { email: signals.email, phone: signals.phone },
+      actorId: null,
+      requestId: input.requestId,
+    })
     return { matched: false }
   }
 
@@ -729,44 +745,6 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     isThreadReply,
   })
   return { matched: true }
-}
-
-/**
- * Park a non-noise message we could not resolve to a Contact/account into the
- * `UnassignedSummary` triage tray — the same home the live webhook uses for
- * unmatched mentions (jobs.ts). Idempotent on (slackTs, channelId). This is
- * what turns "history is silently dropped" into "history shows up in the tray
- * and self-links via the relink cron once the customer exists".
- */
-async function parkUnassignedSummary(input: {
-  message: SlackHistoryMessage
-  channelId: string
-  parsed: SlackSummary
-  senderName: string | null
-  channelName?: string | null
-}): Promise<void> {
-  const { message, channelId, parsed, senderName, channelName = null } = input
-  await db.unassignedSummary.upsert({
-    where: { slackTs_channelId: { slackTs: message.ts, channelId } },
-    create: {
-      id: createId(),
-      slackTs: message.ts,
-      channelId,
-      channelName,
-      parsed: parsed as unknown as object,
-      confidence: parsed.confidence,
-      messageText: message.text ?? null,
-      senderName,
-    },
-    update: {
-      parsed: parsed as unknown as object,
-      confidence: parsed.confidence,
-      messageText: message.text ?? null,
-      senderName,
-      // Back-fill the name on re-park if it was missing before.
-      ...(channelName ? { channelName } : {}),
-    },
-  })
 }
 
 export const BACKFILL_FUNCTIONS = [slackBackfillRequested] as const

@@ -28,6 +28,7 @@ import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isCallLogChannel, isComplaintChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { parseCallLogClient } from './complaint-parse'
+import { finalizeUnresolvedMention } from './finalize'
 import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
   resolveSlackLinkTarget,
@@ -373,29 +374,24 @@ export const slackEventReceived = inngest.createFunction(
     })
 
     if (!target) {
-      // No identity keyed and nothing to onboard on — park; the relink cron
-      // keeps retrying, and channelName is stored so its call-log decision is
+      // No identity keyed and nothing to onboard on. Record the archive AND, in
+      // full-auto (default), resolve it in the same write so it NEVER enters the
+      // human triage queue (operator direction 2026-07 — no mention waits for a
+      // human). channelName is stored so a later pass' call-log decision is
       // deterministic without a live conversations.info call.
-      await step.run('park-no-match', async () =>
-        db.unassignedSummary.upsert({
-          where: { slackTs_channelId: { slackTs: message.ts, channelId: message.channel } },
-          create: {
-            id: createId(),
-            slackTs: message.ts,
-            channelId: message.channel,
-            channelName,
-            parsed: parsed as unknown as object,
-            confidence: parsed.confidence,
-            messageText: message.text,
-            senderName,
-          },
-          update: {
-            parsed: parsed as unknown as object,
-            confidence: parsed.confidence,
-            messageText: message.text,
-            senderName,
-            ...(channelName ? { channelName } : {}),
-          },
+      const finalized = await step.run('finalize-no-match', async () =>
+        finalizeUnresolvedMention({
+          slackTs: message.ts,
+          channelId: message.channel,
+          channelName,
+          parsed,
+          confidence: parsed.confidence,
+          messageText: message.text,
+          senderName,
+          extractedNames: nameCandidates,
+          textSignals: { email: signals.email, phone: signals.phone },
+          actorId: null,
+          requestId: eventId,
         }),
       )
       await step.run('mark-processed', async () => {
@@ -404,7 +400,12 @@ export const slackEventReceived = inngest.createFunction(
           data: { processedAt: new Date() },
         })
       })
-      return { ok: true, parked: true, reason: 'no_contact_match' }
+      return {
+        ok: true,
+        parked: finalized.parked,
+        dismissed: finalized.dismissed,
+        reason: 'no_contact_match',
+      }
     }
 
     // 4. Write the slack_summary Interaction (idempotent on event_id).
