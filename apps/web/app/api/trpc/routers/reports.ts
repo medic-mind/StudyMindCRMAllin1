@@ -5,6 +5,7 @@ import { createId } from '@paralleldrive/cuid2'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { isAnswered } from '@studymind/core/calls'
 import {
   classifyStoredCall,
   describePeakWindow,
@@ -419,6 +420,13 @@ export const reportsRouter = router({
           direction: 'inbound' | 'outbound' | null
           durationSec: number
           isVoicemail: boolean
+          // Answered classification signals — shared with the missed-calls
+          // workspace so the report's "answered" / "missed" never disagrees with
+          // /calls. answered_at is authoritative; the webhook event signal
+          // reclassifies legacy rows; duration is the last-resort fallback.
+          answeredAt?: number | null
+          hasLiveEvent: boolean
+          answeredEvent: boolean
           provider: 'aircall' | 'google_voice' | 'manual'
           /** Counterparty E.164, used as the tray label when no Contact. */
           rawDigits: string | null
@@ -450,10 +458,17 @@ export const reportsRouter = router({
                 : null
             const durationSec =
               typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
-            const event = p['aircallEvent']
+            const event = typeof p['aircallEvent'] === 'string' ? (p['aircallEvent'] as string) : null
             const isVoicemail =
               event === 'call.voicemail_left' ||
               (typeof p['voicemailUrl'] === 'string' && p['voicemailUrl'].length > 0)
+            const answeredAtRaw = p['answeredAt']
+            const answeredAt: number | null | undefined =
+              typeof answeredAtRaw === 'number'
+                ? answeredAtRaw
+                : answeredAtRaw === null
+                  ? null
+                  : undefined
             const rawDigits =
               typeof p['rawDigits'] === 'string' && p['rawDigits'].length > 0
                 ? (p['rawDigits'] as string)
@@ -467,6 +482,9 @@ export const reportsRouter = router({
                 direction,
                 durationSec,
                 isVoicemail,
+                ...(answeredAt !== undefined ? { answeredAt } : {}),
+                hasLiveEvent: event != null,
+                answeredEvent: event === 'call.answered',
                 provider,
                 rawDigits,
               })
@@ -474,6 +492,10 @@ export const reportsRouter = router({
               if (durationSec > prev.durationSec) prev.durationSec = durationSec
               if (prev.direction == null && direction != null) prev.direction = direction
               if (isVoicemail) prev.isVoicemail = true
+              if (answeredAt != null && prev.answeredAt == null) prev.answeredAt = answeredAt
+              else if (answeredAt === null && prev.answeredAt === undefined) prev.answeredAt = null
+              if (event != null) prev.hasLiveEvent = true
+              if (event === 'call.answered') prev.answeredEvent = true
               if (!prev.rawDigits && rawDigits) prev.rawDigits = rawDigits
               if (r.occurredAt < prev.occurredAt) prev.occurredAt = r.occurredAt
             }
@@ -503,9 +525,12 @@ export const reportsRouter = router({
           const inbound = calls.filter((c) => c.direction === 'inbound').length
           const outbound = calls.filter((c) => c.direction === 'outbound').length
           const voicemails = calls.filter((c) => c.isVoicemail).length
-          const missed = calls.filter((c) => !c.isVoicemail && c.durationSec === 0).length
-          const answered = total - voicemails - missed
-          const answeredCalls = calls.filter((c) => !c.isVoicemail && c.durationSec > 0)
+          // Answered vs missed by the shared classification (answered_at / event
+          // signal / duration fallback), so a rung-out call whose duration counts
+          // ring time is a MISS here just like on /calls — not an "answered" call.
+          const answeredCalls = calls.filter((c) => isAnswered(c))
+          const answered = answeredCalls.length
+          const missed = calls.filter((c) => !c.isVoicemail && !isAnswered(c)).length
           const avgDurationSec =
             answeredCalls.length === 0
               ? 0
@@ -601,7 +626,7 @@ export const reportsRouter = router({
           ;(peak[lp.dow] as number[])[lp.hour] = ((peak[lp.dow] as number[])[lp.hour] ?? 0) + 1
           hourly[lp.hour] = (hourly[lp.hour] ?? 0) + 1
           if (peakWindows.length > 0 && isPeakInstant(peakWindows, lp)) {
-            const answered = !c.isVoicemail && c.durationSec > 0
+            const answered = isAnswered(c)
             peakCalls += 1
             if (answered) peakAnswered += 1
             peakTalkSec += c.durationSec
@@ -636,7 +661,9 @@ export const reportsRouter = router({
         ] as const
         const durationBucketCounts = DURATION_BUCKETS.map(() => 0)
         for (const c of calls) {
-          if (c.isVoicemail || c.durationSec === 0) continue
+          // Only answered calls have real talk time; a rung-out call's duration is
+          // ring time, so keep it out of the talk-duration histogram.
+          if (!isAnswered(c)) continue
           const idx = DURATION_BUCKETS.findIndex((b) => c.durationSec < b.max)
           const safe = idx === -1 ? DURATION_BUCKETS.length - 1 : idx
           durationBucketCounts[safe] = (durationBucketCounts[safe] ?? 0) + 1
@@ -682,7 +709,7 @@ export const reportsRouter = router({
 
         // Recent missed + voicemail trays (last 20 each, newest first).
         const missedRecent = calls
-          .filter((c) => !c.isVoicemail && c.durationSec === 0)
+          .filter((c) => !c.isVoicemail && !isAnswered(c))
           .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
           .slice(0, 20)
         const voicemailRecent = calls
@@ -806,7 +833,7 @@ export const reportsRouter = router({
           if (earliest.getTime() >= c.occurredAt.getTime() - 60_000) {
             coldCalls += 1
             coldTalkSec += c.durationSec
-            if (!c.isVoicemail && c.durationSec > 0) coldAnswered += 1
+            if (isAnswered(c)) coldAnswered += 1
           }
         }
 

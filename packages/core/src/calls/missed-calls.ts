@@ -28,6 +28,17 @@ export interface RawCall {
    * missed calls as answered.
    */
   answeredAt?: number | null
+  /**
+   * This row is a live WEBHOOK event (it carries `payload.aircallEvent`). Webhook
+   * ingestion writes one row per Aircall event; sync/backfill rows have no
+   * `aircallEvent`. Lets us classify legacy webhook calls (synced before
+   * `answeredAt` was captured) at READ TIME with no refetch: a webhook call that
+   * has event rows but none of them a `call.answered` was never picked up.
+   */
+  hasLiveEvent?: boolean
+  /** This row is specifically the `call.answered` webhook event — an
+   *  Aircall-confirmed pick-up, reliable regardless of `duration`. */
+  answeredEvent?: boolean
   rawDigits: string | null
   contactId: string | null
 }
@@ -43,6 +54,10 @@ export interface NormalizedCall {
   isVoicemail: boolean
   /** See {@link RawCall.answeredAt}. Collapsed across the call's event rows. */
   answeredAt?: number | null
+  /** True if ANY of the call's rows was a live webhook event. */
+  hasLiveEvent?: boolean
+  /** True if ANY of the call's rows was the `call.answered` webhook event. */
+  answeredEvent?: boolean
   rawDigits: string | null
   contactId: string | null
 }
@@ -77,9 +92,21 @@ export function isAnswered(c: {
   durationSec: number
   isVoicemail: boolean
   answeredAt?: number | null
+  hasLiveEvent?: boolean
+  answeredEvent?: boolean
 }): boolean {
   if (c.isVoicemail) return false
+  // 1. Authoritative: Aircall's answered_at (captured on new rows either path).
   if (c.answeredAt !== undefined) return c.answeredAt !== null
+  // 2. Legacy WEBHOOK rows (no answeredAt): Aircall fires a distinct
+  //    `call.answered` event only when a human picks up. If the call has webhook
+  //    event rows but none is `call.answered`, it was never answered — this is
+  //    what makes a rung-out call (duration = ring time > 0) show as a miss with
+  //    NO refetch or migration.
+  if (c.answeredEvent) return true
+  if (c.hasLiveEvent) return false
+  // 3. Legacy sync/backfill-only rows (no answeredAt, no event): best-effort
+  //    talk-time heuristic until the sync re-enriches them with answeredAt.
   return c.durationSec > 0
 }
 
@@ -166,6 +193,8 @@ export function projectCallInteraction(row: {
       : answeredAtRaw === null
         ? null
         : undefined
+  // A live webhook row carries the Aircall event name; sync/backfill rows don't.
+  const aircallEvent = typeof p['aircallEvent'] === 'string' ? (p['aircallEvent'] as string) : null
   return {
     interactionId: row.id,
     aircallCallId,
@@ -174,6 +203,8 @@ export function projectCallInteraction(row: {
     durationSec,
     isVoicemail: isVoicemailPayload(p),
     ...(answeredAt !== undefined ? { answeredAt } : {}),
+    hasLiveEvent: aircallEvent != null,
+    answeredEvent: aircallEvent === 'call.answered',
     rawDigits: callNumberFromPayload(p),
     contactId: row.contactId,
   }
@@ -196,6 +227,8 @@ export function normalizeCalls(rows: ReadonlyArray<RawCall>): NormalizedCall[] {
         durationSec: r.durationSec,
         isVoicemail: r.isVoicemail,
         ...(r.answeredAt !== undefined ? { answeredAt: r.answeredAt } : {}),
+        hasLiveEvent: r.hasLiveEvent ?? false,
+        answeredEvent: r.answeredEvent ?? false,
         rawDigits: r.rawDigits,
         contactId: r.contactId,
       })
@@ -209,6 +242,10 @@ export function normalizeCalls(rows: ReadonlyArray<RawCall>): NormalizedCall[] {
     // explicit captured null upgrades a still-unknown (legacy/undefined) value.
     if (r.answeredAt != null && prev.answeredAt == null) prev.answeredAt = r.answeredAt
     else if (r.answeredAt === null && prev.answeredAt === undefined) prev.answeredAt = null
+    // Event signals OR across the call's rows: any webhook row ⇒ live; any
+    // call.answered row ⇒ the call was answered.
+    if (r.hasLiveEvent) prev.hasLiveEvent = true
+    if (r.answeredEvent) prev.answeredEvent = true
     if (!prev.rawDigits && r.rawDigits) prev.rawDigits = r.rawDigits
     if (!prev.contactId && r.contactId) prev.contactId = r.contactId
   }

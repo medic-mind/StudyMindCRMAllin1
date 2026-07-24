@@ -23,6 +23,8 @@ function raw(p: Partial<RawCall>): RawCall {
     // Include answeredAt only when the test sets it (number = answered, null =
     // captured-but-not-answered); leaving it out models a legacy row.
     ...(p.answeredAt !== undefined ? { answeredAt: p.answeredAt } : {}),
+    ...(p.hasLiveEvent !== undefined ? { hasLiveEvent: p.hasLiveEvent } : {}),
+    ...(p.answeredEvent !== undefined ? { answeredEvent: p.answeredEvent } : {}),
     rawDigits: p.rawDigits ?? '+447700900001',
     contactId: p.contactId ?? null,
   }
@@ -47,9 +49,23 @@ describe('isAnswered', () => {
     expect(isAnswered({ durationSec: 30, isVoicemail: true, answeredAt: null })).toBe(false)
   })
 
-  it('falls back to the duration heuristic for legacy rows (answeredAt absent)', () => {
+  it('falls back to the duration heuristic ONLY for backfill-only legacy rows', () => {
     expect(isAnswered({ durationSec: 5, isVoicemail: false })).toBe(true)
     expect(isAnswered({ durationSec: 0, isVoicemail: false })).toBe(false)
+  })
+
+  it('uses the webhook event signal for legacy rows with no answeredAt', () => {
+    // A legacy WEBHOOK rung-out call: it has event rows (hasLiveEvent) but none
+    // was call.answered (answeredEvent false). Even with duration = ring time,
+    // it is NOT answered — this reclassifies it as a miss at read time, no
+    // refetch. This is the core fix for "the missed call didn't show".
+    expect(
+      isAnswered({ durationSec: 22, isVoicemail: false, hasLiveEvent: true, answeredEvent: false }),
+    ).toBe(false)
+    // A legacy webhook call that WAS answered carries the call.answered event.
+    expect(
+      isAnswered({ durationSec: 90, isVoicemail: false, hasLiveEvent: true, answeredEvent: true }),
+    ).toBe(true)
   })
 })
 
@@ -88,6 +104,8 @@ describe('projectCallInteraction', () => {
       direction: 'inbound',
       durationSec: 12,
       isVoicemail: false,
+      hasLiveEvent: false,
+      answeredEvent: false,
       rawDigits: '+447700900001',
       contactId: 'c_1',
     })
@@ -234,6 +252,44 @@ describe('deriveMissedCalls', () => {
     const calls = normalizeCalls([
       raw({ aircallCallId: 1, direction: 'inbound', durationSec: 210, answeredAt: 1746783545 }),
     ])
+    expect(deriveMissedCalls(calls, noReviews)).toHaveLength(0)
+  })
+
+  it('reclassifies a LEGACY webhook rung-out call as a miss end-to-end (no answeredAt)', () => {
+    // Reproduces the real bug: a rung-out inbound call stored via webhook BEFORE
+    // answeredAt capture. Its event rows are call.started + call.ended (ring time
+    // 22s, no call.answered), so the old duration>0 check hid it as "answered".
+    // Projected + collapsed, it must now surface as an outstanding miss with no
+    // refetch or migration.
+    const occurredAt = new Date('2026-07-20T09:00:00Z')
+    const rows = [
+      { id: 'i1', occurredAt, contactId: 'c1', payload: {
+        aircallCallId: 7788, aircallEvent: 'call.started', direction: 'inbound',
+        durationSec: 0, rawDigits: '+447415802490' } },
+      { id: 'i2', occurredAt: new Date('2026-07-20T09:00:22Z'), contactId: 'c1', payload: {
+        aircallCallId: 7788, aircallEvent: 'call.ended', direction: 'inbound',
+        durationSec: 22, rawDigits: '+447415802490' } },
+    ]
+    const calls = normalizeCalls(rows.map(projectCallInteraction))
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.hasLiveEvent).toBe(true)
+    expect(calls[0]?.answeredEvent).toBe(false)
+    const out = deriveMissedCalls(calls, noReviews)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.state).toBe('outstanding')
+  })
+
+  it('does NOT list a legacy webhook call that has a call.answered event', () => {
+    const occurredAt = new Date('2026-07-20T09:00:00Z')
+    const rows = [
+      { id: 'a1', occurredAt, contactId: 'c1', payload: {
+        aircallCallId: 8899, aircallEvent: 'call.answered', direction: 'inbound',
+        durationSec: 0, rawDigits: '+447415802490' } },
+      { id: 'a2', occurredAt: new Date('2026-07-20T09:03:00Z'), contactId: 'c1', payload: {
+        aircallCallId: 8899, aircallEvent: 'call.ended', direction: 'inbound',
+        durationSec: 180, rawDigits: '+447415802490' } },
+    ]
+    const calls = normalizeCalls(rows.map(projectCallInteraction))
     expect(deriveMissedCalls(calls, noReviews)).toHaveLength(0)
   })
 
