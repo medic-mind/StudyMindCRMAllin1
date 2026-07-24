@@ -57,6 +57,16 @@ export interface AutoComplaintInput {
   /** Go-live cutoff; defaults to the env-resolved value. Passed explicitly by
    *  the reprocess backfill so a re-run uses the same window. */
   cutoff?: Date
+  /**
+   * This message is a REPLY inside a thread (its `thread_ts` differs from its
+   * own `ts`), not the thread's starting message. A complaint is opened only
+   * from the thread's STARTING message — the reply's body is the follow-up, not
+   * a new complaint (operator direction 2026-07). Replies are still archived as
+   * mentions/summaries by the caller; they just never spawn their own Complaint
+   * (which used to create one complaint per reply, each mis-attributed to
+   * whoever the reply happened to name). Defaults to false = treat as a root.
+   */
+  isThreadReply?: boolean
 }
 
 export interface AutoComplaintResult {
@@ -73,6 +83,12 @@ export async function maybeRaiseComplaintFromSlack(
 
   // Cheap channel gate before any parse / DB match.
   if (!isComplaintChannel(input.channelName)) return { raised: false, complaintId: null }
+
+  // Only the thread's STARTING message opens a complaint. A reply is the
+  // follow-up conversation, not a new complaint — raising one per reply flooded
+  // the queue and mis-attributed each to whoever the reply named (the "every
+  // reply went to Neslie" bug). Replies are still captured as mentions upstream.
+  if (input.isThreadReply) return { raised: false, complaintId: null }
 
   const sourceKey = `slack:${input.channelId}:${input.slackTs}`
   const existing = await db.complaint

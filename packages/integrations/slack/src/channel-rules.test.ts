@@ -5,6 +5,7 @@ import {
   COMPLAINT_AUTO_RAISE_HORIZON_MS,
   isCallSummarySlackChannel,
   isComplaintChannel,
+  isThreadReplyMessage,
   shouldAutoRaiseComplaint,
 } from './channel-rules'
 
@@ -23,6 +24,23 @@ describe('isCallSummarySlackChannel', () => {
     expect(isCallSummarySlackChannel('general')).toBe(false)
     expect(isCallSummarySlackChannel(null)).toBe(false)
     expect(isCallSummarySlackChannel(undefined)).toBe(false)
+  })
+})
+
+describe('isThreadReplyMessage', () => {
+  it('treats a message with a differing thread_ts as a reply', () => {
+    expect(isThreadReplyMessage({ ts: '1700000005.000200', thread_ts: '1700000000.000100' })).toBe(
+      true,
+    )
+  })
+  it('treats the thread STARTING message (thread_ts === ts) as a root', () => {
+    expect(isThreadReplyMessage({ ts: '1700000000.000100', thread_ts: '1700000000.000100' })).toBe(
+      false,
+    )
+  })
+  it('treats a standalone message (no thread_ts) as a root', () => {
+    expect(isThreadReplyMessage({ ts: '1700000000.000100' })).toBe(false)
+    expect(isThreadReplyMessage({ ts: '1700000000.000100', thread_ts: null })).toBe(false)
   })
 })
 

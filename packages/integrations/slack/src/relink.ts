@@ -21,7 +21,7 @@ import { db } from '@studymind/db'
 import { inngest } from '@studymind/jobs'
 
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
-import { isCallLogChannel } from './channel-rules'
+import { isCallLogChannel, isComplaintChannel } from './channel-rules'
 import { slackTrayFullAuto } from './config'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { parseCallLogClient } from './complaint-parse'
@@ -141,17 +141,14 @@ export const RELINK_THREAD_FETCHES = 40
 export const RETRO_LINK_BUDGET = 5000
 
 /**
- * A parked reply often names no customer of its own because its thread ROOT did
- * ("Sampada Neupane +447588744609"). The live ingestion now reads the parent,
- * but rows parked BEFORE that need it on retry. We recover the message's
- * `thread_ts` from the archived Slack ProviderEvent (no extra column), then
- * fetch the root's text. Best-effort: returns null on any miss so matching
- * falls back to the reply alone.
+ * Recover a parked message's thread_ts from the archived Slack ProviderEvent
+ * (no extra column). Returns the root's ts when this message is a REPLY, or null
+ * when it is a thread root/standalone (no thread_ts, or thread_ts equal to its
+ * own ts) or the event isn't found. A parked reply often names no customer of
+ * its own because its thread ROOT did ("Sampada Neupane +447588744609"), so this
+ * powers both the thread-parent inheritance and the complaint reply-gate.
  */
-async function threadParentTextForRow(row: {
-  slackTs: string
-  channelId: string
-}): Promise<string | null> {
+async function slackReplyThreadTs(row: { slackTs: string }): Promise<string | null> {
   const ev = await db.providerEvent.findFirst({
     where: { provider: 'slack', raw: { path: ['event', 'ts'], equals: row.slackTs } },
     select: { raw: true },
@@ -160,6 +157,15 @@ async function threadParentTextForRow(row: {
   const envelope = ev.raw as unknown as SlackEventEnvelope
   const threadTs = envelope.event?.thread_ts
   if (!threadTs || threadTs === row.slackTs) return null
+  return threadTs
+}
+
+async function threadParentTextForRow(row: {
+  slackTs: string
+  channelId: string
+}): Promise<string | null> {
+  const threadTs = await slackReplyThreadTs(row)
+  if (!threadTs) return null
   return resolveThreadParentText({ channelId: row.channelId, threadTs })
 }
 
@@ -504,6 +510,13 @@ async function relinkOneRow(
     // customer actually complained, not when the row was parked. Idempotent +
     // best-effort inside; channel-name lookups are cached per channel.
     if (target.contactId && row.messageText) {
+      // Only the thread's STARTING message opens a complaint. A parked reply
+      // that finally links must not spawn its own complaint (the reply is the
+      // follow-up). Read the archived envelope's thread_ts only for complaint
+      // channels, so non-complaint relinks pay nothing extra.
+      const isThreadReply = isComplaintChannel(channelName)
+        ? (await slackReplyThreadTs(row)) !== null
+        : false
       await maybeRaiseComplaintFromSlack({
         contactId: target.contactId,
         channelId: row.channelId,
@@ -512,6 +525,7 @@ async function relinkOneRow(
         messageText: row.messageText,
         aiCategory: cand.category,
         occurredAt: slackTsToDate(row.slackTs),
+        isThreadReply,
       })
     }
 

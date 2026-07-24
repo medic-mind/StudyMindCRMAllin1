@@ -281,6 +281,9 @@ export const slackEventReceived = inngest.createFunction(
           messageText: message.text,
           aiCategory: null,
           occurredAt,
+          // `threadTs` is non-null only for a reply — only the thread's starting
+          // message opens a complaint (replies are the follow-up).
+          isThreadReply: threadTs !== null,
         }),
       )
       await step.run('mark-processed', async () => {
@@ -484,6 +487,9 @@ export const slackEventReceived = inngest.createFunction(
         messageText: message.text,
         aiCategory: parsed.category,
         occurredAt,
+        // `threadTs` is non-null only for a reply — only the thread's starting
+        // message opens a complaint (replies are the follow-up).
+        isThreadReply: threadTs !== null,
       }),
     )
 

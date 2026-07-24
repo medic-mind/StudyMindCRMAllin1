@@ -33,6 +33,10 @@ interface SlackSummaryPayload {
   slackTs?: unknown
   messageText?: unknown
   category?: unknown
+  /** The thread root's ts when this message was a reply (equals slackTs for a
+   *  root/standalone). Lets the reprocess skip replies — only the starting
+   *  message opens a complaint. */
+  threadTs?: unknown
 }
 
 const str = (v: unknown): string | null =>
@@ -81,6 +85,11 @@ export async function reprocessComplaintMentionsPage(
       if (!channelName) channelName = (await resolveSlackNames({ channelId })).channelName
       if (!isComplaintChannel(channelName)) continue
 
+      // Only the thread's starting message opens a complaint — a stored reply
+      // (threadTs present and different from its own ts) is skipped.
+      const threadTs = str(p.threadTs)
+      const isThreadReply = Boolean(threadTs && threadTs !== slackTs)
+
       const res = await maybeRaiseComplaintFromSlack({
         contactId: row.contactId,
         channelId,
@@ -90,6 +99,7 @@ export async function reprocessComplaintMentionsPage(
         aiCategory: str(p.category),
         occurredAt: row.occurredAt,
         cutoff,
+        isThreadReply,
       })
       if (res.raised) raised += 1
     } catch (err) {

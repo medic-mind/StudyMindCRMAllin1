@@ -52,6 +52,21 @@ export function isComplaintChannel(channelName: string | null | undefined): bool
   return channelName.toLowerCase().replace(/^#/u, '').includes('complaint')
 }
 
+/**
+ * A Slack message is a thread REPLY (not the thread's starting message) when it
+ * carries a `thread_ts` that differs from its own `ts`. A root/standalone
+ * message has no `thread_ts`, or one equal to its own `ts`. Only the starting
+ * message opens a complaint — replies are the follow-up conversation, so this is
+ * the guard that stops one complaint being raised per reply (each otherwise
+ * mis-attributed to whoever the reply happened to name).
+ */
+export function isThreadReplyMessage(msg: {
+  ts?: string | null
+  thread_ts?: string | null
+}): boolean {
+  return Boolean(msg.thread_ts && msg.thread_ts !== msg.ts)
+}
+
 /** Channels whose messages ARE call logs (#callsummaries, #post-trial-…,
  *  #anzcallsummaries, #…complaints…). In these, a full name on its own is a
  *  genuine customer reference, so the auto-onboard's name-only tier unlocks

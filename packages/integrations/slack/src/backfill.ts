@@ -39,7 +39,7 @@ import { inngest } from '@studymind/jobs'
 
 import { SLACK_API_BASE, listIngestChannelIds } from './client'
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
-import { isCallLogChannel, isComplaintChannel } from './channel-rules'
+import { isCallLogChannel, isComplaintChannel, isThreadReplyMessage } from './channel-rules'
 import { parseCallLogClient } from './complaint-parse'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { isSkippableSubtype } from './message-filter'
@@ -453,6 +453,9 @@ interface ProcessSlackInput {
 
 export async function processSlackMessage(input: ProcessSlackInput): Promise<{ matched: boolean }> {
   const { message, channelId } = input
+  // Only the thread's starting message opens a complaint; a reply is the
+  // follow-up, not a new complaint.
+  const isThreadReply = isThreadReplyMessage(message)
   // Human-authored text messages only. Skip non-messages, edits/joins (subtype)
   // and — like the live handler (message-filter.ts) — any bot/app post, so the
   // backfill never re-ingests the CRM's OWN #callsummaries announcement as a
@@ -603,6 +606,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
       messageText: message.text,
       aiCategory: null,
       occurredAt: occurredAtRules,
+      isThreadReply,
     })
     return { matched: true }
   }
@@ -722,6 +726,7 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
     messageText: message.text,
     aiCategory: parsed.category,
     occurredAt,
+    isThreadReply,
   })
   return { matched: true }
 }
