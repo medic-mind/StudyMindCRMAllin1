@@ -37,15 +37,20 @@ export interface AutoMergeResult {
 }
 
 /**
- * Find and merge confident duplicate contacts.
+ * Find and merge duplicate contacts (fully automatic — every cluster sharing an
+ * email or a phone is merged into its oldest member, no human step).
  *
  * @param actorId      audit actor — a user id (Run now) or `system:<job>` (cron).
  * @param actorUserId  FK written to `Contact.updatedById`; null for a system run.
+ * @param maxMerges    cap on merges for THIS call (default {@link MAX_MERGES_PER_RUN}).
+ *                     The interactive drain passes a smaller chunk so each HTTP
+ *                     request stays snappy and loops until drained.
  */
 export async function runAutoMergeDuplicates(
   db: PrismaClient,
-  opts: { actorId: string; actorUserId: string | null },
+  opts: { actorId: string; actorUserId: string | null; maxMerges?: number },
 ): Promise<AutoMergeResult> {
+  const cap = Math.max(1, opts.maxMerges ?? MAX_MERGES_PER_RUN)
   const contacts = await db.contact.findMany({
     where: {
       deletedAt: null,
@@ -69,10 +74,10 @@ export async function runAutoMergeDuplicates(
   let skipped = 0
   let clustersMerged = 0
   for (const plan of plans) {
-    if (merged >= MAX_MERGES_PER_RUN) break
+    if (merged >= cap) break
     let mergedInThisCluster = false
     for (const loserId of plan.loserIds) {
-      if (merged >= MAX_MERGES_PER_RUN) break
+      if (merged >= cap) break
       try {
         const result = await mergeContacts(db, {
           survivorId: plan.survivorId,
@@ -93,8 +98,9 @@ export async function runAutoMergeDuplicates(
         merged += 1
         mergedInThisCluster = true
       } catch {
-        // Restricted-access conflict or a race (loser already merged/deleted).
-        // Never fail the batch — leave this pair for the manual review page.
+        // A restricted-access DSL conflict (§41.1 — the one case a human still
+        // resolves) or a race (loser already merged/deleted). Never fail the
+        // batch: skip this pair and carry on. Everything else is auto-merged.
         skipped += 1
       }
     }

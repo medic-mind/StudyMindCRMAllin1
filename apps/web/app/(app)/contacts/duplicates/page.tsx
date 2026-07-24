@@ -1,8 +1,11 @@
-// Duplicate-contacts cleanup. Surfaces clusters of contacts that share a
-// normalised email or phone (so the same person, saved twice, lines up) and
-// lets a Manager+ merge each cluster with one click. The human confirms every
-// merge (§3 — never auto-merge); merging re-parents all history onto the
-// survivor and soft-deletes the rest via the existing contact.bulkMerge path.
+// Duplicate-contacts page. Duplicates are merged FULLY AUTOMATICALLY (ADR 0047,
+// widened 2026-07) — every contact sharing an email or a phone is combined into
+// its oldest record, hourly and again whenever this page is opened (the client
+// drains the backlog synchronously so a self-hosted Inngest that never fires the
+// cron can't leave duplicates asking for a manual merge). This page therefore
+// normally shows nothing; the manual per-cluster merge remains as a fallback for
+// when automation is paused (CONTACTS_AUTO_MERGE=off) or a group genuinely can't
+// be auto-merged (a restricted-access safeguarding conflict, §41.1).
 
 import { TRPCError } from '@trpc/server'
 
@@ -59,19 +62,14 @@ export default async function DuplicateContactsPage() {
     <>
       <PageHeader
         title="Duplicate contacts"
-        subtitle="The same person saved more than once — grouped by shared email or phone number. Merge a group to combine all their history onto one contact. Nothing is merged until you confirm it."
+        subtitle="The same person saved twice is merged automatically — combined into their oldest record with all their history. This page finishes any outstanding merges the moment you open it, so you don't need to review or confirm anything."
         breadcrumbs={[
           { label: 'B2C Customers', href: '/contacts' },
           { label: 'Duplicates', href: '/contacts/duplicates' },
         ]}
       />
       <PageBody>
-        <DuplicatesList
-          initialClusters={data.clusters}
-          totalClusters={data.totalClusters}
-          duplicateContacts={data.duplicateContacts}
-          capped={data.capped}
-        />
+        <DuplicatesList initialData={data} />
       </PageBody>
     </>
   )

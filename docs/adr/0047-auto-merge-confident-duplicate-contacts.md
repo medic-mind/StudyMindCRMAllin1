@@ -65,6 +65,31 @@ human. Pure decision: `planAutoMerges` in `packages/core/src/contact/duplicates.
 - **Restricted-access safe**: the DSL-conflict guards in `mergeContacts` still
   hard-throw; the unattended job catches and skips rather than forcing a merge.
 
+## Amendment (2026-07): widen to every cluster + Inngest-independent drain
+
+Two changes after the operator ran this in production:
+
+1. **Merge every cluster, no manual review.** The confident-only scoping above
+   is superseded by an operator decision: `planAutoMerges({ includeAmbiguous:
+   true })` merges the WHOLE duplicate cluster (any contacts sharing an email or
+   a phone) into its oldest member with no human step — including the phone-only/
+   different-name case (a possible shared family landline, §41.1). Nothing is
+   parked for review; `CONTACTS_AUTO_MERGE=off` is the only control.
+
+2. **Self-drain on page open (Inngest-independent).** On self-hosted Inngest the
+   hourly `contacts/auto-merge-duplicates` cron often doesn't fire, so the
+   backlog sat and `/contacts/duplicates` kept (wrongly) prompting a manual
+   merge — the automation looked "off". Fix, mirroring the Slack-mentions tray:
+   `contact.duplicates.drainNow` runs the SAME merge synchronously in the
+   request, in bounded ~400-merge chunks, and the page auto-loops it on mount
+   until a pass merges nothing. So opening the page clears the whole backlog with
+   no human step and no cron dependency; the cron stays as the background
+   backstop. `drainNow` respects `CONTACTS_AUTO_MERGE=off` (paused → fall back to
+   the manual per-group merge). The explicit `autoMergeNow` trigger ignores the
+   kill-switch (a human asked to merge). The page is now normally empty and never
+   asks for review — the manual UI only appears when automation is paused or a
+   group genuinely can't be auto-merged (a restricted-access conflict).
+
 ## Consequences
 
 - The §3/§35/§41.1 wording is updated in the same change to record this single

@@ -1,42 +1,153 @@
 'use client'
 
-// Client island for the duplicates cleanup page. Each cluster lets the agent
-// pick the survivor (defaults to the oldest contact) and merge the rest into
-// it. Reuses contact.bulkMerge — audited, re-parents all history, soft-deletes
-// the losers (§3: the agent confirms each merge).
+// Client island for the duplicates page. Duplicate contacts are merged FULLY
+// AUTOMATICALLY (ADR 0047, widened 2026-07) — every contact sharing an email or
+// a phone is combined into its oldest record, with no human step. This island
+// just finishes that work on demand: on open it drains the whole backlog
+// synchronously (`contact.duplicates.drainNow`, looping until nothing is left to
+// merge), so a self-hosted Inngest that never fires the hourly cron can't leave
+// duplicates piling up asking for a manual merge. The only human control is
+// CONTACTS_AUTO_MERGE=off, which pauses the automation — then, and only then, the
+// manual per-group merge below is offered (the "fall back to fully-manual" path
+// of ADR 0047). A group that genuinely can't be auto-merged (a restricted-access
+// safeguarding conflict, §41.1) is the one other case a human still resolves.
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
-import { trpc } from '@/lib/trpc/client'
+import { trpc, type RouterOutputs } from '@/lib/trpc/client'
 
-interface Member {
-  id: string
-  name: string
-  email: string | null
-  phoneE164: string | null
-  kind: string
-  createdAt: Date
-  referralSource: string | null
-}
-interface Cluster {
-  survivorId: string
-  members: Member[]
+type FindResult = RouterOutputs['contact']['duplicates']['find']
+type Cluster = FindResult['clusters'][number]
+type Member = Cluster['members'][number]
+
+export function DuplicatesList({ initialData }: { initialData: FindResult }) {
+  const utils = trpc.useUtils()
+
+  // Live query seeded from the server render, so the list reflects the current
+  // state — in particular it empties out after the auto-drain below invalidates.
+  const findQuery = trpc.contact.duplicates.find.useQuery({ limit: 100 }, { initialData })
+  const data = findQuery.data ?? initialData
+
+  // Auto-drain on open — no button, no Inngest (mirrors the Slack-mentions tray).
+  // Run the fully-automatic merge synchronously in bounded chunks, looping until
+  // a pass merges nothing (backlog drained, or only an unmergeable conflict
+  // remains). Once per mount; a ref guards re-entry.
+  const drain = trpc.contact.duplicates.drainNow.useMutation()
+  const hasBacklog = (initialData.totalClusters ?? 0) > 0
+  const [draining, setDraining] = useState(hasBacklog)
+  const [autoOff, setAutoOff] = useState(false)
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    if (!hasBacklog) return
+    let cancelled = false
+    void (async () => {
+      setDraining(true)
+      try {
+        // Bounded loop; each call merges up to a few hundred. 40 iterations
+        // clears a very large historic backlog — any remainder clears on the
+        // next visit or the hourly cron.
+        for (let i = 0; i < 40; i += 1) {
+          const r = await drain.mutateAsync({})
+          if (cancelled) return
+          if (r.disabled) {
+            setAutoOff(true)
+            break
+          }
+          if (r.done) break
+        }
+      } catch {
+        // Best-effort — the hourly cron is the backstop.
+      } finally {
+        if (!cancelled) {
+          setDraining(false)
+          await utils.contact.duplicates.find.invalidate()
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Run once on mount; the mutation + utils objects are stable.
+  }, [])
+
+  const header = (
+    <div className="rounded-lg border border-primary-200 bg-primary-50/60 px-4 py-3 text-sm text-primary-900">
+      <p className="font-semibold">
+        Duplicate contacts are merged automatically — you don&apos;t need this page.
+      </p>
+      <p className="mt-1 text-xs leading-relaxed text-primary-900/80">
+        Whenever the same person is saved twice — a shared email, or the same phone number — the CRM
+        combines them into their oldest record and moves all their history across. It runs every hour
+        and again the moment you open this page, so nothing ever waits for you to review or confirm
+        it.
+        {draining ? ' Finishing the last few now…' : ''}
+      </p>
+    </div>
+  )
+
+  // Still merging the backlog — never flash the manual "merge these" UI.
+  if (draining) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-8 text-center text-sm text-neutral-600">
+          Merging duplicates…
+        </div>
+      </div>
+    )
+  }
+
+  // Kill-switch on (CONTACTS_AUTO_MERGE=off): the automation is paused, so fall
+  // back to fully-manual review (ADR 0047).
+  if (autoOff) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+          <strong>Automatic merging is turned off</strong> (<code>CONTACTS_AUTO_MERGE=off</code>).
+          Review and merge each group by hand below, or remove that setting to turn automation back
+          on.
+        </div>
+        <ManualReview data={data} />
+      </div>
+    )
+  }
+
+  // Auto-merge is on. If anything is left it couldn't be merged automatically
+  // (e.g. a restricted-access safeguarding conflict, §41.1) — the one case a
+  // human still resolves. Otherwise there is genuinely nothing to do.
+  if (data.clusters.length === 0) {
+    return (
+      <div className="space-y-4">
+        {header}
+        <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-8 text-center text-sm text-neutral-600">
+          All clear — every contact with a shared email or phone is already a single record. New
+          duplicates are merged automatically as they appear.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {header}
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+        A few groups couldn&apos;t be merged automatically and need a manual check — usually a
+        restricted-access safeguarding conflict.
+      </div>
+      <ManualReview data={data} />
+    </div>
+  )
 }
 
-export function DuplicatesList({
-  initialClusters,
-  totalClusters,
-  duplicateContacts,
-  capped,
-}: {
-  initialClusters: Cluster[]
-  totalClusters: number
-  duplicateContacts: number
-  capped: boolean
-}) {
+// Manual per-group merge, reused for the two fallback cases above. Merging runs
+// through the audited contact.bulkMerge path — re-parents all history onto the
+// survivor and soft-deletes the losers.
+function ManualReview({ data }: { data: FindResult }) {
   const utils = trpc.useUtils()
   const [done, setDone] = useState<Set<string>>(new Set())
   const [bulkRunning, setBulkRunning] = useState(false)
@@ -53,32 +164,17 @@ export function DuplicatesList({
     onError: (e) => toast.error(e.message ?? 'Could not merge'),
   })
 
-  // Run the automatic confident-merge immediately (the hourly cron does the
-  // same). Clears the clear-cut duplicates; whatever it leaves needs a human.
-  const autoMerge = trpc.contact.duplicates.autoMergeNow.useMutation({
-    onSuccess: (res) => {
-      toast.success(
-        res.merged > 0
-          ? `Auto-merged ${res.merged} duplicate${res.merged === 1 ? '' : 's'}`
-          : 'No confident duplicates to auto-merge',
-      )
-      void utils.contact.duplicates.find.invalidate()
-    },
-    onError: (e) => toast.error(e.message ?? 'Auto-merge failed'),
-  })
+  const remaining = data.clusters.filter((c) => !done.has(c.survivorId))
 
-  const remaining = initialClusters.filter((c) => !done.has(c.survivorId))
-
-  // Bulk action: merge EVERY shown group, oldest contact kept in each.
-  // Sequential so one bad group can't abort the rest; the human confirms the
-  // whole batch up-front (§3 — confirmed, once for the batch).
+  // Merge EVERY shown group in one go, keeping the oldest contact in each.
+  // Sequential so one bad group can't abort the rest; confirmed once for the
+  // batch.
   const mergeAll = async () => {
-    const groups = initialClusters.filter((c) => !done.has(c.survivorId))
-    if (groups.length === 0) return
-    const losers = groups.reduce((n, g) => n + g.members.length - 1, 0)
+    if (remaining.length === 0) return
+    const losers = remaining.reduce((n, g) => n + g.members.length - 1, 0)
     const msg =
       'Merge ALL ' +
-      groups.length +
+      remaining.length +
       ' groups now? The OLDEST contact in each group is kept and ' +
       losers +
       ' duplicate contact(s) are merged into them. All history moves onto the kept contacts. This cannot be undone.'
@@ -86,7 +182,7 @@ export function DuplicatesList({
     setBulkRunning(true)
     setBulkProgress(0)
     let failures = 0
-    for (const g of groups) {
+    for (const g of remaining) {
       try {
         await merge.mutateAsync({
           survivorId: g.survivorId,
@@ -105,51 +201,27 @@ export function DuplicatesList({
     }
   }
 
-  const autoMergeBanner = (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm text-primary-900">
-      <span>
-        <strong>Auto-merge is on.</strong> Confident duplicates — a shared email, or the same
-        phone <em>and</em> name — are merged automatically every hour. Anything below shares only a
-        phone with a different name (e.g. a family landline), so it needs your eye.
-      </span>
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        disabled={autoMerge.isPending}
-        onClick={() => autoMerge.mutate({})}
-      >
-        {autoMerge.isPending ? 'Merging…' : 'Run auto-merge now'}
-      </Button>
-    </div>
-  )
-
-  if (initialClusters.length === 0) {
+  if (remaining.length === 0) {
     return (
-      <div className="space-y-4">
-        {autoMergeBanner}
-        <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-8 text-center text-sm text-neutral-600">
-          No duplicate contacts to review — everyone with a shared email or phone is already a
-          single record, and confident duplicates are merged automatically.
-        </div>
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        All shown duplicates merged. Refresh to load any remaining groups.
       </div>
     )
   }
 
   return (
-    <div className="space-y-4">
-      {autoMergeBanner}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm text-neutral-700">
         <span>
-          Found <strong>{totalClusters}</strong> group
-          {totalClusters === 1 ? '' : 's'} of duplicates ({duplicateContacts} contacts).{' '}
-          {capped ? 'Showing the first 100 — re-run after merging to see more. ' : ''}
+          <strong>{data.totalClusters}</strong> group{data.totalClusters === 1 ? '' : 's'} to review
+          ({data.duplicateContacts} contacts).{' '}
+          {data.capped ? 'Showing the first 100 — refresh after merging to see more. ' : ''}
           Pick the contact to keep per group, or merge everything in one go.
         </span>
         <Button
           type="button"
           size="sm"
-          disabled={bulkRunning || merge.isPending || remaining.length === 0}
+          disabled={bulkRunning || merge.isPending}
           onClick={() => void mergeAll()}
         >
           {bulkRunning
@@ -157,12 +229,6 @@ export function DuplicatesList({
             : `Merge all ${remaining.length} groups (keep oldest)`}
         </Button>
       </div>
-
-      {remaining.length === 0 ? (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-          All shown duplicates merged. Refresh to load any remaining groups.
-        </div>
-      ) : null}
 
       <ul className="space-y-3">
         {remaining.map((cluster) => (
@@ -219,7 +285,7 @@ function ClusterCard({
         </Button>
       </div>
       <ul className="divide-y divide-neutral-100">
-        {cluster.members.map((m) => (
+        {cluster.members.map((m: Member) => (
           <li key={m.id} className="flex items-center gap-3 py-1.5 text-sm">
             <input
               type="radio"
