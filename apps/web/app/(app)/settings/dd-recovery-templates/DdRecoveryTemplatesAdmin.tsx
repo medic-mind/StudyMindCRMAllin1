@@ -387,10 +387,11 @@ function RecoverySettingsPanel() {
             <div>
               <p className="text-sm font-semibold text-neutral-900">Automatic chasing</p>
               <p className="text-xs text-neutral-500">
-                When on, every new recovery case (everyone who cancels or underpays a Direct Debit)
-                is chased automatically — escalating reminders on the channels below until they pay
-                or set the Direct Debit back up. No per-case setup. Cases you&apos;ve configured or
-                paused by hand are never overridden.
+                <span className="font-medium text-neutral-700">On by default.</span> Every new
+                recovery case (everyone who cancels or underpays a Direct Debit) is chased
+                automatically — escalating reminders on the channels below until they pay or set the
+                Direct Debit back up. The only thing it needs is the re-signup link below. No
+                per-case setup; cases you&apos;ve configured or paused by hand are never overridden.
               </p>
             </div>
             <label className="flex shrink-0 items-center gap-2 text-sm font-medium text-neutral-800">
