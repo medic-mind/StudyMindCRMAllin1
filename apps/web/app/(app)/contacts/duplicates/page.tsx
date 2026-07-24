@@ -2,10 +2,11 @@
 // widened 2026-07) — every contact sharing an email or a phone is combined into
 // its oldest record, hourly and again whenever this page is opened (the client
 // drains the backlog synchronously so a self-hosted Inngest that never fires the
-// cron can't leave duplicates asking for a manual merge). This page therefore
-// normally shows nothing; the manual per-cluster merge remains as a fallback for
-// when automation is paused (CONTACTS_AUTO_MERGE=off) or a group genuinely can't
-// be auto-merged (a restricted-access safeguarding conflict, §41.1).
+// cron can't leave duplicates un-merged). There is NO manual merge on this page:
+// it only reports status — normally "all clear". The single control is
+// CONTACTS_AUTO_MERGE=off, which pauses the automation. Explicit hand-merging (a
+// power-user path, not a review queue) lives on the /contacts select-and-merge
+// tool, not here.
 
 import { TRPCError } from '@trpc/server'
 

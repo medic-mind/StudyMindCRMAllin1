@@ -84,11 +84,21 @@ Two changes after the operator ran this in production:
    request, in bounded ~400-merge chunks, and the page auto-loops it on mount
    until a pass merges nothing. So opening the page clears the whole backlog with
    no human step and no cron dependency; the cron stays as the background
-   backstop. `drainNow` respects `CONTACTS_AUTO_MERGE=off` (paused → fall back to
-   the manual per-group merge). The explicit `autoMergeNow` trigger ignores the
-   kill-switch (a human asked to merge). The page is now normally empty and never
-   asks for review — the manual UI only appears when automation is paused or a
-   group genuinely can't be auto-merged (a restricted-access conflict).
+   backstop. `drainNow` respects `CONTACTS_AUTO_MERGE=off` (paused → the page just
+   reports that automatic merging is off). The explicit `autoMergeNow` trigger
+   ignores the kill-switch (a human asked to merge) and is retained as an API but
+   no longer surfaced.
+
+3. **Zero manual UI on the duplicates page (operator direction: "0 manual
+   stuff").** `/contacts/duplicates` no longer offers ANY manual merge — no
+   per-cluster merge, no "merge all", no review queue. It is status-only:
+   normally "all clear"; "automatic merging is turned off" when the kill-switch
+   is set; and a read-only note (no button) for the rare group that genuinely
+   can't be auto-merged (a restricted-access safeguarding conflict, §41.1), which
+   is correct to keep as separate records. Explicit hand-merging, if ever wanted,
+   lives on the `/contacts` table's select-2+-and-merge power-user tool
+   (`contact.bulkMerge`), which is a deliberate manual action, not a duplicate
+   review queue.
 
 ## Consequences
 
