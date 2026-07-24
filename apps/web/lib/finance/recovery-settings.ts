@@ -47,7 +47,8 @@ export function fallbackRecoverySettings(): EffectiveRecoverySettings {
     financePhone: process.env.DD_FINANCE_PHONE ?? '020 3305 9593',
     companyName: 'Medic Mind',
     companyAddress: '16 Tottenhall Rd, London N13 6HX',
-    autoChaseEnabled: envAutoChaseOverride() ?? false,
+    // ON by default (operator decision); DD_AUTO_CHASE=off pauses it.
+    autoChaseEnabled: envAutoChaseOverride() ?? true,
     autoChaseSetupLinkUrl: process.env.DD_AUTO_CHASE_LINK?.trim() || null,
     autoChaseEmail: true,
     autoChaseSms: false,

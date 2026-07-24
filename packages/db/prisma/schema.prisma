@@ -2213,9 +2213,10 @@ model DdRecoverySettings {
   /// (un-touched) recovery case — turning on the enabled channels + the global
   /// re-signup link + scheduling the first message — so the whole cancelled/
   /// underpaid Direct-Debit list is chased with no per-case human step. The
-  /// operator-authorised money-send exception (§3), gated by this one switch.
-  /// Default OFF: nothing auto-sends until the operator turns it on.
-  autoChaseEnabled Boolean @default(false)
+  /// operator-authorised money-send exception (§3). Default ON (operator
+  /// decision): the only input needed is the re-signup link below — until it is
+  /// set, an armed case still sends nothing. `DD_AUTO_CHASE=off` pauses it.
+  autoChaseEnabled Boolean @default(true)
   /// The ONE re-signup link (GoCardless / Stripe) auto-armed cases send. The
   /// resend_link goal cannot send without it, so an armed case waits on this.
   autoChaseSetupLinkUrl String?
