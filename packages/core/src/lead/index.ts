@@ -33,3 +33,9 @@ export {
 } from './match'
 export { buildPhoneMatch, type PhoneMatchQuery } from './phone-match'
 export { dialCountryFromPhone } from './dial-codes'
+export {
+  resolveLeadPhoneAndCountry,
+  type LeadCountrySource,
+  type ResolvePhoneCountryInput,
+  type ResolvePhoneCountryResult,
+} from './phone-country'

@@ -16,17 +16,13 @@ import { writeAuditLogEntry } from '@studymind/audit'
 import { logger } from '@studymind/core'
 import { createCard, findOrCreateSubject } from '@studymind/core/board'
 import {
-  asTypedPhoneFallback,
   buildPhoneMatch,
   chooseContactMatch,
   classifyLead,
-  composePhoneE164,
-  dialCountryFromPhone,
-  findDialCountry,
-  inferPhoneE164,
   londonWallToUtc,
   normaliseLead,
   planLeadRouting,
+  resolveLeadPhoneAndCountry,
   type ClassificationRuleset,
   type LeadClassification,
   type NormalisedLead,
@@ -293,100 +289,42 @@ export async function processLead(
     }
   }
 
-  // 5. Country + phone resolution. The form's country field wins; else
-  // geo-locate the captured IP. With a country in hand, a nationally-typed
-  // number ("928 812 118", Peru) composes to full E.164 so the contact always
-  // gets a dialable number (live bug: it only survived in the notes).
-  // Country resolution is a strict cheapest-first waterfall so a country is
-  // (almost) always found and a nationally-typed number always composes:
+  // 5. Country + phone resolution — single source of truth in
+  // @studymind/core/lead `resolveLeadPhoneAndCountry`. Signal priority,
+  // strongest first, so a customer-given country code ALWAYS wins (§16):
   //   (1) the form's own country field;
-  //   (2) IP geolocation of the captured visitor IP (free providers);
-  //   (3) the phone's OWN dial code, if it was typed in E.164 ("+51…" → PE) —
-  //       free + deterministic;
-  //   (4) the AI's inferred country (from the message, city/university named,
-  //       email domain) — the expert last resort (§18).
-  let dialCountry = findDialCountry(normalised.country)
-  let countrySource: 'form' | 'ip_geo' | 'phone_dial' | 'ai' | null = dialCountry
-    ? 'form'
-    : null
-  // The form's own visitor-IP field beats the transport IP: CF7 webhooks are
-  // POSTed by the WordPress server, so lead.ip is often the site server, not
-  // the enquirer.
-  const geoIp = normalised.clientIp ?? lead.ip
-  if (!dialCountry && geoIp && deps.geoCountry) {
-    try {
-      const iso2 = await deps.geoCountry(geoIp)
-      dialCountry = findDialCountry(iso2)
-      if (dialCountry) countrySource = 'ip_geo'
-    } catch (err) {
-      logger.warn({ leadId, err: String(err) }, 'lead.process.geo_failed')
-    }
-  }
-  if (!dialCountry) {
-    // Never read the country back out of a UK-ASSUMED +44 (a bare 0…/7… national
-    // number normalisePhone optimistically mapped to +44): that was a circular
-    // GB confirmation that pre-empted the AI fallback and locked foreign leads
-    // to +44 whenever no form country was given and IP geo failed. Only trust an
-    // explicitly-international number here.
-    dialCountry =
-      (normalised.phoneAssumedCountry ? null : dialCountryFromPhone(normalised.phoneE164)) ??
-      dialCountryFromPhone(normalised.phone)
-    if (dialCountry) countrySource = 'phone_dial'
-  }
-  if (!dialCountry && ai?.countryCode) {
-    dialCountry = findDialCountry(ai.countryCode)
-    if (dialCountry) countrySource = 'ai'
-  }
+  //   (2) the phone's OWN dial code (explicit "+…"/"00…", OR a dial code typed
+  //       without the "+" like "91 98765 43210") — the enquirer stated it;
+  //   (3) a VISITOR IP the form forwarded (`clientIp`) — the enquirer's real IP;
+  //   (4) the AI's inferred country (message / city / email domain);
+  //   (5) the TRANSPORT IP (`lead.ip`) — LAST resort, because a CF7 webhook is
+  //       POSTed by the WordPress HOST, so this IP is the site server, not the
+  //       enquirer. Geolocating it used to return "GB" for nearly every overseas
+  //       lead and mangle the number to "+44…"; it must never pre-empt (2)-(4).
+  const { phoneE164, country: dialCountry, countrySource } = await resolveLeadPhoneAndCountry(
+    {
+      formCountry: normalised.country,
+      phoneDisplay: normalised.phone,
+      phoneE164: normalised.phoneE164,
+      phoneAssumedCountry: normalised.phoneAssumedCountry,
+      aiCountryCode: ai?.countryCode ?? null,
+      visitorIp: normalised.clientIp,
+      transportIp: lead.ip,
+    },
+    deps.geoCountry,
+  )
   if (countrySource) {
     logger.info({ leadId, country: dialCountry?.iso2, countrySource }, 'lead.country_resolved')
   }
-  // normalisePhone optimistically maps a bare national number (leading 0 OR a
-  // leading-7 UK mobile) to +44. When the resolved country (form → IP → AI) says
-  // otherwise, recompose with the real dial code so a French "06…" becomes
-  // "+336…" and a US "702…" becomes "+1702…", not "+44…". Only recompose a
-  // GUESSED +44 (assumedCountry === 'GB'); an explicitly-typed international
-  // number is authoritative and never rewritten.
-  let formPhoneE164 = normalised.phoneE164
-  if (
-    normalised.phoneAssumedCountry === 'GB' &&
-    dialCountry &&
-    dialCountry.dial !== '44' &&
-    normalised.phone
-  ) {
-    formPhoneE164 = composePhoneE164(dialCountry, normalised.phone) ?? formPhoneE164
-  }
-  const composedPhone =
-    !formPhoneE164 && normalised.phone && dialCountry
-      ? composePhoneE164(dialCountry, normalised.phone)
-      : null
-  // No country at all (no form field, geo failed)? The number may still carry
-  // its own dial code typed without the + ("51 928 812 118").
-  const inferredPhone =
-    !formPhoneE164 && !composedPhone && normalised.phone
-      ? inferPhoneE164(normalised.phone)
-      : null
-  // Last resort: a typed number ALWAYS lands on the contact's phone field —
-  // as-typed digits beat a number buried in the notes (it stays visible and
-  // manually dialable; an agent can fix the prefix later).
-  const fallbackPhone =
-    !formPhoneE164 && !composedPhone && !inferredPhone && normalised.phone
-      ? asTypedPhoneFallback(normalised.phone)
-      : null
 
   // 6. Match an existing contact (conservative — never auto-merge). Matching
   // is format-insensitive so a re-enquiry never duplicates: email is matched
   // case-insensitively (legacy rows may be mixed-case), and phone is matched
-  // on EVERY candidate form plus the last-9-digit suffix — so a number stored
-  // as "928812118" on the first enquiry and composed to "+51928812118" on the
-  // next still resolves to the same contact.
+  // on the resolved E.164 plus the raw normalised form and the last-9-digit
+  // suffix — so a number stored as "928812118" on the first enquiry and
+  // composed to "+51928812118" on the next still resolves to the same contact.
   const email = normalised.email
-  const phoneE164 = formPhoneE164 ?? composedPhone ?? inferredPhone ?? fallbackPhone
-  const phoneMatch = buildPhoneMatch([
-    formPhoneE164,
-    composedPhone,
-    inferredPhone,
-    fallbackPhone,
-  ])
+  const phoneMatch = buildPhoneMatch([phoneE164, normalised.phoneE164])
   // Match the primary phone OR an additional point of contact (ContactChannel)
   // with the same number, so a re-enquiry from a 2nd/work number attaches to
   // the existing contact instead of creating a duplicate.
