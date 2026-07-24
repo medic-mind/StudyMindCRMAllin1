@@ -10,11 +10,11 @@
 import {
   buildComplaintSlackBlocks,
   buildComplaintSlackText,
-  resolveTopicChannelId,
   type ComplaintSlackArgs,
 } from '@studymind/core/slack'
 
 import { db } from '@/lib/db'
+import { resolveTopicChannelWithDiscovery } from '@/lib/slack/topic-channel'
 
 function appUrl(): string {
   return (
@@ -24,6 +24,27 @@ function appUrl(): string {
   ).replace(/\/$/, '')
 }
 
+/** Turn a raw Slack API error code into something an operator can act on. */
+function friendlySlackError(err: unknown): string {
+  const code =
+    err && typeof err === 'object' && 'slackError' in err
+      ? String((err as { slackError: unknown }).slackError)
+      : null
+  switch (code) {
+    case 'not_in_channel':
+    case 'channel_not_found':
+      return 'the bot is not in that channel yet — invite it in Slack, then log again'
+    case 'is_archived':
+      return 'that Slack channel is archived'
+    case 'invalid_auth':
+    case 'token_revoked':
+    case 'account_inactive':
+      return 'the Slack connection needs reconnecting (Settings → Integrations)'
+    default:
+      return err instanceof Error ? err.message : String(err)
+  }
+}
+
 export interface ComplaintSlackResult {
   status: 'sent' | 'skipped' | 'failed'
   detail?: string
@@ -31,6 +52,9 @@ export interface ComplaintSlackResult {
    *  updates reply under it. Present only when status === 'sent'. */
   slackTs?: string
   channelId?: string
+  /** The human channel name actually posted to (e.g. "#complaintcallsummaries")
+   *  so the UI reports the REAL destination instead of a hardcoded guess. */
+  channelName?: string | null
 }
 
 /**
@@ -52,11 +76,21 @@ export async function postComplaintToSlack(args: {
   agentId: string
   requestId: string
 }): Promise<ComplaintSlackResult> {
-  const channelId = await resolveTopicChannelId(db, 'complaint_call_summary')
+  // Resolve the destination, auto-discovering + wiring #complaintcallsummaries
+  // by name when no explicit route is set (so complaints reach the channel they
+  // are meant for with zero config), and reporting the REAL channel back.
+  const resolved = await resolveTopicChannelWithDiscovery('complaint_call_summary', {
+    actorId: args.agentId,
+  })
+  const channelId = resolved.channelId
   if (!channelId) {
     return {
       status: 'skipped',
-      detail: 'No Slack channel configured for complaints (Settings → Slack channels)',
+      channelName: null,
+      detail:
+        resolved.source === 'muted'
+          ? 'Complaint notifications are switched off (Settings → Slack channels)'
+          : 'No Slack channel configured for complaints (Settings → Slack channels)',
     }
   }
 
@@ -97,9 +131,18 @@ export async function postComplaintToSlack(args: {
       channelId,
       ctx: { actorId: args.agentId, requestId: args.requestId },
     })
-    return { status: 'sent', slackTs: res.slackTs, channelId: res.channelId }
+    return {
+      status: 'sent',
+      slackTs: res.slackTs,
+      channelId: res.channelId,
+      channelName: resolved.channelName,
+    }
   } catch (err) {
-    return { status: 'failed', detail: err instanceof Error ? err.message : String(err) }
+    return {
+      status: 'failed',
+      channelName: resolved.channelName,
+      detail: friendlySlackError(err),
+    }
   }
 }
 

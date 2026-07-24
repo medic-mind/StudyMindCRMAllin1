@@ -11,9 +11,9 @@ import {
   buildCallSummarySlackBlocks,
   buildCallSummarySlackText,
   parseActionButtons,
-  resolveTopicChannelId,
 } from '@studymind/core/slack'
 import { db } from '@/lib/db'
+import { resolveTopicChannelWithDiscovery } from '@/lib/slack/topic-channel'
 
 interface BuildArgs {
   agentId: string
@@ -50,7 +50,11 @@ export function buildCallSummarySenders({ agentId, requestId }: BuildArgs): Call
         })
         channelId = slackChannelId
       } else {
-        channelId = await resolveTopicChannelId(db, 'call_summary')
+        // Auto-discover + wire the operator's #callsummaries channel by name
+        // when no explicit route is set, so summaries reach it with zero config
+        // (mirrors the complaint fix — same latent misroute).
+        const resolved = await resolveTopicChannelWithDiscovery('call_summary', { actorId: agentId })
+        channelId = resolved.channelId
         option = channelId
           ? await db.slackChannelOption.findFirst({
               where: { channelId, archivedAt: null },
