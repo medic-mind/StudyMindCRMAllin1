@@ -994,8 +994,13 @@ export const inboxRouter = router({
       if (!ALLOWED_ROLES.has(user.role)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Inbox is staff-only.' })
       }
+      // Every staff role sees all teams' conversations now (2026-07).
       const seesAll =
-        user.role === 'ceo' || user.role === 'senior_manager' || user.role === 'manager'
+        user.role === 'ceo' ||
+        user.role === 'senior_manager' ||
+        user.role === 'manager' ||
+        user.role === 'sales_executive' ||
+        user.role === 'virtual_assistant'
       const teams = await ctx.db.team.findMany({
         where: {
           archivedAt: null,

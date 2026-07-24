@@ -31,6 +31,8 @@ const WRITE_ROLES: ReadonlySet<UserRole> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 const FIELD_ENUM = z.enum(['firstName', 'lastName', 'email', 'phoneE164'])

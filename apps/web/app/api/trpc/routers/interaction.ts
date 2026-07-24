@@ -1022,7 +1022,13 @@ export const interactionRouter = router({
      *  a Trengo identity when the mirror hasn't been synced yet. */
     assignableUsers: protectedProcedure.query(async ({ ctx }) => {
       const user = requireUser(ctx)
-      if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
+      // Every staff role can assign a conversation (2026-07), so every staff
+      // role can read the assignee picker list.
+      if (
+        !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(
+          user.role,
+        )
+      ) {
         throw new TRPCError({ code: 'FORBIDDEN' })
       }
       const mirror = await ctx.db.trengoUser.findMany({
