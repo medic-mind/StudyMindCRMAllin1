@@ -76,6 +76,12 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     description: 'Auto-merge confident duplicate contacts (shared email, or phone+name); ADR 0047',
   },
   {
+    id: 'leads/heal-recent-call-times',
+    cron: '*/30 * * * *',
+    description:
+      'Auto-fill scheduled call times on recent lead cards left blank (submitted before the "Call day"/"Call time" parser shipped), so a requested call surfaces on the board with no operator button',
+  },
+  {
     id: 'booking/sync-students',
     cron: '*/5 * * * *',
     description: 'Pull changed students from booking.studymind.co.uk (ADR 0029)',
