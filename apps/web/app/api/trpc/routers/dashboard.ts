@@ -207,7 +207,6 @@ export const dashboardRouter = router({
       const now = new Date()
 
       const [
-        unassignedConversations,
         customers,
         openComplaints,
         leadsToTriage,
@@ -216,7 +215,6 @@ export const dashboardRouter = router({
         missedCalls,
         atRisk,
       ] = await Promise.all([
-        db.conversation.count({ where: { status: 'open', assigneeUserId: null } }),
         db.contact.count({ where: { deletedAt: null } }),
         db.complaint.count({ where: { deletedAt: null, status: { in: ['open', 'in_progress'] } } }),
         db.lead.count({ where: { deletedAt: null, status: 'needs_triage' } }),
@@ -256,15 +254,6 @@ export const dashboardRouter = router({
       const queues: QueueCard[] = buildQueueCards(queueCounts, role)
 
       const kpis: KpiTileData[] = [
-        {
-          key: 'conversations',
-          label: 'Unassigned conversations',
-          value: unassignedConversations,
-          hint: 'Trengo inbox',
-          href: '/inbox',
-          tone: unassignedConversations > 0 ? 'info' : 'success',
-          icon: 'inbox',
-        },
         {
           key: 'atRisk',
           label: 'At-risk customers',

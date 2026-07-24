@@ -1,7 +1,7 @@
 // Dashboard at /. RSC. A single pane of glass over the whole CRM as it stands
-// today: a brand greeting hero with a smart "what needs you" summary, four
+// today: a brand greeting hero with a smart "what needs you" summary,
 // role-aware KPI tiles, a "Needs attention" grid of action queues across every
-// work surface (Trengo, calls, leads, complaints, Slack, finance, Direct
+// work surface (calls, leads, complaints, Slack, finance, Direct
 // Debits…), the live at-risk-customers list, and an
 // "Explore the workspace" jump-to grid. Powered by `dashboard.summary` (single
 // round-trip). CLAUDE.md §26 (RSC default), §28 (skeleton in loading.tsx,
@@ -73,17 +73,15 @@ export default async function DashboardPage() {
   }).format(now)
   const firstName = me.name ? me.name.split(' ')[0] ?? null : null
 
-  // "What needs you" — the KPI actionables (Trengo / at-risk) plus every queue,
-  // deduped into one honest total and a single best CTA.
+  // "What needs you" — the at-risk KPI actionable plus every queue, deduped
+  // into one honest total and a single best CTA.
   const kpiByKey = new Map(data.kpis.map((k) => [k.key, k.value] as const))
-  const conversations = kpiByKey.get('conversations') ?? 0
   const atRiskTotal = kpiByKey.get('atRisk') ?? 0
   const queueTotal = data.queues.reduce((sum, q) => sum + q.count, 0)
-  const attentionTotal = queueTotal + conversations + atRiskTotal
+  const attentionTotal = queueTotal + atRiskTotal
 
   const actionables = [
     ...data.queues.map((q) => ({ label: q.label, href: q.href, count: q.count })),
-    { label: 'Trengo inbox', href: '/inbox', count: conversations },
     { label: 'at-risk customers', href: '/contacts/at-risk', count: atRiskTotal },
   ]
   const top = actionables.filter((a) => a.count > 0).sort((a, b) => b.count - a.count)[0]
