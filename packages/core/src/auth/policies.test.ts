@@ -58,12 +58,13 @@ describe('roleCan', () => {
     expect(roleCan('manager', 'user.grant_manage')).toBe(true)
     expect(roleCan('manager', 'user.invite')).toBe(false)
     expect(roleCan('manager', 'user.deactivate')).toBe(false)
-    expect(roleCan('manager', 'settings.write')).toBe(false)
+    // 2026-07: operational settings are now open to every staff role.
+    expect(roleCan('manager', 'settings.write')).toBe(true)
     expect(roleCan('manager', 'dsar.export')).toBe(false)
     expect(roleCan('manager', 'interaction.delete')).toBe(false)
   })
 
-  it('sales_executive has the full sales set incl. refunds, subscription cancel + account creation (2026-07)', () => {
+  it('sales_executive can do everything operational except the locked buckets (2026-07)', () => {
     expect(roleCan('sales_executive', 'contact.read')).toBe(true)
     expect(roleCan('sales_executive', 'contact.read_minor')).toBe(true)
     expect(roleCan('sales_executive', 'contact.write')).toBe(true)
@@ -72,12 +73,17 @@ describe('roleCan', () => {
     expect(roleCan('sales_executive', 'charge.refund')).toBe(true)
     expect(roleCan('sales_executive', 'subscription.cancel')).toBe(true)
     expect(roleCan('sales_executive', 'user.invite')).toBe(true)
-    // Senior-only / catastrophic actions stay denied.
-    expect(roleCan('sales_executive', 'family.merge')).toBe(false)
+    // Widened 2026-07 — "VA and above can do anything operational":
+    expect(roleCan('sales_executive', 'family.merge')).toBe(true)
+    expect(roleCan('sales_executive', 'settings.write')).toBe(true)
+    // The locked buckets (users / integrations / audit / DSAR / destructive)
+    // stay denied at the role level.
     expect(roleCan('sales_executive', 'interaction.delete')).toBe(false)
+    expect(roleCan('sales_executive', 'audit.read')).toBe(false)
     expect(roleCan('sales_executive', 'user.manage')).toBe(false)
-    expect(roleCan('sales_executive', 'settings.write')).toBe(false)
     expect(roleCan('sales_executive', 'dsar.export')).toBe(false)
+    expect(roleCan('sales_executive', 'secrets.rotate')).toBe(false)
+    expect(roleCan('sales_executive', 'tenant.config.write')).toBe(false)
   })
 
   it('virtual_assistant has an IDENTICAL capability set to sales_executive (2026-07)', () => {

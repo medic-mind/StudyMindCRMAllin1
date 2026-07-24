@@ -12,11 +12,19 @@ import { z } from 'zod'
 
 import { protectedProcedure, requireUser, router, type UserRole } from '@/lib/trpc/builders'
 
-const MANAGE_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE_ROLES: ReadonlySet<UserRole> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 const FINANCE_ROLES: ReadonlySet<UserRole> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 const KINDS = ['reminder', 'legal_escalation', 'other'] as const

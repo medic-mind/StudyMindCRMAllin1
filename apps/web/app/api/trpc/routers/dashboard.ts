@@ -61,6 +61,8 @@ const FINANCE_ROLES: ReadonlySet<UserRole> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 // Reconciliation discrepancy categories that belong to the Direct Debit

@@ -39,7 +39,14 @@ export default async function AircallReportPage({
 
   const me = await getCurrentUser()
   const role = me?.role ?? 'virtual_assistant'
-  const canManage = role === 'ceo' || role === 'senior_manager' || role === 'manager'
+  // Peak-window editing is open to every staff role (2026-07). `role` is still
+  // resolved so the check stays explicit if a future gate narrows it.
+  const canManage =
+    role === 'ceo' ||
+    role === 'senior_manager' ||
+    role === 'manager' ||
+    role === 'sales_executive' ||
+    role === 'virtual_assistant'
 
   return (
     <>

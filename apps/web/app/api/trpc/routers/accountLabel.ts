@@ -20,7 +20,13 @@ import {
   type UserRole,
 } from '@/lib/trpc/builders'
 
-const MANAGE_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE_ROLES: ReadonlySet<UserRole> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 const APPLY_ROLES: ReadonlySet<UserRole> = new Set([
   'ceo',
   'senior_manager',

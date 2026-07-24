@@ -11,7 +11,7 @@ import { CatalogueManager } from './CatalogueManager'
 
 export const dynamic = 'force-dynamic'
 
-const MANAGE = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export default async function SubjectsPage() {
   const me = await getCurrentUser()

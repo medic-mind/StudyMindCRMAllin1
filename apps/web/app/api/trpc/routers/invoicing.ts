@@ -78,7 +78,13 @@ const WRITE_ROLES: ReadonlySet<UserRole> = new Set([
   'sales_executive',
   'virtual_assistant',
 ])
-const MARK_PAID_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
+const MARK_PAID_ROLES: ReadonlySet<UserRole> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 function assertRead(role: UserRole): void {
   if (!READ_ROLES.has(role)) {

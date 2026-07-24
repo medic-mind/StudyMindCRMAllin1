@@ -122,7 +122,13 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const me = await getCurrentUser()
   // Money actions (send a DD setup link) mirror the gocardless router's
   // finance gate; everyone else sees the panel read-only (§20.1).
-  const canManageDirectDebit = ['ceo', 'senior_manager', 'manager'].includes(me?.role ?? '')
+  const canManageDirectDebit = [
+    'ceo',
+    'senior_manager',
+    'manager',
+    'sales_executive',
+    'virtual_assistant',
+  ].includes(me?.role ?? '')
 
   let contact
   try {

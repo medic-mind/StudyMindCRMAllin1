@@ -9,7 +9,7 @@ import { QuickRepliesAdmin } from './QuickRepliesAdmin'
 
 export const dynamic = 'force-dynamic'
 
-const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 const BREADCRUMBS = [
   { label: 'Settings', href: '/settings' },

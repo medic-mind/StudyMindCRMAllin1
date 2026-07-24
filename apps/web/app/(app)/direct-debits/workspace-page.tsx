@@ -10,7 +10,13 @@ import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
 import { getCurrentUser } from '@/lib/auth/server'
 
-const FINANCE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const FINANCE_ROLES = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 const IMPORT_ROLES = new Set(['ceo', 'senior_manager'])
 
 const SUBTITLES: Record<DdTab, string> = {

@@ -9,7 +9,7 @@ import { getCurrentUser } from '@/lib/auth/server'
 
 export const dynamic = 'force-dynamic'
 
-const FINANCE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const FINANCE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export default async function Page({
   params,

@@ -25,6 +25,9 @@ import {
 const BRANDING_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanManageBranding(role: UserRole): void {

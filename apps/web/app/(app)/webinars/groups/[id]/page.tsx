@@ -15,7 +15,7 @@ import { GroupWorkspace } from '../GroupWorkspace'
 
 export const dynamic = 'force-dynamic'
 
-const MANAGE = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export default async function GroupDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params

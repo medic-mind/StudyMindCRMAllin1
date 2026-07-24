@@ -33,7 +33,13 @@ import {
   type UserRole,
 } from '@/lib/trpc/builders'
 
-const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['ceo', 'senior_manager', 'manager'])
+const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 function assertCanManage(role: UserRole): void {
   if (!MANAGE_ROLES.has(role)) {

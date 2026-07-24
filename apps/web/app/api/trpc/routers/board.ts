@@ -76,7 +76,13 @@ import {
   type UserRole,
 } from '@/lib/trpc/builders'
 
-const BOARD_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['ceo', 'senior_manager'])
+const BOARD_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 const CARD_WRITE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
@@ -91,6 +97,8 @@ const CARD_DELETE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 const LABEL_DELETE_ROLES = BOARD_MANAGE_ROLES
 // Clearing an ENTIRE board (archives every card at once) is the most
@@ -1168,6 +1176,8 @@ const QUICK_ACTION_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanManageQuickActions(role: UserRole): void {

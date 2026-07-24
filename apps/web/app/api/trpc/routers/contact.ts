@@ -593,8 +593,13 @@ export const contactRouter = router({
       .input(z.object({ survivorId: z.string(), loserId: z.string() }))
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
-        // family.merge restricted to ceo, senior_manager, manager (ADR 0014).
-        if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
+        // family.merge is open to every staff role (2026-07 — VA and above can
+        // do anything operational; §20). Auto-merge already runs system-wide.
+        if (
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(
+            user.role,
+          )
+        ) {
           throw new TRPCError({ code: 'FORBIDDEN' })
         }
         const result = await mergeContacts(ctx.db, {
@@ -938,10 +943,14 @@ export const contactRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      if (!['ceo', 'senior_manager', 'manager'].includes(user.role)) {
+      if (
+        !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(
+          user.role,
+        )
+      ) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'Only Manager or above can merge contacts',
+          message: 'Staff role required to merge contacts',
         })
       }
       // Guard: survivor can't be in the loser set.
@@ -1000,10 +1009,16 @@ export const contactRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      if (user.role !== 'ceo' && user.role !== 'senior_manager' && user.role !== 'manager') {
+      // Soft-delete is reversible (30-day grace, §21) and open to every staff
+      // role (2026-07 — VA and above can do anything operational).
+      if (
+        !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(
+          user.role,
+        )
+      ) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: 'Only Manager or above can bulk-delete contacts',
+          message: 'Staff role required to bulk-delete contacts',
         })
       }
       const result = await ctx.db.contact.updateMany({

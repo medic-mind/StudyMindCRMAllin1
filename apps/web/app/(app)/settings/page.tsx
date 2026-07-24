@@ -8,6 +8,7 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 
+import { getCurrentUser } from '@/lib/auth/server'
 import { PageHeader } from '@/components/shell/page-header'
 import {
   BarChartIcon,
@@ -20,7 +21,7 @@ import {
   UsersIcon,
 } from '@/components/ui/icon'
 
-import { SETTINGS_GROUPS, type SettingsIconKey } from './settings-links'
+import { visibleSettingsGroups, type Role, type SettingsIconKey } from './settings-links'
 
 const ICONS: Record<SettingsIconKey, ReactNode> = {
   users: <UsersIcon size={16} />,
@@ -34,12 +35,15 @@ const ICONS: Record<SettingsIconKey, ReactNode> = {
   integrations: <BarChartIcon size={16} />,
 }
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const me = await getCurrentUser()
+  const role: Role = me?.role ?? 'virtual_assistant'
+  const groups = visibleSettingsGroups(role)
   return (
     <>
       <PageHeader title="Settings" subtitle="Organisation, brand, and platform configuration" />
       <div className="space-y-8">
-        {SETTINGS_GROUPS.map((group) => (
+        {groups.map((group) => (
           <section key={group.title}>
             <header className="mb-3">
               <h2 className="text-xs font-semibold uppercase tracking-[0.08em] text-neutral-500">

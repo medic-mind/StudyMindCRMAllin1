@@ -32,6 +32,8 @@ const READ_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 export const costRouter = router({

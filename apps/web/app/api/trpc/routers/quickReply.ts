@@ -20,6 +20,8 @@ const MANAGE_ROLES: ReadonlySet<UserRole> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 const CHANNELS = ['whatsapp', 'sms', 'email', 'web_chat'] as const

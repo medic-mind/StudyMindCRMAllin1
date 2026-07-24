@@ -41,6 +41,8 @@ const INSTALMENT_WRITE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 function assertCanWriteInstalments(role: SessionUser['role']): void {
   if (!INSTALMENT_WRITE_ROLES.has(role)) {
@@ -65,6 +67,8 @@ const BOOKING_CANCEL_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanWriteBookings(role: SessionUser['role']): void {

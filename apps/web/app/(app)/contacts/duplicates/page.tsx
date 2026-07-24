@@ -17,7 +17,10 @@ export const dynamic = 'force-dynamic'
 
 export default async function DuplicateContactsPage() {
   const me = await getCurrentUser()
-  if (!me || !['ceo', 'senior_manager', 'manager'].includes(me.role)) {
+  if (
+    !me ||
+    !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(me.role)
+  ) {
     return (
       <>
         <PageHeader

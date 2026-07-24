@@ -12,7 +12,7 @@ import { GroupsManager } from './GroupsManager'
 
 export const dynamic = 'force-dynamic'
 
-const MANAGE = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export default async function GroupsPage() {
   const me = await getCurrentUser()

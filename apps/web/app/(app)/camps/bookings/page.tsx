@@ -37,7 +37,7 @@ import { BookingSlideOver, type BookingItem } from './BookingSlideOver'
 export const dynamic = 'force-dynamic'
 
 const WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
-const CANCEL_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const CANCEL_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 const gbp = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' })
 function money(minor: number | null): string {

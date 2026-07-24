@@ -7,6 +7,16 @@
 // Deliberately excluded (2026-07 declutter): Email accounts + Invoicing live
 // under Integrations (the single external-services hub); My mailboxes lives in
 // the user menu (top-right); Feature flags is a URL-only dev tool.
+//
+// Role gating (2026-07): operational settings pages are open to EVERY staff
+// role ("VA and above can do anything operational"). Only the two locked
+// buckets stay admin-only via `visibleTo` — USER MANAGEMENT (Users, Teams,
+// Roles) and INTEGRATIONS (Integrations hub + Slack channel routing). The
+// tRPC procedures behind each page enforce the same gate server-side; this
+// just keeps the UI honest.
+
+// Canonical sales-CRM roles (ADR 0014).
+export type Role = 'ceo' | 'senior_manager' | 'manager' | 'sales_executive' | 'virtual_assistant'
 
 export type SettingsIconKey =
   | 'users'
@@ -28,6 +38,12 @@ export interface SettingsLink {
   description: string
   roles: string
   icon: SettingsIconKey
+  /**
+   * Roles allowed to see AND open this page. Absent = every staff role. Set
+   * only on the locked buckets (Users/Teams/Roles = user management;
+   * Integrations/Slack routing = integrations).
+   */
+  visibleTo?: ReadonlyArray<Role>
 }
 
 export interface SettingsGroup {
@@ -49,6 +65,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
           'Create accounts, reset or reissue logins, delete/erase, per-user permissions, avatars. Audited.',
         roles: 'CEO · SM · Manager',
         icon: 'users',
+        visibleTo: ['ceo', 'senior_manager', 'manager'],
       },
       {
         href: '/settings/teams',
@@ -56,6 +73,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         description: 'Group ops staff into squads (shared inbox teams + assignment pickers).',
         roles: 'CEO · Senior Manager',
         icon: 'users',
+        visibleTo: ['ceo', 'senior_manager'],
       },
       {
         href: '/settings/roles',
@@ -64,6 +82,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         description: 'Create custom roles and assign permissions on top of the built-in roles.',
         roles: 'CEO · Senior Manager',
         icon: 'shield',
+        visibleTo: ['ceo', 'senior_manager'],
       },
     ],
   },
@@ -75,14 +94,14 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         href: '/settings/companies',
         title: 'Companies',
         description: 'Sister-brand tags (Medic Mind, Oxbridge Mind, StudyMind, anything you add).',
-        roles: 'CEO · Senior Manager',
+        roles: 'All staff',
         icon: 'companies',
       },
       {
         href: '/settings/branding',
         title: 'Branding',
         description: 'Upload the logo shown in the top bar and on sign-in.',
-        roles: 'CEO · Senior Manager',
+        roles: 'All staff',
         icon: 'branding',
       },
     ],
@@ -97,7 +116,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         navLabel: 'Forwarding',
         description:
           'Configure the “Forward to <team>” quick actions (AP team, CEOs, schools, partnerships).',
-        roles: 'Manager+',
+        roles: 'All staff',
         icon: 'mail',
       },
       {
@@ -106,7 +125,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         navLabel: 'DD recovery',
         description:
           'The escalating email + text sequence for chasing an unpaid Direct Debit, plus the late fee, cadence and letterhead. Court fee + interest are calculated automatically.',
-        roles: 'Manager+',
+        roles: 'All staff',
         icon: 'coins',
       },
       {
@@ -116,13 +135,14 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
           'The Slack channels the CRM posts to (call-summary action points with deep-link buttons), and where each kind of notification is routed.',
         roles: 'Manager+',
         icon: 'git',
+        visibleTo: ['ceo', 'senior_manager', 'manager'],
       },
       {
         href: '/settings/quick-replies',
         title: 'Quick replies',
         description:
           'Canned responses agents insert into a conversation reply. Personalise with {{first_name}} / {{name}}.',
-        roles: 'Manager+',
+        roles: 'All staff',
         icon: 'mail',
       },
       {
@@ -130,7 +150,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         title: 'Labels',
         description:
           'Custom, colour-coded labels for customers and B2B accounts. Apply them in bulk from the Customers or Accounts lists.',
-        roles: 'Manager+',
+        roles: 'All staff',
         icon: 'building',
       },
       {
@@ -139,7 +159,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         navLabel: 'Board actions',
         description:
           'Configure the per-card buttons on each board (Called once, Called twice, Invalid number…). Pick a board to manage its buttons.',
-        roles: 'Manager+',
+        roles: 'All staff',
         icon: 'git',
       },
     ],
@@ -155,12 +175,34 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
           'The hub for every external service — webhook status, plus B2B invoicing, email accounts and Slack routing.',
         roles: 'CEO · Senior Manager · Manager',
         icon: 'integrations',
+        visibleTo: ['ceo', 'senior_manager', 'manager'],
       },
     ],
   },
 ]
 
-/** Flat `{ href, label }` list for the sidebar Settings sub-nav. */
-export function settingsNavChildren(): Array<{ href: string; label: string }> {
-  return SETTINGS_GROUPS.flatMap((g) => g.links.map((l) => ({ href: l.href, label: l.navLabel ?? l.title })))
+/** Whether `role` may see a settings link (absent visibleTo = every staff role). */
+export function canSeeSettingsLink(link: SettingsLink, role: Role): boolean {
+  return !link.visibleTo || link.visibleTo.includes(role)
+}
+
+/** Settings groups filtered to the links `role` may see (empty groups dropped). */
+export function visibleSettingsGroups(role: Role): SettingsGroup[] {
+  return SETTINGS_GROUPS.map((g) => ({
+    ...g,
+    links: g.links.filter((l) => canSeeSettingsLink(l, role)),
+  })).filter((g) => g.links.length > 0)
+}
+
+/**
+ * Flat `{ href, label }` list for the sidebar Settings sub-nav, filtered to the
+ * pages `role` may open — so a Virtual Assistant sees the operational settings
+ * but not Users / Teams / Roles / Integrations.
+ */
+export function settingsNavChildren(role: Role): Array<{ href: string; label: string }> {
+  return SETTINGS_GROUPS.flatMap((g) =>
+    g.links
+      .filter((l) => canSeeSettingsLink(l, role))
+      .map((l) => ({ href: l.href, label: l.navLabel ?? l.title })),
+  )
 }

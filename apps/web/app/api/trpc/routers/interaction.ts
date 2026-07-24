@@ -960,11 +960,13 @@ export const interactionRouter = router({
       .mutation(async ({ ctx, input }) => {
         const user = requireUser(ctx)
         if (
-          !['ceo', 'senior_manager', 'manager'].includes(user.role)
+          !['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'].includes(
+            user.role,
+          )
         ) {
           throw new TRPCError({
             code: 'FORBIDDEN',
-            message: 'Only Manager and above can reassign conversations.',
+            message: 'Staff role required to reassign conversations.',
           })
         }
         await enforceRestrictedAccess(ctx, input.contactId, 'trengo-assign')

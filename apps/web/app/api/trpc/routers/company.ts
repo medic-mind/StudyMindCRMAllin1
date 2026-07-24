@@ -18,6 +18,9 @@ import {
 const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanManage(role: UserRole): void {
