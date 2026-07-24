@@ -330,9 +330,10 @@ export const complaintRouter = router({
       // reverse of the Slack→CRM complaint import, so logging a complaint here
       // and typing one in Slack do the same thing. Best-effort: a Slack failure
       // never fails logging the complaint. (Slack-sourced complaints are created
-      // by the ingestion executor, not this procedure, so there is no echo.)
+      // by the ingestion executor, not this procedure, so there is no echo.) The
+      // status is returned so the UI can echo it (mirrors the call-summary flow).
       const { postComplaintToSlack } = await import('@/lib/complaints/slack-sender')
-      await postComplaintToSlack({
+      const slack = await postComplaintToSlack({
         complaintId: id,
         contactId: input.contactId,
         title: input.title,
@@ -341,9 +342,9 @@ export const complaintRouter = router({
         severity: input.severity,
         agentId: user.id,
         requestId: ctx.requestId,
-      }).catch(() => undefined)
+      }).catch((): { status: 'failed' } => ({ status: 'failed' }))
 
-      return { id }
+      return { id, slack }
     }),
 
   update: auditedProcedure

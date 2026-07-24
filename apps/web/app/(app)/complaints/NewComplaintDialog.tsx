@@ -1,8 +1,10 @@
-// Log-complaint modal for the Complaints hub: pick the customer (typeahead),
-// then the same fields as the contact page's ComplaintsSection form — title,
-// details, severity, and category (preset + free-type). Server work is the
-// existing complaint.create (audited; the complaint is stored on the
-// customer's record). Esc closes, backdrop closes, focus restore.
+// Log-complaint modal for the Complaints hub. Find the customer with the shared
+// ContactFinder (search the CRM, or add a brand-new person inline with a de-dup
+// guard) then the same fields as the contact page's ComplaintsSection form —
+// title, details, severity, and category (preset + free-type). Server work is
+// the existing complaint.create (audited; the complaint is stored on the
+// customer's record AND announced to #complaintcallsummaries — the reply echoes
+// that Slack status). Esc closes, backdrop closes, focus restore.
 // CLAUDE.md §26, §28.
 
 'use client'
@@ -11,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 
+import { ContactFinder, type ResolvedContact } from '@/components/contact/contact-finder'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -21,10 +24,17 @@ import { XIcon } from '@/components/ui/icon'
 
 type Severity = 'low' | 'medium' | 'high'
 
+/** Turn the best-effort Slack result into a plain-English toast line. */
+function slackNote(status: string | undefined): string {
+  if (status === 'skipped') return 'Slack not configured — set it up in Settings → Slack channels'
+  return "couldn't post to Slack (recorded on the CRM)"
+}
+
 export function NewComplaintDialog() {
   const router = useRouter()
   const utils = trpc.useUtils()
   const [open, setOpen] = useState(false)
+  const [picked, setPicked] = useState<ResolvedContact | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [severity, setSeverity] = useState<Severity>('medium')
@@ -37,25 +47,27 @@ export function NewComplaintDialog() {
   const titleRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
-  const [contactQuery, setContactQuery] = useState('')
-  const [pickedContactId, setPickedContactId] = useState<string | null>(null)
-  const contactSearch = trpc.contact.list.useQuery(
-    { q: contactQuery, limit: 8 },
-    { enabled: open && contactQuery.trim().length >= 2 && !pickedContactId },
-  )
   const categoriesQuery = trpc.complaint.categories.useQuery(undefined, { enabled: open })
 
+  function reset() {
+    setPicked(null)
+    setTitle('')
+    setDescription('')
+    setSeverity('medium')
+    setCategory('')
+    setErrors({})
+  }
+
   const create = trpc.complaint.create.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       setOpen(false)
-      setTitle('')
-      setDescription('')
-      setSeverity('medium')
-      setCategory('')
-      setContactQuery('')
-      setPickedContactId(null)
-      setErrors({})
-      toast.success('Complaint logged')
+      reset()
+      const status = data.slack?.status
+      if (status === 'sent') {
+        toast.success('Complaint logged and posted to #complaintcallsummaries')
+      } else {
+        toast.success(`Complaint logged — ${slackNote(status)}`)
+      }
       await utils.complaint.activeCount.invalidate()
       router.refresh()
     },
@@ -65,7 +77,7 @@ export function NewComplaintDialog() {
     },
   })
 
-  // Esc closes; focus the customer search on open; restore focus on close.
+  // Esc closes; restore focus to the trigger on close.
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
@@ -82,16 +94,16 @@ export function NewComplaintDialog() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const next: { customer?: string; title?: string } = {}
-    if (!pickedContactId) next.customer = 'Pick the customer the complaint is about.'
+    if (!picked) next.customer = 'Find the customer, or add them if they are new.'
     if (title.trim().length < 2) next.title = 'Give the complaint a short title.'
-    if (next.customer || next.title || !pickedContactId) {
+    if (next.customer || next.title || !picked) {
       setErrors(next)
       if (next.title && !next.customer) titleRef.current?.focus()
       return
     }
     setErrors({})
     create.mutate({
-      contactId: pickedContactId,
+      contactId: picked.contactId,
       title: title.trim(),
       description: description.trim() || undefined,
       severity,
@@ -130,51 +142,27 @@ export function NewComplaintDialog() {
             </header>
             <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
               <Field label="Customer" required error={errors.customer}>
-                {pickedContactId ? (
+                {picked ? (
                   <div className="flex items-center justify-between rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-800">
-                    <span className="truncate">{contactQuery}</span>
+                    <span className="truncate">{picked.contactName}</span>
                     <button
                       type="button"
-                      onClick={() => {
-                        setPickedContactId(null)
-                        setContactQuery('')
-                      }}
+                      onClick={() => setPicked(null)}
                       className="ml-2 shrink-0 text-xs text-primary-700 hover:underline"
                     >
                       Change
                     </button>
                   </div>
                 ) : (
-                  <div className="space-y-1.5">
-                    <Input
-                      value={contactQuery}
-                      onChange={(e) => setContactQuery(e.target.value)}
-                      placeholder="Search customers by name, email, or phone…"
-                    />
-                    {contactSearch.data && contactSearch.data.items.length > 0 ? (
-                      <ul className="max-h-40 overflow-auto rounded-md border border-neutral-200 bg-white shadow-sm">
-                        {contactSearch.data.items.map((c) => (
-                          <li key={c.id}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setPickedContactId(c.id)
-                                setContactQuery(c.displayName)
-                                if (errors.customer) setErrors((p) => ({ ...p, customer: undefined }))
-                                setTimeout(() => titleRef.current?.focus(), 0)
-                              }}
-                              className="block w-full px-3 py-1.5 text-left text-sm hover:bg-primary-50 hover:text-primary-800"
-                            >
-                              <span className="font-medium">{c.displayName}</span>
-                              {c.email && (
-                                <span className="ml-2 text-xs text-neutral-500">{c.email}</span>
-                              )}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
+                  <ContactFinder
+                    createCta="Add & continue →"
+                    searchPlaceholder="Search customers by name, email, or phone…"
+                    onResolved={(r) => {
+                      setPicked(r)
+                      if (errors.customer) setErrors((p) => ({ ...p, customer: undefined }))
+                      setTimeout(() => titleRef.current?.focus(), 0)
+                    }}
+                  />
                 )}
               </Field>
 

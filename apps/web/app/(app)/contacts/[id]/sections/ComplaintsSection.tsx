@@ -66,14 +66,18 @@ export function ComplaintsSection({ contactId }: { contactId: string }) {
     }
     setBusy(true)
     try {
-      await create.mutateAsync({
+      const res = await create.mutateAsync({
         contactId,
         title: title.trim(),
         description: description.trim() || undefined,
         severity,
         category: category.trim() || undefined,
       })
-      toast.success('Complaint logged')
+      toast.success(
+        res.slack?.status === 'sent'
+          ? 'Complaint logged and posted to #complaintcallsummaries'
+          : 'Complaint logged',
+      )
       setTitle('')
       setDescription('')
       setSeverity('medium')
