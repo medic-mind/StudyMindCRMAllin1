@@ -20,6 +20,8 @@ import {
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { writeAuditLogEntry } from '@studymind/audit'
+
 import { loadAccountStats } from '@studymind/core/stats'
 import { BookingApiError, createClient, isConfigured } from '@studymind/integration-booking/client'
 
@@ -744,6 +746,16 @@ export const businessAccountRouter = router({
       },
     })
     if (!a) throw new TRPCError({ code: 'NOT_FOUND' })
+
+    // Per-record access log: record who opened this school/partner account
+    // (the B2B analogue of contact.viewed). Queries don't run auditMiddleware,
+    // so write directly; requestId dedupes a same-request refetch. §20.
+    await writeAuditLogEntry(ctx.db, {
+      actorId: requireUser(ctx).id,
+      action: 'business_account.viewed',
+      target: { type: 'BusinessAccount', id: a.id },
+      requestId: ctx.requestId,
+    })
 
     // At-a-glance stats for the detail header band: engagement aggregates
     // (students, hours, paid, comms, last-contacted) plus a live rollup of the

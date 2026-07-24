@@ -26,6 +26,7 @@ import { CROSS_CUTTING_FUNCTIONS, inngest } from '@studymind/jobs'
 import { autoMergeDuplicatesHourly } from './_boundary/auto-merge-duplicates'
 import { costSummaryWeekly } from './_boundary/cost-summary'
 import { auditLogArchiveWeekly } from './_boundary/audit-log-archive'
+import { eraseDueRecordsDaily } from './_boundary/erase-due-records'
 import { flagDdDefaultersNightly } from './_boundary/flag-dd-defaulters'
 import { gocardlessSetupLinkMaintenance } from './_boundary/gocardless-setup-links'
 import { ddChaseTick } from './_boundary/dd-chase'
@@ -49,6 +50,7 @@ const BOUNDARY_FUNCTIONS = [
   autoMergeDuplicatesHourly,
   costSummaryWeekly,
   auditLogArchiveWeekly,
+  eraseDueRecordsDaily,
   ddChaseTick,
   flagDdDefaultersNightly,
   gocardlessSetupLinkMaintenance,

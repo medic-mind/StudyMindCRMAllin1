@@ -12,6 +12,7 @@
     "./medi/process-account": "./src/medi/process-account.ts",
     "./compliance/audit-log-archive": "./src/compliance/audit-log-archive.ts",
     "./compliance/enforce-retention": "./src/compliance/enforce-retention.ts",
+    "./compliance/erase-due-records": "./src/compliance/erase-due-records.ts",
     "./security/safeguarding-sla": "./src/security/safeguarding-sla.ts",
     "./security/ueba": "./src/security/ueba.ts"
   },

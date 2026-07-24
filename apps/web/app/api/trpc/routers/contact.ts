@@ -8,6 +8,8 @@ import { z } from 'zod'
 
 import { writeAuditLogEntry } from '@studymind/audit'
 
+import { eraseContactData } from '@studymind/core/compliance/erase-contact'
+
 import { phoneSearchDigitRuns } from '@studymind/core/contact/phone-search'
 import { BusinessError } from '@studymind/core/errors'
 
@@ -393,12 +395,25 @@ export const contactRouter = router({
         },
       })
       if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
-      // §20.1 / §21: every read of a MINOR's profile is audited (this query
-      // returns dateOfBirth + isMinor). Queries don't run auditMiddleware, so
-      // write the audit row directly. Non-minor reads are not audited.
+      const viewer = requireUser(ctx)
+      // Per-record access log (compliance activity viewer): record every
+      // open of a contact record — the "who viewed this" trail the audit
+      // surface renders. Queries don't run auditMiddleware, so write directly.
+      // requestId gives the writer's built-in dedupe, so a component refetch
+      // within one request writes a single row, not one per re-render.
+      await writeAuditLogEntry(ctx.db, {
+        actorId: viewer.id,
+        action: 'contact.viewed',
+        target: { type: 'Contact', id: row.id },
+        requestId: ctx.requestId,
+        purpose: input.purpose ?? 'contact.read',
+      })
+      // §20.1 / §21: reads of a MINOR's profile carry the stricter,
+      // separate compliance action as well (this query returns
+      // dateOfBirth + isMinor).
       if (row.isMinor) {
         await writeAuditLogEntry(ctx.db, {
-          actorId: requireUser(ctx).id,
+          actorId: viewer.id,
           action: 'contact.read_minor',
           target: { type: 'Contact', id: row.id },
           purpose: input.purpose ?? 'contact.read',
@@ -1017,6 +1032,116 @@ export const contactRouter = router({
         after: { deletedCount: result.count },
       })
       return { deletedCount: result.count }
+    }),
+
+  // ---------------------------------------------------------------------------
+  // GDPR right-to-erasure (Article 17). CEO / Senior Manager only. §21.
+  // `erase` is immediate + irreversible (crypto-shred + anonymise);
+  // `scheduleErasure` soft-deletes with a 30-day grace the daily
+  // `compliance/erase-due-records` cron then completes; `cancelErasure` stops
+  // a scheduled erasure within the grace window.
+  // ---------------------------------------------------------------------------
+  erase: protectedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        // The actor must retype the contact's name (or email) to confirm — a
+        // deliberate friction step for an irreversible action.
+        confirmName: z.string().min(1),
+        reason: z.string().max(500).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (user.role !== 'ceo' && user.role !== 'senior_manager') {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only a CEO or Senior Manager can permanently erase a contact.',
+        })
+      }
+      const row = await ctx.db.contact.findFirst({
+        where: { id: input.id },
+        select: { id: true, firstName: true, lastName: true, email: true, erasedAt: true },
+      })
+      if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
+      const displayName = [row.firstName, row.lastName].filter(Boolean).join(' ').trim()
+      const expected = (displayName || row.email || '').trim().toLowerCase()
+      const provided = input.confirmName.trim().toLowerCase()
+      // If the record has no name/email at all, require the literal word ERASE.
+      const matches = expected ? provided === expected : provided === 'erase'
+      if (!matches) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Confirmation does not match the contact — erasure aborted.',
+        })
+      }
+      const result = await eraseContactData(ctx.db, {
+        contactId: input.id,
+        actorId: user.id,
+        requestId: ctx.requestId,
+        reason: input.reason ?? 'Manual erasure',
+      })
+      return result
+    }),
+
+  scheduleErasure: auditedProcedure
+    .input(z.object({ id: z.string(), reason: z.string().max(500).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (user.role !== 'ceo' && user.role !== 'senior_manager') {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only a CEO or Senior Manager can schedule an erasure.',
+        })
+      }
+      const before = await ctx.db.contact.findFirst({
+        where: { id: input.id, erasedAt: null },
+        select: { id: true, deletedAt: true, erasureScheduledAt: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      const now = new Date()
+      const scheduledAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+      await ctx.db.contact.update({
+        where: { id: input.id },
+        data: {
+          deletedAt: before.deletedAt ?? now,
+          erasureScheduledAt: scheduledAt,
+          updatedById: user.id,
+        },
+      })
+      await ctx.audit({
+        action: 'contact.erasure_scheduled',
+        target: { type: 'Contact', id: input.id },
+        after: { erasureScheduledAt: scheduledAt, reason: input.reason ?? null },
+      })
+      return { erasureScheduledAt: scheduledAt }
+    }),
+
+  cancelErasure: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      if (user.role !== 'ceo' && user.role !== 'senior_manager') {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only a CEO or Senior Manager can cancel an erasure.',
+        })
+      }
+      const before = await ctx.db.contact.findFirst({
+        where: { id: input.id, erasedAt: null },
+        select: { id: true, erasureScheduledAt: true },
+      })
+      if (!before) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.contact.update({
+        where: { id: input.id },
+        data: { erasureScheduledAt: null, updatedById: user.id },
+      })
+      await ctx.audit({
+        action: 'contact.erasure_cancelled',
+        target: { type: 'Contact', id: input.id },
+        before: { erasureScheduledAt: before.erasureScheduledAt },
+      })
+      return { ok: true as const }
     }),
 
   /** Bulk-push a list of contacts to the Mailchimp audience. Per-id failures

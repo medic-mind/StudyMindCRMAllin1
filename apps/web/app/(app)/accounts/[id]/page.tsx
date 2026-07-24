@@ -4,6 +4,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { roleCan } from '@studymind/core/auth/policies'
+
 import { AccountInvoicingPanel } from '@/components/invoicing/AccountInvoicingPanel'
 import { InvoicesPanel } from '@/components/invoices/InvoicesPanel'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +17,8 @@ import { accountStatusTone } from '@/lib/ui/status-tone'
 
 import { SlackSection } from '../../contacts/[id]/sections/SlackSection'
 
+
+import { ActivitySection } from '../../contacts/[id]/sections/ActivitySection'
 
 import { AccountEditor } from './AccountEditor'
 import { AccountContacts } from './AccountContacts'
@@ -46,6 +50,9 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
 
   const canInvoiceWrite = Boolean(me && INVOICING_WRITE_ROLES.has(me.role))
   const canInvoiceMarkPaid = Boolean(me && INVOICING_MARK_PAID_ROLES.has(me.role))
+  // The access & change log (who viewed/edited this account) is an audit
+  // surface — visible to holders of `audit.read`. §20.
+  const canViewActivity = Boolean(me && roleCan(me.role, 'audit.read'))
 
   // Notes / activity / Slack — parity with the customer view.
   const [notes, activity, slackMentions] = await Promise.all([
@@ -183,6 +190,18 @@ export default async function BusinessAccountDetailPage({ params }: Props) {
             </ol>
           )}
         </Card>
+
+        {canViewActivity && (
+          <Card className="p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-neutral-900">Access &amp; change log</h2>
+              <span className="text-[11px] uppercase tracking-wide text-neutral-500">
+                Who viewed / edited this account
+              </span>
+            </div>
+            <ActivitySection targetType="BusinessAccount" targetId={account.id} />
+          </Card>
+        )}
       </div>
     </>
   )

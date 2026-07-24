@@ -19,6 +19,10 @@ interface Props<T> {
   label?: string
   disabled?: boolean
   className?: string
+  /** Fired after a successful export with the row count, so the caller can
+   * record the export in the audit log (CLAUDE.md §20 — bulk exports are
+   * tracked). Kept generic so this component stays tRPC-free. */
+  onExported?: (rowCount: number) => void
 }
 
 const BTN_CLS =
@@ -31,6 +35,7 @@ export function CsvExportButton<T>({
   label = 'Export CSV',
   disabled,
   className,
+  onExported,
 }: Props<T>) {
   const [busy, setBusy] = useState(false)
   async function onClick() {
@@ -38,6 +43,7 @@ export function CsvExportButton<T>({
     try {
       const rows = await getRows()
       downloadCsv(fileNameBase, rows, columns)
+      onExported?.(rows.length)
     } finally {
       setBusy(false)
     }

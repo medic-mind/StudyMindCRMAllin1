@@ -93,7 +93,24 @@ export function ContactsExportButton({
   hasHours,
 }: Props) {
   const utils = trpc.useUtils()
+  const recordExport = trpc.audit.recordExport.useMutation()
   const [pulling, setPulling] = useState(false)
+
+  // A short, human-readable description of the active filters for the audit
+  // trail, so "who exported what" is answerable, not just "someone exported".
+  function filterSummary(): string {
+    const parts: string[] = []
+    if (q) parts.push(`search "${q}"`)
+    if (companyIds?.length) parts.push(`${companyIds.length} companies`)
+    if (kinds?.length) parts.push(`kinds ${kinds.join(',')}`)
+    if (bookingStatuses?.length) parts.push(`status ${bookingStatuses.join(',')}`)
+    if (labelIds?.length) parts.push(`${labelIds.length} labels`)
+    if (subjectIds?.length) parts.push(`${subjectIds.length} subjects`)
+    if (countries?.length) parts.push(`countries ${countries.join(',')}`)
+    if (enquiryCategories?.length) parts.push(`enquiry ${enquiryCategories.join(',')}`)
+    if (hasHours) parts.push('has hours')
+    return parts.length ? parts.join('; ') : 'no filter (whole list)'
+  }
 
   async function getRows(): Promise<Row[]> {
     setPulling(true)
@@ -155,6 +172,9 @@ export function ContactsExportButton({
       columns={COLUMNS}
       fileNameBase="contacts"
       label={pulling ? 'Pulling…' : 'Export CSV'}
+      onExported={(rowCount) =>
+        recordExport.mutate({ kind: 'contact', rowCount, filterSummary: filterSummary() })
+      }
     />
   )
 }

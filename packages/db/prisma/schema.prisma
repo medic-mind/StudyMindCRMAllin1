@@ -621,6 +621,13 @@ model Contact {
   createdById String?
   updatedById String?
   deletedAt   DateTime?
+  /// GDPR right-to-erasure (Article 17). `erasureScheduledAt` marks a contact
+  /// soft-deleted with a 30-day grace window; the daily `compliance/erase-due-
+  /// records` job crypto-shreds + anonymises it once the window passes.
+  /// `erasedAt` is set the moment the personal data is destroyed (immediate
+  /// erasure sets it directly). Both null for a normal contact. §21.
+  erasureScheduledAt DateTime?
+  erasedAt           DateTime?
 
   familyMembers      FamilyMember[]
   billingForFamily   Family[]                 @relation("BillingContact")
@@ -696,6 +703,7 @@ model Contact {
   @@index([kind])
   @@index([bookingStatus])
   @@index([bookingContactId])
+  @@index([erasureScheduledAt])
 }
 
 /// An additional point of contact for a Contact — a second phone number, a

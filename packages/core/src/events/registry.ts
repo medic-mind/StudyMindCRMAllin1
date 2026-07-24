@@ -16,6 +16,16 @@ export const EVENT_NAMES = [
   'contact.updated',
   'contact.merged',
   'contact.read_minor',
+  // Per-record access + export audit (compliance viewer). `contact.viewed`
+  // is written on every contact-record open (throttled per request);
+  // `contact.exported` / `account.exported` record a bulk CSV pull.
+  'contact.viewed',
+  'contact.exported',
+  'account.exported',
+  // GDPR right-to-erasure (Article 17). §21.
+  'contact.erasure_scheduled',
+  'contact.erasure_cancelled',
+  'contact.erased',
   'family.created',
   'family.state_changed',
   'family.billing_contact_changed',
@@ -143,6 +153,7 @@ export const EVENT_NAMES = [
   'business_account.updated',
   'business_account.archived',
   'business_account.restored',
+  'business_account.viewed',
   'business_account.contact_linked',
   'business_account.contact_unlinked',
   // Students enrolled at a BusinessAccount.

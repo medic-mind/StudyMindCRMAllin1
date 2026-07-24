@@ -5,6 +5,7 @@ import { router } from '@/lib/trpc/builders'
 import { accountRouter } from './routers/account'
 import { accountLabelRouter } from './routers/accountLabel'
 import { adminRouter } from './routers/admin'
+import { auditRouter } from './routers/audit'
 import {
   boardQuickActionRouter,
   boardRouter,
@@ -39,6 +40,9 @@ const contactWithChannels = router({
   merge: contactRouter.merge,
   bulkMerge: contactRouter.bulkMerge,
   bulkSoftDelete: contactRouter.bulkSoftDelete,
+  erase: contactRouter.erase,
+  scheduleErasure: contactRouter.scheduleErasure,
+  cancelErasure: contactRouter.cancelErasure,
   bulkMailchimpPush: contactRouter.bulkMailchimpPush,
   links: contactRouter.links,
   documents: contactRouter.documents,
@@ -83,6 +87,7 @@ export const appRouter = router({
   account: accountRouter,
   accountLabel: accountLabelRouter,
   admin: adminRouter,
+  audit: auditRouter,
   board: boardRouter,
   boardQuickAction: boardQuickActionRouter,
   branding: brandingRouter,

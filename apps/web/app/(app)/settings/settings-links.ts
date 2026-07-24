@@ -65,6 +65,15 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         roles: 'CEO · Senior Manager',
         icon: 'shield',
       },
+      {
+        href: '/settings/audit',
+        title: 'Audit log',
+        navLabel: 'Audit log',
+        description:
+          'Who did what, and when — every record view, edit, deletion, sign-in and export. Searchable by type and date.',
+        roles: 'CEO · SM · Manager',
+        icon: 'shield',
+      },
     ],
   },
   {

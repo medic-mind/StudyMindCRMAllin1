@@ -6,7 +6,38 @@ Bootstrap the very first `super_admin` user in a StudyMind CRM environment.
 This is the role that can grant `admin` and `super_admin` to others
 (CLAUDE.md §20, ADR 0009). Without it, nobody can manage users.
 
-The default seed creates **`aashir@studymind.co.uk`** as `Aashir`.
+The default seed creates **`aashir@studymind.co.uk`** as `Aashir` with the
+`ceo` role (ADR 0014).
+
+## 2026-07 update — the seed is NON-DESTRUCTIVE and ships no default password
+
+The seed (`packages/db/prisma/seed-super-admin.ts`) was hardened for security:
+
+- **No hard-coded password.** It no longer contains any fallback password. On a
+  **first bootstrap** (the CEO row does not exist), the password comes from
+  `SUPER_ADMIN_PASSWORD` if set (must be ≥ 12 chars, 3 of 4 character classes),
+  otherwise a **strong random password is generated and printed once** to the
+  deploy log. `mustResetPassword` is set, so the operator is forced to change it
+  on first login.
+- **It never overwrites an existing password.** On every later deploy the seed
+  runs but leaves the CEO password untouched (it only ensures the `ceo` role
+  assignment exists). A redeploy can no longer reset a CEO's chosen password.
+- **Recovery is explicit.** If the CEO is locked out and no other admin exists,
+  set both `SUPER_ADMIN_PASSWORD='…strong…'` **and**
+  `SUPER_ADMIN_FORCE_PASSWORD_RESET=true`, then redeploy. Only then is the
+  existing password reset (and lock/deactivation cleared). Unset the flag after.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `SUPER_ADMIN_EMAIL` (or legacy `INITIAL_SUPER_ADMIN_EMAIL`) | `aashir@studymind.co.uk` | CEO email. |
+| `SUPER_ADMIN_NAME` | `Aashir` | Display name (create only). |
+| `SUPER_ADMIN_PASSWORD` (or legacy `INITIAL_SUPER_ADMIN_PASSWORD`) | _unset_ | Password to set on create, or on an existing row only with the force flag. Must be ≥ 12 chars / 3 classes. |
+| `SUPER_ADMIN_FORCE_PASSWORD_RESET` | _unset_ | `true` to reset an existing CEO password (recovery). |
+| `SUPER_ADMIN_SKIP_FORCE_RESET` | _unset_ | `true` to NOT force a first-login change on create. |
+
+> The sections below predate the 2026-07 rewrite (they describe an older
+> `super_admin` role + email-link path). Follow the behaviour above where they
+> conflict.
 
 ## When to run
 

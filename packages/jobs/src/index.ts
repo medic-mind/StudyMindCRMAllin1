@@ -61,6 +61,12 @@ export const RECURRING_JOBS: readonly RecurringJobSpec[] = [
     description: 'Archive AuditLogEntry older than 12 months to cold storage',
   },
   {
+    id: 'compliance/erase-due-records',
+    cron: '30 4 * * *',
+    description:
+      'GDPR erasure: permanently crypto-shred + anonymise contacts whose 30-day erasure grace window has elapsed',
+  },
+  {
     id: 'gmail/refresh-watch',
     cron: '0 6 * * *',
     description: 'Renew Gmail Pub/Sub watches that expire within 24h',

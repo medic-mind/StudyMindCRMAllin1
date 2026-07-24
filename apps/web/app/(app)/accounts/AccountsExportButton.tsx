@@ -82,6 +82,7 @@ interface Props {
 
 export function AccountsExportButton({ kind, statuses, q }: Props) {
   const utils = trpc.useUtils()
+  const recordExport = trpc.audit.recordExport.useMutation()
   async function getRows(): Promise<Row[]> {
     const data = await utils.businessAccount.list.fetch({
       kind,
@@ -91,11 +92,20 @@ export function AccountsExportButton({ kind, statuses, q }: Props) {
     })
     return data
   }
+  function filterSummary(): string {
+    const parts = [`kind ${kind}`]
+    if (statuses?.length) parts.push(`status ${statuses.join(',')}`)
+    if (q) parts.push(`search "${q}"`)
+    return parts.join('; ')
+  }
   return (
     <CsvExportButton
       getRows={getRows}
       columns={COLUMNS}
       fileNameBase={`accounts_${kind}`}
+      onExported={(rowCount) =>
+        recordExport.mutate({ kind: 'account', rowCount, filterSummary: filterSummary() })
+      }
     />
   )
 }

@@ -8,6 +8,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { ReactNode } from 'react'
 
+import { roleCan } from '@studymind/core/auth/policies'
+
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 import { contactKindTone } from '@/lib/ui/status-tone'
@@ -39,7 +41,9 @@ import {
 import { AddNote } from './AddNote'
 import { CallButton } from './CallButton'
 import { EditContactButton } from './EditContactButton'
+import { EraseContactButton } from './EraseContactButton'
 import { Timeline } from './Timeline'
+import { ActivitySection } from './sections/ActivitySection'
 import { CallsSection } from './sections/CallsSection'
 import { CallSummariesFeed } from './sections/CallSummariesFeed'
 import { CallSummarySection } from './sections/CallSummarySection'
@@ -123,6 +127,13 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   // Money actions (send a DD setup link) mirror the gocardless router's
   // finance gate; everyone else sees the panel read-only (§20.1).
   const canManageDirectDebit = ['ceo', 'senior_manager', 'manager'].includes(me?.role ?? '')
+  // §20.1: the record activity log (who viewed/edited/deleted this record) is
+  // an audit surface — visible to holders of `audit.read` (CEO/Senior
+  // Manager/Manager). The server enforces the real gate; this just hides the
+  // section from roles that can't read it.
+  const canViewActivity = me ? roleCan(me.role, 'audit.read') : false
+  // GDPR erasure is a CEO / Senior Manager action (§21).
+  const canErase = me ? ['ceo', 'senior_manager'].includes(me.role) : false
 
   let contact
   try {
@@ -182,6 +193,7 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
     ['section-notes', 'Notes'],
     ['section-documents', 'Documents'],
     ['section-timeline', 'Timeline'],
+    ...(canViewActivity ? ([['section-activity', 'Activity log']] as Array<[string, string]>) : []),
   ]
 
   return (
@@ -496,6 +508,16 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
               contactId={contact.id}
             />
           </SectionCard>
+
+          {canViewActivity && (
+            <SectionCard
+              id="section-activity"
+              title="Activity log"
+              icon={<ActivityIcon size={16} />}
+            >
+              <ActivitySection targetType="Contact" targetId={contact.id} />
+            </SectionCard>
+          )}
         </div>
 
         {/* Sticky detail rail */}
@@ -668,6 +690,17 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
                   <span className="break-all font-mono text-xs text-neutral-500">{contact.id}</span>
                 </DetailRow>
               </dl>
+              {canErase && (
+                <div className="mt-4 border-t border-neutral-100 pt-4">
+                  <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-red-400">
+                    Data protection
+                  </h3>
+                  <p className="mb-2 text-xs text-neutral-500">
+                    Permanently erase this contact&rsquo;s personal data (GDPR right to erasure).
+                  </p>
+                  <EraseContactButton contactId={contact.id} displayName={contact.displayName} />
+                </div>
+              )}
             </div>
           </Card>
         </aside>
