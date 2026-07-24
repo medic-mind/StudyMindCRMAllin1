@@ -22,6 +22,9 @@ export interface PostAlertInput {
   ctx: OutboundContext
   /** Optional channel override; defaults to SLACK_ALERTS_CHANNEL_ID. */
   channelId?: string
+  /** Reply under an existing message (its `ts`) instead of posting top-level —
+   *  used to mirror a CRM complaint thread into its Slack thread. */
+  threadTs?: string
   /** Test seam. */
   client?: SlackClient
 }
@@ -52,6 +55,7 @@ export async function postAlert(input: PostAlertInput): Promise<PostAlertResult>
     channel: channelId,
     text: input.message,
     ...(input.blocks ? { blocks: input.blocks } : {}),
+    ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
   })
 
   // Persist BEFORE writing audit so a partial-failure on audit does not

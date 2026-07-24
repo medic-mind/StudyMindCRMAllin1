@@ -404,6 +404,11 @@ export const EVENT_NAMES = [
   'complaint.resolved',
   'complaint.dismissed',
   'complaint.reopened',
+  'complaint.archived',
+  'complaint.unarchived',
+  'complaint.deleted',
+  'complaint.restored',
+  'complaint.purged',
   // Contact-timeline note events written alongside complaint transitions.
   'complaint.raised',
 

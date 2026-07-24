@@ -1,16 +1,19 @@
-// Complaints router. A complaint is logged against a customer (Contact),
-// appears on the Active complaints queue, can be worked with follow-ups +
-// action points, and resolved. Every customer-facing
-// step writes a `note` Interaction on the contact timeline (so it is "synced
-// to the customer's CRM") plus an audit row. Any staff can log, work, and
-// resolve a complaint (product decision); Virtual Assistants included.
-// CLAUDE.md §20, §27, §45.
+// Complaints router. Complaints are logged IN the CRM (Slack auto-ingestion was
+// removed, 2026-07). A complaint is logged against a CRM customer (Contact) OR a
+// manually-typed person (name + phone) when they're not in the CRM; either way
+// it ALWAYS posts to the Slack #complaintcallsummaries channel via the connected
+// bot and anchors a thread that mirrors follow-up updates into Slack and logs
+// them onto the customer's CRM timeline. Full lifecycle: work with thread
+// updates + action points, reassign, resolve/dismiss/reopen, archive/unarchive,
+// delete/restore, and permanently delete. Any staff can log, work and resolve a
+// complaint; delete + permanent-delete are role-gated. CLAUDE.md §20, §27, §45.
 
 import { createId } from '@paralleldrive/cuid2'
 import type { PrismaClient } from '@prisma/client'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 
+import { complaintCustomer } from '@/lib/complaints/customer'
 import {
   auditedProcedure,
   protectedProcedure,
@@ -21,9 +24,16 @@ import {
 const StatusEnum = z.enum(['open', 'in_progress', 'resolved', 'dismissed'])
 const SeverityEnum = z.enum(['low', 'medium', 'high'])
 const ACTIVE_STATUSES = ['open', 'in_progress'] as const
+const TERMINAL_STATUSES = new Set(['resolved', 'dismissed'])
 
-/** Preset complaint themes (Complaint.category stays free text — these seed
- *  the pick-list; staff can always type a new one). */
+// Complaints are an OPERATIONAL surface: every staff role (Virtual Assistant
+// included) can log, work, resolve, archive, delete/restore and permanently
+// delete a complaint — consistent with the 2026-07 policy (only integrations +
+// user-management are admin-only). Destructive actions are guarded by a
+// confirm dialog + an audit row, not a role gate.
+
+/** Preset complaint themes (Complaint.category stays free text — these seed the
+ *  pick-list; staff can always type a new one). */
 const PRESET_CATEGORIES = [
   'Billing',
   'Scheduling',
@@ -36,18 +46,28 @@ const PRESET_CATEGORIES = [
   'Other',
 ] as const
 
-/** Write a staff-visible note Interaction on the contact timeline so a
- *  complaint event is reflected in the customer's CRM. */
+const CONTACT_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  phoneE164: true,
+} as const
+
+/** Write a staff-visible note Interaction on the contact timeline so a complaint
+ *  event is reflected on the customer's CRM record. No-op for a manual complaint
+ *  (no CRM contact to log against — the complaint record itself is the trail). */
 async function timelineNote(
   db: PrismaClient,
   input: {
-    contactId: string
+    contactId: string | null
     summary: string
     event: string
     complaintId: string
     actorId: string | null
   },
 ): Promise<void> {
+  if (!input.contactId) return
   await db.interaction.create({
     data: {
       id: createId(),
@@ -68,21 +88,27 @@ async function timelineNote(
   })
 }
 
-function displayName(c: {
-  firstName: string | null
-  lastName: string | null
-  email: string | null
-}): string {
-  return [c.firstName, c.lastName].filter(Boolean).join(' ').trim() || c.email || 'Contact'
+/** Resolve a batch of user ids to display names for assignee chips. */
+async function resolveUserNames(
+  db: PrismaClient,
+  ids: ReadonlyArray<string | null>,
+): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter((x): x is string => Boolean(x)))]
+  if (unique.length === 0) return new Map()
+  const users = await db.user.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, name: true, email: true },
+  })
+  return new Map(users.map((u) => [u.id, u.name?.trim() || u.email]))
 }
 
 export const complaintRouter = router({
-  /** Active-complaints queue / per-contact list. */
+  /** Complaints queue / per-contact list. */
   list: protectedProcedure
     .input(
       z
         .object({
-          filter: z.enum(['active', 'all', 'resolved', 'mine']).default('active'),
+          filter: z.enum(['active', 'all', 'resolved', 'mine', 'archived']).default('active'),
           contactId: z.string().optional(),
           limit: z.number().int().min(1).max(200).default(100),
         })
@@ -90,19 +116,26 @@ export const complaintRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      const statusWhere =
-        input.filter === 'active'
-          ? { status: { in: [...ACTIVE_STATUSES] } }
-          : input.filter === 'resolved'
-            ? { status: { in: ['resolved', 'dismissed'] } }
-            : {}
+      // A per-contact list (the contact page) shows every non-deleted complaint
+      // for that customer, archived included (labelled), regardless of filter.
+      const where = input.contactId
+        ? { deletedAt: null, contactId: input.contactId }
+        : input.filter === 'archived'
+          ? { deletedAt: null, archivedAt: { not: null } }
+          : input.filter === 'active'
+            ? { deletedAt: null, archivedAt: null, status: { in: [...ACTIVE_STATUSES] } }
+            : input.filter === 'mine'
+              ? {
+                  deletedAt: null,
+                  archivedAt: null,
+                  assigneeId: user.id,
+                  status: { in: [...ACTIVE_STATUSES] },
+                }
+              : input.filter === 'resolved'
+                ? { deletedAt: null, archivedAt: null, status: { in: ['resolved', 'dismissed'] } }
+                : { deletedAt: null, archivedAt: null } // all
       const rows = await ctx.db.complaint.findMany({
-        where: {
-          deletedAt: null,
-          ...(input.contactId ? { contactId: input.contactId } : {}),
-          ...(input.filter === 'mine' ? { assigneeId: user.id, status: { in: [...ACTIVE_STATUSES] } } : {}),
-          ...statusWhere,
-        },
+        where,
         orderBy: [{ createdAt: 'desc' }],
         take: input.limit,
         select: {
@@ -114,38 +147,44 @@ export const complaintRouter = router({
           assigneeId: true,
           createdAt: true,
           resolvedAt: true,
-          contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+          archivedAt: true,
+          personName: true,
+          personPhone: true,
+          personEmail: true,
+          contact: { select: CONTACT_SELECT },
           _count: { select: { updates: true } },
         },
       })
-      return rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        status: r.status,
-        severity: r.severity,
-        category: r.category,
-        assigneeId: r.assigneeId,
-        createdAt: r.createdAt,
-        resolvedAt: r.resolvedAt,
-        contactId: r.contact.id,
-        contactName: displayName(r.contact),
-        updateCount: r._count.updates,
-      }))
+      const assigneeNames = await resolveUserNames(ctx.db, rows.map((r) => r.assigneeId))
+      return rows.map((r) => {
+        const cust = complaintCustomer(r)
+        return {
+          id: r.id,
+          title: r.title,
+          status: r.status,
+          severity: r.severity,
+          category: r.category,
+          assigneeId: r.assigneeId,
+          assigneeName: r.assigneeId ? (assigneeNames.get(r.assigneeId) ?? null) : null,
+          createdAt: r.createdAt,
+          resolvedAt: r.resolvedAt,
+          archived: r.archivedAt != null,
+          contactId: cust.contactId,
+          customerName: cust.name,
+          isManual: cust.manual,
+          updateCount: r._count.updates,
+        }
+      })
     }),
 
-  /** Count of active complaints — for the sidebar badge. */
+  /** Count of active (open + in progress, not archived) complaints — sidebar badge. */
   activeCount: protectedProcedure.query(async ({ ctx }) => {
     return ctx.db.complaint.count({
-      where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] } },
+      where: { deletedAt: null, archivedAt: null, status: { in: [...ACTIVE_STATUSES] } },
     })
   }),
 
-  /**
-   * Management headline stats for the top-level Complaints dashboard. All-staff
-   * (the queue is worked by everyone) — the deep period analytics with charts
-   * stay Manager+ under /reports/complaints. Kept to a handful of cheap
-   * counts/groupBys so it is safe to load on every dashboard view.
-   */
+  /** Management headline stats for the top-level Complaints dashboard. */
   dashboardStats: protectedProcedure.query(async ({ ctx }) => {
     const now = Date.now()
     const since30 = new Date(now - 30 * 86_400_000)
@@ -154,15 +193,19 @@ export const complaintRouter = router({
       await Promise.all([
         ctx.db.complaint.groupBy({
           by: ['severity'],
-          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] } },
+          where: { deletedAt: null, archivedAt: null, status: { in: [...ACTIVE_STATUSES] } },
           _count: true,
         }),
         ctx.db.complaint.count({ where: { deletedAt: null, createdAt: { gte: since30 } } }),
         ctx.db.complaint.count({ where: { deletedAt: null, resolvedAt: { gte: since30 } } }),
         ctx.db.complaint.count({
-          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] }, assigneeId: null },
+          where: {
+            deletedAt: null,
+            archivedAt: null,
+            status: { in: [...ACTIVE_STATUSES] },
+            assigneeId: null,
+          },
         }),
-        // Resolution time over the last 90 days of resolved complaints.
         ctx.db.complaint.findMany({
           where: { deletedAt: null, resolvedAt: { gte: since90 } },
           select: { createdAt: true, resolvedAt: true },
@@ -193,11 +236,7 @@ export const complaintRouter = router({
     }
   }),
 
-  /**
-   * Category pick-list for the log-complaint form: the preset themes merged
-   * with every category staff have already typed in (so a new typed category
-   * becomes part of the list organically — no settings page needed).
-   */
+  /** Category pick-list for the log-complaint form. */
   categories: protectedProcedure.query(async ({ ctx }) => {
     const used = await ctx.db.complaint.findMany({
       where: { deletedAt: null, category: { not: null } },
@@ -219,9 +258,18 @@ export const complaintRouter = router({
     return [...PRESET_CATEGORIES, ...extras]
   }),
 
-  /** Live backlog + opened-in-period — for the report KPI strips (Aircall /
-   *  Finance). `activeBacklog` is a "now" figure; `openedInPeriod` tracks the
-   *  report's period selector so the tile responds to it. */
+  /** Active staff for the assignee picker. */
+  assignableUsers: protectedProcedure.query(async ({ ctx }) => {
+    const users = await ctx.db.user.findMany({
+      where: { deactivatedAt: null, deletedAt: null },
+      select: { id: true, name: true, email: true },
+      orderBy: [{ name: 'asc' }, { email: 'asc' }],
+      take: 200,
+    })
+    return users.map((u) => ({ id: u.id, name: u.name?.trim() || u.email, email: u.email }))
+  }),
+
+  /** Live backlog + opened-in-period — for the report KPI strips. */
   periodCounts: protectedProcedure
     .input(z.object({ from: z.date(), to: z.date() }))
     .query(async ({ ctx, input }) => {
@@ -229,7 +277,7 @@ export const complaintRouter = router({
       to.setUTCHours(23, 59, 59, 999)
       const [activeBacklog, openedInPeriod] = await Promise.all([
         ctx.db.complaint.count({
-          where: { deletedAt: null, status: { in: [...ACTIVE_STATUSES] } },
+          where: { deletedAt: null, archivedAt: null, status: { in: [...ACTIVE_STATUSES] } },
         }),
         ctx.db.complaint.count({
           where: { deletedAt: null, createdAt: { gte: input.from, lte: to } },
@@ -253,8 +301,15 @@ export const complaintRouter = router({
           assigneeId: true,
           resolution: true,
           resolvedAt: true,
+          archivedAt: true,
           createdAt: true,
-          contact: { select: { id: true, firstName: true, lastName: true, email: true } },
+          createdById: true,
+          slackChannelId: true,
+          slackMessageTs: true,
+          personName: true,
+          personPhone: true,
+          personEmail: true,
+          contact: { select: CONTACT_SELECT },
           updates: {
             orderBy: { createdAt: 'asc' },
             select: {
@@ -269,35 +324,81 @@ export const complaintRouter = router({
         },
       })
       if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+      const cust = complaintCustomer(c)
+      const authorIds = [c.createdById, ...c.updates.map((u) => u.createdById)]
+      const names = await resolveUserNames(ctx.db, [...authorIds, c.assigneeId])
       return {
-        ...c,
-        contactName: displayName(c.contact),
+        id: c.id,
+        title: c.title,
+        description: c.description,
+        status: c.status,
+        severity: c.severity,
+        category: c.category,
+        resolution: c.resolution,
+        resolvedAt: c.resolvedAt,
+        archived: c.archivedAt != null,
+        createdAt: c.createdAt,
+        postedToSlack: Boolean(c.slackMessageTs),
+        assigneeId: c.assigneeId,
+        assigneeName: c.assigneeId ? (names.get(c.assigneeId) ?? null) : null,
+        contactId: cust.contactId,
+        customerName: cust.name,
+        customerPhone: cust.phone,
+        customerEmail: cust.email,
+        isManual: cust.manual,
+        updates: c.updates.map((u) => ({
+          ...u,
+          authorName: u.createdById ? (names.get(u.createdById) ?? null) : null,
+        })),
       }
     }),
 
   create: auditedProcedure
     .input(
-      z.object({
-        contactId: z.string(),
-        title: z.string().trim().min(2).max(200),
-        description: z.string().trim().max(4000).optional(),
-        severity: SeverityEnum.default('medium'),
-        category: z.string().trim().max(80).optional(),
-        assigneeId: z.string().optional(),
-      }),
+      z
+        .object({
+          contactId: z.string().optional(),
+          person: z
+            .object({
+              name: z.string().trim().min(2).max(120),
+              phone: z.string().trim().max(40).optional(),
+              email: z.string().trim().max(200).optional(),
+            })
+            .optional(),
+          title: z.string().trim().min(2).max(200),
+          description: z.string().trim().max(4000).optional(),
+          severity: SeverityEnum.default('medium'),
+          category: z.string().trim().max(80).optional(),
+          assigneeId: z.string().optional(),
+        })
+        .refine((v) => Boolean(v.contactId) || Boolean(v.person?.name), {
+          message: 'Pick a customer from the CRM, or type a name to log it manually.',
+          path: ['contactId'],
+        }),
     )
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      const contact = await ctx.db.contact.findFirst({
-        where: { id: input.contactId, deletedAt: null },
-        select: { id: true },
-      })
-      if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+      // Prefer a linked CRM contact; a manual person is stored only when no
+      // contact is chosen (never a silent contact create — §3).
+      let contactId: string | null = null
+      if (input.contactId) {
+        const contact = await ctx.db.contact.findFirst({
+          where: { id: input.contactId, deletedAt: null },
+          select: { id: true },
+        })
+        if (!contact) throw new TRPCError({ code: 'NOT_FOUND', message: 'Contact not found' })
+        contactId = contact.id
+      }
+      const manual = contactId ? null : (input.person ?? null)
+
       const id = createId()
       await ctx.db.complaint.create({
         data: {
           id,
-          contactId: input.contactId,
+          contactId,
+          personName: manual?.name ?? null,
+          personPhone: manual?.phone ?? null,
+          personEmail: manual?.email ?? null,
           title: input.title,
           description: input.description ?? null,
           severity: input.severity,
@@ -309,7 +410,7 @@ export const complaintRouter = router({
         },
       })
       await timelineNote(ctx.db, {
-        contactId: input.contactId,
+        contactId,
         summary: `Complaint raised: ${input.title}`,
         event: 'complaint.raised',
         complaintId: id,
@@ -319,23 +420,25 @@ export const complaintRouter = router({
         action: 'complaint.created',
         target: { type: 'Complaint', id },
         after: {
-          contactId: input.contactId,
+          contactId,
+          manual: Boolean(manual),
+          personName: manual?.name ?? null,
           title: input.title,
           severity: input.severity,
           category: input.category ?? null,
         },
       })
 
-      // Announce to the operator-routed #complaintcallsummaries channel — the
-      // reverse of the Slack→CRM complaint import, so logging a complaint here
-      // and typing one in Slack do the same thing. Best-effort: a Slack failure
-      // never fails logging the complaint. (Slack-sourced complaints are created
-      // by the ingestion executor, not this procedure, so there is no echo.) The
-      // status is returned so the UI can echo it (mirrors the call-summary flow).
+      // ALWAYS announce to the operator-routed #complaintcallsummaries channel
+      // and anchor the thread (best-effort — a Slack failure never fails logging
+      // the complaint). The status is returned so the UI can echo it.
       const { postComplaintToSlack } = await import('@/lib/complaints/slack-sender')
       const slack = await postComplaintToSlack({
         complaintId: id,
-        contactId: input.contactId,
+        contactId,
+        personName: manual?.name ?? null,
+        personPhone: manual?.phone ?? null,
+        personEmail: manual?.email ?? null,
         title: input.title,
         description: input.description ?? null,
         category: input.category ?? null,
@@ -343,8 +446,16 @@ export const complaintRouter = router({
         agentId: user.id,
         requestId: ctx.requestId,
       }).catch((): { status: 'failed' } => ({ status: 'failed' }))
+      if (slack.status === 'sent' && slack.slackTs && slack.channelId) {
+        await ctx.db.complaint
+          .update({
+            where: { id },
+            data: { slackChannelId: slack.channelId, slackMessageTs: slack.slackTs },
+          })
+          .catch(() => undefined)
+      }
 
-      return { id, slack }
+      return { id, slack: { status: slack.status } }
     }),
 
   update: auditedProcedure
@@ -355,6 +466,8 @@ export const complaintRouter = router({
         severity: SeverityEnum.optional(),
         category: z.string().trim().max(80).nullish(),
         assigneeId: z.string().nullish(),
+        title: z.string().trim().min(2).max(200).optional(),
+        description: z.string().trim().max(4000).nullish(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -364,18 +477,8 @@ export const complaintRouter = router({
         select: { id: true, status: true },
       })
       if (!existing) throw new TRPCError({ code: 'NOT_FOUND' })
-      // Keep resolvedAt/resolvedById consistent with the status the same way
-      // the dedicated resolve/reopen procedures do — otherwise a complaint
-      // moved to resolved/dismissed via update() had status set but resolvedAt
-      // null, so it vanished from the resolution-time + resolved-count metrics.
-      // Only stamp on a genuine transition INTO a terminal state, and clear on a
-      // transition OUT; an unrelated edit that re-passes the same status is a
-      // no-op so resolvedAt is never bumped.
-      const TERMINAL_STATUSES = new Set(['resolved', 'dismissed'])
-      let resolvedTransition: {
-        resolvedAt?: Date | null
-        resolvedById?: string | null
-      } = {}
+      // Keep resolvedAt/resolvedById consistent with the status transition.
+      let resolvedTransition: { resolvedAt?: Date | null; resolvedById?: string | null } = {}
       if (input.status !== undefined && input.status !== existing.status) {
         const wasTerminal = TERMINAL_STATUSES.has(existing.status)
         const willBeTerminal = TERMINAL_STATUSES.has(input.status)
@@ -392,6 +495,8 @@ export const complaintRouter = router({
           ...(input.severity !== undefined ? { severity: input.severity } : {}),
           ...(input.category !== undefined ? { category: input.category } : {}),
           ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
           ...resolvedTransition,
           updatedById: user.id,
         },
@@ -408,7 +513,8 @@ export const complaintRouter = router({
       return { ok: true }
     }),
 
-  /** Add a follow-up note or action point. */
+  /** Add a thread message or action point. Logs onto the customer's CRM timeline
+   *  (if linked) AND mirrors into the complaint's Slack thread. */
   addUpdate: auditedProcedure
     .input(
       z.object({
@@ -421,7 +527,7 @@ export const complaintRouter = router({
       const user = requireUser(ctx)
       const c = await ctx.db.complaint.findFirst({
         where: { id: input.complaintId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, contactId: true, slackChannelId: true, slackMessageTs: true },
       })
       if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
       const id = createId()
@@ -434,11 +540,37 @@ export const complaintRouter = router({
           createdById: user.id,
         },
       })
+      await timelineNote(ctx.db, {
+        contactId: c.contactId,
+        summary: `${input.isActionPoint ? 'Complaint action' : 'Complaint update'}: ${input.body}`,
+        event: 'complaint.update_added',
+        complaintId: c.id,
+        actorId: user.id,
+      })
       await ctx.audit({
         action: 'complaint.update_added',
         target: { type: 'Complaint', id: input.complaintId },
         after: { updateId: id, isActionPoint: input.isActionPoint },
       })
+      // Mirror into the Slack thread (best-effort).
+      if (c.slackChannelId && c.slackMessageTs) {
+        const author = await ctx.db.user.findUnique({
+          where: { id: user.id },
+          select: { name: true, email: true },
+        })
+        const { postComplaintThreadReply } = await import('@/lib/complaints/slack-sender')
+        await postComplaintThreadReply({
+          complaintId: c.id,
+          updateId: id,
+          channelId: c.slackChannelId,
+          threadTs: c.slackMessageTs,
+          body: input.body,
+          isActionPoint: input.isActionPoint,
+          authorName: author?.name?.trim() || author?.email || null,
+          agentId: user.id,
+          requestId: ctx.requestId,
+        }).catch(() => undefined)
+      }
       return { id }
     }),
 
@@ -520,10 +652,82 @@ export const complaintRouter = router({
         where: { id: input.id },
         data: { status: 'open', resolvedAt: null, resolvedById: null, updatedById: user.id },
       })
+      await ctx.audit({ action: 'complaint.reopened', target: { type: 'Complaint', id: input.id } })
+      return { ok: true }
+    }),
+
+  /** Archive (hide from the active queue) — reversible, never deletes. */
+  archive: auditedProcedure
+    .input(z.object({ id: z.string(), archived: z.boolean().default(true) }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const c = await ctx.db.complaint.findFirst({
+        where: { id: input.id, deletedAt: null },
+        select: { id: true },
+      })
+      if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.complaint.update({
+        where: { id: input.id },
+        data: { archivedAt: input.archived ? new Date() : null, updatedById: user.id },
+      })
       await ctx.audit({
-        action: 'complaint.reopened',
+        action: input.archived ? 'complaint.archived' : 'complaint.unarchived',
         target: { type: 'Complaint', id: input.id },
       })
+      return { ok: true }
+    }),
+
+  /** Soft-delete (remove from the queue; recoverable). Any staff. */
+  delete: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const c = await ctx.db.complaint.findFirst({
+        where: { id: input.id, deletedAt: null },
+        select: { id: true },
+      })
+      if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.complaint.update({
+        where: { id: input.id },
+        data: { deletedAt: new Date(), updatedById: user.id },
+      })
+      await ctx.audit({ action: 'complaint.deleted', target: { type: 'Complaint', id: input.id } })
+      return { ok: true }
+    }),
+
+  /** Restore a soft-deleted complaint. Any staff. */
+  restore: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = requireUser(ctx)
+      const c = await ctx.db.complaint.findUnique({
+        where: { id: input.id },
+        select: { id: true, deletedAt: true },
+      })
+      if (!c || !c.deletedAt) throw new TRPCError({ code: 'NOT_FOUND' })
+      await ctx.db.complaint.update({
+        where: { id: input.id },
+        data: { deletedAt: null, updatedById: user.id },
+      })
+      await ctx.audit({ action: 'complaint.restored', target: { type: 'Complaint', id: input.id } })
+      return { ok: true }
+    }),
+
+  /** Permanently delete a complaint + its thread (irreversible). Any staff —
+   *  guarded by a confirm dialog + audit row, not a role gate. */
+  permanentlyDelete: auditedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      requireUser(ctx)
+      const c = await ctx.db.complaint.findUnique({ where: { id: input.id }, select: { id: true } })
+      if (!c) throw new TRPCError({ code: 'NOT_FOUND' })
+      // Audit BEFORE the row is gone so the deletion itself is recorded.
+      await ctx.audit({
+        action: 'complaint.purged',
+        target: { type: 'Complaint', id: input.id },
+      })
+      // ComplaintUpdate rows cascade on the FK.
+      await ctx.db.complaint.delete({ where: { id: input.id } })
       return { ok: true }
     }),
 })

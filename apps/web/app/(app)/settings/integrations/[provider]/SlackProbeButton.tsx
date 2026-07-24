@@ -40,14 +40,6 @@ export function SlackProbeButton(): JSX.Element {
     },
   })
 
-  const reprocessComplaints = trpc.admin.backfill.slackComplaints.reprocess.useMutation({
-    onSuccess: () =>
-      toast.success(
-        'Scanning existing complaint-channel mentions — matching ones will open as Complaints shortly.',
-      ),
-    onError: (e) => toast.error(e.message ?? 'Could not start the complaint reprocess'),
-  })
-
   const joinAll = trpc.admin.integrations.slackJoinAllChannels.useMutation({
     onSuccess: (r) => {
       if (!r.ok) {
@@ -81,16 +73,6 @@ export function SlackProbeButton(): JSX.Element {
           title="Join every public channel in the workspace as the bot, so the pull can read them all — private channels still need /invite"
         >
           {joinAll.isPending ? 'Joining…' : 'Join all public channels'}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          disabled={reprocessComplaints.isPending}
-          onClick={() => reprocessComplaints.mutate()}
-          title="Open Complaints for complaint-channel Slack mentions already in the CRM (since go-live). Idempotent — safe to re-run."
-        >
-          {reprocessComplaints.isPending ? 'Scanning…' : 'Reprocess complaint mentions'}
         </Button>
         <Button
           type="button"

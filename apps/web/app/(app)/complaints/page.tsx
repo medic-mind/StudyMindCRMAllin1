@@ -19,12 +19,13 @@ import { complaintStatusTone } from '@/lib/ui/status-tone'
 
 import { NewComplaintDialog } from './NewComplaintDialog'
 
-type Filter = 'active' | 'mine' | 'resolved' | 'all'
+type Filter = 'active' | 'mine' | 'resolved' | 'all' | 'archived'
 
 const FILTERS: ReadonlyArray<{ value: Filter; label: string }> = [
   { value: 'active', label: 'Active' },
   { value: 'mine', label: 'Assigned to me' },
   { value: 'resolved', label: 'Resolved' },
+  { value: 'archived', label: 'Archived' },
   { value: 'all', label: 'All' },
 ]
 
@@ -64,7 +65,12 @@ export default async function ComplaintsPage({
 }) {
   const sp = await searchParams
   const filter: Filter =
-    sp.filter === 'mine' || sp.filter === 'resolved' || sp.filter === 'all' ? sp.filter : 'active'
+    sp.filter === 'mine' ||
+    sp.filter === 'resolved' ||
+    sp.filter === 'all' ||
+    sp.filter === 'archived'
+      ? sp.filter
+      : 'active'
   const caller = await createServerCaller()
   const me = await getCurrentUser()
   const canSeeReport = me ? REPORT_ROLES.has(me.role) : false
@@ -161,7 +167,7 @@ export default async function ComplaintsPage({
             {complaints.map((c) => (
               <Link
                 key={c.id}
-                href={`/contacts/${c.contactId}#section-complaints`}
+                href={`/complaints/${c.id}`}
                 className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-neutral-50/80"
               >
                 <span className="min-w-0">
@@ -169,16 +175,23 @@ export default async function ComplaintsPage({
                     {c.title}
                   </span>
                   <span className="text-xs text-neutral-500">
-                    {c.contactName}
+                    {c.customerName}
+                    {c.isManual ? ' (manual)' : ''}
                     {' · '}
                     {formatRelativeTime(new Date(c.createdAt), now)}
                     {c.category ? ` · ${c.category}` : ''}
+                    {c.assigneeName ? ` · ${c.assigneeName}` : ''}
                     {c.updateCount > 0
                       ? ` · ${c.updateCount} update${c.updateCount === 1 ? '' : 's'}`
                       : ''}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1.5">
+                  {c.archived ? (
+                    <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500">
+                      Archived
+                    </span>
+                  ) : null}
                   <span
                     className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
                       SEVERITY_CLS[c.severity] ?? SEVERITY_CLS.low

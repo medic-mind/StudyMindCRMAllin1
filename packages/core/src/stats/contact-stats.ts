@@ -80,7 +80,10 @@ export async function loadContactComplaintCounts(
   })
 
   for (const row of groups) {
-    out.set(row.contactId, row._count._all)
+    // contactId is nullable on Complaint (manual complaints have none); the
+    // `in: contactIds` filter guarantees a real id here, this guard just
+    // satisfies the widened type.
+    if (row.contactId) out.set(row.contactId, row._count._all)
   }
 
   return out

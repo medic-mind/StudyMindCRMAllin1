@@ -1,11 +1,9 @@
-// Log-complaint modal for the Complaints hub. Find the customer with the shared
-// ContactFinder (search the CRM, or add a brand-new person inline with a de-dup
-// guard) then the same fields as the contact page's ComplaintsSection form —
-// title, details, severity, and category (preset + free-type). Server work is
-// the existing complaint.create (audited; the complaint is stored on the
-// customer's record AND announced to #complaintcallsummaries — the reply echoes
-// that Slack status). Esc closes, backdrop closes, focus restore.
-// CLAUDE.md §26, §28.
+// Log-complaint modal. Pick the customer from the CRM (ContactFinder) OR type
+// them in manually (name + phone) when they're not in the CRM — either way the
+// complaint is stored properly and, on save, ALWAYS posted to Slack
+// #complaintcallsummaries via the connected bot (clearly flagged in the form),
+// which starts the thread you then work on the complaint's page. Esc/backdrop
+// close, focus restore. CLAUDE.md §26, §28.
 
 'use client'
 
@@ -15,42 +13,45 @@ import { toast } from 'sonner'
 
 import { ContactFinder, type ResolvedContact } from '@/components/contact/contact-finder'
 import { Button } from '@/components/ui/button'
+import { HashIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
+import { PhoneInput } from '@/components/ui/phone-input'
 import { Select } from '@/components/ui/select'
 import { SuggestInput } from '@/components/ui/suggest-input'
 import { Textarea } from '@/components/ui/textarea'
 import { trpc } from '@/lib/trpc/client'
-import { XIcon } from '@/components/ui/icon'
 
 type Severity = 'low' | 'medium' | 'high'
+type Mode = 'crm' | 'manual'
 
-/** Turn the best-effort Slack result into a plain-English toast line. */
+/** Plain-English Slack outcome for the success toast. */
 function slackNote(status: string | undefined): string {
+  if (status === 'sent') return 'posted to #complaintcallsummaries'
   if (status === 'skipped') return 'Slack not configured — set it up in Settings → Slack channels'
-  return "couldn't post to Slack (recorded on the CRM)"
+  return "couldn't post to Slack (still saved on the CRM)"
 }
 
 export function NewComplaintDialog() {
   const router = useRouter()
   const utils = trpc.useUtils()
   const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<Mode>('crm')
   const [picked, setPicked] = useState<ResolvedContact | null>(null)
+  const [manual, setManual] = useState({ name: '', phone: '', email: '' })
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [severity, setSeverity] = useState<Severity>('medium')
   const [category, setCategory] = useState('')
-  const [errors, setErrors] = useState<{
-    customer?: string
-    title?: string
-    form?: string
-  }>({})
+  const [errors, setErrors] = useState<{ customer?: string; title?: string; form?: string }>({})
   const titleRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const categoriesQuery = trpc.complaint.categories.useQuery(undefined, { enabled: open })
 
   function reset() {
+    setMode('crm')
     setPicked(null)
+    setManual({ name: '', phone: '', email: '' })
     setTitle('')
     setDescription('')
     setSeverity('medium')
@@ -63,13 +64,14 @@ export function NewComplaintDialog() {
       setOpen(false)
       reset()
       const status = data.slack?.status
-      if (status === 'sent') {
-        toast.success('Complaint logged and posted to #complaintcallsummaries')
-      } else {
-        toast.success(`Complaint logged — ${slackNote(status)}`)
-      }
+      toast.success(
+        status === 'sent'
+          ? 'Complaint logged and posted to #complaintcallsummaries'
+          : `Complaint logged — ${slackNote(status)}`,
+      )
       await utils.complaint.activeCount.invalidate()
-      router.refresh()
+      await utils.complaint.list.invalidate()
+      router.push(`/complaints/${data.id}`)
     },
     onError: (e) => {
       setErrors({ form: e.message })
@@ -77,7 +79,6 @@ export function NewComplaintDialog() {
     },
   })
 
-  // Esc closes; restore focus to the trigger on close.
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
@@ -91,19 +92,33 @@ export function NewComplaintDialog() {
     if (!open) triggerRef.current?.focus()
   }, [open])
 
+  const hasCustomer = mode === 'crm' ? Boolean(picked) : manual.name.trim().length >= 2
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const next: { customer?: string; title?: string } = {}
-    if (!picked) next.customer = 'Find the customer, or add them if they are new.'
+    if (!hasCustomer)
+      next.customer =
+        mode === 'crm'
+          ? 'Find the customer, or switch to "Enter manually".'
+          : 'Enter the customer’s name (2+ characters).'
     if (title.trim().length < 2) next.title = 'Give the complaint a short title.'
-    if (next.customer || next.title || !picked) {
+    if (next.customer || next.title) {
       setErrors(next)
       if (next.title && !next.customer) titleRef.current?.focus()
       return
     }
     setErrors({})
     create.mutate({
-      contactId: picked.contactId,
+      ...(mode === 'crm' && picked
+        ? { contactId: picked.contactId }
+        : {
+            person: {
+              name: manual.name.trim(),
+              phone: manual.phone.trim() || undefined,
+              email: manual.email.trim() || undefined,
+            },
+          }),
       title: title.trim(),
       description: description.trim() || undefined,
       severity,
@@ -141,28 +156,84 @@ export function NewComplaintDialog() {
               </button>
             </header>
             <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
+              {/* Slack notice — always sent, made explicit. */}
+              <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                <HashIcon size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  Logging this <strong>posts it to Slack #complaintcallsummaries</strong> and starts
+                  a thread — every message you add here is mirrored to that thread and the
+                  customer’s CRM record.
+                </span>
+              </div>
+
               <Field label="Customer" required error={errors.customer}>
-                {picked ? (
-                  <div className="flex items-center justify-between rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-800">
-                    <span className="truncate">{picked.contactName}</span>
+                <div className="mb-2 inline-flex rounded-md border border-neutral-200 bg-neutral-50 p-0.5 text-xs">
+                  {(['crm', 'manual'] as const).map((m) => (
                     <button
+                      key={m}
                       type="button"
-                      onClick={() => setPicked(null)}
-                      className="ml-2 shrink-0 text-xs text-primary-700 hover:underline"
+                      onClick={() => {
+                        setMode(m)
+                        setErrors((p) => ({ ...p, customer: undefined }))
+                      }}
+                      className={
+                        mode === m
+                          ? 'rounded px-2.5 py-1 font-medium text-primary-800 bg-white shadow-sm'
+                          : 'rounded px-2.5 py-1 text-neutral-600 hover:text-neutral-900'
+                      }
                     >
-                      Change
+                      {m === 'crm' ? 'Find in CRM' : 'Enter manually'}
                     </button>
-                  </div>
+                  ))}
+                </div>
+
+                {mode === 'crm' ? (
+                  picked ? (
+                    <div className="flex items-center justify-between rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-800">
+                      <span className="truncate">{picked.contactName}</span>
+                      <button
+                        type="button"
+                        onClick={() => setPicked(null)}
+                        className="ml-2 shrink-0 text-xs text-primary-700 hover:underline"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <ContactFinder
+                      createCta="Add & continue →"
+                      searchPlaceholder="Search customers by name, email, or phone…"
+                      onResolved={(r) => {
+                        setPicked(r)
+                        if (errors.customer) setErrors((p) => ({ ...p, customer: undefined }))
+                        setTimeout(() => titleRef.current?.focus(), 0)
+                      }}
+                    />
+                  )
                 ) : (
-                  <ContactFinder
-                    createCta="Add & continue →"
-                    searchPlaceholder="Search customers by name, email, or phone…"
-                    onResolved={(r) => {
-                      setPicked(r)
-                      if (errors.customer) setErrors((p) => ({ ...p, customer: undefined }))
-                      setTimeout(() => titleRef.current?.focus(), 0)
-                    }}
-                  />
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Input
+                      value={manual.name}
+                      onChange={(e) => {
+                        setManual((m) => ({ ...m, name: e.target.value }))
+                        if (errors.customer) setErrors((p) => ({ ...p, customer: undefined }))
+                      }}
+                      placeholder="Full name"
+                      aria-label="Customer name"
+                    />
+                    <PhoneInput
+                      value={manual.phone}
+                      onChange={(v) => setManual((m) => ({ ...m, phone: v }))}
+                    />
+                    <Input
+                      value={manual.email}
+                      onChange={(e) => setManual((m) => ({ ...m, email: e.target.value }))}
+                      placeholder="Email (optional)"
+                      type="email"
+                      className="sm:col-span-2"
+                      aria-label="Customer email"
+                    />
+                  </div>
                 )}
               </Field>
 
@@ -192,10 +263,7 @@ export function NewComplaintDialog() {
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Severity">
-                  <Select
-                    value={severity}
-                    onChange={(e) => setSeverity(e.target.value as Severity)}
-                  >
+                  <Select value={severity} onChange={(e) => setSeverity(e.target.value as Severity)}>
                     <option value="low">Low severity</option>
                     <option value="medium">Medium severity</option>
                     <option value="high">High severity</option>
@@ -223,7 +291,7 @@ export function NewComplaintDialog() {
                   Cancel
                 </Button>
                 <Button type="submit" size="sm" disabled={create.isPending}>
-                  {create.isPending ? 'Logging…' : 'Log complaint'}
+                  {create.isPending ? 'Logging…' : 'Log complaint & post to Slack'}
                 </Button>
               </div>
             </form>

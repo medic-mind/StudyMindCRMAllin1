@@ -20,6 +20,9 @@ export interface SlackChatPostMessageInput {
   channel: string
   text: string
   blocks?: unknown[]
+  /** Reply in an existing thread (the root message's `ts`). Omit to post a new
+   *  top-level message. Used to mirror a CRM complaint thread into Slack. */
+  thread_ts?: string
 }
 
 export interface SlackChatPostMessageResult {

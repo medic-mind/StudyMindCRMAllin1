@@ -1025,7 +1025,9 @@ export const reportsRouter = router({
       const ACTIVE = ['open', 'in_progress'] as const
 
       const [activeBacklog, openedRows, resolvedRows, activeGroups] = await Promise.all([
-        ctx.db.complaint.count({ where: { deletedAt: null, status: { in: [...ACTIVE] } } }),
+        ctx.db.complaint.count({
+          where: { deletedAt: null, archivedAt: null, status: { in: [...ACTIVE] } },
+        }),
         ctx.db.complaint.findMany({
           where: { deletedAt: null, createdAt: { gte: from, lte: periodTo } },
           select: { status: true, severity: true, category: true, createdAt: true },
@@ -1038,7 +1040,7 @@ export const reportsRouter = router({
         }),
         ctx.db.complaint.groupBy({
           by: ['contactId'],
-          where: { deletedAt: null, status: { in: [...ACTIVE] } },
+          where: { deletedAt: null, archivedAt: null, status: { in: [...ACTIVE] } },
           _count: { _all: true },
         }),
       ])
@@ -1087,6 +1089,9 @@ export const reportsRouter = router({
         .slice(0, 8)
 
       const topGroups = activeGroups
+        // Manual complaints (no CRM contact) group under a null contactId — they
+        // have no contact to rank as a "repeat complainer".
+        .filter((g): g is typeof g & { contactId: string } => g.contactId != null)
         .map((g) => ({ contactId: g.contactId, count: g._count._all }))
         .sort((a, b) => b.count - a.count)
         .slice(0, 8)

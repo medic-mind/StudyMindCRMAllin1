@@ -4560,7 +4560,17 @@ model WebinarLevelOption {
 /// in the app layer).
 model Complaint {
   id          String  @id
-  contactId   String
+  /// Linked CRM customer. NULLABLE (2026-07): a complaint can instead be logged
+  /// against a manually-typed person (personName/personPhone) with no CRM
+  /// contact. At least one of contactId or personName is always set (enforced in
+  /// the complaint router). onDelete SetNull so erasing a contact keeps the
+  /// complaint record with its typed identity, never cascade-deletes it.
+  contactId   String?
+  /// Manual customer identity, used when contactId is null (a complaint about
+  /// someone not in the CRM). Also filled alongside a contact as a snapshot.
+  personName  String?
+  personPhone String?
+  personEmail String?
   title       String
   description String?
   /// open | in_progress | resolved | dismissed. "Active" = open | in_progress.
@@ -4570,13 +4580,19 @@ model Complaint {
   /// Free-text category (billing, scheduling, tutor, safeguarding, …).
   category    String?
   assigneeId  String?
-  /// Idempotency key for system-raised complaints (ADR 0042) — e.g.
-  /// "slack:<channelId>:<ts>" for a complaint-channel call summary. Null for
-  /// human-logged complaints.
+  /// Idempotency key for system-raised complaints (ADR 0042) — retained
+  /// forward-only; no longer written now that Slack→complaint auto-ingestion is
+  /// removed (complaints are logged in the CRM, 2026-07).
   sourceKey    String?   @unique
+  /// Slack thread anchor: the #complaintcallsummaries message the bot posted for
+  /// this complaint, so thread updates reply under it (kept in sync both ways).
+  slackChannelId String?
+  slackMessageTs String?
   resolvedAt   DateTime?
   resolvedById String?
   resolution   String?
+  /// Reversible archive — hidden from the active queue but never deleted.
+  archivedAt   DateTime?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -4584,12 +4600,13 @@ model Complaint {
   updatedById String?
   deletedAt   DateTime?
 
-  contact Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contact Contact?          @relation(fields: [contactId], references: [id], onDelete: SetNull)
   updates ComplaintUpdate[]
 
   @@index([status])
   @@index([contactId, createdAt])
   @@index([assigneeId])
+  @@index([archivedAt])
 }
 
 /// A follow-up note or action point on a complaint — the audit trail of how a
