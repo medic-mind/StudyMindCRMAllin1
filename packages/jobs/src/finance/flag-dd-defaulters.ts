@@ -439,14 +439,18 @@ async function resolveCaseIdentity(
     contactId?: string | null
   },
 ): Promise<CaseIdentity> {
-  // The plan may carry the customer directly, else via its subscription.
+  // The plan carries the customer directly, else via its subscription; grab the
+  // plan name too as the ultimate display fallback (it usually embeds the
+  // customer's name, e.g. "Lamar Fallatah 30h A-Level Tutoring").
   let gcCustomerId = args.gcCustomerId ?? null
-  if (!gcCustomerId && args.gcSubscriptionId) {
+  let planName: string | null = null
+  if (args.gcSubscriptionId) {
     const sub = await db.gcSubscription.findFirst({
       where: { gcSubscriptionId: args.gcSubscriptionId },
-      select: { gcCustomerId: true },
+      select: { gcCustomerId: true, name: true },
     })
-    gcCustomerId = sub?.gcCustomerId ?? null
+    gcCustomerId = gcCustomerId ?? sub?.gcCustomerId ?? null
+    planName = sub?.name?.trim() || null
   }
 
   let contactId = args.contactId ?? null
@@ -496,7 +500,9 @@ async function resolveCaseIdentity(
     // Prefer the CRM contact's canonical details; fall back to GoCardless.
     chaseEmail: contact?.email ?? gcEmail,
     chasePhoneE164: contact?.phoneE164 ?? gcPhone,
-    personName: contactId ? null : gcDisplayName,
+    // Display label when there is no linked contact — the GoCardless name, else
+    // the plan name, so a case is NEVER left "Unknown" (operator ask).
+    personName: contactId ? null : (gcDisplayName ?? planName),
   }
 }
 

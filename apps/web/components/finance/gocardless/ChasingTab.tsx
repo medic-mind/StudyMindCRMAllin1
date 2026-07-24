@@ -7,6 +7,7 @@
 // standalone person who predates the CRM. Manager+ writes are server-enforced;
 // all staff read.
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -68,6 +69,8 @@ export function RecoveryCasesSection({ canWrite }: { canWrite: boolean }) {
           history, to send a message, or to start the automatic recovery.
         </p>
       </div>
+
+      {canWrite ? <AutoChaseBanner /> : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1">
@@ -196,6 +199,47 @@ export function RecoveryCasesSection({ canWrite }: { canWrite: boolean }) {
         />
       ) : null}
     </section>
+  )
+}
+
+// One-line state of the operator-level automatic chasing switch, so it's never
+// a mystery why reminders are or aren't going out.
+function AutoChaseBanner() {
+  const q = trpc.ddRecoverySettings.get.useQuery()
+  if (!q.data) return null
+  const on = q.data.autoChaseEnabled
+  const hasLink = Boolean(q.data.autoChaseSetupLinkUrl)
+  const settingsLink = (
+    <Link href="/settings/dd-recovery-templates" className="font-medium underline">
+      Settings → Direct Debit recovery
+    </Link>
+  )
+
+  if (on && hasLink) {
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+        <span className="font-semibold">Automatic chasing is ON.</span> Every new recovery case is
+        chased automatically ({[q.data.autoChaseEmail ? 'email' : null, q.data.autoChaseSms ? 'text' : null]
+          .filter(Boolean)
+          .join(' + ') || 'no channel selected'}) with escalating reminders until they pay or set the
+        Direct Debit back up. Manage it in {settingsLink}.
+      </div>
+    )
+  }
+  if (on && !hasLink) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <span className="font-semibold">Automatic chasing is ON, but paused</span> — no re-signup
+        link is set, so nothing sends. Add one in {settingsLink}.
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
+      <span className="font-semibold text-neutral-800">Automatic chasing is OFF.</span> Cases are
+      added and identified automatically, but reminders won&apos;t send until you turn it on in{' '}
+      {settingsLink}.
+    </div>
   )
 }
 
