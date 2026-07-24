@@ -461,6 +461,10 @@ async function relinkOneRow(
             event: 'slack.message_summarised',
             slackTs: row.slackTs,
             channelId: row.channelId,
+            // Store the channel NAME too (live + backfill paths already do) so a
+            // post in a call-summary channel is recognised as a call summary in
+            // the Call Summaries feed, not just a generic mention (§37).
+            channelName,
             permalink: buildSlackPermalink(row.channelId, row.slackTs, null),
             messageText: row.messageText,
             senderName: row.senderName,

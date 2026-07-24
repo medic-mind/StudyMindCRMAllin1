@@ -3,9 +3,28 @@ import { describe, expect, it } from 'vitest'
 import {
   buildComplaintDraft,
   COMPLAINT_AUTO_RAISE_HORIZON_MS,
+  isCallSummarySlackChannel,
   isComplaintChannel,
   shouldAutoRaiseComplaint,
 } from './channel-rules'
+
+describe('isCallSummarySlackChannel', () => {
+  it('matches call-summary channels', () => {
+    expect(isCallSummarySlackChannel('callsummaries')).toBe(true)
+    expect(isCallSummarySlackChannel('#anzcallsummaries')).toBe(true)
+    expect(isCallSummarySlackChannel('post-trial-summaries')).toBe(true)
+  })
+  it('excludes complaint channels (those become Complaints, not call summaries)', () => {
+    expect(isCallSummarySlackChannel('complaintcallsummaries')).toBe(false)
+    expect(isCallSummarySlackChannel('b2bcomplaints')).toBe(false)
+  })
+  it('excludes generic channels and empty input', () => {
+    expect(isCallSummarySlackChannel('ops')).toBe(false)
+    expect(isCallSummarySlackChannel('general')).toBe(false)
+    expect(isCallSummarySlackChannel(null)).toBe(false)
+    expect(isCallSummarySlackChannel(undefined)).toBe(false)
+  })
+})
 
 describe('isComplaintChannel', () => {
   it('matches any channel whose name contains "complaint"', () => {

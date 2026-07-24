@@ -26,22 +26,39 @@ export const autoMergeDuplicatesHourly = inngest.createFunction(
       return { disabled: true, merged: 0 }
     }
 
-    const result = await step.run('auto-merge', () =>
-      runAutoMergeDuplicates(db, { actorId: SYSTEM_ACTOR, actorUserId: null }),
-    )
+    // Drain the ENTIRE duplicate backlog in one tick (operator ask 2026-07 —
+    // "merge all, fully automated retrospectively"). Each pass merges up to the
+    // service cap (1000) and soft-deletes the losers, so the next pass's scan
+    // finds the next batch; loop until a pass merges nothing (drained, or only
+    // skip-conflicts remain). MAX_PASSES × cap = the hard ceiling per tick; a
+    // normal org drains in a single pass, so passes 2+ only run on a big
+    // historic backlog.
+    const MAX_PASSES = 25
+    const totals = { scanned: 0, clustersMerged: 0, merged: 0, skipped: 0 }
+    let passes = 0
+    for (; passes < MAX_PASSES; passes++) {
+      const result = await step.run(`auto-merge-${passes}`, () =>
+        runAutoMergeDuplicates(db, { actorId: SYSTEM_ACTOR, actorUserId: null }),
+      )
+      totals.scanned += result.scanned
+      totals.clustersMerged += result.clustersMerged
+      totals.merged += result.merged
+      totals.skipped += result.skipped
+      if (result.merged === 0) break // backlog drained
+    }
 
-    if (result.merged > 0) {
+    if (totals.merged > 0) {
       await step.run('audit-summary', () =>
         writeAuditLogEntry(db, {
           actorId: SYSTEM_ACTOR,
           action: 'contact.merged',
           target: { type: 'System', id: 'contacts/auto-merge-duplicates' },
-          after: result,
+          after: { ...totals, passes: passes + 1 },
         }),
       )
     }
 
-    logger.info(result, 'contacts auto-merge complete')
-    return result
+    logger.info({ ...totals, passes: passes + 1 }, 'contacts auto-merge complete')
+    return { ...totals, passes: passes + 1 }
   },
 )

@@ -525,8 +525,25 @@ export async function callSummariesForContact(
     where: {
       contactId: input.contactId,
       deletedAt: null,
-      type: { in: ['call_summary', 'slack_summary'] },
-      ...cursorWhere(input.cursor),
+      AND: [
+        // A call summary is: one recorded in the CRM (call_summary) OR a Slack
+        // message posted in a CALL-SUMMARY channel (name contains "summar",
+        // excluding complaint channels — those become Complaints, ADR 0042). A
+        // generic Slack mention in any other channel is NOT a call summary and
+        // stays in the Slack section only (§37 — "realise when it's a call
+        // summary, not just a mention").
+        {
+          OR: [
+            { type: 'call_summary' as const },
+            {
+              type: 'slack_summary' as const,
+              payload: { path: ['channelName'], string_contains: 'summar' },
+              NOT: { payload: { path: ['channelName'], string_contains: 'complaint' } },
+            },
+          ],
+        },
+        cursorWhere(input.cursor),
+      ],
     },
     orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
@@ -864,7 +881,20 @@ export async function channelSummaryForContact(
       _max: { occurredAt: true },
     }),
     db.interaction.aggregate({
-      where: { contactId, deletedAt: null, type: { in: ['call_summary', 'slack_summary'] } },
+      // Mirror callSummariesForContact: CRM summaries + Slack posts from
+      // call-summary channels only (not every Slack mention).
+      where: {
+        contactId,
+        deletedAt: null,
+        OR: [
+          { type: 'call_summary' },
+          {
+            type: 'slack_summary',
+            payload: { path: ['channelName'], string_contains: 'summar' },
+            NOT: { payload: { path: ['channelName'], string_contains: 'complaint' } },
+          },
+        ],
+      },
       _count: { id: true },
       _max: { occurredAt: true },
     }),

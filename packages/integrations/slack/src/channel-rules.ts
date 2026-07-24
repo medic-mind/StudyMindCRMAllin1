@@ -62,6 +62,20 @@ export function isCallLogChannel(channelName: string | null | undefined): boolea
   return n.includes('summar') || n.includes('complaint')
 }
 
+/**
+ * A CALL-SUMMARY channel specifically (#callsummaries, #anzcallsummaries,
+ * #post-trial-summaries) — a message here that links to a contact IS a call
+ * summary, so the Call Summaries feed surfaces it as one (source 'slack')
+ * rather than a generic Slack mention. Complaint channels are excluded: those
+ * are logged as Complaints (ADR 0042), not call summaries. Substring match so
+ * new/renamed channels keep working with no code change.
+ */
+export function isCallSummarySlackChannel(channelName: string | null | undefined): boolean {
+  if (!channelName) return false
+  const n = channelName.toLowerCase().replace(/^#/u, '')
+  return n.includes('summar') && !n.includes('complaint')
+}
+
 /** Tolerated clock skew for a mention timestamped slightly in the future —
  *  beyond this the ts is garbage and the horizon must not be bypassed. */
 const FUTURE_SKEW_TOLERANCE_MS = 24 * 60 * 60 * 1000
