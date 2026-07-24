@@ -34,7 +34,7 @@ interface Props {
 
 
 const INVOICING_WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive'])
-const INVOICING_MARK_PAID_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const INVOICING_MARK_PAID_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export default async function BusinessAccountDetailPage({ params }: Props) {
   const { id } = await params

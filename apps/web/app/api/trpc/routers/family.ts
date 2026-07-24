@@ -258,6 +258,8 @@ export const familyRouter = router({
         'ceo',
         'senior_manager',
         'manager',
+        'sales_executive',
+        'virtual_assistant',
       ])
       if (!allowed.has(user.role)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'role cannot reconcile' })

@@ -12,7 +12,13 @@ import { clusterDuplicates } from '@studymind/core/contact'
 import { runAutoMergeDuplicates } from '@/lib/services/auto-merge-duplicates'
 import { auditedProcedure, protectedProcedure, requireUser, router } from '@/lib/trpc/builders'
 
-const MANAGER_PLUS = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGER_PLUS = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 export const contactDuplicatesRouter = router({
   find: protectedProcedure

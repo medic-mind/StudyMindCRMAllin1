@@ -61,15 +61,35 @@ import { sendTestReminderForClass } from '@/lib/webinar/test-reminder'
 
 import { webinarLevelRouter, webinarSubjectRouter } from './webinar-catalogue'
 
+// Operational webinar management (cohorts, classes, schedules, enrolments,
+// reminder templates, sender address) is open to every staff role (2026-07 —
+// "VA and above can do anything operational").
 const MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertCanManage(role: UserRole): void {
   if (!MANAGE_ROLES.has(role)) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'Only Manager or above can manage webinars' })
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Staff role required to manage webinars' })
+  }
+}
+
+// Connecting the Zoom account (storing/clearing the Server-to-Server OAuth
+// credentials) is an INTEGRATION action, not operational management, so it
+// stays CEO + Senior Manager only — same locked bucket as every other external
+// service connection (CLAUDE.md §20 / §37).
+const ZOOM_CONNECTION_ROLES: ReadonlySet<UserRole> = new Set<UserRole>(['ceo', 'senior_manager'])
+
+function assertCanManageZoomConnection(role: UserRole): void {
+  if (!ZOOM_CONNECTION_ROLES.has(role)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Only a CEO or Senior Manager can connect or disconnect Zoom',
+    })
   }
 }
 
@@ -1799,7 +1819,7 @@ const zoomRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const user = requireUser(ctx)
-      assertCanManage(user.role)
+      assertCanManageZoomConnection(user.role)
       // Prove the credentials work BEFORE storing them.
       try {
         await zoomClient.getMe(input)
@@ -1821,7 +1841,7 @@ const zoomRouter = router({
   /** Remove the stored credentials (ZOOM_* env vars, if set, still apply). */
   disconnect: auditedProcedure.mutation(async ({ ctx }) => {
     const user = requireUser(ctx)
-    assertCanManage(user.role)
+    assertCanManageZoomConnection(user.role)
     await clearZoomCredentials(ctx.db, { actorId: user.id, requestId: ctx.requestId })
     ctx.audit.called = true
     return { ok: true as const }
@@ -1830,7 +1850,7 @@ const zoomRouter = router({
   /** Verify the effective Zoom credentials by fetching the connected user. */
   testConnection: protectedProcedure.mutation(async ({ ctx }) => {
     const user = requireUser(ctx)
-    assertCanManage(user.role)
+    assertCanManageZoomConnection(user.role)
     const cfg = await loadZoomConfig(ctx.db)
     if (!cfg) {
       return { ok: false as const, error: 'Zoom is not connected yet.' }

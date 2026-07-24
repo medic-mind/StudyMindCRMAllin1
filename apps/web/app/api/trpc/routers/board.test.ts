@@ -136,13 +136,12 @@ function makeCtx(role: SessionUser['role'], state: Partial<FakeState> = {}) {
 }
 
 describe('board.create gating', () => {
-  it('rejects manager and below', async () => {
+  it('allows every staff role, incl. virtual_assistant (2026-07)', async () => {
     for (const role of ['manager', 'sales_executive', 'virtual_assistant'] as const) {
       const { ctx } = makeCtx(role)
       const caller = boardRouter.createCaller(ctx)
-      await expect(caller.create({ name: 'X', isDefault: false })).rejects.toMatchObject({
-        code: 'FORBIDDEN',
-      })
+      const board = await caller.create({ name: 'X', isDefault: false })
+      expect(board.name).toBe('X')
     }
   })
 
@@ -215,15 +214,14 @@ describe('card.move gating', () => {
 })
 
 describe('label.delete gating', () => {
-  it('rejects sales_executive but allows senior_manager', async () => {
-    const seed = { labels: [{ id: 'l1', name: 'B2C', color: 'blue-600' }] }
-    const se = makeCtx('sales_executive', { labels: [...seed.labels] })
-    await expect(labelRouter.createCaller(se.ctx).delete({ id: 'l1' })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
+  it('allows every staff role, incl. sales_executive + virtual_assistant (2026-07)', async () => {
+    const se = makeCtx('sales_executive', { labels: [{ id: 'l1', name: 'B2C', color: 'blue-600' }] })
+    await expect(labelRouter.createCaller(se.ctx).delete({ id: 'l1' })).resolves.toEqual({
+      ok: true,
     })
 
-    const sm = makeCtx('senior_manager', { labels: [...seed.labels] })
-    await expect(labelRouter.createCaller(sm.ctx).delete({ id: 'l1' })).resolves.toEqual({
+    const va = makeCtx('virtual_assistant', { labels: [{ id: 'l2', name: 'B2B', color: 'sky-600' }] })
+    await expect(labelRouter.createCaller(va.ctx).delete({ id: 'l2' })).resolves.toEqual({
       ok: true,
     })
   })

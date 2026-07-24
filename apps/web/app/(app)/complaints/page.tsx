@@ -42,7 +42,13 @@ const SEVERITY_CLS: Record<string, string> = {
 
 // Mirrors REPORT_ROLES in the reports router — the deep analytics page is
 // Manager+, so only show its link to roles who can actually open it.
-const REPORT_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const REPORT_ROLES = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 function fmtHours(h: number | null): string {
   if (h == null) return '—'

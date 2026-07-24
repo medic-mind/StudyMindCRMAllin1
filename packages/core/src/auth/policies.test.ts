@@ -58,12 +58,13 @@ describe('roleCan', () => {
     expect(roleCan('manager', 'user.grant_manage')).toBe(true)
     expect(roleCan('manager', 'user.invite')).toBe(false)
     expect(roleCan('manager', 'user.deactivate')).toBe(false)
-    expect(roleCan('manager', 'settings.write')).toBe(false)
+    // 2026-07: operational settings are now open to every staff role.
+    expect(roleCan('manager', 'settings.write')).toBe(true)
     expect(roleCan('manager', 'dsar.export')).toBe(false)
     expect(roleCan('manager', 'interaction.delete')).toBe(false)
   })
 
-  it('sales_executive has the full sales set incl. refunds, subscription cancel + account creation (2026-07)', () => {
+  it('sales_executive can do everything operational except the locked buckets (2026-07)', () => {
     expect(roleCan('sales_executive', 'contact.read')).toBe(true)
     expect(roleCan('sales_executive', 'contact.read_minor')).toBe(true)
     expect(roleCan('sales_executive', 'contact.write')).toBe(true)
@@ -72,12 +73,17 @@ describe('roleCan', () => {
     expect(roleCan('sales_executive', 'charge.refund')).toBe(true)
     expect(roleCan('sales_executive', 'subscription.cancel')).toBe(true)
     expect(roleCan('sales_executive', 'user.invite')).toBe(true)
-    // Senior-only / catastrophic actions stay denied.
-    expect(roleCan('sales_executive', 'family.merge')).toBe(false)
+    // Widened 2026-07 — "VA and above can do anything operational":
+    expect(roleCan('sales_executive', 'family.merge')).toBe(true)
+    expect(roleCan('sales_executive', 'settings.write')).toBe(true)
+    // The locked buckets (users / integrations / audit / DSAR / destructive)
+    // stay denied at the role level.
     expect(roleCan('sales_executive', 'interaction.delete')).toBe(false)
+    expect(roleCan('sales_executive', 'audit.read')).toBe(false)
     expect(roleCan('sales_executive', 'user.manage')).toBe(false)
-    expect(roleCan('sales_executive', 'settings.write')).toBe(false)
     expect(roleCan('sales_executive', 'dsar.export')).toBe(false)
+    expect(roleCan('sales_executive', 'secrets.rotate')).toBe(false)
+    expect(roleCan('sales_executive', 'tenant.config.write')).toBe(false)
   })
 
   it('virtual_assistant has an IDENTICAL capability set to sales_executive (2026-07)', () => {
@@ -262,18 +268,20 @@ describe('custom-role permissions (assignable set + sanitize)', () => {
   })
 
   it('forbids privilege escalation — you can only bundle what you hold', () => {
-    // A sales-level actor (who lacks family.merge) cannot mint a role that merges.
+    // A sales-level actor (who lacks audit.read) cannot mint a role that reads
+    // the audit log. (family.merge / settings.write are now held by sales, so
+    // audit.read is the assignable action sales does NOT hold — see §20.)
     const salesEffective = ACTIONS.filter((a) => roleCan('sales_executive', a))
-    const cleaned = sanitizeRolePermissions(salesEffective, ['family.merge', 'contact.write'])
-    expect(cleaned).not.toContain('family.merge')
+    const cleaned = sanitizeRolePermissions(salesEffective, ['audit.read', 'contact.write'])
+    expect(cleaned).not.toContain('audit.read')
     expect(cleaned).toContain('contact.write')
   })
 
   it('hasAction honours an assignable grant from a custom role', () => {
-    // sales_executive base role cannot merge families…
-    expect(hasAction('sales_executive', [], 'family.merge')).toBe(false)
-    // …but a custom role granting family.merge makes it pass.
-    expect(hasAction('sales_executive', ['family.merge'], 'family.merge')).toBe(true)
+    // sales_executive base role cannot read the audit log…
+    expect(hasAction('sales_executive', [], 'audit.read')).toBe(false)
+    // …but a custom role granting audit.read makes it pass.
+    expect(hasAction('sales_executive', ['audit.read'], 'audit.read')).toBe(true)
     // A deny-list action can never be satisfied by a grant.
     expect(hasAction('sales_executive', ['secrets.rotate'], 'secrets.rotate')).toBe(false)
   })

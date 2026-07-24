@@ -192,16 +192,18 @@ describe('finance.allocation.upsert', () => {
     expect(rows.find((r) => r.id === 'a_1')?.deletedAt).toBeNull()
   })
 
-  it('forbids non-finance roles', async () => {
-    const { ctx } = makeCtx('sales_executive', { id: 'pay_1', amountMinor: 5000, familyId: 'fam_1' })
-    const caller = financeRouter.createCaller(ctx)
+  it('allows every staff role — finance ops opened to VA and above (2026-07)', async () => {
+    for (const role of ['sales_executive', 'virtual_assistant'] as const) {
+      const { ctx, rows } = makeCtx(role, { id: 'pay_1', amountMinor: 5000, familyId: 'fam_1' })
+      const caller = financeRouter.createCaller(ctx)
 
-    await expect(
-      caller.allocation.upsert({
+      const result = await caller.allocation.upsert({
         paymentId: 'pay_1',
         allocations: [{ bookingId: 'b_1', amountMinor: 1000, reason: 'session 1' }],
-      }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      })
+      expect(result.items).toHaveLength(1)
+      expect(rows.filter((r) => r.deletedAt === null)).toHaveLength(1)
+    }
   })
 })
 

@@ -51,6 +51,8 @@ const RULE_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 const SEND_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([

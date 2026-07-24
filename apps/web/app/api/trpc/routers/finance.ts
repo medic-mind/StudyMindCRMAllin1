@@ -62,6 +62,8 @@ const FINANCE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 // charge.create_link is allowed for every sales role — Sales Executive AND

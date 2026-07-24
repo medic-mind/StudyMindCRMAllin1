@@ -1,12 +1,12 @@
-// Board settings. ADR 0018. CEO + Senior Manager only. Rename the board,
-// manage its stages, configure tick/x quick-action target stages, and manage
-// labels. CLAUDE.md §20 (server also gates every mutation).
+// Board settings. ADR 0018. Rename the board, manage its stages, configure
+// tick/x quick-action target stages, and manage labels. Open to every staff
+// role (2026-07 — VA and above can do anything operational); the board tRPC
+// mutations still gate + audit each write server-side. CLAUDE.md §20.
 
-import { notFound, redirect } from 'next/navigation'
+import { notFound } from 'next/navigation'
 
 import { PageBody } from '@/components/shell/page-body'
 import { PageHeader } from '@/components/shell/page-header'
-import { getCurrentUser } from '@/lib/auth/server'
 import { parseCardFace } from '@/lib/board/card-face'
 import { createServerCaller } from '@/lib/trpc/server'
 
@@ -22,12 +22,6 @@ interface PageProps {
 
 export default async function BoardSettingsPage({ params }: PageProps) {
   const { boardId } = await params
-  const me = await getCurrentUser()
-  const role = me?.role ?? 'virtual_assistant'
-  if (role !== 'ceo' && role !== 'senior_manager') {
-    redirect(`/boards/${boardId}`)
-  }
-
   const caller = await createServerCaller()
   let board
   try {

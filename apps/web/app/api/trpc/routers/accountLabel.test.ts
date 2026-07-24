@@ -145,13 +145,13 @@ function makeCtx(role: SessionUser['role'], seed: Partial<FakeState> = {}) {
 }
 
 describe('accountLabel catalogue gating', () => {
-  it('rejects sales_executive and below for create', async () => {
+  it('allows every staff role, incl. sales_executive + virtual_assistant (2026-07)', async () => {
     for (const role of ['sales_executive', 'virtual_assistant'] as const) {
-      const { ctx } = makeCtx(role)
+      const { ctx, actions } = makeCtx(role)
       const caller = accountLabelRouter.createCaller(ctx)
-      await expect(caller.create({ name: 'Priority' })).rejects.toMatchObject({
-        code: 'FORBIDDEN',
-      })
+      const res = await caller.create({ name: 'Priority', color: '#2563eb' })
+      expect(res.id).toBeTruthy()
+      expect(actions).toContain('account_label.created')
     }
   })
 
@@ -209,12 +209,14 @@ describe('businessAccount.bulkSetLabel', () => {
     }
   }
 
-  it('rejects sales_executive (Manager+ for bulk)', async () => {
-    const { ctx } = makeCtx('sales_executive', seed())
-    const caller = businessAccountRouter.createCaller(ctx)
-    await expect(
-      caller.bulkSetLabel({ ids: ['a1', 'a2'], labelId: 'l1' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  it('allows every staff role, incl. sales_executive + virtual_assistant (2026-07)', async () => {
+    for (const role of ['sales_executive', 'virtual_assistant'] as const) {
+      const { ctx, state } = makeCtx(role, seed())
+      const caller = businessAccountRouter.createCaller(ctx)
+      const res = await caller.bulkSetLabel({ ids: ['a1', 'a2'], labelId: 'l1' })
+      expect(res.count).toBe(2)
+      expect(state.links).toHaveLength(2)
+    }
   })
 
   it('applies a label across many accounts and audits per account', async () => {

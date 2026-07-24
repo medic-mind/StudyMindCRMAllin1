@@ -86,7 +86,7 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: Status; label: string }> = [
   { value: 'churned', label: 'Churned' },
 ]
 
-const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 
 type SortKey =

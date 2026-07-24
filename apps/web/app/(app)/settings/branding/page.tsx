@@ -18,7 +18,7 @@ const BREADCRUMBS = [
   { label: 'Branding', href: '/settings/branding' },
 ]
 
-const MANAGE_ROLES = new Set(['ceo', 'senior_manager'])
+const MANAGE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export default async function BrandingSettingsPage() {
   const me = await getCurrentUser()

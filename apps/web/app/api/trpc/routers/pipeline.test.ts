@@ -230,12 +230,11 @@ describe('pipeline.stages.list', () => {
 })
 
 describe('pipeline.stages.listIncludingArchived', () => {
-  it('rejects roles below senior_manager', async () => {
-    const { ctx } = makeCtx('manager', { stages: seedStages() })
+  it('allows every staff role, incl. virtual_assistant (2026-07)', async () => {
+    const { ctx } = makeCtx('virtual_assistant', { stages: seedStages() })
     const caller = pipelineRouter.createCaller(ctx)
-    await expect(caller.stages.listIncludingArchived()).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    })
+    const rows = await caller.stages.listIncludingArchived()
+    expect(rows).toHaveLength(2)
   })
 
   it('allows senior_manager', async () => {
@@ -247,12 +246,12 @@ describe('pipeline.stages.listIncludingArchived', () => {
 })
 
 describe('pipeline.stages.create', () => {
-  it('rejects manager', async () => {
-    const { ctx } = makeCtx('manager', { stages: seedStages() })
+  it('allows every staff role, incl. virtual_assistant (2026-07)', async () => {
+    const { ctx, stages } = makeCtx('virtual_assistant', { stages: seedStages() })
     const caller = pipelineRouter.createCaller(ctx)
-    await expect(
-      caller.stages.create({ name: 'New', color: 'sky-500' }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    const r = await caller.stages.create({ name: 'New', color: 'sky-500' })
+    expect(r.position).toBe(3)
+    expect(stages).toHaveLength(3)
   })
 
   it('auto-positions at end and audits', async () => {

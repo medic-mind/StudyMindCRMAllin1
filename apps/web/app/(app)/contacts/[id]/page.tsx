@@ -126,11 +126,17 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
   const me = await getCurrentUser()
   // Money actions (send a DD setup link) mirror the gocardless router's
   // finance gate; everyone else sees the panel read-only (§20.1).
-  const canManageDirectDebit = ['ceo', 'senior_manager', 'manager'].includes(me?.role ?? '')
+  const canManageDirectDebit = [
+    'ceo',
+    'senior_manager',
+    'manager',
+    'sales_executive',
+    'virtual_assistant',
+  ].includes(me?.role ?? '')
   // §20.1: the record activity log (who viewed/edited/deleted this record) is
   // an audit surface — visible to holders of `audit.read` (CEO/Senior
-  // Manager/Manager). The server enforces the real gate; this just hides the
-  // section from roles that can't read it.
+  // Manager/Manager). Audit reads stay restricted (not opened to sales/VA). The
+  // server enforces the real gate; this just hides the section.
   const canViewActivity = me ? roleCan(me.role, 'audit.read') : false
   // GDPR erasure is a CEO / Senior Manager action (§21).
   const canErase = me ? ['ceo', 'senior_manager'].includes(me.role) : false

@@ -59,6 +59,8 @@ const FINANCE_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 const IMPORT_ROLES: ReadonlySet<SessionUser['role']> = new Set(['ceo', 'senior_manager'])

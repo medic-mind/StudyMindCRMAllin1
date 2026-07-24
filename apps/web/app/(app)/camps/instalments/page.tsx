@@ -11,7 +11,7 @@ import { InstalmentsWorkspace } from './InstalmentsWorkspace'
 
 export const dynamic = 'force-dynamic'
 
-const WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager'])
+const WRITE_ROLES = new Set(['ceo', 'senior_manager', 'manager', 'sales_executive', 'virtual_assistant'])
 
 export default async function CampInstalmentsPage() {
   const me = await getCurrentUser()

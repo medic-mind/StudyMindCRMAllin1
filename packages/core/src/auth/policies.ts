@@ -143,10 +143,11 @@ const SENIOR_MANAGER_ACTIONS: ReadonlySet<Action> = new Set<Action>([
 ])
 
 // Manager: sales + finance ops. Can refund, create payment links, manage
-// allocations. Can edit user details + reset passwords (`user.manage`) and
-// delegate that right to an individual (`user.grant_manage`) — but CANNOT
+// allocations, merge families, and change operational settings
+// (`settings.write`). Can edit user details + reset passwords (`user.manage`)
+// and delegate that right to an individual (`user.grant_manage`) — but CANNOT
 // create accounts (ADR 0021: creation is CEO + Senior Manager only),
-// deactivate peers, or write tenant-wide settings.
+// deactivate peers, or write tenant-wide config.
 const MANAGER_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'contact.read',
   'contact.read_minor',
@@ -157,26 +158,38 @@ const MANAGER_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'charge.refund',
   'subscription.cancel',
   'audit.read',
+  'settings.write',
   'user.manage',
   'user.grant_manage',
 ])
 
 // Sales Executive AND Virtual Assistant share an IDENTICAL capability set
-// (operator decision, 2026-07 — CLAUDE.md §20). Both get full contact CRUD,
-// interactions, payment links, account creation, refunds, and subscription
-// cancellation; the two roles differ only in name/label, not in what they can
-// do. Catastrophic actions (role grants, deactivation, secrets, tenant config,
-// DSAR, audit reads, settings) stay reserved for the senior roles via
-// ROLE_GRANTS below. Account creation is capped so neither can mint a role
-// above their own tier — see `canCreateUserAtRole`.
+// (operator decision, 2026-07 — CLAUDE.md §20; widened again 2026-07 so that
+// "Virtual Assistant and above can do anything operational"). Both get the full
+// day-to-day toolkit: contact CRUD, interactions, family merges, payment links,
+// refunds, subscription cancellation, account creation, and changing
+// operational settings (`settings.write` — branding, labels, quick replies,
+// forwarding, DD recovery copy, board quick actions, etc.).
+//
+// The ONLY things that stay reserved for the senior roles (via ROLE_GRANTS +
+// the dedicated router role-Sets) are the two operator-defined "locked
+// buckets": INTEGRATIONS (connecting/configuring external services + provider
+// imports/backfills + secrets + tenant config → `secrets.rotate`,
+// `tenant.config.write`) and USER MANAGEMENT (`user.manage`,
+// `user.grant_manage`, `user.deactivate`, `user.role.*`, teams, custom roles),
+// plus DSAR export (`dsar.export`) and audit-log reads (`audit.read`). Account
+// creation is capped so neither can mint a role above their own tier — see
+// `canCreateUserAtRole` — and the Users settings surface itself stays admin-only.
 const SALES_ROLE_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'contact.read',
   'contact.read_minor',
   'contact.write',
+  'family.merge',
   'interaction.create',
   'charge.create_link',
   'charge.refund',
   'subscription.cancel',
+  'settings.write',
   'user.invite',
 ])
 

@@ -23,7 +23,13 @@ import type { UserRole } from '@/lib/trpc/builders'
 
 type IconComp = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>
 
-const FINANCE_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
+const FINANCE_ROLES: ReadonlySet<UserRole> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 interface QuickLink {
   href: string

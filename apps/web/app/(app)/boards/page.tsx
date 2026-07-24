@@ -13,7 +13,13 @@ import { NewBoardButton } from './NewBoardButton'
 
 export const dynamic = 'force-dynamic'
 
-const CAN_MANAGE = new Set(['ceo', 'senior_manager'])
+const CAN_MANAGE = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 export default async function BoardsPage() {
   const me = await getCurrentUser()

@@ -34,9 +34,24 @@ const CAN_WRITE = new Set([
   'sales_executive',
   'virtual_assistant',
 ])
-const CAN_MANAGE = new Set(['ceo', 'senior_manager'])
-// Hard-deleting a card is Manager+ (CARD_DELETE_ROLES in the tRPC router).
-const CAN_DELETE_CARD = new Set(['ceo', 'senior_manager', 'manager'])
+// Board management + hard-deleting a card are open to every staff role
+// (2026-07 — VA and above can do anything operational). The board tRPC router
+// (BOARD_MANAGE_ROLES / CARD_DELETE_ROLES) gates + audits each write. Clearing
+// a whole board stays CEO-only (see the `role === 'ceo'` guard below).
+const CAN_MANAGE = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
+const CAN_DELETE_CARD = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 interface PageProps {
   params: Promise<{ boardId: string }>

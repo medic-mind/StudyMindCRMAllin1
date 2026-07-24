@@ -11,7 +11,13 @@ import { z } from 'zod'
 import { loadDdRecoverySettings } from '@/lib/finance/recovery-settings'
 import { protectedProcedure, requireUser, router, type UserRole } from '@/lib/trpc/builders'
 
-const MANAGE_ROLES: ReadonlySet<UserRole> = new Set(['ceo', 'senior_manager', 'manager'])
+const MANAGE_ROLES: ReadonlySet<UserRole> = new Set([
+  'ceo',
+  'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
+])
 
 function assertManage(role: UserRole): void {
   if (!MANAGE_ROLES.has(role)) {

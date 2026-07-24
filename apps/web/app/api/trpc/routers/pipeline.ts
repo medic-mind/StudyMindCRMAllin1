@@ -33,6 +33,9 @@ import {
 const STAGE_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
+  'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 const FAMILY_MOVE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([

@@ -132,7 +132,6 @@ function buildNav(role: Role): NavItem[] {
     {
       href: '/direct-debits',
       label: 'Direct Debits',
-      visibleTo: ['ceo', 'senior_manager', 'manager'],
       children: [
         { href: '/direct-debits', label: 'Overview' },
         { href: '/direct-debits/plans', label: 'Plans' },
@@ -154,12 +153,14 @@ function buildNav(role: Role): NavItem[] {
     {
       href: '/settings',
       label: 'Settings',
-      // Settings is admin-tier. CEO and Senior Manager get the full panel;
-      // Manager can read Integrations only (each child page enforces its own
-      // role gate). The sub-nav is the SHARED settings list (settings-links.ts)
-      // that also drives the Settings landing page, so the two never drift.
-      visibleTo: ['ceo', 'senior_manager', 'manager'],
-      children: settingsNavChildren(),
+      // Settings is visible to every staff role now that operational settings
+      // (branding, labels, quick replies, forwarding, DD recovery, board
+      // actions, companies) are open to all (2026-07). The sub-nav is the
+      // SHARED settings list (settings-links.ts), filtered by role, so a
+      // Virtual Assistant sees the operational pages but not the locked buckets
+      // (Users / Teams / Roles / Integrations / Slack routing). Each child page
+      // still enforces its own server-side gate.
+      children: settingsNavChildren(role),
     },
   ]
 
@@ -222,10 +223,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     // Shell-wide workflow-popup providers (CLAUDE.md §26). ConfirmProvider gives
     // every surface a branded guarded-confirm; ComposeEmailProvider wraps the
-    // TopBar too so the ⌘K command palette can open the in-house composer. VAs
-    // can draft but not send (role-gated).
+    // TopBar too so the ⌘K command palette can open the in-house composer.
+    // Every staff role can send now (2026-07 — VA and above can do anything
+    // operational); the mail router still audits + gates each send server-side.
     <ConfirmProvider>
-      <ComposeEmailProvider canSend={role !== 'virtual_assistant'}>
+      <ComposeEmailProvider canSend>
         <div className="flex min-h-screen flex-col bg-neutral-50">
           <NavigationProgress />
           <TopBar

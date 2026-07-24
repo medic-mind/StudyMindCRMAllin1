@@ -75,6 +75,8 @@ const CHANNEL_MANAGE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 // Moderation tier: delete anyone's message. Same as channel management.

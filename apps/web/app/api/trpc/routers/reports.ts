@@ -28,6 +28,8 @@ const REPORT_ROLES: ReadonlySet<SessionUser['role']> = new Set([
   'ceo',
   'senior_manager',
   'manager',
+  'sales_executive',
+  'virtual_assistant',
 ])
 
 function assertReports(user: SessionUser): void {
