@@ -47,7 +47,7 @@ import {
 
 import { mergeContacts } from '@/lib/services/contact-merge'
 import { findMergeCandidates } from '@/lib/services/merge-suggestions'
-import { toContactDetail, toContactSummary } from '@/lib/view-models/contact'
+import { toContactDetail, toContactExportRow, toContactSummary } from '@/lib/view-models/contact'
 
 import {
   auditedProcedure,
@@ -57,21 +57,11 @@ import {
   router,
 } from '@/lib/trpc/builders'
 
-const ListInput = z.object({
-  cursor: z
-    .object({
-      id: z.string(),
-      createdAt: z.date(),
-    })
-    .nullish(),
-  limit: z.number().min(1).max(100).default(25),
-  /**
-   * 1-based page for offset pagination. When supplied the list returns that
-   * page (skip = (page-1)*limit) instead of cursor-paginating, so the UI can
-   * show "page X of Y" + a total. Cursor mode (omit `page`) is retained for
-   * the CSV export streamer and the typeahead callers.
-   */
-  page: z.number().int().min(1).optional(),
+// Every FILTER a customer list read accepts (search + all facets + ranges).
+// Shared verbatim by `list` (the table) and `exportRows` (the CSV) so the two
+// stay in lockstep — an "export filtered" is guaranteed to match the on-screen
+// list because they parse the identical shape and run the identical where.
+const ContactFilterShape = {
   q: z.string().trim().min(1).max(120).optional(),
   /** Filter by Company.id (m2m — matches contacts tagged with this brand). */
   companyId: z.string().nullish(),
@@ -113,6 +103,26 @@ const ListInput = z.object({
   maxHoursDelivered: z.number().int().min(0).optional(),
   /** Only customers whose most recent lesson was at least this many days ago. */
   lastLessonBeforeDays: z.number().int().min(0).optional(),
+} as const
+
+const ContactFilterInput = z.object(ContactFilterShape)
+type ContactFilterInput = z.infer<typeof ContactFilterInput>
+
+const ListInput = ContactFilterInput.extend({
+  cursor: z
+    .object({
+      id: z.string(),
+      createdAt: z.date(),
+    })
+    .nullish(),
+  limit: z.number().min(1).max(100).default(25),
+  /**
+   * 1-based page for offset pagination. When supplied the list returns that
+   * page (skip = (page-1)*limit) instead of cursor-paginating, so the UI can
+   * show "page X of Y" + a total. Cursor mode (omit `page`) is retained for
+   * the CSV export streamer and the typeahead callers.
+   */
+  page: z.number().int().min(1).optional(),
   /**
    * Sort field. `createdAt` (default) and `name`, plus the booking-derived
    * hours columns. All sort on real Contact columns so cursor pagination stays
@@ -124,6 +134,123 @@ const ListInput = z.object({
     .default('createdAt'),
   sortDir: z.enum(['asc', 'desc']).default('desc'),
 })
+
+// The CSV export streams the WHOLE filtered (or unfiltered — "Export all")
+// set page by page. Same filter shape as the list; a bigger page size keeps
+// the round-trips down since each page still costs a fixed handful of queries.
+const ExportInput = ContactFilterInput.extend({
+  cursor: z
+    .object({
+      id: z.string(),
+      createdAt: z.date(),
+    })
+    .nullish(),
+  limit: z.number().int().min(1).max(500).default(200),
+})
+
+type ContactFilterDb = Parameters<typeof loadContactCommsCounts>[0]
+
+/**
+ * Build the `Prisma.ContactWhereInput` for every list/export filter EXCEPT the
+ * keyset cursor. Shared by `list` (count + page) and `exportRows` so a filter
+ * added here reaches both. Async because the enquiry-category facet resolves
+ * matching contact ids via the Lead table first (no Prisma relation to walk).
+ */
+async function buildContactFilterWhere(
+  db: ContactFilterDb,
+  input: ContactFilterInput,
+): Promise<Prisma.ContactWhereInput> {
+  const lastLessonCutoff =
+    input.lastLessonBeforeDays != null
+      ? new Date(Date.now() - input.lastLessonBeforeDays * 24 * 60 * 60 * 1000)
+      : null
+
+  let enquiryContactIds: string[] | null = null
+  if (input.enquiryCategories && input.enquiryCategories.length > 0) {
+    const leads = await db.lead.findMany({
+      where: {
+        deletedAt: null,
+        convertedToContactId: { not: null },
+        categories: { hasSome: input.enquiryCategories },
+      },
+      select: { convertedToContactId: true },
+      distinct: ['convertedToContactId'],
+      // Bounded, but sized to the comprehensive CSV export's own row cap
+      // (ContactsExportMenu MAX_ROWS) so an "export current view" filtered by an
+      // enquiry type stays complete up to that ceiling rather than silently
+      // stopping at 10k. The table read (25/page) also benefits.
+      take: 50_000,
+    })
+    enquiryContactIds = leads.map((l) => l.convertedToContactId).filter((id): id is string => !!id)
+  }
+
+  return {
+    deletedAt: null,
+    ...(input.kinds && input.kinds.length > 0
+      ? { kind: { in: input.kinds } }
+      : input.kind
+        ? { kind: input.kind }
+        : {}),
+    ...(input.bookingStatuses && input.bookingStatuses.length > 0
+      ? { bookingStatus: { in: input.bookingStatuses } }
+      : input.bookingStatus
+        ? { bookingStatus: input.bookingStatus }
+        : {}),
+    ...(input.hasFamily !== undefined
+      ? input.hasFamily
+        ? { familyMembers: { some: {} } }
+        : { familyMembers: { none: {} } }
+      : {}),
+    ...(input.companyIds && input.companyIds.length > 0
+      ? { companies: { some: { companyId: { in: input.companyIds } } } }
+      : input.companyId
+        ? { companies: { some: { companyId: input.companyId } } }
+        : {}),
+    ...(input.subjectIds && input.subjectIds.length > 0
+      ? { subjects: { some: { subjectId: { in: input.subjectIds } } } }
+      : input.subjectId
+        ? { subjects: { some: { subjectId: input.subjectId } } }
+        : {}),
+    ...(input.countries && input.countries.length > 0 ? { country: { in: input.countries } } : {}),
+    ...(enquiryContactIds ? { id: { in: enquiryContactIds } } : {}),
+    // AND semantics: a customer must carry every requested label.
+    ...(input.labelIds && input.labelIds.length > 0
+      ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
+      : {}),
+    ...(input.minHoursBooked != null || input.maxHoursBooked != null
+      ? {
+          hoursBooked: {
+            ...(input.minHoursBooked != null ? { gte: input.minHoursBooked } : {}),
+            ...(input.maxHoursBooked != null ? { lte: input.maxHoursBooked } : {}),
+          },
+        }
+      : {}),
+    ...(input.minHoursDelivered != null || input.maxHoursDelivered != null
+      ? {
+          hoursDelivered: {
+            ...(input.minHoursDelivered != null ? { gte: input.minHoursDelivered } : {}),
+            ...(input.maxHoursDelivered != null ? { lte: input.maxHoursDelivered } : {}),
+          },
+        }
+      : {}),
+    ...(lastLessonCutoff ? { lastLessonAt: { lte: lastLessonCutoff } } : {}),
+    ...(input.q
+      ? {
+          OR: [
+            { firstName: { contains: input.q, mode: 'insensitive' } },
+            { lastName: { contains: input.q, mode: 'insensitive' } },
+            { email: { contains: input.q, mode: 'insensitive' } },
+            { phoneE164: { contains: input.q } },
+            // Phone-shaped queries match by digit run so spaces, the
+            // country code, and the trunk 0 are all optional (§29).
+            ...phoneSearchDigitRuns(input.q).map((run) => ({
+              phoneE164: { contains: run },
+            })),
+          ],
+        }
+      : {}),
+  }
+}
 
 function newId(): string {
   return createId()
@@ -159,102 +286,11 @@ export const contactRouter = router({
         orderBy = [{ createdAt: dir }, { id: dir }]
     }
 
-    const lastLessonCutoff =
-      input.lastLessonBeforeDays != null
-        ? new Date(Date.now() - input.lastLessonBeforeDays * 24 * 60 * 60 * 1000)
-        : null
-
-    // Enquiry-category filter: Lead has no Prisma relation to Contact
-    // (convertedToContactId is a plain column), so resolve the matching
-    // contact ids up front and filter on `id IN`.
-    let enquiryContactIds: string[] | null = null
-    if (input.enquiryCategories && input.enquiryCategories.length > 0) {
-      const leads = await ctx.db.lead.findMany({
-        where: {
-          deletedAt: null,
-          convertedToContactId: { not: null },
-          categories: { hasSome: input.enquiryCategories },
-        },
-        select: { convertedToContactId: true },
-        distinct: ['convertedToContactId'],
-        take: 10_000,
-      })
-      enquiryContactIds = leads
-        .map((l) => l.convertedToContactId)
-        .filter((id): id is string => !!id)
-    }
-
-    // Every filter EXCEPT the keyset cursor — shared by the count and the
-    // page read so "total" reflects the whole filtered set. Plural filter
-    // params (multi-select UI) win over their singular back-compat twin.
-    const filterWhere: Prisma.ContactWhereInput = {
-      deletedAt: null,
-      ...(input.kinds && input.kinds.length > 0
-        ? { kind: { in: input.kinds } }
-        : input.kind
-          ? { kind: input.kind }
-          : {}),
-      ...(input.bookingStatuses && input.bookingStatuses.length > 0
-        ? { bookingStatus: { in: input.bookingStatuses } }
-        : input.bookingStatus
-          ? { bookingStatus: input.bookingStatus }
-          : {}),
-      ...(input.hasFamily !== undefined
-        ? input.hasFamily
-          ? { familyMembers: { some: {} } }
-          : { familyMembers: { none: {} } }
-        : {}),
-      ...(input.companyIds && input.companyIds.length > 0
-        ? { companies: { some: { companyId: { in: input.companyIds } } } }
-        : input.companyId
-          ? { companies: { some: { companyId: input.companyId } } }
-          : {}),
-      ...(input.subjectIds && input.subjectIds.length > 0
-        ? { subjects: { some: { subjectId: { in: input.subjectIds } } } }
-        : input.subjectId
-          ? { subjects: { some: { subjectId: input.subjectId } } }
-          : {}),
-      ...(input.countries && input.countries.length > 0
-        ? { country: { in: input.countries } }
-        : {}),
-      ...(enquiryContactIds ? { id: { in: enquiryContactIds } } : {}),
-      // AND semantics: a customer must carry every requested label.
-      ...(input.labelIds && input.labelIds.length > 0
-        ? { AND: input.labelIds.map((id) => ({ labels: { some: { labelId: id } } })) }
-        : {}),
-      ...(input.minHoursBooked != null || input.maxHoursBooked != null
-        ? {
-            hoursBooked: {
-              ...(input.minHoursBooked != null ? { gte: input.minHoursBooked } : {}),
-              ...(input.maxHoursBooked != null ? { lte: input.maxHoursBooked } : {}),
-            },
-          }
-        : {}),
-      ...(input.minHoursDelivered != null || input.maxHoursDelivered != null
-        ? {
-            hoursDelivered: {
-              ...(input.minHoursDelivered != null ? { gte: input.minHoursDelivered } : {}),
-              ...(input.maxHoursDelivered != null ? { lte: input.maxHoursDelivered } : {}),
-            },
-          }
-        : {}),
-      ...(lastLessonCutoff ? { lastLessonAt: { lte: lastLessonCutoff } } : {}),
-      ...(input.q
-        ? {
-            OR: [
-              { firstName: { contains: input.q, mode: 'insensitive' } },
-              { lastName: { contains: input.q, mode: 'insensitive' } },
-              { email: { contains: input.q, mode: 'insensitive' } },
-              { phoneE164: { contains: input.q } },
-              // Phone-shaped queries match by digit run so spaces, the
-              // country code, and the trunk 0 are all optional (§29).
-              ...phoneSearchDigitRuns(input.q).map((run) => ({
-                phoneE164: { contains: run },
-              })),
-            ],
-          }
-        : {}),
-    }
+    // Every filter EXCEPT the keyset cursor — shared with the CSV export via
+    // `buildContactFilterWhere` so "export filtered" matches the list exactly.
+    // Used by both the count and the page read so `total` reflects the whole
+    // filtered set.
+    const filterWhere = await buildContactFilterWhere(ctx.db, input)
 
     // Keyset cursor (only meaningful for the default createdAt sort). Combined
     // with the filters via a top-level AND so the search `OR` is preserved.
@@ -339,6 +375,109 @@ export const contactRouter = router({
     const last = sliced[sliced.length - 1]
     const nextCursor = hasMore && last ? { id: last.id, createdAt: last.createdAt } : null
     return { items, nextCursor, total }
+  }),
+
+  /**
+   * Comprehensive CSV export stream. Powers BOTH the "Export current view" and
+   * "Export all customers" buttons on `/contacts`: the client calls it with the
+   * live filters (filtered) or with none (all), then keeps calling with the
+   * returned cursor until it's null. Every page carries the FULL contact record
+   * (profile, address, booking + engagement figures, comms counts, tags,
+   * family, extra points of contact) so the file is a complete export, not the
+   * table's subset. Keyset-paginated on (createdAt desc, id desc) so a big
+   * export never skips or duplicates a row. A bulk read of customer data — the
+   * caller records `contact.exported` in the audit log (§20/§21).
+   */
+  exportRows: protectedProcedure.input(ExportInput).query(async ({ ctx, input }) => {
+    const filterWhere = await buildContactFilterWhere(ctx.db, input)
+
+    // Keyset cursor on the same (createdAt desc, id desc) order every page
+    // uses — independent of the on-screen sort, since export order doesn't
+    // matter and this guarantees complete, non-overlapping pagination.
+    const cursorWhere: Prisma.ContactWhereInput | null = input.cursor
+      ? {
+          OR: [
+            { createdAt: { lt: input.cursor.createdAt } },
+            {
+              AND: [{ createdAt: input.cursor.createdAt }, { id: { lt: input.cursor.id } }],
+            },
+          ],
+        }
+      : null
+
+    const rows = await ctx.db.contact.findMany({
+      where: cursorWhere ? { AND: [filterWhere, cursorWhere] } : filterWhere,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: input.limit + 1,
+      include: {
+        familyMembers: {
+          take: 1,
+          include: { family: { select: { id: true, name: true } } },
+        },
+        interactions: {
+          where: { deletedAt: null },
+          orderBy: { occurredAt: 'desc' },
+          take: 1,
+          select: { occurredAt: true },
+        },
+        companies: {
+          include: { company: { select: { id: true, name: true, slug: true, color: true } } },
+        },
+        labels: {
+          include: { label: { select: { id: true, name: true, color: true } } },
+        },
+        subjects: {
+          include: { subject: { select: { id: true, name: true } } },
+        },
+        bookingProfile: { select: { hoursRemaining: true, nextHoursExpiryAt: true } },
+      },
+    })
+
+    const hasMore = rows.length > input.limit
+    const sliced = hasMore ? rows.slice(0, input.limit) : rows
+    const pageIds = sliced.map((r) => r.id)
+
+    // Four batched reads for the whole page (one query each, page-size
+    // independent): comms counts, active complaints, enquiry types, and the
+    // extra points of contact (ContactChannel).
+    const [counts, complaints, enquiryTypes, channelRows] = await Promise.all([
+      loadContactCommsCounts(ctx.db, pageIds),
+      loadContactComplaintCounts(ctx.db, pageIds),
+      loadContactEnquiryTypes(ctx.db, pageIds),
+      pageIds.length > 0
+        ? ctx.db.contactChannel.findMany({
+            where: { contactId: { in: pageIds }, deletedAt: null },
+            orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+            select: { contactId: true, kind: true, value: true, label: true },
+          })
+        : Promise.resolve(
+            [] as Array<{ contactId: string; kind: string; value: string; label: string | null }>,
+          ),
+    ])
+
+    const channelsByContact = new Map<
+      string,
+      Array<{ kind: string; value: string; label: string | null }>
+    >()
+    for (const ch of channelRows) {
+      const list = channelsByContact.get(ch.contactId) ?? []
+      list.push({ kind: ch.kind, value: ch.value, label: ch.label })
+      channelsByContact.set(ch.contactId, list)
+    }
+
+    const now = new Date()
+    const items = sliced.map((r) =>
+      toContactExportRow(r, {
+        counts: counts.get(r.id),
+        complaintCount: complaints.get(r.id) ?? 0,
+        enquiryTypes: enquiryTypes.get(r.id) ?? [],
+        channels: channelsByContact.get(r.id) ?? [],
+        now,
+      }),
+    )
+    const last = sliced[sliced.length - 1]
+    const nextCursor = hasMore && last ? { id: last.id, createdAt: last.createdAt } : null
+    return { items, nextCursor }
   }),
 
   /** Facet options for the B2C list filters that have no fixed value set:

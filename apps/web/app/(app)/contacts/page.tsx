@@ -17,7 +17,7 @@ import { SearchField } from '@/components/ui/search-field'
 import { getCurrentUser } from '@/lib/auth/server'
 import { createServerCaller } from '@/lib/trpc/server'
 
-import { ContactsExportButton } from './ContactsExportButton'
+import { ContactsExportMenu } from './ContactsExportMenu'
 import { ContactsTable } from './ContactsTable'
 import { QuickAddContactButton } from './QuickAddContactButton'
 
@@ -179,7 +179,7 @@ export default async function ContactsPage({
         subtitle={`${total} customer${total === 1 ? '' : 's'}${sp.q ? ` matching “${sp.q}”` : ''}`}
         actions={
           <div className="flex items-center gap-2">
-            <ContactsExportButton
+            <ContactsExportMenu
               q={sp.q}
               companyIds={companyIds}
               kinds={kinds}
@@ -189,6 +189,7 @@ export default async function ContactsPage({
               countries={countries}
               enquiryCategories={enquiryCategories}
               hasHours={hasHours}
+              total={total}
             />
             <QuickAddContactButton />
           </div>
