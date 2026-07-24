@@ -110,10 +110,20 @@ export default authMiddleware((req) => {
       }
     | null
 
-  if (!session && !isPublicPath(pathname)) {
+  // /api/trpc authenticates every procedure itself via the DB-backed
+  // `legacyAuth()` — which is AUTHORITATIVE and can outlive this EDGE JWT check
+  // (they use different auth configs, so the edge cookie can read as "no
+  // session" while the real session is still valid). Blocking it here would (a)
+  // wrongly 401 a logged-in user whose edge JWT lagged, and (b) emit a bare
+  // `{ error: 'unauthorized' }` JSON that is NOT a tRPC error envelope, so the
+  // client surfaces the opaque "Unable to transform response from server"
+  // instead of a clean message. Let it reach the handler; a genuinely
+  // unauthenticated call gets a proper tRPC UNAUTHORIZED there.
+  const isTrpc = pathname.startsWith('/api/trpc')
+  if (!session && !isPublicPath(pathname) && !isTrpc) {
     // NEVER redirect an /api request to the sign-in HTML page — the caller
     // expects JSON and a 307→HTML surfaces as "Unexpected token '<' … not valid
-    // JSON". Return a clean 401 instead; the tRPC/route handler's own auth still
+    // JSON". Return a clean 401 instead; the route handler's own auth still
     // applies. Only page navigations bounce to /sign-in.
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
