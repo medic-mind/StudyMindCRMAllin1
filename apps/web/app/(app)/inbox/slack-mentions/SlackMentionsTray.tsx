@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -35,8 +35,48 @@ export function SlackMentionsTray() {
     staleTime: 5 * 60_000,
   })
   const bulkDismiss = trpc.slackSummary.unassigned.bulkDismiss.useMutation()
+  const drainNow = trpc.slackSummary.unassigned.drainNow.useMutation()
   const items = listQuery.data ?? []
   const aiOff = diagnostics.data?.aiConfigured === false
+
+  // Auto-drain on load — no button, no Inngest. The 15-min relink cron is the
+  // backstop, but self-hosted Inngest often doesn't fire crons, so old rows sat
+  // here forever. This runs the SAME link-or-dismiss logic synchronously in the
+  // request whenever the tray is opened, looping until the backlog is empty, so
+  // it clears itself. Once per mount (a ref guards re-entry).
+  const [draining, setDraining] = useState(false)
+  const drainStarted = useRef(false)
+  useEffect(() => {
+    if (drainStarted.current) return
+    drainStarted.current = true
+    let cancelled = false
+    void (async () => {
+      setDraining(true)
+      try {
+        // Bounded loop: ~300 rows/call. 20 iterations clears a 6k backlog; any
+        // remainder clears on the next visit or the cron.
+        for (let i = 0; i < 20; i += 1) {
+          const r = await drainNow.mutateAsync()
+          if (cancelled) return
+          if (r.remaining <= 0) break
+        }
+      } catch {
+        // Best-effort — the cron is the backstop.
+      } finally {
+        if (!cancelled) {
+          setDraining(false)
+          await Promise.all([
+            utils.slackSummary.unassigned.list.invalidate(),
+            utils.slackSummary.unassigned.count.invalidate(),
+          ])
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Run once on mount; the mutation + utils objects are stable.
+  }, [])
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const toggleSelected = (id: string) =>
@@ -62,10 +102,10 @@ export function SlackMentionsTray() {
   const header = (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-xs text-neutral-500">
-        Slack is pulled and matching re-runs automatically on a schedule — no button needed:
-        mentions that resolve to one customer link themselves, and dead/noise rows are dismissed
-        automatically. What lands here is genuinely ambiguous (e.g. two customers with the same
-        name) — assign it, or clear it in bulk below.
+        This tray clears itself — matching runs automatically when you open this page (and every 15
+        minutes in the background), with no button: mentions that resolve to one customer link
+        themselves, and everything else is dismissed automatically. Nothing waits for human review.
+        {draining ? ' Tidying up…' : ''}
       </p>
     </div>
   )

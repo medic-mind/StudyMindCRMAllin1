@@ -241,6 +241,41 @@ export const slackSummaryRouter = router({
     }),
 
     /**
+     * Drain the parked tray SYNCHRONOUSLY, in the request — no Inngest. This is
+     * the reliable fallback for a self-hosted Inngest where the
+     * `slack/relink-unassigned` cron doesn't fire, so the old backlog never
+     * clears. Each call links/auto-onboards or (full-auto) dismisses a bounded
+     * chunk and returns how many remain, so the tray can auto-repeat until zero
+     * with no button. DB-only (no rate-limited Slack thread fetches) to stay
+     * fast. Sales Executive+ (same as triage), since the tray auto-fires it.
+     */
+    drainNow: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      assertCanTriage(user.role)
+      const { relinkParkedRowsBatch } = await import('@studymind/integration-slack/relink')
+      // Bounded per call (≈300 rows) so the request never times out; the tray
+      // loops until `remaining` is 0.
+      const MAX_BATCHES = 3
+      let afterId: string | null = null
+      const totals = { scanned: 0, linked: 0, dismissed: 0 }
+      for (let i = 0; i < MAX_BATCHES; i += 1) {
+        const batch = await relinkParkedRowsBatch(user.id, afterId, { threadFetches: 0 })
+        totals.scanned += batch.scanned
+        totals.linked += batch.linked
+        totals.dismissed += batch.dismissed
+        if (batch.done) break
+        afterId = batch.lastId
+      }
+      const remaining = await ctx.db.unassignedSummary.count({ where: { resolvedAt: null } })
+      await ctx.audit({
+        action: 'slack_summary.relink_requested',
+        target: { type: 'System', id: 'slack-drain-sync' },
+        after: { ...totals, remaining, sync: true, by: user.id },
+      })
+      return { ...totals, remaining }
+    }),
+
+    /**
      * Pull recent messages from EVERY channel the bot is in, right now (the
      * slack/sync-messages cron also runs every 15 min). This is the fix for
      * "messages aren't being pulled": it doesn't rely on the Events webhook —

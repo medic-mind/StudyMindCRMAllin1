@@ -9,6 +9,7 @@
     "./client": "./src/client.ts",
     "./webhook": "./src/webhook.ts",
     "./jobs": "./src/jobs.ts",
+    "./relink": "./src/relink.ts",
     "./outbound": "./src/outbound.ts",
     "./types": "./src/types.ts",
     "./config": "./src/config.ts"

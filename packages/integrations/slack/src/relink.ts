@@ -220,6 +220,7 @@ async function forceDismissParkedRow(
 export async function relinkParkedRowsBatch(
   actorId: string,
   afterId: string | null,
+  opts?: { threadFetches?: number },
 ): Promise<RelinkBatchResult> {
   // Own-brand catalogue is process-cached; load once per batch so the name
   // re-scan filters out "Medic Mind" & co exactly like the live ingest paths.
@@ -250,7 +251,9 @@ export async function relinkParkedRowsBatch(
   let linked = 0
   let dismissed = 0
   let errors = 0
-  let threadBudget = RELINK_THREAD_FETCHES
+  // Thread-parent fetches hit the (rate-limited) Slack API; a synchronous
+  // request-time drain passes 0 to stay DB-only and fast.
+  let threadBudget = opts?.threadFetches ?? RELINK_THREAD_FETCHES
   for (const row of rows) {
     let outcome: RelinkOutcome | 'error' = 'parked'
     try {
