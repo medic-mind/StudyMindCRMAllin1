@@ -35,6 +35,7 @@
     "./medi": "./src/medi/index.ts",
     "./safeguarding": "./src/safeguarding/index.ts",
     "./slack": "./src/slack/index.ts",
+    "./slack/call-summary-detect": "./src/slack/call-summary-detect.ts",
     "./backfill": "./src/backfill/index.ts",
     "./cache/redis-rate-limit": "./src/cache/redis-rate-limit.ts",
     "./auth/policies": "./src/auth/policies.ts",

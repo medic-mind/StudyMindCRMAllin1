@@ -147,12 +147,14 @@ export function BoardCard({
   const borderColor = stageColor ? resolveStageColor(stageColor) : 'transparent'
 
   // The board's designated tick-circle action (seeded as "Call completed")
-  // renders as a Todoist-style circle by the card name; the rest stay as chips.
-  // Hide the circle once the card already sits on that action's target stage.
+  // ALSO renders as a Todoist-style circle by the card name — but it stays in
+  // the chip row too (operator ask: keep both "Call completed" the chip AND the
+  // tick-circle, even though they do the same thing). Hide only the circle once
+  // the card already sits on that action's target stage.
   const checkboxAction = quickActions.find((a) => a.isCheckbox)
   const showCircle =
     canWrite && checkboxAction != null && checkboxAction.targetStageId !== stageId
-  const chipActions = quickActions.filter((a) => !a.isCheckbox)
+  const chipActions = quickActions
 
   return (
     <li

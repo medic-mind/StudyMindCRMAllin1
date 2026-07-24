@@ -9,7 +9,15 @@
 
 import type { PrismaClient } from '@prisma/client'
 
+import { looksLikeCallSummary } from '@studymind/core/slack/call-summary-detect'
+
 import { htmlToText } from '@/lib/format/html-text'
+
+// Over-fetch factor when a Slack list must be content-partitioned into call
+// summaries vs generic mentions (below): fetch several pages so the visible
+// page still fills after the split. A single contact rarely has enough Slack
+// rows to exceed one over-fetched window.
+const PARTITION_OVERFETCH = 4
 
 // -----------------------------------------------------------------------------
 // Common
@@ -58,6 +66,28 @@ function nextCursor<T extends { id: string; occurredAt: Date }>(
   const hasMore = rows.length > limit
   const sliced = hasMore ? rows.slice(0, limit) : rows
   const last = sliced[sliced.length - 1]
+  return {
+    sliced,
+    nextCursor: hasMore && last ? { id: last.id, occurredAt: last.occurredAt } : null,
+  }
+}
+
+/**
+ * Paginate an over-fetched, desc-ordered window after a JS content filter
+ * (`keep`). The cursor is the last INCLUDED row, so the next page re-scans from
+ * there — no skips, no dupes. There may be more when the filtered set overflows
+ * the page OR the DB window came back full (more rows we didn't fetch).
+ */
+function paginateFiltered<T extends { id: string; occurredAt: Date }>(
+  rows: T[],
+  fetchTake: number,
+  limit: number,
+  keep: (r: T) => boolean,
+): { sliced: T[]; nextCursor: ChannelCursor | null } {
+  const filtered = rows.filter(keep)
+  const sliced = filtered.slice(0, limit)
+  const last = sliced[sliced.length - 1]
+  const hasMore = filtered.length > limit || rows.length >= fetchTake
   return {
     sliced,
     nextCursor: hasMore && last ? { id: last.id, occurredAt: last.occurredAt } : null,
@@ -428,6 +458,7 @@ export async function slackMentionsForContact(
   input: ChannelListInput,
 ): Promise<Paginated<SlackMention>> {
   const limit = clampLimit(input.limit)
+  const fetchTake = (limit + 1) * PARTITION_OVERFETCH
   const rows = await db.interaction.findMany({
     where: {
       contactId: input.contactId,
@@ -436,10 +467,18 @@ export async function slackMentionsForContact(
       ...cursorWhere(input.cursor),
     },
     orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-    take: limit + 1,
+    take: fetchTake,
     select: { id: true, occurredAt: true, summary: true, payload: true },
   })
-  const { sliced, nextCursor: nc } = nextCursor(rows, limit)
+  // A Slack message that IS a call summary belongs under Call Summaries, not in
+  // the mentions list — keep the two mutually exclusive (operator ask).
+  const { sliced, nextCursor: nc } = paginateFiltered(rows, fetchTake, limit, (r) => {
+    const p = asObject(r.payload)
+    return !looksLikeCallSummary({
+      text: asString(p['messageText']),
+      channelName: asString(p['channelName']),
+    })
+  })
   const items: SlackMention[] = sliced.map(rowToSlackMention)
   return { items, nextCursor: nc }
 }
@@ -521,32 +560,16 @@ export async function callSummariesForContact(
   input: ChannelListInput,
 ): Promise<Paginated<CallSummaryEntry>> {
   const limit = clampLimit(input.limit)
+  const fetchTake = (limit + 1) * PARTITION_OVERFETCH
   const rows = await db.interaction.findMany({
     where: {
       contactId: input.contactId,
       deletedAt: null,
-      AND: [
-        // A call summary is: one recorded in the CRM (call_summary) OR a Slack
-        // message posted in a CALL-SUMMARY channel (name contains "summar",
-        // excluding complaint channels — those become Complaints, ADR 0042). A
-        // generic Slack mention in any other channel is NOT a call summary and
-        // stays in the Slack section only (§37 — "realise when it's a call
-        // summary, not just a mention").
-        {
-          OR: [
-            { type: 'call_summary' as const },
-            {
-              type: 'slack_summary' as const,
-              payload: { path: ['channelName'], string_contains: 'summar' },
-              NOT: { payload: { path: ['channelName'], string_contains: 'complaint' } },
-            },
-          ],
-        },
-        cursorWhere(input.cursor),
-      ],
+      type: { in: ['call_summary', 'slack_summary'] },
+      ...cursorWhere(input.cursor),
     },
     orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-    take: limit + 1,
+    take: fetchTake,
     select: {
       id: true,
       occurredAt: true,
@@ -556,7 +579,20 @@ export async function callSummariesForContact(
       createdById: true,
     },
   })
-  const { sliced, nextCursor: nc } = nextCursor(rows, limit)
+  // A call summary is: one recorded in the CRM (call_summary) OR a Slack message
+  // whose CONTENT is call-summary-shaped (labelled call-log format or explicit
+  // call-outcome language, or a call-summary channel) — recognised by the pure
+  // `looksLikeCallSummary`, not just the channel. A generic Slack mention stays
+  // in the Slack section only (§37 — "realise when it's a call summary, not just
+  // a mention; otherwise it's a Slack mention").
+  const { sliced, nextCursor: nc } = paginateFiltered(rows, fetchTake, limit, (r) => {
+    if (r.type === 'call_summary') return true
+    const p = asObject(r.payload)
+    return looksLikeCallSummary({
+      text: asString(p['messageText']),
+      channelName: asString(p['channelName']),
+    })
+  })
 
   // Resolve the CRM authors of site summaries in one batch.
   const authorIds = [...new Set(sliced.map((r) => r.createdById).filter((x): x is string => !!x))]
@@ -858,7 +894,7 @@ export async function channelSummaryForContact(
 ): Promise<ChannelSummary> {
   // We deliberately do a small set of cheap aggregates rather than one big
   // group-by, so each can use the partial index added in the chunk-1 migration.
-  const [emails, calls, slack, callSummaries, trengoMsgs, notes] = await Promise.all([
+  const [emails, calls, slackRows, callSummaryAgg, trengoMsgs, notes] = await Promise.all([
     db.interaction.findMany({
       where: {
         contactId,
@@ -875,26 +911,16 @@ export async function channelSummaryForContact(
       take: 50,
       select: { occurredAt: true, payload: true },
     }),
-    db.interaction.aggregate({
+    // Slack rows are partitioned in JS (mentions vs call summaries) by CONTENT,
+    // exactly like the feeds, so the tiles match the lists. Bounded fetch.
+    db.interaction.findMany({
       where: { contactId, deletedAt: null, type: 'slack_summary' },
-      _count: { id: true },
-      _max: { occurredAt: true },
+      orderBy: { occurredAt: 'desc' },
+      take: 400,
+      select: { occurredAt: true, payload: true },
     }),
     db.interaction.aggregate({
-      // Mirror callSummariesForContact: CRM summaries + Slack posts from
-      // call-summary channels only (not every Slack mention).
-      where: {
-        contactId,
-        deletedAt: null,
-        OR: [
-          { type: 'call_summary' },
-          {
-            type: 'slack_summary',
-            payload: { path: ['channelName'], string_contains: 'summar' },
-            NOT: { payload: { path: ['channelName'], string_contains: 'complaint' } },
-          },
-        ],
-      },
+      where: { contactId, deletedAt: null, type: 'call_summary' },
       _count: { id: true },
       _max: { occurredAt: true },
     }),
@@ -944,6 +970,37 @@ export async function channelSummaryForContact(
   }
   const missed = missedCallIds.size
 
+  // Partition Slack rows the same way the feeds do, so tile counts match lists.
+  let slackMentionCount = 0
+  let slackMentionLatest: Date | null = null
+  let slackCallSummaryCount = 0
+  let slackCallSummaryLatest: Date | null = null
+  for (const r of slackRows) {
+    const p = asObject(r.payload)
+    if (
+      looksLikeCallSummary({
+        text: asString(p['messageText']),
+        channelName: asString(p['channelName']),
+      })
+    ) {
+      slackCallSummaryCount += 1
+      if (!slackCallSummaryLatest || r.occurredAt > slackCallSummaryLatest) {
+        slackCallSummaryLatest = r.occurredAt
+      }
+    } else {
+      slackMentionCount += 1
+      if (!slackMentionLatest || r.occurredAt > slackMentionLatest) {
+        slackMentionLatest = r.occurredAt
+      }
+    }
+  }
+  const callSummaryLatest =
+    callSummaryAgg._max.occurredAt && slackCallSummaryLatest
+      ? callSummaryAgg._max.occurredAt > slackCallSummaryLatest
+        ? callSummaryAgg._max.occurredAt
+        : slackCallSummaryLatest
+      : (callSummaryAgg._max.occurredAt ?? slackCallSummaryLatest)
+
   const trengoConvs = new Set<string>()
   let trengoLatest: Date | null = null
   for (const r of trengoMsgs) {
@@ -966,12 +1023,12 @@ export async function channelSummaryForContact(
       latestAt: callLatest,
     },
     slack: {
-      mentionCount: slack._count.id,
-      latestAt: slack._max.occurredAt,
+      mentionCount: slackMentionCount,
+      latestAt: slackMentionLatest,
     },
     callSummaries: {
-      count: callSummaries._count.id,
-      latestAt: callSummaries._max.occurredAt,
+      count: callSummaryAgg._count.id + slackCallSummaryCount,
+      latestAt: callSummaryLatest,
     },
     trengo: {
       conversationCount: trengoConvs.size,
