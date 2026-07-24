@@ -55,6 +55,11 @@ import {
 } from '@/lib/trpc/builders'
 import { buildCaseRecoveryVars } from '@/lib/finance/recovery-vars'
 import { companyLetterhead, loadDdRecoverySettings } from '@/lib/finance/recovery-settings'
+import {
+  composeCaseName,
+  loadGcFallbackForCase,
+  loadGcFallbackForCases,
+} from '@/lib/finance/case-display'
 
 // Refunds + allocation review + reconciliation are restricted to roles that
 // can move money. ADR 0014 — ceo, senior_manager, manager. Sales Executive
@@ -713,15 +718,37 @@ export const financeRouter = router({
                 })
               : []
           const contactById = new Map(contacts.map((c) => [c.id, c]))
+          // Read-time GoCardless fallback so a case is NEVER "Unknown / no email"
+          // even if it was created by a path that didn't seed the fields, or
+          // before the hourly identify-backfill reached it.
+          const fallback = await loadGcFallbackForCases(
+            ctx.db,
+            rows.map((r) => ({
+              id: r.id,
+              gcCustomerId: r.gcCustomerId,
+              gcSubscriptionId: r.gcSubscriptionId,
+            })),
+          )
           return rows.map((r) => {
             const c = r.contactId ? contactById.get(r.contactId) : null
             const contactName = c
               ? [c.firstName, c.lastName].filter(Boolean).join(' ') || null
               : null
-            // Display name: linked contact wins, then the standalone case's own
-            // name (ADR 0045 amendment), then whichever identifier we have.
-            const name =
-              contactName || r.personName || r.chaseEmail || r.chasePhoneE164 || 'Unknown'
+            const fb = fallback.get(r.id) ?? {
+              gcName: null,
+              gcEmail: null,
+              gcPhone: null,
+              planName: null,
+            }
+            // Display name: linked contact → standalone name → GoCardless name →
+            // plan name → any identifier. "Unknown" is now unreachable.
+            const name = composeCaseName({
+              contactName,
+              personName: r.personName,
+              chaseEmail: r.chaseEmail ?? c?.email ?? null,
+              chasePhoneE164: r.chasePhoneE164 ?? c?.phoneE164 ?? null,
+              fallback: fb,
+            })
             return {
               id: r.id,
               status: r.status,
@@ -734,8 +761,10 @@ export const financeRouter = router({
               autoChase: r.autoChase,
               sendEmails: r.sendEmails,
               sendTexts: r.sendTexts,
-              chaseEmail: r.chaseEmail,
-              chasePhoneE164: r.chasePhoneE164,
+              // Fill the reachable email/phone from the contact / GoCardless too,
+              // so the sub-line never wrongly reads "no email" when GC has one.
+              chaseEmail: r.chaseEmail ?? c?.email ?? fb.gcEmail,
+              chasePhoneE164: r.chasePhoneE164 ?? c?.phoneE164 ?? fb.gcPhone,
               setupLinkUrl: r.setupLinkUrl,
               cadenceDays: r.cadenceDays,
               escalationStep: r.escalationStep,
@@ -1204,6 +1233,14 @@ export const financeRouter = router({
           const contactName = contact
             ? [contact.firstName, contact.lastName].filter(Boolean).join(' ') || null
             : null
+          // Read-time GoCardless fallback — the case modal never shows "Unknown".
+          const fb = await loadGcFallbackForCase(ctx.db, {
+            id: c.id,
+            gcCustomerId: c.gcCustomerId,
+            gcSubscriptionId: c.gcSubscriptionId,
+          })
+          const displayEmail = c.chaseEmail ?? contact?.email ?? fb.gcEmail
+          const displayPhone = c.chasePhoneE164 ?? contact?.phoneE164 ?? fb.gcPhone
           const outstandingMinor = Math.max(0, c.openingShortfallMinor - c.recoveredMinor)
           const recoverySettings = await loadDdRecoverySettings(ctx.db)
           // The token values (name, amount, re-signup link, calculated CCJ
@@ -1227,10 +1264,16 @@ export const financeRouter = router({
             contactId: c.contactId,
             gcCustomerId: c.gcCustomerId,
             gcSubscriptionId: c.gcSubscriptionId,
-            name: contactName || c.personName || c.chaseEmail || c.chasePhoneE164 || 'Unknown',
+            name: composeCaseName({
+              contactName,
+              personName: c.personName,
+              chaseEmail: displayEmail,
+              chasePhoneE164: displayPhone,
+              fallback: fb,
+            }),
             personName: c.personName,
-            chaseEmail: c.chaseEmail ?? contact?.email ?? null,
-            chasePhoneE164: c.chasePhoneE164 ?? contact?.phoneE164 ?? null,
+            chaseEmail: displayEmail,
+            chasePhoneE164: displayPhone,
             outstandingMinor,
             openingShortfallMinor: c.openingShortfallMinor,
             recoveredMinor: c.recoveredMinor,
