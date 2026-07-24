@@ -438,6 +438,11 @@ function RecoverySettingsPanel() {
               Send text reminders (Trengo)
             </label>
           </div>
+          <p className="text-xs text-neutral-500">
+            Email is the fully-automatic channel (sent from the system mailbox). Text reminders send
+            under an assigned case owner&apos;s Trengo login, so auto-created cases without an owner
+            fall back to email — assign an owner on a case to text it.
+          </p>
         </div>
 
         <div className="flex justify-end">
