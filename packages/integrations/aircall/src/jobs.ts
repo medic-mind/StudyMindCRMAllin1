@@ -528,6 +528,11 @@ async function upsertCallInteraction(
         aircallEventId: input.eventId,
         direction: input.call.direction,
         durationSec: input.call.duration,
+        // Authoritative "a human answered" signal (unix seconds, null if never
+        // answered). Aircall's `duration` counts ring time, so a rung-out call
+        // has duration > 0 but answered_at null — this is what tells the
+        // missed-calls workspace it's a miss, not an answered call.
+        answeredAt: input.call.answered_at ?? null,
         recordingUrl: input.call.recording,
         voicemailUrl: input.call.voicemail,
         rawDigits: input.call.raw_digits,

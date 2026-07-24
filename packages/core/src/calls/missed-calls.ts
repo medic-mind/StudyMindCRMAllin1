@@ -18,6 +18,16 @@ export interface RawCall {
   direction: 'inbound' | 'outbound' | null
   durationSec: number
   isVoicemail: boolean
+  /**
+   * Aircall's `answered_at` (unix seconds) — the AUTHORITATIVE "a human picked
+   * up" signal. `null` = never answered (a miss); a number = answered.
+   * `undefined` = a legacy row synced before we captured it, so callers fall
+   * back to the `durationSec` heuristic. Aircall's `duration` counts the whole
+   * call lifetime incl. RING time, so a rung-out call has `duration > 0` while
+   * `answered_at` is null — which is exactly why duration alone misclassified
+   * missed calls as answered.
+   */
+  answeredAt?: number | null
   rawDigits: string | null
   contactId: string | null
 }
@@ -31,6 +41,8 @@ export interface NormalizedCall {
   direction: 'inbound' | 'outbound' | null
   durationSec: number
   isVoicemail: boolean
+  /** See {@link RawCall.answeredAt}. Collapsed across the call's event rows. */
+  answeredAt?: number | null
   rawDigits: string | null
   contactId: string | null
 }
@@ -52,10 +64,23 @@ export interface MissedCallResult extends NormalizedCall {
   review: MissedCallReviewRow | null
 }
 
-/** A call counts as answered only if a human picked up (talk time > 0 and it
- * isn't a voicemail). Everything else inbound is a miss to follow up. */
-export function isAnswered(c: { durationSec: number; isVoicemail: boolean }): boolean {
-  return !c.isVoicemail && c.durationSec > 0
+/**
+ * A call counts as answered only if a human actually picked up. Aircall's
+ * `answered_at` is the authoritative signal — a rung-out call has `answered_at`
+ * null even though its `duration` counts the RING time (> 0), so using duration
+ * alone recorded missed calls as "answered" and hid them from the workspace.
+ * When `answeredAt` was captured (new rows) it decides; legacy rows (no
+ * `answeredAt` key) fall back to the old talk-time heuristic. A voicemail is
+ * never "answered".
+ */
+export function isAnswered(c: {
+  durationSec: number
+  isVoicemail: boolean
+  answeredAt?: number | null
+}): boolean {
+  if (c.isVoicemail) return false
+  if (c.answeredAt !== undefined) return c.answeredAt !== null
+  return c.durationSec > 0
 }
 
 /**
@@ -132,6 +157,15 @@ export function projectCallInteraction(row: {
   const direction =
     p['direction'] === 'inbound' || p['direction'] === 'outbound' ? p['direction'] : null
   const durationSec = typeof p['durationSec'] === 'number' ? (p['durationSec'] as number) : 0
+  // Tri-state: a number (answered) / null (captured, never answered) / undefined
+  // (legacy row — no key, so isAnswered falls back to durationSec).
+  const answeredAtRaw = p['answeredAt']
+  const answeredAt: number | null | undefined =
+    typeof answeredAtRaw === 'number'
+      ? answeredAtRaw
+      : answeredAtRaw === null
+        ? null
+        : undefined
   return {
     interactionId: row.id,
     aircallCallId,
@@ -139,6 +173,7 @@ export function projectCallInteraction(row: {
     direction,
     durationSec,
     isVoicemail: isVoicemailPayload(p),
+    ...(answeredAt !== undefined ? { answeredAt } : {}),
     rawDigits: callNumberFromPayload(p),
     contactId: row.contactId,
   }
@@ -160,6 +195,7 @@ export function normalizeCalls(rows: ReadonlyArray<RawCall>): NormalizedCall[] {
         direction: r.direction,
         durationSec: r.durationSec,
         isVoicemail: r.isVoicemail,
+        ...(r.answeredAt !== undefined ? { answeredAt: r.answeredAt } : {}),
         rawDigits: r.rawDigits,
         contactId: r.contactId,
       })
@@ -169,6 +205,10 @@ export function normalizeCalls(rows: ReadonlyArray<RawCall>): NormalizedCall[] {
     if (r.durationSec > prev.durationSec) prev.durationSec = r.durationSec
     if (r.isVoicemail) prev.isVoicemail = true
     if (prev.direction == null && r.direction != null) prev.direction = r.direction
+    // answeredAt: a numeric answer (any event that saw a pick-up) wins; an
+    // explicit captured null upgrades a still-unknown (legacy/undefined) value.
+    if (r.answeredAt != null && prev.answeredAt == null) prev.answeredAt = r.answeredAt
+    else if (r.answeredAt === null && prev.answeredAt === undefined) prev.answeredAt = null
     if (!prev.rawDigits && r.rawDigits) prev.rawDigits = r.rawDigits
     if (!prev.contactId && r.contactId) prev.contactId = r.contactId
   }

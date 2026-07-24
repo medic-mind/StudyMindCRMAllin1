@@ -20,16 +20,36 @@ function raw(p: Partial<RawCall>): RawCall {
     direction: p.direction ?? 'inbound',
     durationSec: p.durationSec ?? 0,
     isVoicemail: p.isVoicemail ?? false,
+    // Include answeredAt only when the test sets it (number = answered, null =
+    // captured-but-not-answered); leaving it out models a legacy row.
+    ...(p.answeredAt !== undefined ? { answeredAt: p.answeredAt } : {}),
     rawDigits: p.rawDigits ?? '+447700900001',
     contactId: p.contactId ?? null,
   }
 }
 
 describe('isAnswered', () => {
-  it('is true only when picked up and not a voicemail', () => {
+  it('is true only when picked up and not a voicemail (legacy duration heuristic)', () => {
     expect(isAnswered({ durationSec: 42, isVoicemail: false })).toBe(true)
     expect(isAnswered({ durationSec: 0, isVoicemail: false })).toBe(false)
     expect(isAnswered({ durationSec: 30, isVoicemail: true })).toBe(false)
+  })
+
+  it('uses answered_at authoritatively over duration when it was captured', () => {
+    // THE BUG: a rung-out call has duration > 0 (Aircall counts ring time) but
+    // was never answered — answered_at is null. It must NOT count as answered.
+    expect(isAnswered({ durationSec: 25, isVoicemail: false, answeredAt: null })).toBe(false)
+    // A genuinely answered call carries a numeric answered_at.
+    expect(isAnswered({ durationSec: 210, isVoicemail: false, answeredAt: 1746783545 })).toBe(true)
+    // answered_at wins even if duration is 0 for some reason.
+    expect(isAnswered({ durationSec: 0, isVoicemail: false, answeredAt: 1746783545 })).toBe(true)
+    // A voicemail is never answered, whatever answered_at says.
+    expect(isAnswered({ durationSec: 30, isVoicemail: true, answeredAt: null })).toBe(false)
+  })
+
+  it('falls back to the duration heuristic for legacy rows (answeredAt absent)', () => {
+    expect(isAnswered({ durationSec: 5, isVoicemail: false })).toBe(true)
+    expect(isAnswered({ durationSec: 0, isVoicemail: false })).toBe(false)
   })
 })
 
@@ -80,6 +100,22 @@ describe('projectCallInteraction', () => {
     expect(call.durationSec).toBe(0)
     expect(call.isVoicemail).toBe(false)
     expect(call.rawDigits).toBeNull()
+  })
+
+  it('reads answered_at as a tri-state (number / null / absent)', () => {
+    const base = { occurredAt, contactId: null }
+    // Captured number → answered.
+    expect(
+      projectCallInteraction({ id: 'a', ...base, payload: { answeredAt: 1746783545 } }).answeredAt,
+    ).toBe(1746783545)
+    // Captured null → known miss.
+    expect(projectCallInteraction({ id: 'b', ...base, payload: { answeredAt: null } }).answeredAt).toBe(
+      null,
+    )
+    // Absent (legacy row) → undefined, so isAnswered falls back to duration.
+    expect(
+      'answeredAt' in projectCallInteraction({ id: 'c', ...base, payload: { durationSec: 9 } }),
+    ).toBe(false)
   })
 
   it('flags a voicemail and uses the toNumber fallback for manual click-to-call', () => {
@@ -144,6 +180,22 @@ describe('normalizeCalls', () => {
     ])
     expect(out).toHaveLength(2)
   })
+
+  it('propagates the answer signal across a call event rows (numeric wins, null upgrades)', () => {
+    // One enriched event row carrying answered_at:null flips the collapsed call
+    // to a known miss even when the other event rows are legacy (undefined).
+    const missed = normalizeCalls([
+      raw({ aircallCallId: 5, durationSec: 20 }), // legacy row, no answeredAt
+      raw({ aircallCallId: 5, durationSec: 20, answeredAt: null }), // enriched
+    ])
+    expect(missed[0]?.answeredAt).toBe(null)
+    // A numeric answer on any event row wins (the call was picked up).
+    const answered = normalizeCalls([
+      raw({ aircallCallId: 6, durationSec: 0 }),
+      raw({ aircallCallId: 6, durationSec: 200, answeredAt: 1746783545 }),
+    ])
+    expect(answered[0]?.answeredAt).toBe(1746783545)
+  })
 })
 
 describe('deriveMissedCalls', () => {
@@ -163,6 +215,25 @@ describe('deriveMissedCalls', () => {
 
   it('does not list an answered inbound call', () => {
     const calls = normalizeCalls([raw({ aircallCallId: 1, durationSec: 60 })])
+    expect(deriveMissedCalls(calls, noReviews)).toHaveLength(0)
+  })
+
+  it('lists a RUNG-OUT inbound call as a miss even though duration counts ring time', () => {
+    // The regression: Aircall reports duration = ring time (> 0) for a call
+    // nobody answered, with answered_at null. Duration alone hid it as
+    // "answered"; answered_at makes it correctly a miss.
+    const calls = normalizeCalls([
+      raw({ aircallCallId: 1, direction: 'inbound', durationSec: 22, answeredAt: null }),
+    ])
+    const out = deriveMissedCalls(calls, noReviews)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.state).toBe('outstanding')
+  })
+
+  it('does not list a call answered_at confirms was answered (duration incl. ring)', () => {
+    const calls = normalizeCalls([
+      raw({ aircallCallId: 1, direction: 'inbound', durationSec: 210, answeredAt: 1746783545 }),
+    ])
     expect(deriveMissedCalls(calls, noReviews)).toHaveLength(0)
   })
 

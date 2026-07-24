@@ -129,15 +129,28 @@ export const aircallBackfillRequested = inngest.createFunction(
 export async function processBackfillCall(
   call: AircallCallResource,
 ): Promise<{ created: boolean; matched: boolean }> {
-  // Idempotent on aircall call id.
+  // Idempotent on aircall call id. When the row already exists but predates the
+  // `answeredAt` capture, enrich it in place — this RETROACTIVELY fixes rung-out
+  // calls that were recorded as "answered" (duration > 0) and so never showed in
+  // the missed-calls workspace. Enriching one of the call's rows is enough: the
+  // missed-calls collapse propagates the answer signal across the call's events.
   const existing = await db.interaction.findFirst({
     where: {
       type: 'call',
       payload: { path: ['aircallCallId'], equals: call.id },
     },
-    select: { id: true },
+    select: { id: true, payload: true },
   })
-  if (existing) return { created: false, matched: true }
+  if (existing) {
+    const p = (existing.payload ?? {}) as Record<string, unknown>
+    if (!('answeredAt' in p)) {
+      await db.interaction.update({
+        where: { id: existing.id },
+        data: { payload: { ...p, answeredAt: call.answered_at ?? null } },
+      })
+    }
+    return { created: false, matched: true }
+  }
 
   // Resolve OR create the Contact for this call's counterparty — the SAME path
   // the live webhook uses (CLAUDE.md §10), so an imported missed call from an
@@ -215,10 +228,17 @@ export async function processBackfillCall(
         // Self-describing provider so the analytics classifier never has to
         // infer it (CLAUDE.md §10). Aircall call ids are numeric.
         provider: 'aircall',
-        interactionType: call.duration > 0 ? 'call.answered' : 'call.ended',
+        // Classify by whether a human picked up (answered_at), NOT by duration —
+        // Aircall's `duration` counts ring time, so a rung-out call has
+        // duration > 0 while answered_at is null.
+        interactionType: call.answered_at != null ? 'call.answered' : 'call.ended',
         aircallCallId: call.id,
         direction: call.direction,
         durationSec: call.duration,
+        // Authoritative "a human answered" signal (unix seconds, null if never
+        // answered) — what makes the missed-calls workspace treat a rung-out
+        // call as a miss rather than an answered call.
+        answeredAt: call.answered_at ?? null,
         recordingUrl: call.recording,
         recordingS3Key,
         voicemailUrl: call.voicemail,
