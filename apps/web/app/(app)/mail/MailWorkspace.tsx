@@ -213,7 +213,6 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
   const labels = trpc.mail.labels.useQuery({ mailAccountId: accountId })
   // Gmail-style unread badges for Inbox + its category tabs, plus the Spam total.
   const counts = trpc.mail.folderCounts.useQuery({ mailAccountId: accountId })
-  const syncNow = trpc.mail.syncNow.useMutation()
 
   const kbArchive = trpc.mail.thread.setArchived.useMutation()
   const kbRead = trpc.mail.thread.setRead.useMutation()
@@ -327,33 +326,6 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
             className="inline-flex w-fit items-center gap-3 rounded-2xl bg-gmail-600 py-3 pl-4 pr-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gmail-700"
           >
             <PencilIcon size={18} /> Compose
-          </button>
-          {/* Force a Gmail sync — the safety net that converges the CRM onto
-              Gmail's current state on demand (the gmail/sync cron also runs
-              every 10 min). */}
-          <button
-            type="button"
-            title="Sync from Gmail"
-            aria-label="Sync from Gmail"
-            disabled={syncNow.isPending}
-            onClick={() => {
-              syncNow
-                .mutateAsync()
-                .then((r) => {
-                  toast.success(
-                    r.connected > 0 ? 'Syncing from Gmail…' : 'No Gmail account connected',
-                  )
-                  setTimeout(() => {
-                    void utils.mail.threads.list.invalidate()
-                    void utils.mail.labels.invalidate()
-                    void utils.mail.folderCounts.invalidate()
-                  }, 1500)
-                })
-                .catch((e) => toast.error(e instanceof Error ? e.message : 'Sync failed'))
-            }}
-            className="rounded-full border border-neutral-300 bg-white p-2 text-neutral-500 hover:bg-neutral-100 disabled:opacity-50"
-          >
-            <RepeatIcon size={16} className={syncNow.isPending ? 'animate-spin' : ''} />
           </button>
         </div>
 
@@ -647,29 +619,17 @@ export function MailWorkspace({ accounts }: { accounts: AccountOption[] }) {
                 <button
                   type="button"
                   onClick={() => {
-                    // Refresh = pull from Gmail, not just re-read our own DB —
-                    // an agent pressing this expects mail that arrived in Gmail
-                    // to show up. Invalidate immediately for snappiness, then
-                    // fire the sync and re-read once it has had a moment.
+                    // Local re-read of the list + counts. Pulling new mail FROM
+                    // Gmail is automatic (real-time push + the gmail/sync cron),
+                    // so this just refreshes the view — no manual sync.
                     invalidateList()
-                    syncNow
-                      .mutateAsync()
-                      .then(() => {
-                        setTimeout(() => {
-                          invalidateList()
-                          void utils.mail.folderCounts.invalidate()
-                          void utils.mail.labels.invalidate()
-                        }, 1500)
-                      })
-                      .catch(() => {
-                        // Local refresh already happened; sync errors surface
-                        // via the rail's dedicated sync button.
-                      })
+                    void utils.mail.folderCounts.invalidate()
+                    void utils.mail.labels.invalidate()
                   }}
                   aria-label="Refresh"
                   className="ml-1 rounded-full p-1.5 text-neutral-500 hover:bg-neutral-100"
                 >
-                  <RepeatIcon size={16} className={syncNow.isPending ? 'animate-spin' : ''} />
+                  <RepeatIcon size={16} />
                 </button>
               )}
               <span className="ml-auto text-xs text-neutral-500">

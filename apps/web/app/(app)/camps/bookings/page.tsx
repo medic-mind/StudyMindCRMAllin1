@@ -33,7 +33,6 @@ import { CampsNav } from '../CampsNav'
 import { BookingStatusBadge } from '../camp-status'
 import { StatTile } from '../StatTile'
 import { BookingSlideOver, type BookingItem } from './BookingSlideOver'
-import { SyncNowButton } from './SyncNowButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -111,7 +110,6 @@ export default async function CampBookingsPage({ searchParams }: { searchParams?
       <PageHeader
         title="Camp bookings"
         subtitle="Every Summer Camp booking, on record in the CRM. Edit details, assign camps, add notes — changes sync back to the camp app instantly."
-        actions={<SyncNowButton connected={list.connected} canSync={canEdit} />}
       />
       <PageBody>
         <CampsNav />
@@ -191,7 +189,7 @@ export default async function CampBookingsPage({ searchParams }: { searchParams?
             <p className="mt-3 text-sm font-medium text-neutral-800">No bookings on record yet</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-neutral-500">
               {list.connected
-                ? 'Import the camp app’s bookings with “Sync from camp” above (or the full Import on the Overview page) — new bookings then arrive automatically.'
+                ? 'Bookings sync in automatically on a schedule (and in real time as they change). For a one-off historic import, use the full Import on the Overview page.'
                 : 'Connect the Summer Camp app (Overview page explains how) — bookings then sync in automatically and stay on record here.'}
             </p>
           </Card>

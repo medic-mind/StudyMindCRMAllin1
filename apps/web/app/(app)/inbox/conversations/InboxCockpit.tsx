@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Avatar } from '@/components/ui/avatar'
-import { CheckIcon, ChevronDownIcon, InboxIcon, RepeatIcon, SearchIcon, StarIcon, XIcon } from '@/components/ui/icon'
+import { CheckIcon, ChevronDownIcon, InboxIcon, SearchIcon, StarIcon, XIcon } from '@/components/ui/icon'
 import { Input } from '@/components/ui/input'
 import { formatRelativeTime } from '@/lib/format/relative-time'
 import { useConversationStream } from '@/lib/hooks/use-conversation-stream'
@@ -557,11 +557,6 @@ function FoldersRail({
     staleTime: 60_000,
     retry: false,
   })
-  const syncNow = trpc.inbox.conversations.syncNow.useMutation({
-    onSuccess: () =>
-      toast.success('Syncing from Trengo — statuses will converge in a moment.'),
-    onError: (e) => toast.error(e.message ?? 'Could not start the sync'),
-  })
   // Full historic import (CEO / Senior Manager) — pulls EVERY Trengo ticket
   // (creating a contact per sender), so the app matches Trengo from scratch.
   const canImport = meRole === 'ceo' || meRole === 'senior_manager'
@@ -874,16 +869,6 @@ function FoldersRail({
             </button>
           )
         ) : null}
-        <button
-          type="button"
-          onClick={() => syncNow.mutate()}
-          disabled={syncNow.isPending}
-          title="Pull each conversation's current status from Trengo now"
-          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
-        >
-          <RepeatIcon size={13} />
-          {syncNow.isPending ? 'Syncing…' : 'Sync from Trengo'}
-        </button>
         <Link
           href="/inbox/suggestions"
           className="block rounded-md px-2.5 py-1.5 text-xs text-trengo-300 hover:bg-neutral-800"

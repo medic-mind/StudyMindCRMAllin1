@@ -3,8 +3,8 @@
 // the channels where staff discuss customers (Slack's conversations.history
 // only reads channels the bot has joined — unlike Trengo's workspace token),
 // or SLACK_BOT_TOKEN being unset. This calls Slack directly and lists exactly
-// which channels the bot can read, so the gap is obvious. Also fires the
-// on-demand pull sync. CEO / Senior Manager (server enforces). CLAUDE.md §12.
+// which channels the bot can read, so the gap is obvious. Pulling messages is
+// automatic on a cron. CEO / Senior Manager (server enforces). CLAUDE.md §12.
 
 'use client'
 
@@ -40,12 +40,6 @@ export function SlackProbeButton(): JSX.Element {
     },
   })
 
-  const syncNow = trpc.slackSummary.unassigned.syncNow.useMutation({
-    onSuccess: () =>
-      toast.success('Pulling recent Slack messages — mentions will appear shortly.'),
-    onError: (e) => toast.error(e.message ?? 'Could not start the sync'),
-  })
-
   const reprocessComplaints = trpc.admin.backfill.slackComplaints.reprocess.useMutation({
     onSuccess: () =>
       toast.success(
@@ -66,7 +60,7 @@ export function SlackProbeButton(): JSX.Element {
         toast.success(
           `Joined ${r.joined.length} channel${r.joined.length === 1 ? '' : 's'}` +
             (r.failed.length > 0 ? ` — ${r.failed.length} failed` : '') +
-            '. Now run "Sync from Slack now" or a 90-day backfill.',
+            '. Messages will pull in automatically on the next cron tick.',
         )
       }
       // Refresh the membership readout so the change is visible immediately.
@@ -87,16 +81,6 @@ export function SlackProbeButton(): JSX.Element {
           title="Join every public channel in the workspace as the bot, so the pull can read them all — private channels still need /invite"
         >
           {joinAll.isPending ? 'Joining…' : 'Join all public channels'}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          disabled={syncNow.isPending}
-          onClick={() => syncNow.mutate({ lookbackHours: 24 })}
-          title="Pull the last day of messages from every channel the bot is in"
-        >
-          {syncNow.isPending ? 'Syncing…' : 'Sync from Slack now'}
         </Button>
         <Button
           type="button"

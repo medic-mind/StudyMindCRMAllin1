@@ -267,7 +267,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
                 }`}
               >
                 {detail.slackStats.eventsReceived === 0
-                  ? 'No Slack WEBHOOK events have reached the CRM (this counter only tracks the Events API push, not the 15-min pull). The pull sync still works from SLACK_BOT_TOKEN alone — use “Test Slack connection” below to see which channels the bot can actually read, then “Sync from Slack now”. For real-time push too, point the Slack app’s Event Subscriptions at /api/webhooks/slack (subscribe message.channels) with SLACK_SIGNING_SECRET set.'
+                  ? 'No Slack WEBHOOK events have reached the CRM (this counter only tracks the Events API push, not the automatic pull). The pull sync runs automatically on a schedule from SLACK_BOT_TOKEN alone — use “Test Slack connection” below to see which channels the bot can actually read. For real-time push too, point the Slack app’s Event Subscriptions at /api/webhooks/slack (subscribe message.channels) with SLACK_SIGNING_SECRET set.'
                   : detail.slackStats.mentionsLinked === 0 && detail.slackStats.parkedForTriage === 0
                     ? 'Events are arriving but none matched a contact yet — most messages are noise (no name/phone/email). Post a message with a customer’s phone or email and re-check, or run the backfill below to reprocess history through the matcher.'
                     : 'Connected — Slack mentions are being captured and matched to contacts.'}
