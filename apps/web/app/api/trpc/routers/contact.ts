@@ -483,6 +483,19 @@ export const contactRouter = router({
       before: null,
       after: created,
     })
+    // Best-effort self-heal: a newly-added customer picks up any earlier Slack
+    // mentions that were auto-dismissed because they weren't in the CRM yet
+    // (§12). Fired as an event (processed even when the cron scheduler isn't),
+    // and never blocks contact creation.
+    try {
+      const { inngest } = await import('@studymind/jobs')
+      await inngest.send({
+        name: 'slack/relink-now.requested',
+        data: { actorId: 'system:contact.create' },
+      })
+    } catch {
+      // ignore — the cron + tray drain remain the backstop
+    }
     return { id: created.id }
   }),
 

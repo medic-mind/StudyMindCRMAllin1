@@ -100,12 +100,18 @@ export function SlackMentionsTray() {
     setSelected(allSelected ? new Set() : new Set(items.map((m) => m.id)))
 
   const header = (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="text-xs text-neutral-500">
-        This tray clears itself — matching runs automatically when you open this page (and every 15
-        minutes in the background), with no button: mentions that resolve to one customer link
-        themselves, and everything else is dismissed automatically. Nothing waits for human review.
-        {draining ? ' Tidying up…' : ''}
+    <div className="rounded-lg border border-primary-200 bg-primary-50/60 px-4 py-3">
+      <p className="text-sm font-semibold text-primary-900">
+        This is fully automated — you shouldn&apos;t normally need this page.
+      </p>
+      <p className="mt-1 text-xs leading-relaxed text-primary-900/80">
+        Every Slack message about a customer is matched and saved onto that customer&apos;s timeline
+        automatically. Anything that can&apos;t be matched to a customer is dismissed automatically —
+        nothing here waits for you to assign it by hand. This page is only a safety net: it&apos;s
+        where a message would appear if the automatic matching ever got stuck, so in normal running
+        it stays empty. If a customer is added to the CRM later, their earlier mentions are
+        incorporated automatically too.
+        {draining ? ' Tidying up the last few now…' : ''}
       </p>
     </div>
   )
@@ -133,10 +139,11 @@ export function SlackMentionsTray() {
         {header}
         {banner}
         <Card className="px-10 py-14 text-center">
-          <p className="text-sm font-medium text-neutral-800">Nothing to triage.</p>
+          <p className="text-sm font-medium text-neutral-800">All clear — nothing stuck here.</p>
           <p className="mt-1 text-xs text-neutral-500">
-            Slack mentions that confidently match a customer attach automatically. Anything the AI
-            couldn&apos;t place lands here.
+            Slack mentions are matched to customers and filed on their timelines automatically. This
+            page only fills up if the automatic matching gets stuck on something — which should be
+            rare, and it clears itself.
           </p>
         </Card>
       </div>

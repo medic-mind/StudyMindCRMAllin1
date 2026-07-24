@@ -3368,11 +3368,20 @@ model UnassignedSummary {
   createdAt    DateTime  @default(now())
   resolvedAt   DateTime?
   resolvedById String?
+  /// True when this row was AUTO-dismissed (no human) but still carries an
+  /// identity signal (a name / email / phone the matcher couldn't resolve to a
+  /// contact yet — usually because that customer isn't in the CRM). The
+  /// self-heal pass re-runs the matcher over these and LINKS the mention onto
+  /// the customer's timeline once they are added, then clears the flag. It stays
+  /// resolved throughout, so it never re-enters the human tray (§12).
+  autoLinkPending Boolean @default(false)
 
   @@unique([slackTs, channelId])
   @@index([resolvedAt])
   /// Keyset paging by the relink drain (id asc, resolvedAt null).
   @@index([resolvedAt, id])
+  /// Keyset paging by the self-heal pass (id asc, autoLinkPending true).
+  @@index([autoLinkPending, id])
 }
 
 model SlackPost {

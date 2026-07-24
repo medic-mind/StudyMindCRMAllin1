@@ -105,6 +105,11 @@ export const RELINK_THREAD_FETCHES = 40
  *  cron path resolves every channel (unbounded). */
 export const RELINK_SYNC_CHANNEL_NAME_API = 25
 
+/** After this long an auto-dismissed-but-unmatched mention stops being re-tried
+ *  by the self-heal pass (the customer was never added), so the pending set
+ *  stays bounded. The row is kept + stays resolved — only the retry flag clears. */
+export const AUTO_LINK_HORIZON_MS = 365 * 24 * 60 * 60 * 1000
+
 /** Cap on account-linked contacts scanned per tick for the retro-stamp pass.
  *  The junction is small relative to interactions; this bound is a safety net. */
 export const RETRO_LINK_BUDGET = 5000
@@ -537,6 +542,153 @@ async function relinkOneRow(
   }
 }
 
+export interface SelfHealBatchResult {
+  scanned: number
+  linked: number
+  expired: number
+  errors: number
+  lastId: string | null
+  done: boolean
+}
+
+/**
+ * Self-heal one batch of AUTO-DISMISSED rows that still carry an identity signal
+ * (`autoLinkPending: true`). These were dismissed because the customer they name
+ * wasn't in the CRM yet. We re-run the matcher (MATCH ONLY — never onboard/create
+ * a contact here; ADR 0043 onboarding already ran at ingest) and, the moment that
+ * customer has been added, file the mention on their timeline and clear the flag.
+ * The row stays RESOLVED throughout, so this never re-populates the human tray.
+ * No complaint is raised from the self-heal (it only files the record).
+ *
+ * Keyset paging on `id asc` over the pending set; each row error-isolated. Rows
+ * that still don't match are left pending (retried next pass) until they age past
+ * AUTO_LINK_HORIZON_MS, when the flag is cleared to bound the working set.
+ */
+export async function relinkAutoDismissedBatch(
+  actorId: string,
+  afterId: string | null,
+): Promise<SelfHealBatchResult> {
+  const brands = await loadOwnBrands()
+  const rows = await db.unassignedSummary.findMany({
+    where: { autoLinkPending: true, ...(afterId ? { id: { gt: afterId } } : {}) },
+    orderBy: { id: 'asc' },
+    take: RELINK_BATCH,
+    select: {
+      id: true,
+      slackTs: true,
+      channelId: true,
+      channelName: true,
+      parsed: true,
+      confidence: true,
+      messageText: true,
+      senderName: true,
+      createdAt: true,
+    },
+  })
+  if (rows.length === 0) {
+    return { scanned: 0, linked: 0, expired: 0, errors: 0, lastId: afterId, done: true }
+  }
+  let linked = 0
+  let expired = 0
+  let errors = 0
+  const ageCutoff = Date.now() - AUTO_LINK_HORIZON_MS
+  for (const row of rows) {
+    try {
+      const cand = candidateFromParsed(row.parsed)
+      const fromText = extractContactSignals(row.messageText ?? '')
+      const structured = parseCallLogClient(row.messageText ?? '')
+      const candidate = {
+        name: structured?.clientName ?? cand.name,
+        email: structured?.clientEmail ?? cand.email ?? fromText.email,
+        phone: structured?.clientPhone ?? cand.phone ?? fromText.phone,
+      }
+      let target =
+        candidate.name || candidate.email || candidate.phone
+          ? await resolveSlackLinkTarget(candidate)
+          : null
+      if (!target && row.messageText) {
+        const names = extractNameCandidates(row.messageText).filter((n) => !isOwnBrandName(n, brands))
+        if (names.length > 0) target = await resolveSlackLinkTargetFromNames(names)
+      }
+
+      if (target) {
+        // The customer now exists — file the mention on their timeline
+        // (idempotent on slackTs) and clear the retry flag. Keep resolvedAt.
+        const existing = await db.interaction.findFirst({
+          where: { type: 'slack_summary', payload: { path: ['slackTs'], equals: row.slackTs } },
+          select: { id: true },
+        })
+        if (!existing) {
+          const created = await db.interaction.create({
+            data: {
+              id: createId(),
+              type: 'slack_summary',
+              ...targetForeignKey(target),
+              occurredAt: slackTsToDate(row.slackTs),
+              summary: (cand.summary ?? row.messageText ?? 'Slack message').slice(0, 280),
+              payload: {
+                event: 'slack.message_summarised',
+                slackTs: row.slackTs,
+                channelId: row.channelId,
+                channelName: row.channelName,
+                permalink: buildSlackPermalink(row.channelId, row.slackTs, null),
+                messageText: row.messageText,
+                senderName: row.senderName,
+                category: cand.category ?? 'general',
+                sentiment: cand.sentiment ?? 'neutral',
+                suggestedNextAction: cand.suggestedNextAction,
+                confidence: row.confidence,
+                matchedVia: target.via,
+                matchFuzzy: target.fuzzy ?? false,
+                linkedTo: target.kind,
+                selfHealed: true,
+                promptVersion: cand.promptVersion ?? 'self-heal-v1',
+              },
+            },
+            select: { id: true },
+          })
+          await writeAuditLogEntry(db, {
+            actorId,
+            action: 'slack.message_summarised',
+            target: targetAuditTarget(target),
+            requestId: `slack-self-heal:${row.id}`,
+            after: { interactionId: created.id, matchedVia: target.via, selfHealed: true },
+          })
+        }
+        await db.unassignedSummary.update({
+          where: { id: row.id },
+          data: { autoLinkPending: false },
+        })
+        linked += 1
+        continue
+      }
+
+      // Still no matching customer. Give up on ancient rows to bound the set.
+      if (row.createdAt.getTime() < ageCutoff) {
+        await db.unassignedSummary.update({
+          where: { id: row.id },
+          data: { autoLinkPending: false },
+        })
+        expired += 1
+      }
+    } catch (err) {
+      errors += 1
+      logger.warn(
+        { rowId: row.id, channelId: row.channelId, err },
+        'slack self-heal: row failed — continuing',
+      )
+    }
+  }
+  return {
+    scanned: rows.length,
+    linked,
+    expired,
+    errors,
+    lastId: rows[rows.length - 1]!.id,
+    done: rows.length < RELINK_BATCH,
+  }
+}
+
 /**
  * Retro-stamp: existing slack_summary mentions linked to a contact who belongs
  * to a B2B account (school / partnership) were written before §12 account-
@@ -603,14 +755,29 @@ export const slackRelinkUnassigned = inngest.createFunction(
       if (batch.done) break
       afterId = batch.lastId
     }
+    // Self-heal: file previously auto-dismissed mentions onto their customer's
+    // timeline once that customer has been added to the CRM (§12).
+    let healAfterId: string | null = null
+    const heal = { scanned: 0, linked: 0, expired: 0 }
+    for (let i = 0; i < RELINK_MAX_BATCHES; i += 1) {
+      const cursor = healAfterId
+      const batch: SelfHealBatchResult = await step.run(`self-heal-batch-${i}`, async () =>
+        relinkAutoDismissedBatch('system:slack/relink-unassigned', cursor),
+      )
+      heal.scanned += batch.scanned
+      heal.linked += batch.linked
+      heal.expired += batch.expired
+      if (batch.done) break
+      healAfterId = batch.lastId
+    }
     const retro = await step.run('retro-stamp-school-mentions', async () =>
       retroStampSchoolMentionsOnce(),
     )
     await step.run('heartbeat', async () =>
       recordCronRun(db, { functionId: 'slack/relink-unassigned', success: true, durationMs: 0 }),
     )
-    logger.info({ ...result, ...retro }, 'slack relink-unassigned complete')
-    return { ...result, ...retro }
+    logger.info({ ...result, heal, ...retro }, 'slack relink-unassigned complete')
+    return { ...result, heal, ...retro }
   },
 )
 
@@ -646,10 +813,26 @@ export const slackRelinkNow = inngest.createFunction(
       if (batch.done) break
       afterId = batch.lastId
     }
+    // Self-heal previously auto-dismissed mentions whose customer now exists —
+    // this is what a `contact.create` fires, so a newly-added customer picks up
+    // their earlier Slack mentions immediately (§12).
+    let healAfterId: string | null = null
+    const heal = { scanned: 0, linked: 0, expired: 0 }
+    for (let i = 0; i < RELINK_MAX_BATCHES; i += 1) {
+      const cursor = healAfterId
+      const batch: SelfHealBatchResult = await step.run(`self-heal-batch-${i}`, async () =>
+        relinkAutoDismissedBatch(actorId, cursor),
+      )
+      heal.scanned += batch.scanned
+      heal.linked += batch.linked
+      heal.expired += batch.expired
+      if (batch.done) break
+      healAfterId = batch.lastId
+    }
     const retro = await step.run('retro-stamp-school-mentions', async () =>
       retroStampSchoolMentionsOnce(),
     )
-    logger.info({ ...result, ...retro }, 'slack relink-now complete')
-    return { ...result, ...retro }
+    logger.info({ ...result, heal, ...retro }, 'slack relink-now complete')
+    return { ...result, heal, ...retro }
   },
 )

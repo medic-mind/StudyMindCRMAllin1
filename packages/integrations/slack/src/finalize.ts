@@ -117,13 +117,30 @@ export async function finalizeUnresolvedMention(
   input: FinalizeUnresolvedInput,
 ): Promise<{ parked: boolean; dismissed: boolean }> {
   const fullAuto = slackTrayFullAuto()
+  const candidate = candidateIdentityFromParsed(input.parsed)
+  const extractedNames = input.extractedNames ?? []
+  const textSignals = input.textSignals ?? { email: null, phone: null }
   const { dismiss, reason } = resolveUnlinkedOutcome(fullAuto, {
-    candidate: candidateIdentityFromParsed(input.parsed),
+    candidate,
     messageText: input.messageText,
-    extractedNames: input.extractedNames ?? [],
-    textSignals: input.textSignals ?? { email: null, phone: null },
+    extractedNames,
+    textSignals,
   })
   const resolvedAt = dismiss ? new Date() : null
+  // A dismissed row that STILL carries an identity signal (a name / email / phone
+  // the matcher couldn't resolve to a contact yet — usually because that
+  // customer isn't in the CRM) is a candidate for self-healing: the re-link pass
+  // will file it on the customer's timeline once they are added. A pure-noise /
+  // no-identity dismissal can never match, so it's not flagged.
+  const hasIdentity = Boolean(
+    candidate.name ||
+      candidate.email ||
+      candidate.phone ||
+      extractedNames.length > 0 ||
+      textSignals.email ||
+      textSignals.phone,
+  )
+  const autoLinkPending = dismiss && hasIdentity
   const key = { slackTs_channelId: { slackTs: input.slackTs, channelId: input.channelId } }
 
   // Never re-open a row a human (or a prior pass) already resolved.
@@ -156,10 +173,11 @@ export async function finalizeUnresolvedMention(
       messageText: input.messageText,
       senderName: input.senderName,
       resolvedAt,
+      autoLinkPending,
     },
     update: {
       ...shared,
-      ...(resolvedAt ? { resolvedAt } : {}),
+      ...(resolvedAt ? { resolvedAt, autoLinkPending } : {}),
     },
     select: { id: true },
   })

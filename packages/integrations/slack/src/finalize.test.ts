@@ -99,6 +99,26 @@ describe('finalizeUnresolvedMention — full-auto (default)', () => {
     expect(writeAudit.mock.calls[0]![1].after.reason).toBe('auto_dismiss_unlinked')
   })
 
+  it('does NOT flag a no-identity dismissal for self-heal (nothing to match on)', async () => {
+    await finalizeUnresolvedMention(baseInput())
+    expect(upsert.mock.calls[0]![0].create.autoLinkPending).toBe(false)
+  })
+
+  it('flags a dismissal that carries a name for self-heal (autoLinkPending)', async () => {
+    await finalizeUnresolvedMention(
+      baseInput({
+        parsed: {
+          candidateContactIdentifier: { name: 'Priya Patel', email: null, phone: null },
+          confidence: 0.4,
+        },
+        messageText: 'spoke to Priya Patel about her booking',
+        extractedNames: ['Priya Patel'],
+      }),
+    )
+    expect(upsert.mock.calls[0]![0].create.autoLinkPending).toBe(true)
+    expect(upsert.mock.calls[0]![0].create.resolvedAt).toBeInstanceOf(Date)
+  })
+
   it('is idempotent: an already-resolved row is left alone (no write, no audit)', async () => {
     findUnique.mockResolvedValue({ resolvedAt: new Date() })
     const res = await finalizeUnresolvedMention(baseInput())

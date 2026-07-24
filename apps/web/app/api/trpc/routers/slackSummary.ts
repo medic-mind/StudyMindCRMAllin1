@@ -252,7 +252,9 @@ export const slackSummaryRouter = router({
     drainNow: auditedProcedure.mutation(async ({ ctx }) => {
       const user = requireUser(ctx)
       assertCanTriage(user.role)
-      const { relinkParkedRowsBatch } = await import('@studymind/integration-slack/relink')
+      const { relinkParkedRowsBatch, relinkAutoDismissedBatch } = await import(
+        '@studymind/integration-slack/relink'
+      )
       // Clear the WHOLE open backlog per call (up to 1000 rows / 10 batches), so
       // a single tray visit drains a typical backlog to zero; the tray still
       // loops until `remaining` is 0 for anything larger. DB-only
@@ -281,6 +283,21 @@ export const slackSummaryRouter = router({
         totals.errors += batch.errors
         if (batch.done) break
         afterId = batch.lastId
+      }
+      // Also self-heal: file previously auto-dismissed mentions onto a customer's
+      // timeline if that customer has since been added to the CRM. Bounded so the
+      // request stays fast; the cron continues any remainder.
+      let healAfterId: string | null = null
+      for (let i = 0; i < MAX_BATCHES; i += 1) {
+        let heal
+        try {
+          heal = await relinkAutoDismissedBatch(user.id, healAfterId)
+        } catch {
+          break
+        }
+        totals.linked += heal.linked
+        if (heal.done) break
+        healAfterId = heal.lastId
       }
       const remaining = await ctx.db.unassignedSummary.count({ where: { resolvedAt: null } })
       await ctx.audit({
