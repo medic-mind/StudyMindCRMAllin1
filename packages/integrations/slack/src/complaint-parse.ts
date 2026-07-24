@@ -182,6 +182,53 @@ export function parseStructuredComplaint(plainText: string): StructuredComplaint
   }
 }
 
+/**
+ * Extract the CLIENT identity from the team's labelled call-log format — the
+ * SAME "Client Name and Number / Client Email / Guardian …" labels a call
+ * summary uses — WITHOUT requiring the complaint-specific fields (that's the
+ * only difference from parseStructuredComplaint). Used to smart-assign a Slack
+ * call summary to the right customer on its authoritative client details.
+ * Returns null when the message isn't the labelled format or names no client.
+ */
+export function parseCallLogClient(plainText: string): {
+  clientName: string | null
+  clientEmail: string | null
+  clientPhone: string | null
+} | null {
+  const lines = plainText.split(/\r?\n/u)
+  const buckets: Partial<Record<Field, string[]>> = {}
+  let current: Field | null = null
+  let labelCount = 0
+  for (const rawLine of lines) {
+    const del = delabel(rawLine)
+    const field = del ? matchLabel(del.label) : null
+    if (field) {
+      labelCount += 1
+      current = field
+      buckets[field] = buckets[field] ?? []
+      if (del!.rest.trim().length > 0) buckets[field]!.push(del!.rest.trim())
+    } else if (current) {
+      const stripped = rawLine.replace(/^\s*[-*•●·]\s*/u, '').trim()
+      if (stripped.length > 0) buckets[current]!.push(stripped)
+    }
+  }
+  if (labelCount < 2) return null
+  const join = (f: Field): string | null => {
+    const parts = buckets[f]
+    if (!parts || parts.length === 0) return null
+    return parts.join('\n').trim() || null
+  }
+  const clientContact = join('clientContact')
+  const emailField = join('clientEmail')
+  const clientName = clientContact ? nameFromContact(clientContact) : null
+  const clientEmail =
+    (emailField ? firstEmail(emailField) : null) ??
+    (clientContact ? firstEmail(clientContact) : null)
+  const clientPhone = clientContact ? firstPhone(clientContact) : null
+  if (!clientName && !clientEmail && !clientPhone) return null
+  return { clientName, clientEmail, clientPhone }
+}
+
 /** A clean, human-readable title for the complaint. */
 export function structuredComplaintTitle(s: StructuredComplaint): string {
   if (s.clientName) return `Complaint — ${s.clientName}`.slice(0, 200)

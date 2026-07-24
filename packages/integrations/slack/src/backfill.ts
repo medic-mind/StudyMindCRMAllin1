@@ -40,6 +40,7 @@ import { inngest } from '@studymind/jobs'
 import { SLACK_API_BASE, listIngestChannelIds } from './client'
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isCallLogChannel, isComplaintChannel } from './channel-rules'
+import { parseCallLogClient } from './complaint-parse'
 import { maybeRaiseComplaintFromSlack } from './complaints'
 import { isSkippableSubtype } from './message-filter'
 import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
@@ -511,9 +512,15 @@ export async function processSlackMessage(input: ProcessSlackInput): Promise<{ m
   const parentSignals = input.threadParentText
     ? extractContactSignals(input.threadParentText)
     : { email: null, phone: null }
+  // Smart-assign the labelled call-log / call-summary format: prefer the
+  // explicit CLIENT identity over the first email/phone in the text.
+  const structured = parseCallLogClient(message.text ?? '')
   const usableEmail = (e: string | null) => (e && !isOwnBrandEmail(e, brands) ? e : null)
-  const matchEmail = usableEmail(signals.email) ?? usableEmail(parentSignals.email)
-  const matchPhone = signals.phone ?? parentSignals.phone
+  const matchEmail =
+    usableEmail(structured?.clientEmail ?? null) ??
+    usableEmail(signals.email) ??
+    usableEmail(parentSignals.email)
+  const matchPhone = structured?.clientPhone ?? signals.phone ?? parentSignals.phone
   let rulesTarget =
     matchEmail || matchPhone
       ? await resolveSlackLinkTarget({ name: null, email: matchEmail, phone: matchPhone })

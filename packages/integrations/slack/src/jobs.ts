@@ -27,6 +27,7 @@ import { inngest } from '@studymind/jobs'
 import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isCallLogChannel, isComplaintChannel } from './channel-rules'
 import { maybeRaiseComplaintFromSlack } from './complaints'
+import { parseCallLogClient } from './complaint-parse'
 import { isOwnBrandEmail, isOwnBrandName, loadOwnBrands } from './own-brands'
 import {
   resolveSlackLinkTarget,
@@ -154,9 +155,16 @@ export const slackEventReceived = inngest.createFunction(
     const parentSignals = threadParentText
       ? extractContactSignals(threadParentText)
       : { email: null, phone: null }
+    // Smart-assign the labelled call-log / call-summary format: prefer the
+    // explicit CLIENT identity over the first email/phone in the text (which can
+    // be the guardian). Null for non-labelled messages → no change.
+    const structured = parseCallLogClient(message.text ?? '')
     const usableEmail = (e: string | null) => (e && !isOwnBrandEmail(e, brands) ? e : null)
-    const matchEmail = usableEmail(signals.email) ?? usableEmail(parentSignals.email)
-    const matchPhone = signals.phone ?? parentSignals.phone
+    const matchEmail =
+      usableEmail(structured?.clientEmail ?? null) ??
+      usableEmail(signals.email) ??
+      usableEmail(parentSignals.email)
+    const matchPhone = structured?.clientPhone ?? signals.phone ?? parentSignals.phone
     let rulesTarget =
       matchEmail || matchPhone
         ? await step.run('match-target-rules', async () =>

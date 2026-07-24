@@ -24,6 +24,7 @@ import { autoOnboardContactForSlackMessage } from './auto-onboard'
 import { isCallLogChannel } from './channel-rules'
 import { slackTrayFullAuto } from './config'
 import { maybeRaiseComplaintFromSlack } from './complaints'
+import { parseCallLogClient } from './complaint-parse'
 import { extractContactSignals, extractNameCandidates, slackTsToDate } from './extract'
 import {
   resolveSlackLinkTarget,
@@ -335,10 +336,15 @@ async function relinkOneRow(
     // costs nothing). extractContactSignals understands Slack's <tel:>/
     // <mailto:> markup as well as plain text.
     const fromText = extractContactSignals(row.messageText ?? '')
+    // Smart-assign the labelled call-log / call-summary format: it names the
+    // CLIENT explicitly ("Client Name and Number / Client Email"), so prefer
+    // that authoritative identity over the AI guess or the first email in the
+    // text (which can be the guardian). Null for non-labelled messages.
+    const structured = parseCallLogClient(row.messageText ?? '')
     const candidate = {
-      name: cand.name,
-      email: cand.email ?? fromText.email,
-      phone: cand.phone ?? fromText.phone,
+      name: structured?.clientName ?? cand.name,
+      email: structured?.clientEmail ?? cand.email ?? fromText.email,
+      phone: structured?.clientPhone ?? cand.phone ?? fromText.phone,
     }
 
     let target =

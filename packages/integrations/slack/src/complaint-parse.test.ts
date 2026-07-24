@@ -1,10 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  parseCallLogClient,
   parseStructuredComplaint,
   structuredComplaintDescription,
   structuredComplaintTitle,
 } from './complaint-parse'
+
+describe('parseCallLogClient', () => {
+  it('extracts the CLIENT identity from a call summary (no Complaint field)', () => {
+    const text = [
+      'Client Name and Number: Waqara Ali (+447852544479)',
+      'Guardian Name and Number: Sana Ali (+447700900000)',
+      'Client Email: waqara@example.com',
+      'Summary of call: discussed the UCAT timetable',
+      'Actions: send the pricing PDF',
+    ].join('\n')
+    expect(parseCallLogClient(text)).toEqual({
+      clientName: 'Waqara Ali',
+      clientEmail: 'waqara@example.com',
+      clientPhone: '+447852544479',
+    })
+  })
+
+  it('returns null for a non-labelled message', () => {
+    expect(parseCallLogClient('Spoke to Waqara about the mocks, all good')).toBeNull()
+    expect(parseCallLogClient('')).toBeNull()
+  })
+})
 
 // The real #complaintcallsummaries format (from the team's Slack).
 const SAMPLE = `Client Name and Number: Vyshale Arulalagan - UCAT (+1 (647) 901-2817)
