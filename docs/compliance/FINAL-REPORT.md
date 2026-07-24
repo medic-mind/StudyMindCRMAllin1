@@ -35,7 +35,7 @@ overstated.
 - **Per-record Activity log** on every **contact** and every **B2B account / school**
   — plain-English "who viewed / added / edited / deleted this, and when", with the
   changed fields shown for edits.
-- **Organisation-wide audit page** at **Settings → Audit log** — searchable by
+- **Organisation-wide audit page** at the **Audit log** nav section — searchable by
   activity type (views, changes, sign-ins, exports, DSAR exports) and date range.
 - **Sign-ins, failed logins and lockouts** surface in the viewer (with device/IP).
 - **CSV exports are now recorded** (who, which list, row count, filter) — previously

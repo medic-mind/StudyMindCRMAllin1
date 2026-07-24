@@ -48,8 +48,8 @@ Both are now closed.
 
 | Question | Answer |
 |---|---|
-| Log of who logged in and when? | ✅ Captured (`auth.signin_succeeded/_failed`, lockouts, 2FA events, with IP + device). 🔧 Now viewable in **Settings → Audit log**. |
-| Who viewed/added/edited/deleted a client record? | 🔧 **Now fully captured and viewable.** Adds/edits/deletes were already audited (with before→after diffs); **record views are now logged too** (`contact.viewed` / `business_account.viewed`). A per-record **Activity log** on each contact **and each B2B account/school**, plus an org-wide **Settings → Audit log**, show it in plain English. Gated to CEO / Senior Manager / Manager (`audit.read`). |
+| Log of who logged in and when? | ✅ Captured (`auth.signin_succeeded/_failed`, lockouts, 2FA events, with IP + device). 🔧 Now viewable in the **Audit log** nav section. |
+| Who viewed/added/edited/deleted a client record? | 🔧 **Now fully captured and viewable.** Adds/edits/deletes were already audited (with before→after diffs); **record views are now logged too** (`contact.viewed` / `business_account.viewed`). A per-record **Activity log** on each contact **and each B2B account/school**, plus an org-wide the **Audit log** nav section, show it in plain English. Gated to CEO / Senior Manager / Manager (`audit.read`). |
 | How long kept / exportable? | ✅ Append-only; auto-archived to S3 cold storage at 12 months; exportable per-client via the DSAR export. 🟡 The "7-year then hard-delete" of audit rows isn't enforced in code (rows are kept indefinitely — data not lost). |
 | Alerts on unusual activity? | ✅ Weekly UEBA job scans the audit log (failed-login spikes, off-hours DSAR exports) and posts to Slack. |
 

@@ -84,15 +84,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         icon: 'shield',
         visibleTo: ['ceo', 'senior_manager'],
       },
-      {
-        href: '/settings/audit',
-        title: 'Audit log',
-        navLabel: 'Audit log',
-        description:
-          'Who did what, and when — every record view, edit, deletion, sign-in and export. Searchable by type and date.',
-        roles: 'CEO · SM · Manager',
-        icon: 'shield',
-      },
+      // Audit log is now a top-level nav section (`/audit`), not a Settings page.
     ],
   },
   {

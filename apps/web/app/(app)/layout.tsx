@@ -150,6 +150,14 @@ function buildNav(role: Role): NavItem[] {
         { href: '/reports/cost', label: 'Cost' },
       ],
     },
+    // Audit log — the org-wide "who did what, and when" surface (record views,
+    // edits, deletions, sign-ins, exports). Its own top-level section rather
+    // than buried in Settings. Gated to the `audit.read` roles.
+    {
+      href: '/audit',
+      label: 'Audit log',
+      visibleTo: ['ceo', 'senior_manager', 'manager'],
+    },
     {
       href: '/settings',
       label: 'Settings',
