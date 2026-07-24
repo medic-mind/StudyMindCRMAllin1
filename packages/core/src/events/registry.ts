@@ -339,6 +339,7 @@ export const EVENT_NAMES = [
   'gocardless.customer.updated',
   'gocardless.customer.update_requested',
   'gocardless.customer.linked',
+  'gocardless.customer.auto_linked',
   'gocardless.customer.unlinked',
   'gocardless.customers.relinked',
   'gocardless.setup_link.created',

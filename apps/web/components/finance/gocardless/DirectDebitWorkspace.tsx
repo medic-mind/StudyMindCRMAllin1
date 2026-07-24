@@ -121,11 +121,16 @@ export function DirectDebitWorkspace({
 }
 
 // The single Issues tab (ADR 0045 amendment): the recovery-cases worklist (the
-// CRM of people who owe money — chase, message, recover) at the top, and the
-// auto-detected sources below (defaulters + cancelled-early / underpaid plans).
-// Historic pre-go-live issues are hidden by default with a reveal toggle.
+// CRM of people who owe money — chase, message, recover) is the PRIMARY surface.
+// Everyone with a detected issue is auto-opened into it and identified (their
+// name + email copied from GoCardless, a CRM contact created if they were never
+// in the CRM). The raw detected-issue tables below re-list the same people, so
+// they are collapsed by default as a source breakdown — expand to see the
+// collected-vs-contracted maths. Historic pre-go-live issues stay hidden behind
+// their own reveal toggle.
 function IssuesTab({ canWrite }: { canWrite: boolean }) {
   const [includeHistoric, setIncludeHistoric] = useState(false)
+  const [showBreakdown, setShowBreakdown] = useState(false)
   return (
     <div className="space-y-8">
       <RecoveryCasesSection canWrite={canWrite} />
@@ -133,11 +138,21 @@ function IssuesTab({ canWrite }: { canWrite: boolean }) {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200 pt-4">
           <div>
-            <h2 className="text-sm font-semibold text-neutral-900">Detected issues</h2>
+            <button
+              type="button"
+              onClick={() => setShowBreakdown((s) => !s)}
+              className="flex items-center gap-1.5 text-sm font-semibold text-neutral-900 hover:text-primary-700"
+              aria-expanded={showBreakdown}
+            >
+              <span aria-hidden className="text-neutral-400">
+                {showBreakdown ? '▾' : '▸'}
+              </span>
+              Detected-issue breakdown
+            </button>
             <p className="text-xs text-neutral-500">
-              Underpayments and Direct Debits cancelled before every payment was collected. Open a
-              recovery case from any row to see the message history, turn the automated reminders
-              on/off, and send an email or text.
+              Everyone here is already in the recovery list above — this is the source detail
+              (collected vs contracted, why it flagged). {showBreakdown ? 'Hide' : 'Show'} it to
+              dig into the numbers.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -149,19 +164,25 @@ function IssuesTab({ canWrite }: { canWrite: boolean }) {
                 Recovery templates &amp; settings →
               </Link>
             ) : null}
-            <label className="flex items-center gap-1.5 text-xs text-neutral-600">
-              <input
-                type="checkbox"
-                checked={includeHistoric}
-                onChange={(e) => setIncludeHistoric(e.target.checked)}
-              />
-              Show issues before July 2026
-            </label>
+            {showBreakdown ? (
+              <label className="flex items-center gap-1.5 text-xs text-neutral-600">
+                <input
+                  type="checkbox"
+                  checked={includeHistoric}
+                  onChange={(e) => setIncludeHistoric(e.target.checked)}
+                />
+                Show issues before July 2026
+              </label>
+            ) : null}
           </div>
         </div>
-        <DefaultersSection includeHistoric={includeHistoric} canWrite={canWrite} />
-        <PlanShortfallsSection includeHistoric={includeHistoric} canWrite={canWrite} />
-        <ActivePlanArrearsSection includeHistoric={includeHistoric} canWrite={canWrite} />
+        {showBreakdown ? (
+          <>
+            <DefaultersSection includeHistoric={includeHistoric} canWrite={canWrite} />
+            <PlanShortfallsSection includeHistoric={includeHistoric} canWrite={canWrite} />
+            <ActivePlanArrearsSection includeHistoric={includeHistoric} canWrite={canWrite} />
+          </>
+        ) : null}
       </div>
     </div>
   )

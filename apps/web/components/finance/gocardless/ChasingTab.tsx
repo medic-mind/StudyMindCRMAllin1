@@ -123,7 +123,7 @@ export function RecoveryCasesSection({ canWrite }: { canWrite: boolean }) {
               : view === 'needs_link'
                 ? 'Nothing waiting for a link.'
                 : view === 'open'
-                  ? 'Nobody is being chased yet. Press "Scan for issues" to auto-add everyone behind on, not making, or underpaying their Direct Debit — or add a person by hand.'
+                  ? 'Nobody is being chased. Everyone behind on, not making, or underpaying their Direct Debit is added here and identified automatically every hour (their name + email are pulled from GoCardless, and a CRM contact is created if they were never in the CRM). Use "Scan for issues" to run it now, or add a person by hand.'
                   : 'Nothing here.'}
           </p>
         ) : (

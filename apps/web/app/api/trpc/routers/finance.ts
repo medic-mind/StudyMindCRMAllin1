@@ -29,6 +29,7 @@ import {
   paymentSummaryForFamily,
   resolveUnresolvedStripePayment,
   linkUnlinkedGcCustomers,
+  resolveOrCreateContactForGcCustomer,
 } from '@studymind/core/finance'
 import { roleCan } from '@studymind/core/auth/policies'
 import {
@@ -975,7 +976,25 @@ export const financeRouter = router({
           })
           if (existing) return { id: existing.id, created: false }
 
-          const contactId = input.links?.contactId ?? null
+          // Identify the person — onboard/link a CRM contact from the GoCardless
+          // customer when the plan isn't linked yet, so the case is never
+          // "Unknown / no email" (never auto-merges — §41.1).
+          let contactId = input.links?.contactId ?? null
+          let personName: string | null = null
+          let gcEmail: string | null = null
+          let gcPhone: string | null = null
+          const gcCustomerId = input.links?.gcCustomerId ?? null
+          if (!contactId && gcCustomerId) {
+            const onboarded = await resolveOrCreateContactForGcCustomer(
+              ctx.db,
+              { gcCustomerId },
+              { actorId: user.id },
+            )
+            contactId = onboarded.contactId
+            personName = onboarded.contactId ? null : onboarded.displayName
+            gcEmail = onboarded.email
+            gcPhone = onboarded.phone
+          }
           const contact = contactId
             ? await ctx.db.contact.findFirst({
                 where: { id: contactId, deletedAt: null },
@@ -989,18 +1008,18 @@ export const financeRouter = router({
             data: {
               id,
               gcSubscriptionId: input.gcSubscriptionId,
-              gcCustomerId: input.links?.gcCustomerId ?? null,
+              gcCustomerId,
               contactId,
               familyId: input.links?.familyId ?? null,
-              personName: null,
+              personName,
               status: 'new',
               openingShortfallMinor: input.outstandingMinor,
               // Auto-send OFF on open — the case exists to be worked; the human
               // arms channels + pastes the re-signup link in the modal (§3).
               sendEmails: false,
               sendTexts: false,
-              chaseEmail: contact?.email ?? null,
-              chasePhoneE164: contact?.phoneE164 ?? null,
+              chaseEmail: contact?.email ?? gcEmail,
+              chasePhoneE164: contact?.phoneE164 ?? gcPhone,
               setupLinkUrl: null,
               cadenceDays,
               nextAutoMessageAt: null,

@@ -17,6 +17,7 @@ import {
   listActivePlanArrears,
   listDefaulters,
   listPlanShortfalls,
+  resolveOrCreateContactForGcCustomer,
   type ActivePlanArrearsWithCustomer,
   type DefaulterRow,
   type PlanShortfallWithCustomer,
@@ -406,6 +407,99 @@ export interface AutoOpenRecoveryResult {
 
 const CASE_CLOSED_STATUSES = ['recovered', 'written_off'] as const
 
+/**
+ * Resolve who a recovery case is FOR, so no case is ever "Unknown". A case
+ * seeded only with a GoCardless subscription/customer has the customer's name +
+ * email at the provider but no CRM contact — this fills that in:
+ *   1. auto-onboard/link the CRM contact from the GoCardless customer (create it
+ *      if they were never in the CRM — the operator ask), then use the CRM
+ *      contact's canonical email/phone;
+ *   2. fall back to the family's billing contact;
+ *   3. and as a floor, carry the GoCardless name/email/phone straight through
+ *      (personName + chaseEmail + chasePhone) so a row still shows the real
+ *      person even in the rare no-contact case.
+ * System write — actorId null (§19). Idempotent (onboard dedupes per customer).
+ */
+export interface CaseIdentity {
+  contactId: string | null
+  gcCustomerId: string | null
+  familyId: string | null
+  chaseEmail: string | null
+  chasePhoneE164: string | null
+  /** Fallback display name — only set when there is no linked CRM contact. */
+  personName: string | null
+}
+
+async function resolveCaseIdentity(
+  db: DbClient,
+  args: {
+    gcCustomerId?: string | null
+    gcSubscriptionId?: string | null
+    familyId?: string | null
+    contactId?: string | null
+  },
+): Promise<CaseIdentity> {
+  // The plan may carry the customer directly, else via its subscription.
+  let gcCustomerId = args.gcCustomerId ?? null
+  if (!gcCustomerId && args.gcSubscriptionId) {
+    const sub = await db.gcSubscription.findFirst({
+      where: { gcSubscriptionId: args.gcSubscriptionId },
+      select: { gcCustomerId: true },
+    })
+    gcCustomerId = sub?.gcCustomerId ?? null
+  }
+
+  let contactId = args.contactId ?? null
+  let familyId = args.familyId ?? null
+  let gcDisplayName: string | null = null
+  let gcEmail: string | null = null
+  let gcPhone: string | null = null
+
+  // Onboard/link the CRM contact from the GoCardless customer when we have none.
+  if (!contactId && gcCustomerId) {
+    const onboarded = await resolveOrCreateContactForGcCustomer(
+      db,
+      { gcCustomerId },
+      { actorId: null },
+    )
+    contactId = onboarded.contactId
+    gcDisplayName = onboarded.displayName
+    gcEmail = onboarded.email
+    gcPhone = onboarded.phone
+  }
+
+  // Family billing contact as a last resort (defaulters are family-keyed).
+  if (!contactId && familyId) {
+    const fam = await db.family.findFirst({
+      where: { id: familyId, deletedAt: null },
+      select: { billingContactId: true },
+    })
+    contactId = fam?.billingContactId ?? null
+  }
+
+  const contact = contactId
+    ? await db.contact.findFirst({
+        where: { id: contactId, deletedAt: null },
+        select: {
+          email: true,
+          phoneE164: true,
+          familyMembers: { select: { familyId: true }, take: 1 },
+        },
+      })
+    : null
+  if (!familyId && contact?.familyMembers?.[0]) familyId = contact.familyMembers[0].familyId
+
+  return {
+    contactId,
+    gcCustomerId,
+    familyId,
+    // Prefer the CRM contact's canonical details; fall back to GoCardless.
+    chaseEmail: contact?.email ?? gcEmail,
+    chasePhoneE164: contact?.phoneE164 ?? gcPhone,
+    personName: contactId ? null : gcDisplayName,
+  }
+}
+
 export async function autoOpenRecoveryCases(
   db: DbClient,
   now: Date = new Date(),
@@ -448,27 +542,30 @@ export async function autoOpenRecoveryCases(
       select: { id: true },
     })
     if (existing) continue
-    const contact = p.contactId
-      ? await db.contact.findFirst({
-          where: { id: p.contactId, deletedAt: null },
-          select: { email: true, phoneE164: true },
-        })
-      : null
+    // Identify the person (onboarding them into the CRM if they were never in
+    // it) so the case is never "Unknown / no email".
+    const who = await resolveCaseIdentity(db, {
+      gcCustomerId: p.gcCustomerId,
+      gcSubscriptionId: p.gcSubscriptionId,
+      contactId: p.contactId,
+      familyId: p.familyId,
+    })
     await db.directDebitCase.create({
       data: {
         id: createId(),
         gcSubscriptionId: p.gcSubscriptionId,
-        gcCustomerId: p.gcCustomerId ?? null,
-        contactId: p.contactId ?? null,
-        familyId: p.familyId ?? null,
+        gcCustomerId: who.gcCustomerId ?? p.gcCustomerId ?? null,
+        contactId: who.contactId,
+        familyId: who.familyId ?? p.familyId ?? null,
+        personName: who.personName,
         status: 'new',
         openingShortfallMinor: Math.max(0, Math.round(p.outstandingMinor)),
         sendEmails: false,
         sendTexts: false,
         setupLinkUrl: null,
         nextAutoMessageAt: null,
-        chaseEmail: contact?.email ?? null,
-        chasePhoneE164: contact?.phoneE164 ?? null,
+        chaseEmail: who.chaseEmail,
+        chasePhoneE164: who.chasePhoneE164,
         createdById: null,
         updatedById: null,
       },
@@ -493,28 +590,26 @@ export async function autoOpenRecoveryCases(
       select: { id: true },
     })
     if (existing) continue
-    const [contact, gcCustomer] = await Promise.all([
-      db.contact.findFirst({
-        where: { id: contactId, deletedAt: null },
-        select: { email: true, phoneE164: true },
-      }),
+    const [who, gcCustomer] = await Promise.all([
+      resolveCaseIdentity(db, { contactId, familyId: d.familyId }),
       db.gcCustomer.findFirst({ where: { contactId }, select: { gcCustomerId: true } }),
     ])
     await db.directDebitCase.create({
       data: {
         id: createId(),
         gcSubscriptionId: null,
-        gcCustomerId: gcCustomer?.gcCustomerId ?? null,
+        gcCustomerId: gcCustomer?.gcCustomerId ?? who.gcCustomerId ?? null,
         contactId,
         familyId: d.familyId,
+        personName: who.personName,
         status: 'new',
         openingShortfallMinor: Math.max(0, Math.round(d.outstandingMinor)),
         sendEmails: false,
         sendTexts: false,
         setupLinkUrl: null,
         nextAutoMessageAt: null,
-        chaseEmail: contact?.email ?? null,
-        chasePhoneE164: contact?.phoneE164 ?? null,
+        chaseEmail: who.chaseEmail,
+        chasePhoneE164: who.chasePhoneE164,
         createdById: null,
         updatedById: null,
       },
@@ -526,12 +621,15 @@ export async function autoOpenRecoveryCases(
 }
 
 // -----------------------------------------------------------------------------
-// Identify the customers on already-open recovery cases. A case opened before
-// its GoCardless customer was linked to a CRM contact (or before the contact
-// existed) shows as "Unknown" in the chase list. This resolves the contact —
-// via the case's gcCustomer, its plan's gcCustomer, or its family's billing
-// contact — and backfills contactId + a blank chaseEmail/chasePhone, so the
-// chase-up worklist shows real people. Idempotent; safe to re-run.
+// Identify the people on already-open recovery cases. A case opened before its
+// GoCardless customer was linked to a CRM contact (or before the contact
+// existed) shows as "Unknown · no email · no phone · not in CRM" in the chase
+// list. This resolves them via `resolveCaseIdentity`, which will AUTO-ONBOARD a
+// CRM contact from the GoCardless customer when they were never in the CRM (the
+// operator ask — a Direct Debit payer is a real customer), and always carries
+// the GoCardless name/email/phone through as a floor so a row is never left
+// blank. Fill-blank only — a staff-set chase address is never clobbered (§3).
+// Idempotent; safe to re-run.
 // -----------------------------------------------------------------------------
 
 export interface BackfillCaseContactsResult {
@@ -545,14 +643,20 @@ export async function backfillRecoveryCaseContacts(
   const cases = await db.directDebitCase.findMany({
     where: {
       deletedAt: null,
-      contactId: null,
       status: { notIn: [...CASE_CLOSED_STATUSES] },
+      // Only cases not yet fully identified: no linked contact (the "Unknown"
+      // rows) or no chase address to reach them on. NOT `{ personName: null }` —
+      // a contact-linked case has a null personName by design (the contact name
+      // wins), so including it would rescan every case for no reason.
+      OR: [{ contactId: null }, { chaseEmail: null }],
     },
     select: {
       id: true,
       gcSubscriptionId: true,
       gcCustomerId: true,
+      contactId: true,
       familyId: true,
+      personName: true,
       chaseEmail: true,
       chasePhoneE164: true,
     },
@@ -561,55 +665,27 @@ export async function backfillRecoveryCaseContacts(
 
   let updated = 0
   for (const c of cases) {
-    let contactId: string | null = null
-
-    // 1. Directly via the case's GoCardless customer.
-    if (c.gcCustomerId) {
-      const cust = await db.gcCustomer.findFirst({
-        where: { gcCustomerId: c.gcCustomerId },
-        select: { contactId: true },
-      })
-      contactId = cust?.contactId ?? null
-    }
-    // 2. Via the plan's customer.
-    if (!contactId && c.gcSubscriptionId) {
-      const sub = await db.gcSubscription.findFirst({
-        where: { gcSubscriptionId: c.gcSubscriptionId },
-        select: { gcCustomerId: true },
-      })
-      if (sub?.gcCustomerId) {
-        const cust = await db.gcCustomer.findFirst({
-          where: { gcCustomerId: sub.gcCustomerId },
-          select: { contactId: true },
-        })
-        contactId = cust?.contactId ?? null
-      }
-    }
-    // 3. Via the family's billing contact.
-    if (!contactId && c.familyId) {
-      const fam = await db.family.findFirst({
-        where: { id: c.familyId, deletedAt: null },
-        select: { billingContactId: true },
-      })
-      contactId = fam?.billingContactId ?? null
-    }
-    if (!contactId) continue
-
-    const contact = await db.contact.findFirst({
-      where: { id: contactId, deletedAt: null },
-      select: { email: true, phoneE164: true },
+    const who = await resolveCaseIdentity(db, {
+      gcCustomerId: c.gcCustomerId,
+      gcSubscriptionId: c.gcSubscriptionId,
+      contactId: c.contactId,
+      familyId: c.familyId,
     })
-    await db.directDebitCase.update({
-      where: { id: c.id },
-      data: {
-        contactId,
-        // Fill-blank only — never clobber a staff-set chase address.
-        ...(!c.chaseEmail && contact?.email ? { chaseEmail: contact.email } : {}),
-        ...(!c.chasePhoneE164 && contact?.phoneE164
-          ? { chasePhoneE164: contact.phoneE164 }
-          : {}),
-      },
-    })
+
+    const data: Prisma.DirectDebitCaseUncheckedUpdateInput = {}
+    if (!c.contactId && who.contactId) data.contactId = who.contactId
+    if (!c.gcCustomerId && who.gcCustomerId) data.gcCustomerId = who.gcCustomerId
+    if (!c.familyId && who.familyId) data.familyId = who.familyId
+    // Fill-blank only — never clobber a staff-set chase address (§3).
+    if (!c.chaseEmail && who.chaseEmail) data.chaseEmail = who.chaseEmail
+    if (!c.chasePhoneE164 && who.chasePhoneE164) data.chasePhoneE164 = who.chasePhoneE164
+    // Fallback display name only while there is still no linked contact.
+    if (!c.personName && !c.contactId && !who.contactId && who.personName) {
+      data.personName = who.personName
+    }
+
+    if (Object.keys(data).length === 0) continue
+    await db.directDebitCase.update({ where: { id: c.id }, data })
     updated += 1
   }
 
