@@ -24,11 +24,14 @@ import { trpc } from '@/lib/trpc/client'
 type Severity = 'low' | 'medium' | 'high'
 type Mode = 'crm' | 'manual'
 
-/** Plain-English Slack outcome for the success toast. */
-function slackNote(status: string | undefined): string {
-  if (status === 'sent') return 'posted to #complaintcallsummaries'
-  if (status === 'skipped') return 'Slack not configured — set it up in Settings → Slack channels'
-  return "couldn't post to Slack (still saved on the CRM)"
+/** Plain-English Slack outcome for the success toast — reports the REAL channel
+ *  it landed in (never a hardcoded guess) plus any actionable failure reason. */
+function slackNote(slack: { status?: string; channelName?: string | null; detail?: string | null }): string {
+  const channel = slack.channelName ?? 'Slack'
+  if (slack.status === 'sent') return `posted to ${channel}`
+  if (slack.status === 'skipped')
+    return slack.detail ?? 'Slack not configured — set it up in Settings → Slack channels'
+  return `couldn't post to Slack${slack.detail ? ` — ${slack.detail}` : ''} (still saved on the CRM)`
 }
 
 export function NewComplaintDialog() {
@@ -63,12 +66,14 @@ export function NewComplaintDialog() {
     onSuccess: async (data) => {
       setOpen(false)
       reset()
-      const status = data.slack?.status
-      toast.success(
-        status === 'sent'
-          ? 'Complaint logged and posted to #complaintcallsummaries'
-          : `Complaint logged — ${slackNote(status)}`,
-      )
+      const slack = data.slack ?? {}
+      if (slack.status === 'sent') {
+        toast.success(`Complaint logged and ${slackNote(slack)}`)
+      } else {
+        // Not posted where the operator expects — surface it clearly, not as a
+        // silent success, so a misroute / uninvited bot is obvious.
+        toast.warning(`Complaint logged — ${slackNote(slack)}`)
+      }
       await utils.complaint.activeCount.invalidate()
       await utils.complaint.list.invalidate()
       router.push(`/complaints/${data.id}`)

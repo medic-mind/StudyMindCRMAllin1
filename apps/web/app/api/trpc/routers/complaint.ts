@@ -306,6 +306,7 @@ export const complaintRouter = router({
           createdById: true,
           slackChannelId: true,
           slackMessageTs: true,
+          slackChannelName: true,
           personName: true,
           personPhone: true,
           personEmail: true,
@@ -339,6 +340,9 @@ export const complaintRouter = router({
         archived: c.archivedAt != null,
         createdAt: c.createdAt,
         postedToSlack: Boolean(c.slackMessageTs),
+        // The REAL channel it was posted to (falls back to the canonical name
+        // for complaints logged before this was captured).
+        slackChannelName: c.slackChannelName ?? (c.slackMessageTs ? '#complaintcallsummaries' : null),
         assigneeId: c.assigneeId,
         assigneeName: c.assigneeId ? (names.get(c.assigneeId) ?? null) : null,
         contactId: cust.contactId,
@@ -445,17 +449,34 @@ export const complaintRouter = router({
         severity: input.severity,
         agentId: user.id,
         requestId: ctx.requestId,
-      }).catch((): { status: 'failed' } => ({ status: 'failed' }))
+      }).catch((err): Awaited<ReturnType<typeof postComplaintToSlack>> => ({
+        status: 'failed',
+        channelName: null,
+        detail: err instanceof Error ? err.message : String(err),
+      }))
       if (slack.status === 'sent' && slack.slackTs && slack.channelId) {
         await ctx.db.complaint
           .update({
             where: { id },
-            data: { slackChannelId: slack.channelId, slackMessageTs: slack.slackTs },
+            data: {
+              slackChannelId: slack.channelId,
+              slackMessageTs: slack.slackTs,
+              slackChannelName: slack.channelName ?? null,
+            },
           })
           .catch(() => undefined)
       }
 
-      return { id, slack: { status: slack.status } }
+      return {
+        id,
+        slack: {
+          status: slack.status,
+          // The REAL channel it landed in (or null when unknown) so the UI
+          // never claims a hardcoded destination, plus any actionable detail.
+          channelName: slack.channelName ?? null,
+          detail: slack.detail ?? null,
+        },
+      }
     }),
 
   update: auditedProcedure

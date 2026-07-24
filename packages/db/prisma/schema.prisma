@@ -4588,6 +4588,9 @@ model Complaint {
   /// this complaint, so thread updates reply under it (kept in sync both ways).
   slackChannelId String?
   slackMessageTs String?
+  /// Human name of the channel actually posted to (e.g. "#complaintcallsummaries")
+  /// so the UI reports the REAL destination instead of a hardcoded guess.
+  slackChannelName String?
   resolvedAt   DateTime?
   resolvedById String?
   resolution   String?

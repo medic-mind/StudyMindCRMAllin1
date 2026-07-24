@@ -122,7 +122,7 @@ export function ComplaintDetailPanel({
             <span>Raised {formatRelativeTime(new Date(c.createdAt), new Date())}</span>
             {c.postedToSlack ? (
               <span className="inline-flex items-center gap-1 text-emerald-600">
-                <HashIcon size={11} /> Posted to #complaintcallsummaries
+                <HashIcon size={11} /> Posted to {c.slackChannelName ?? '#complaintcallsummaries'}
               </span>
             ) : (
               <span className="text-amber-600">Not posted to Slack</span>
