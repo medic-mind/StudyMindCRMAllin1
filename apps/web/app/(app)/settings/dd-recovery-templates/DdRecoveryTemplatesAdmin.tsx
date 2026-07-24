@@ -269,6 +269,10 @@ interface SettingsForm {
   financePhone: string
   companyName: string
   companyAddress: string
+  autoChaseEnabled: boolean
+  autoChaseSetupLinkUrl: string
+  autoChaseEmail: boolean
+  autoChaseSms: boolean
 }
 
 // The customisable policy figures behind the chase (ADR 0045 amendment) — late
@@ -288,6 +292,10 @@ function RecoverySettingsPanel() {
         financePhone: q.data.financePhone,
         companyName: q.data.companyName,
         companyAddress: q.data.companyAddress,
+        autoChaseEnabled: q.data.autoChaseEnabled,
+        autoChaseSetupLinkUrl: q.data.autoChaseSetupLinkUrl ?? '',
+        autoChaseEmail: q.data.autoChaseEmail,
+        autoChaseSms: q.data.autoChaseSms,
       })
     }
   }, [q.data, f])
@@ -372,6 +380,65 @@ function RecoverySettingsPanel() {
             />
           </Field>
         </div>
+
+        {/* Automatic chasing — the master switch for hands-off reminders. */}
+        <div className="space-y-3 rounded-lg border border-neutral-200 bg-neutral-50 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-neutral-900">Automatic chasing</p>
+              <p className="text-xs text-neutral-500">
+                When on, every new recovery case (everyone who cancels or underpays a Direct Debit)
+                is chased automatically — escalating reminders on the channels below until they pay
+                or set the Direct Debit back up. No per-case setup. Cases you&apos;ve configured or
+                paused by hand are never overridden.
+              </p>
+            </div>
+            <label className="flex shrink-0 items-center gap-2 text-sm font-medium text-neutral-800">
+              <input
+                type="checkbox"
+                checked={f.autoChaseEnabled}
+                onChange={(e) => setF({ ...f, autoChaseEnabled: e.target.checked })}
+              />
+              {f.autoChaseEnabled ? 'On' : 'Off'}
+            </label>
+          </div>
+          <Field
+            label="Re-signup link (GoCardless or Stripe)"
+            htmlFor="s-link"
+            hint="The one link every reminder sends so people can set their Direct Debit back up. Required — reminders won't send without it."
+            error={
+              f.autoChaseEnabled && !f.autoChaseSetupLinkUrl.trim()
+                ? 'Add a link, or reminders will stay paused.'
+                : undefined
+            }
+          >
+            <Input
+              id="s-link"
+              value={f.autoChaseSetupLinkUrl}
+              onChange={(e) => setF({ ...f, autoChaseSetupLinkUrl: e.target.value })}
+              placeholder="https://pay.gocardless.com/…"
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-4 text-sm text-neutral-700">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={f.autoChaseEmail}
+                onChange={(e) => setF({ ...f, autoChaseEmail: e.target.checked })}
+              />
+              Send email reminders
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={f.autoChaseSms}
+                onChange={(e) => setF({ ...f, autoChaseSms: e.target.checked })}
+              />
+              Send text reminders (Trengo)
+            </label>
+          </div>
+        </div>
+
         <div className="flex justify-end">
           <Button type="button" size="sm" onClick={() => save.mutate(f)} disabled={save.isPending}>
             {save.isPending ? 'Saving…' : 'Save settings'}

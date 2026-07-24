@@ -160,8 +160,11 @@ export {
 // Automated Direct Debit chasing (ADR 0045) — pure engine decisions.
 export {
   chaseAutoResolved,
+  decideAutoArm,
   decideChaseTick,
   nextChaseAt,
+  type AutoArmPatch,
+  type AutoChaseConfig,
   type ChaseCaseState,
   type ChaseChannel,
   type ChaseTemplateRef,

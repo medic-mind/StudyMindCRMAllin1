@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   chaseAutoResolved,
+  decideAutoArm,
   decideChaseTick,
   nextChaseAt,
+  type AutoChaseConfig,
   type ChaseCaseState,
   type ChaseTemplateRef,
 } from './dd-chase'
@@ -31,6 +33,87 @@ function cs(overrides: Partial<ChaseCaseState> = {}): ChaseCaseState {
 
 const emails = [tpl('e1', 'email'), tpl('e2', 'email'), tpl('e3', 'email')]
 const texts = [tpl('s1', 'sms'), tpl('s2', 'sms')]
+
+// A fresh auto-opened case: un-armed (sends off, no link), autoChase default on.
+function unarmed(overrides: Partial<ChaseCaseState> = {}): ChaseCaseState {
+  return cs({
+    status: 'new',
+    sendEmails: false,
+    sendTexts: false,
+    setupLinkUrl: null,
+    escalationStep: 0,
+    nextAutoMessageAt: null,
+    ...overrides,
+  })
+}
+
+function config(overrides: Partial<AutoChaseConfig> = {}): AutoChaseConfig {
+  return {
+    autoChaseEnabled: true,
+    autoChaseSetupLinkUrl: 'https://pay.gocardless.com/global',
+    autoChaseEmail: true,
+    autoChaseSms: false,
+    ...overrides,
+  }
+}
+
+describe('decideAutoArm', () => {
+  it('arms an un-touched case with the global link + email when enabled', () => {
+    const patch = decideAutoArm(unarmed(), config(), now)
+    expect(patch).not.toBeNull()
+    expect(patch).toMatchObject({
+      setupLinkUrl: 'https://pay.gocardless.com/global',
+      recoveryStrategy: 'resend_link',
+      sendEmails: true,
+      sendTexts: false,
+      nextAutoMessageAt: now,
+    })
+  })
+
+  it('does nothing when auto-chase is off', () => {
+    expect(decideAutoArm(unarmed(), config({ autoChaseEnabled: false }), now)).toBeNull()
+  })
+
+  it('does nothing without a global re-signup link (stays "needs link")', () => {
+    expect(decideAutoArm(unarmed(), config({ autoChaseSetupLinkUrl: null }), now)).toBeNull()
+    expect(decideAutoArm(unarmed(), config({ autoChaseSetupLinkUrl: '   ' }), now)).toBeNull()
+  })
+
+  it('never overrides a case a human already armed or configured', () => {
+    expect(decideAutoArm(unarmed({ setupLinkUrl: 'https://human/link' }), config(), now)).toBeNull()
+    expect(decideAutoArm(unarmed({ sendEmails: true }), config(), now)).toBeNull()
+  })
+
+  it('never re-arms a paused case', () => {
+    expect(decideAutoArm(unarmed({ autoChase: false }), config(), now)).toBeNull()
+  })
+
+  it('does not arm a channel it cannot reach', () => {
+    // Email selected but the case has no email → nothing to send on.
+    expect(decideAutoArm(unarmed({ chaseEmail: null }), config(), now)).toBeNull()
+    // SMS selected + a valid phone → arm SMS only.
+    const patch = decideAutoArm(
+      unarmed({ chaseEmail: null }),
+      config({ autoChaseEmail: false, autoChaseSms: true }),
+      now,
+    )
+    expect(patch).toMatchObject({ sendEmails: false, sendTexts: true })
+  })
+
+  it('will not text a non-E.164 phone', () => {
+    expect(
+      decideAutoArm(
+        unarmed({ chaseEmail: null, chasePhoneE164: '07700900123' }),
+        config({ autoChaseEmail: false, autoChaseSms: true }),
+        now,
+      ),
+    ).toBeNull()
+  })
+
+  it('skips a closed case', () => {
+    expect(decideAutoArm(unarmed({ status: 'recovered' }), config(), now)).toBeNull()
+  })
+})
 
 describe('decideChaseTick', () => {
   it('sends on every enabled channel at the current escalation step', () => {

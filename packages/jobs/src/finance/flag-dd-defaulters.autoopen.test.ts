@@ -11,7 +11,7 @@
 // identify logic in isolation; ddIssueMeetsCutoff / DEFAULT_DD_ISSUE_CUTOFF stay
 // real.
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   listPlanShortfalls,
@@ -59,6 +59,7 @@ function makeDb(
   opts: {
     existingBySub?: Set<string>
     existingByContact?: Set<string>
+    subscriptionName?: string | null
   } = {},
 ) {
   const created: CreatedCase[] = []
@@ -91,12 +92,26 @@ function makeDb(
       findFirst: async () => ({ gcCustomerId: 'CU1' }),
     },
     gcSubscription: {
-      findFirst: async () => null,
+      findFirst: async () => ({ gcCustomerId: null, name: opts.subscriptionName ?? null }),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any
   return { db, created }
 }
+
+beforeEach(() => {
+  // Default: the onboard resolver finds/creates nothing (each test that needs a
+  // contact overrides this) — keeps paths that don't touch it from crashing.
+  resolveOrCreateContactForGcCustomer.mockReset()
+  resolveOrCreateContactForGcCustomer.mockResolvedValue({
+    contactId: null,
+    created: false,
+    linked: false,
+    displayName: null,
+    email: null,
+    phone: null,
+  })
+})
 
 describe('autoOpenRecoveryCases', () => {
   it('creates a recovery case for a new plan shortfall with SAFE defaults (§3 no auto-send)', async () => {
@@ -168,6 +183,36 @@ describe('autoOpenRecoveryCases', () => {
       { gcCustomerId: 'CU9' },
       { actorId: null },
     )
+  })
+
+  it('never leaves a case "Unknown" — falls back to the plan name when the customer is empty', async () => {
+    // Customer row has no name/email/phone, so the resolver creates nothing…
+    resolveOrCreateContactForGcCustomer.mockResolvedValue({
+      contactId: null,
+      created: false,
+      linked: false,
+      displayName: null,
+      email: null,
+      phone: null,
+    })
+    listPlanShortfalls.mockResolvedValue([
+      {
+        gcSubscriptionId: 'SUB3',
+        gcCustomerId: 'CU_empty',
+        contactId: null,
+        familyId: null,
+        shortfallMinor: 5775,
+        issueDate: AFTER_CUTOFF,
+      },
+    ])
+    listActivePlanArrears.mockResolvedValue([])
+    listDefaulters.mockResolvedValue([])
+
+    // …but the plan name embeds the person, so the case is labelled with it.
+    const { db, created } = makeDb({ subscriptionName: 'Ilona Pisarek 30h LNAT' })
+    await autoOpenRecoveryCases(db, NOW)
+    expect(created[0]!.personName).toBe('Ilona Pisarek 30h LNAT')
+    expect(created[0]!.contactId).toBeNull()
   })
 
   it('is idempotent — a plan that already has a case is skipped', async () => {

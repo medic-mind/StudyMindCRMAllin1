@@ -89,6 +89,77 @@ export function decideChaseTick(input: {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Automatic arming (ADR 0045 amendment). Operators asked that automated
+// reminders "just work" without arming every case by hand. When the operator
+// turns on automatic chasing (Settings → Direct Debit recovery), the hourly
+// engine arms every NEW, un-touched case: it turns on the enabled channels the
+// case can actually reach, attaches the single global re-signup link, and
+// schedules the first message. SAFE by construction: only fires when the
+// operator enabled it AND a global re-signup link is set (the resend_link goal
+// cannot send without one, §3), and never overrides a case a human already
+// configured or paused.
+// -----------------------------------------------------------------------------
+
+export interface AutoChaseConfig {
+  /** Master switch — nothing is auto-armed unless the operator turned this on. */
+  autoChaseEnabled: boolean
+  /** The one global re-signup link armed cases send. Null ⇒ cannot arm. */
+  autoChaseSetupLinkUrl: string | null
+  autoChaseEmail: boolean
+  autoChaseSms: boolean
+}
+
+/** The fields to write when auto-arming a case. */
+export interface AutoArmPatch {
+  setupLinkUrl: string
+  recoveryStrategy: RecoveryStrategy
+  sendEmails: boolean
+  sendTexts: boolean
+  nextAutoMessageAt: Date
+}
+
+/** A case is "already armed / touched" when a human (or a prior arm) has given
+ *  it a link or switched a channel on — we never override that. */
+function isCaseArmed(cs: Pick<ChaseCaseState, 'setupLinkUrl' | 'sendEmails' | 'sendTexts'>): boolean {
+  return Boolean(cs.setupLinkUrl) || cs.sendEmails || cs.sendTexts
+}
+
+/**
+ * Decide whether to auto-arm one open case right now, and with what. Returns the
+ * patch to apply, or null to leave the case as-is. Pure — the engine persists.
+ *
+ * Arms only when: the operator enabled auto-chase, a global re-signup link is
+ * set, the case is open + not already armed/paused, and the case can reach the
+ * customer on at least one enabled channel (has an email / an E.164 phone).
+ */
+export function decideAutoArm(
+  cs: ChaseCaseState,
+  config: AutoChaseConfig,
+  now: Date,
+): AutoArmPatch | null {
+  if (!config.autoChaseEnabled) return null
+  if (CLOSED.has(cs.status)) return null
+  if (!cs.autoChase) return null // a human paused it — respect that.
+  if (isCaseArmed(cs)) return null // already configured — never override.
+  // The resend_link goal (get them back onto a plan) needs the link to send.
+  const link = config.autoChaseSetupLinkUrl?.trim()
+  if (!link) return null
+
+  const sendEmails = config.autoChaseEmail && Boolean(cs.chaseEmail)
+  const sendTexts =
+    config.autoChaseSms && Boolean(cs.chasePhoneE164 && cs.chasePhoneE164.trim().startsWith('+'))
+  if (!sendEmails && !sendTexts) return null // no channel we can actually reach.
+
+  return {
+    setupLinkUrl: link,
+    recoveryStrategy: 'resend_link',
+    sendEmails,
+    sendTexts,
+    nextAutoMessageAt: now,
+  }
+}
+
 /** When the next message is due after a successful send. */
 export function nextChaseAt(now: Date, cadenceDays: number): Date {
   const days = Number.isFinite(cadenceDays) && cadenceDays >= 1 ? Math.floor(cadenceDays) : 3

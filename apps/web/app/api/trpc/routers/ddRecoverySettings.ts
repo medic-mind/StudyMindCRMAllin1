@@ -26,6 +26,11 @@ const UpdateInput = z.object({
   financePhone: z.string().trim().min(3).max(40),
   companyName: z.string().trim().min(1).max(120),
   companyAddress: z.string().trim().min(1).max(300),
+  // Automatic chasing (operator opt-in). Empty link string clears it.
+  autoChaseEnabled: z.boolean(),
+  autoChaseSetupLinkUrl: z.string().trim().url().max(600).nullish().or(z.literal('')),
+  autoChaseEmail: z.boolean(),
+  autoChaseSms: z.boolean(),
 })
 
 export const ddRecoverySettingsRouter = router({
@@ -38,6 +43,7 @@ export const ddRecoverySettingsRouter = router({
     const user = requireUser(ctx)
     assertManage(user.role)
     const lateFeeMinor = Math.round(input.lateFeePounds * 100)
+    const link = input.autoChaseSetupLinkUrl?.trim()
     const fields = {
       lateFeeMinor,
       defaultCadenceDays: input.defaultCadenceDays,
@@ -45,6 +51,10 @@ export const ddRecoverySettingsRouter = router({
       financePhone: input.financePhone.trim(),
       companyName: input.companyName.trim(),
       companyAddress: input.companyAddress.trim(),
+      autoChaseEnabled: input.autoChaseEnabled,
+      autoChaseSetupLinkUrl: link && link.length > 0 ? link : null,
+      autoChaseEmail: input.autoChaseEmail,
+      autoChaseSms: input.autoChaseSms,
     }
     await ctx.db.ddRecoverySettings.upsert({
       where: { id: 'dd_recovery' },

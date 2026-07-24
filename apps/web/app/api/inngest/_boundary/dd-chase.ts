@@ -21,6 +21,7 @@ import { createId } from '@paralleldrive/cuid2'
 import { writeAuditLogEntry } from '@studymind/audit'
 import {
   chaseAutoResolved,
+  decideAutoArm,
   decideChaseTick,
   linkUnlinkedGcCustomers,
   nextChaseAt,
@@ -140,7 +141,17 @@ export const ddChaseTick = inngest.createFunction(
     const settings = await loadDdRecoverySettings(db)
     const letterhead = companyLetterhead(settings)
 
+    // Operator-level automatic chasing config (Settings → DD recovery). When on,
+    // every new un-touched case is armed below with no per-case human step.
+    const autoChaseConfig = {
+      autoChaseEnabled: settings.autoChaseEnabled,
+      autoChaseSetupLinkUrl: settings.autoChaseSetupLinkUrl,
+      autoChaseEmail: settings.autoChaseEmail,
+      autoChaseSms: settings.autoChaseSms,
+    }
+
     let resolved = 0
+    let armed = 0
     let sent = 0
     let exhausted = 0
 
@@ -198,6 +209,58 @@ export const ddChaseTick = inngest.createFunction(
           resolved += 1
           continue
         }
+      }
+
+      // 1b. Auto-arm an un-touched case when the operator turned automatic
+      // chasing on — turn on the reachable channels, attach the global re-signup
+      // link, and schedule the first message NOW (§3: only when the operator
+      // enabled it and a link is set; never overrides a human-configured case).
+      const armPatch = decideAutoArm(
+        {
+          status: c.status as 'new' | 'chasing' | 'escalated',
+          autoChase: c.autoChase,
+          sendEmails: c.sendEmails,
+          sendTexts: c.sendTexts,
+          chaseEmail: c.chaseEmail,
+          chasePhoneE164: c.chasePhoneE164,
+          setupLinkUrl: c.setupLinkUrl,
+          recoveryStrategy: c.recoveryStrategy === 'demand_full' ? 'demand_full' : 'resend_link',
+          escalationStep: c.escalationStep,
+          nextAutoMessageAt: c.nextAutoMessageAt,
+        },
+        autoChaseConfig,
+        now,
+      )
+      if (armPatch) {
+        await db.directDebitCase.update({
+          where: { id: c.id },
+          data: {
+            setupLinkUrl: armPatch.setupLinkUrl,
+            recoveryStrategy: armPatch.recoveryStrategy,
+            sendEmails: armPatch.sendEmails,
+            sendTexts: armPatch.sendTexts,
+            nextAutoMessageAt: armPatch.nextAutoMessageAt,
+            updatedById: null,
+          },
+        })
+        // Reflect into the in-memory case so this SAME tick sends the first step.
+        c.setupLinkUrl = armPatch.setupLinkUrl
+        c.recoveryStrategy = armPatch.recoveryStrategy
+        c.sendEmails = armPatch.sendEmails
+        c.sendTexts = armPatch.sendTexts
+        c.nextAutoMessageAt = armPatch.nextAutoMessageAt
+        await writeAuditLogEntry(db, {
+          actorId: null,
+          action: 'direct_debit.case_auto_armed',
+          target: { type: 'DirectDebitCase', id: c.id },
+          requestId: `dd-arm:${c.id}`,
+          after: {
+            channels: [armPatch.sendEmails ? 'email' : null, armPatch.sendTexts ? 'sms' : null].filter(
+              Boolean,
+            ),
+          },
+        })
+        armed += 1
       }
 
       // 2. Send whatever is due.
@@ -401,7 +464,7 @@ export const ddChaseTick = inngest.createFunction(
       }
     }
 
-    logger.info({ examined: cases.length, resolved, sent, exhausted }, 'dd-chase tick complete')
-    return { examined: cases.length, resolved, sent, exhausted }
+    logger.info({ examined: cases.length, resolved, armed, sent, exhausted }, 'dd-chase tick complete')
+    return { examined: cases.length, resolved, armed, sent, exhausted }
   },
 )
