@@ -205,7 +205,9 @@ export function BoardCard({
         {cardFaceHas(cardFields, 'contact') && (card.contactEmail || card.contactPhone) && (
           <div className="pointer-events-auto mt-1.5 flex flex-col gap-1 text-xs text-neutral-600">
             {card.contactEmail && <EmailLink email={card.contactEmail} />}
-            {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
+            {card.contactPhone && (
+              <PhoneLink phone={card.contactPhone} contactId={card.contactId} />
+            )}
           </div>
         )}
         {/* SUBJECT — COMPANY — enquiry-type row, then any labels. */}

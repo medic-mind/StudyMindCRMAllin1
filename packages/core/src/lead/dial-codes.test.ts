@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   asTypedPhoneFallback,
   composePhoneE164,
+  dialCountryFromCode,
   dialCountryFromPhone,
   DIAL_COUNTRIES,
   findDialCountry,
@@ -77,6 +78,47 @@ describe('findDialCountry', () => {
     expect(findDialCountry('Atlantis')).toBeNull()
     expect(findDialCountry('')).toBeNull()
     expect(findDialCountry(null)).toBeNull()
+  })
+})
+
+describe('dialCountryFromCode', () => {
+  it('resolves a "+dial" country-code field (the CF7 shape in the bug report)', () => {
+    expect(dialCountryFromCode('+44')?.iso2).toBe('GB')
+    expect(dialCountryFromCode('+964')?.iso2).toBe('IQ')
+    expect(dialCountryFromCode('+91')?.iso2).toBe('IN')
+  })
+
+  it('accepts a bare code, "00"-prefixed code, and stray whitespace', () => {
+    expect(dialCountryFromCode('44')?.iso2).toBe('GB')
+    expect(dialCountryFromCode('0044')?.iso2).toBe('GB')
+    expect(dialCountryFromCode(' +964 ')?.iso2).toBe('IQ')
+  })
+
+  it('picks the primary territory for a shared dial code', () => {
+    expect(dialCountryFromCode('+1')?.iso2).toBe('US')
+    expect(dialCountryFromCode('+44')?.iso2).toBe('GB')
+    expect(dialCountryFromCode('+7')?.iso2).toBe('RU')
+  })
+
+  it('reads the code out of a "+44 (United Kingdom)" combined label', () => {
+    expect(dialCountryFromCode('+44 (United Kingdom)')?.iso2).toBe('GB')
+  })
+
+  it('never mistakes a full phone number for a dial code', () => {
+    // 12 digits: exact-matches no dial code → null (the phone field owns this).
+    expect(dialCountryFromCode('447990856600')).toBeNull()
+  })
+
+  it('does not misread a stray number inside a non-code value', () => {
+    // No "+"/"00" and not digits-only → not trusted as a dial code.
+    expect(dialCountryFromCode('Region 7')).toBeNull()
+  })
+
+  it('returns null for a non-dial value / empty / unknown code', () => {
+    expect(dialCountryFromCode('United Kingdom')).toBeNull()
+    expect(dialCountryFromCode('+999')).toBeNull()
+    expect(dialCountryFromCode('')).toBeNull()
+    expect(dialCountryFromCode(null)).toBeNull()
   })
 })
 

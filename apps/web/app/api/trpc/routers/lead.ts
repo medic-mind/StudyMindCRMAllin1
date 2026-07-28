@@ -415,6 +415,89 @@ export const leadRouter = router({
   }),
 
   /**
+   * Retroactive phone-number repair for the "Invalid number" board (ADR 0023
+   * follow-up). The dial-code bug stored valid-looking but WRONG +… numbers
+   * (a "Country code: +44"/"+964" that was ignored → composed against a
+   * mis-geolocated host country). This re-derives the correct number from each
+   * contact's ORIGINAL enquiry (`Lead.rawPayload`) and only proposes a change
+   * when it comes from a customer-stated signal and actually differs — so the
+   * operator sees exactly what will change before applying (§3/§34).
+   */
+  phoneRepair: router({
+    // Preview: read-only scan of the Invalid number board.
+    preview: protectedProcedure.query(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      assertCanManageSources(user.role)
+      const { scanInvalidNumberRepairs } = await import('@/lib/leads/phone-repair')
+      const scan = await scanInvalidNumberRepairs(ctx.db, { limit: 1000 })
+      return {
+        changes: scan.changes,
+        contactCount: scan.contactCount,
+        fixable: scan.changes.length,
+        withoutEnquiryData: scan.withoutEnquiryData,
+      }
+    }),
+
+    // Apply: re-scan and write the confident corrections, one audited update
+    // per contact. Idempotent — a second run finds nothing left to fix.
+    apply: auditedProcedure.mutation(async ({ ctx }) => {
+      const user = requireUser(ctx)
+      assertCanManageSources(user.role)
+      const { scanInvalidNumberRepairs } = await import('@/lib/leads/phone-repair')
+      const scan = await scanInvalidNumberRepairs(ctx.db, { limit: 1000 })
+
+      let changed = 0
+      let skipped = 0
+      for (const change of scan.changes) {
+        const before = await ctx.db.contact.findFirst({
+          where: { id: change.contactId, deletedAt: null },
+          select: { id: true, phoneE164: true, country: true },
+        })
+        // Guard against a concurrent edit between the scan and this write:
+        // only correct a contact still carrying the wrong number we scanned.
+        if (!before || before.phoneE164 !== change.current) {
+          skipped += 1
+          continue
+        }
+        try {
+          const after = await ctx.db.contact.update({
+            where: { id: change.contactId },
+            data: {
+              phoneE164: change.proposed,
+              // Fill a blank country from the same resolution; never overwrite.
+              ...(!before.country && change.country ? { country: change.country } : {}),
+              updatedById: user.id,
+            },
+            select: { id: true, phoneE164: true, country: true },
+          })
+          await ctx.audit({
+            action: 'contact.updated',
+            target: { type: 'Contact', id: change.contactId },
+            before,
+            after,
+          })
+          changed += 1
+        } catch (err) {
+          // A unique-collision means this corrected number already exists on
+          // another contact — that's a duplicate for the merge page, not
+          // something to overwrite here. Skip, don't fail the batch.
+          if (
+            err &&
+            typeof err === 'object' &&
+            'code' in err &&
+            (err as { code?: string }).code === 'P2002'
+          ) {
+            skipped += 1
+            continue
+          }
+          throw err
+        }
+      }
+      return { changed, skipped, scanned: scan.changes.length }
+    }),
+  }),
+
+  /**
    * Integrations "Test Lead Generator". Pushes a synthetic Contact-Form-7-shape
    * submission through the exact same ingest path as the public endpoint
    * (normalise → persist → classify), so an admin can prove the pipeline is

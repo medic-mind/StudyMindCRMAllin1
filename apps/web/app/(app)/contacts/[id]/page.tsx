@@ -260,7 +260,9 @@ export default async function ContactDetailPage({ params }: { params: Promise<{ 
                     className="inline-flex items-center gap-1.5 transition-colors hover:text-primary-700"
                   />
                 )}
-                {contact.phoneE164 && <PhoneLink phone={contact.phoneE164} />}
+                {contact.phoneE164 && (
+                  <PhoneLink phone={contact.phoneE164} contactId={contact.id} />
+                )}
                 {contact.family && (
                   <Link
                     href={`/contacts/families/${contact.family.id}`}

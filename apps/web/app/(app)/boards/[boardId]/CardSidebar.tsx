@@ -235,7 +235,7 @@ export function CardSidebar({ card, canWrite }: Props) {
           )}
           {card.contactPhone && (
             <div className="text-xs">
-              <PhoneLink phone={card.contactPhone} />
+              <PhoneLink phone={card.contactPhone} contactId={card.contactId} />
             </div>
           )}
         </div>

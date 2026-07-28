@@ -227,7 +227,9 @@ export function BoardListView({
                               onClick={(e) => e.stopPropagation()}
                             >
                               {card.contactEmail && <EmailLink email={card.contactEmail} />}
-                              {card.contactPhone && <PhoneLink phone={card.contactPhone} />}
+                              {card.contactPhone && (
+                                <PhoneLink phone={card.contactPhone} contactId={card.contactId} />
+                              )}
                             </div>
                           ) : null}
                         </td>

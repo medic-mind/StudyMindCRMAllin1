@@ -213,7 +213,7 @@ export function AtRiskDashboard({
                         </Link>
                         <span className="mt-0.5 flex items-center gap-2 text-xs">
                           <EmailLink email={c.email} />
-                          <PhoneLink phone={c.phoneE164} />
+                          <PhoneLink phone={c.phoneE164} contactId={c.id} />
                         </span>
                         {(c.labels.length > 0 || c.complaintCount > 0) && (
                           <span className="mt-1 flex flex-wrap items-center gap-1">

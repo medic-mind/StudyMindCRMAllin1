@@ -623,7 +623,7 @@ export function ContactsTable({ rows, baseQuery, total, page, pageSize, role }: 
                       <EmailLink email={c.email} />
                     </td>
                     <td className="px-3 py-2 align-top text-xs">
-                      <PhoneLink phone={c.phoneE164} />
+                      <PhoneLink phone={c.phoneE164} contactId={c.id} />
                     </td>
                     <td className="px-3 py-2 align-top">
                       {c.subjects.length === 0 && c.enquiryTypes.length === 0 ? (

@@ -85,6 +85,31 @@ describe('resolveLeadPhoneAndCountry — international phone fix', () => {
     expect(res.countrySource).toBe('visitor_ip')
   })
 
+  it('a "+44" country-code field wins over a mis-geolocated host and composes +44 (Luise Scharf bug)', async () => {
+    // The CF7 form posted "Country code: +44" + "Phone Number: 7990856600".
+    // The host/CDN IP mis-geolocated to Germany; the stated +44 must win so the
+    // number composes to +44…, not +49….
+    const res = await resolveLeadPhoneAndCountry(
+      input('7990856600', { formCountry: '+44', transportIp: HOST_UK }),
+      geo({ [HOST_UK]: 'DE' }),
+    )
+    expect(res.phoneE164).toBe('+447990856600')
+    expect(res.country?.iso2).toBe('GB')
+    expect(res.countrySource).toBe('form')
+  })
+
+  it('a "+964" country-code field composes an Iraqi number, not a Bulgarian one (Ahmed bug)', async () => {
+    // "Country code: +964" + "Phone: 0785 751 0917". The host IP mis-geolocated
+    // to Bulgaria (+359); the stated +964 must win and the trunk 0 is dropped.
+    const res = await resolveLeadPhoneAndCountry(
+      input('0785 751 0917', { formCountry: '+964', transportIp: HOST_UK }),
+      geo({ [HOST_UK]: 'BG' }),
+    )
+    expect(res.phoneE164).toBe('+9647857510917')
+    expect(res.country?.iso2).toBe('IQ')
+    expect(res.countrySource).toBe('form')
+  })
+
   it('the form country field wins over everything', async () => {
     const res = await resolveLeadPhoneAndCountry(
       input('09876543210', {

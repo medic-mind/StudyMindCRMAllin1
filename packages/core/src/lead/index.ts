@@ -16,6 +16,7 @@ export { classifyLead, FREE_RESOURCES_CATEGORY, type ClassifyOptions } from './c
 export {
   asTypedPhoneFallback,
   composePhoneE164,
+  dialCountryFromCode,
   findDialCountry,
   inferPhoneE164,
   DIAL_COUNTRIES,
@@ -39,3 +40,4 @@ export {
   type ResolvePhoneCountryInput,
   type ResolvePhoneCountryResult,
 } from './phone-country'
+export { proposePhoneRepair, type PhoneRepairProposal } from './phone-repair'

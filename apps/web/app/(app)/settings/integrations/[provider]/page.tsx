@@ -29,6 +29,7 @@ import { TrengoProbeButton } from './TrengoProbeButton'
 import { LeadIngestionPanel } from './LeadIngestionPanel'
 import { LeadCallTimeBackfillButton } from './LeadCallTimeBackfillButton'
 import { LeadMaintenanceButton } from './LeadMaintenanceButton'
+import { LeadPhoneRepairButton } from './LeadPhoneRepairButton'
 
 const BACKFILL_PROVIDERS = new Set(['gmail', 'aircall', 'trengo', 'slack'])
 const SHARED_TOKEN_BACKFILL = new Set(['aircall', 'slack'])
@@ -186,6 +187,7 @@ export default async function IntegrationDetailPage({ params }: PageProps) {
           {provider === 'lead' ? (
             <>
               <div className="flex flex-wrap justify-end gap-2">
+                <LeadPhoneRepairButton />
                 <LeadCallTimeBackfillButton />
                 <LeadMaintenanceButton />
               </div>

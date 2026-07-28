@@ -359,6 +359,38 @@ export function findDialCountry(token: string | null | undefined): DialCountry |
 }
 
 /**
+ * Resolve a country from a DIAL-CODE token — the value a CF7 "Country code"
+ * field posts ("+44", "+964", "0044", "44"). This is the enquirer's OWN stated
+ * code, so it is a first-class country signal, but `findDialCountry` can't read
+ * it (it only knows ISO2 codes and English names). Without this, a form that
+ * posts "Country code: +44" had its country discarded and the phone was then
+ * composed against a wrongly IP-geolocated host country (the live bug: +44 →
+ * +49…, +964 → +359…). For a shared code (+1, +44, +7) the primary territory
+ * wins (US, GB, RU) — it is listed first in DIAL_COUNTRIES. Country NAMES / ISO2
+ * are handled by findDialCountry; this is the dial-code-only fallback.
+ */
+export function dialCountryFromCode(token: string | null | undefined): DialCountry | null {
+  if (!token) return null
+  const t = token.trim()
+  if (!t) return null
+  const hasIntlPrefix = t.startsWith('+') || t.startsWith('00')
+  // Strip a leading "+" / "00", then keep only the digits so "+44",
+  // "+44 (United Kingdom)" and "0044" all reduce to the bare code.
+  let digits = (t.startsWith('+') ? t.slice(1) : t).replace(/[^\d]/gu, '')
+  if (digits.startsWith('00')) digits = digits.slice(2)
+  if (!digits) return null
+  // A dial code is 1–4 digits; anything longer is a phone number, not a code
+  // (exact-matched below, so a full number can't accidentally hit a prefix).
+  if (digits.length > 4) return null
+  // Without an explicit "+"/"00", only trust a token that is ESSENTIALLY just
+  // the code (e.g. "44"), so a stray number inside a country name can't be
+  // misread as a dial code.
+  if (!hasIntlPrefix && !/^\d{1,4}$/u.test(t.replace(/[\s()+-]/gu, ''))) return null
+  // First match in DIAL_COUNTRIES order = the primary territory for the code.
+  return DIAL_COUNTRIES.find((c) => c.dial === digits) ?? null
+}
+
+/**
  * Compose E.164 from a country + a nationally-typed number ("928 812 118",
  * Peru → "+51928812118"). Strips the trunk 0, tolerates the dial code being
  * typed inline, and refuses anything outside plausible E.164 lengths so we

@@ -21,6 +21,7 @@
 import {
   asTypedPhoneFallback,
   composePhoneE164,
+  dialCountryFromCode,
   dialCountryFromPhone,
   findDialCountry,
   inferPhoneE164,
@@ -77,7 +78,12 @@ export async function resolveLeadPhoneAndCountry(
     explicitE164 ?? (input.phoneDisplay ? inferPhoneE164(input.phoneDisplay) : null)
 
   // --- Country waterfall (customer-given signals beat guesses) ---------------
-  let country: DialCountry | null = findDialCountry(input.formCountry)
+  // The form's country field may be a NAME/ISO2 ("United Kingdom", "GB") OR a
+  // dial code ("+44", "+964") — CF7's "Country code" field posts the latter.
+  // Try the name/ISO resolver first, then the dial-code resolver, so a
+  // customer-stated dial code is honoured instead of being lost to IP geo.
+  let country: DialCountry | null =
+    findDialCountry(input.formCountry) ?? dialCountryFromCode(input.formCountry)
   let countrySource: LeadCountrySource | null = country ? 'form' : null
 
   if (!country && ownCodeE164) {
