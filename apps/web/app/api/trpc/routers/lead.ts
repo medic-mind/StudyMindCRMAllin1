@@ -438,9 +438,10 @@ export const leadRouter = router({
       }
     }),
 
-    // Apply: re-scan and write the confident corrections, one audited update
+    // Commit: re-scan and write the confident corrections, one audited update
     // per contact. Idempotent — a second run finds nothing left to fix.
-    apply: auditedProcedure.mutation(async ({ ctx }) => {
+    // (`commit`, not `apply` — `apply` is a reserved tRPC router key, §37.)
+    commit: auditedProcedure.mutation(async ({ ctx }) => {
       const user = requireUser(ctx)
       assertCanManageSources(user.role)
       const { scanInvalidNumberRepairs } = await import('@/lib/leads/phone-repair')

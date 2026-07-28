@@ -17,7 +17,7 @@ export function LeadPhoneRepairButton(): JSX.Element {
   const [open, setOpen] = useState(false)
   const utils = trpc.useUtils()
   const preview = trpc.lead.phoneRepair.preview.useQuery(undefined, { enabled: open })
-  const apply = trpc.lead.phoneRepair.apply.useMutation({
+  const apply = trpc.lead.phoneRepair.commit.useMutation({
     onSuccess: (r) => {
       if (r.changed > 0) {
         toast.success(
