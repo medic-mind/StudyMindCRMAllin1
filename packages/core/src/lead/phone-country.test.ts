@@ -110,6 +110,18 @@ describe('resolveLeadPhoneAndCountry — international phone fix', () => {
     expect(res.countrySource).toBe('form')
   })
 
+  it('a "+62" country-code field composes an Indonesian number, not a Singaporean one (Rendi bug)', async () => {
+    // "Country code: +62" + "Phone: 0812-2272-7990". A Singapore-ish host IP
+    // mis-geolocated to +65; the stated +62 must win and the trunk 0 is dropped.
+    const res = await resolveLeadPhoneAndCountry(
+      input('0812-2272-7990', { formCountry: '+62', transportIp: HOST_UK }),
+      geo({ [HOST_UK]: 'SG' }),
+    )
+    expect(res.phoneE164).toBe('+6281222727990')
+    expect(res.country?.iso2).toBe('ID')
+    expect(res.countrySource).toBe('form')
+  })
+
   it('the form country field wins over everything', async () => {
     const res = await resolveLeadPhoneAndCountry(
       input('09876543210', {
