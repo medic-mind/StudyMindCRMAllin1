@@ -184,24 +184,58 @@ export function buildRawEmail(input: BuildRawEmailInput): string {
  * email: the SYSTEM_GMAIL_EMAIL account if it has connected Gmail, else any
  * connected default mailbox, else null.
  */
-export async function resolveSystemAgentId(): Promise<string | null> {
+export interface SystemMailbox {
+  agentId: string
+  /** The connected mailbox address, so the send uses that mailbox's OWN token
+   *  (multi-account, ADR 0012). Absent only for a legacy User-level token. */
+  address?: string
+}
+
+/**
+ * Resolve the connected mailbox that should send system email — and crucially
+ * its ADDRESS, so `createClientForAgent` reads the per-mailbox token. Multi-
+ * account connects store the refresh token on `GmailMailbox` (keyed by address),
+ * NOT on `User.gmailRefreshTokenCipherId`; resolving an agentId alone made the
+ * client fall back to the (usually null) User pointer and the send `skipped` —
+ * the "no reset email arrives" bug when mailboxes were connected the new way.
+ * Order: the configured SYSTEM_GMAIL_EMAIL mailbox, else its legacy User token,
+ * else any connected mailbox, else any legacy User token. Only rows that
+ * actually carry a token are considered.
+ */
+export async function resolveSystemMailbox(): Promise<SystemMailbox | null> {
   const configured = (process.env['SYSTEM_GMAIL_EMAIL'] ?? DEFAULT_SYSTEM_EMAIL)
     .trim()
     .toLowerCase()
   if (configured) {
+    const mailbox = await db.gmailMailbox.findFirst({
+      where: { address: configured, deletedAt: null, refreshTokenCipherId: { not: null } },
+      select: { agentId: true, address: true },
+    })
+    if (mailbox) return { agentId: mailbox.agentId, address: mailbox.address }
     const user = await db.user.findUnique({
       where: { email: configured },
       select: { id: true, gmailRefreshTokenCipherId: true },
     })
-    if (user?.gmailRefreshTokenCipherId) return user.id
+    if (user?.gmailRefreshTokenCipherId) return { agentId: user.id }
   }
-  // Fallback: any connected mailbox (prefer a default one).
-  const mailbox = await db.gmailMailbox.findFirst({
-    where: { deletedAt: null },
+  // Fallback: any connected mailbox with its own token (prefer a default one).
+  const anyMailbox = await db.gmailMailbox.findFirst({
+    where: { deletedAt: null, refreshTokenCipherId: { not: null } },
     orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-    select: { agentId: true },
+    select: { agentId: true, address: true },
   })
-  return mailbox?.agentId ?? null
+  if (anyMailbox) return { agentId: anyMailbox.agentId, address: anyMailbox.address }
+  // Last resort: any user carrying a legacy User-level token.
+  const anyUser = await db.user.findFirst({
+    where: { gmailRefreshTokenCipherId: { not: null }, deletedAt: null },
+    select: { id: true },
+  })
+  return anyUser ? { agentId: anyUser.id } : null
+}
+
+/** Back-compat: just the agent id (e.g. the `systemEmailReady` check). */
+export async function resolveSystemAgentId(): Promise<string | null> {
+  return (await resolveSystemMailbox())?.agentId ?? null
 }
 
 /**
@@ -216,20 +250,27 @@ export async function sendSystemEmail(input: SendSystemEmailInput): Promise<Syst
     .filter((s) => s.length > 0)
   if (to.length === 0) return { status: 'skipped', id: null, detail: 'No recipients' }
 
-  const agentId = input.fromAgentId ?? (await resolveSystemAgentId())
-  if (!agentId) {
+  // Resolve BOTH the agent and its mailbox address so the send uses that
+  // mailbox's own token (multi-account). An explicit fromAgentId/fromAddress
+  // overrides. Without the address a multi-account mailbox's token isn't found
+  // and the send is wrongly skipped.
+  const resolved: SystemMailbox | null = input.fromAgentId
+    ? { agentId: input.fromAgentId, ...(input.fromAddress ? { address: input.fromAddress } : {}) }
+    : await resolveSystemMailbox()
+  if (!resolved) {
     return {
       status: 'skipped',
       id: null,
       detail: 'No system Gmail mailbox connected (set SYSTEM_GMAIL_EMAIL and connect Gmail).',
     }
   }
+  const address = input.fromAddress ?? resolved.address
 
   const requestId = input.requestId ?? createId()
   try {
     const client = await createClientForAgent({
-      agentId,
-      ...(input.fromAddress ? { address: input.fromAddress } : {}),
+      agentId: resolved.agentId,
+      ...(address ? { address } : {}),
       purpose: 'gmail.system_send',
       requestId,
     })
