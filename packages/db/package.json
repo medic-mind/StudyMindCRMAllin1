@@ -18,6 +18,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:webinar": "tsx prisma/seed-webinar-run.ts",
     "db:seed:super-admin": "tsx prisma/seed-super-admin.ts",
+    "create-admin": "tsx prisma/create-admin.ts",
     "db:reset-password": "tsx prisma/reset-password.ts",
     "db:studio": "prisma studio"
   },
