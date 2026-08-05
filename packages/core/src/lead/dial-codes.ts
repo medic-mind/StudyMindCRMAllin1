@@ -396,10 +396,14 @@ export function dialCountryFromCode(token: string | null | undefined): DialCount
  * typed inline, and refuses anything outside plausible E.164 lengths so we
  * never store junk in `Contact.phoneE164` (§29).
  */
-// Countries where the national trunk '0' is retained after the dial code in the
-// international (E.164) number rather than dropped. Italy is the canonical case
-// (`+39 06…`); nearly everyone else drops it.
-const TRUNK_ZERO_RETAINED: ReadonlySet<string> = new Set<string>(['IT'])
+// Countries where the leading '0' is part of the subscriber number rather than a
+// national trunk prefix, so it is RETAINED after the dial code in the E.164
+// number. Nearly everyone else drops it.
+//   IT — the canonical case (`+39 06…` for landlines).
+//   CI — since the 2021 renumbering, Côte d'Ivoire numbers are 10 digits whose
+//        leading 0 is part of the number (`+225 0507153136`). Stripping it
+//        produced a 9-digit, undialable `+225507153136`.
+const TRUNK_ZERO_RETAINED: ReadonlySet<string> = new Set<string>(['IT', 'CI'])
 
 export function composePhoneE164(country: DialCountry, rawNumber: string): string | null {
   let digits = rawNumber.replace(/[^\d]/gu, '')
@@ -414,9 +418,7 @@ export function composePhoneE164(country: DialCountry, rawNumber: string): strin
   // for countries where the leading 0 is part of the international number
   // (Italy: `+39 06…`). Stripping it there yields a wrong, undialable E.164.
   const national =
-    digits.startsWith('0') && !TRUNK_ZERO_RETAINED.has(country.iso2)
-      ? digits.slice(1)
-      : digits
+    digits.startsWith('0') && !TRUNK_ZERO_RETAINED.has(country.iso2) ? digits.slice(1) : digits
   if (national.length < 6 || national.length > 12) return null
   const candidate = `+${country.dial}${national}`
   return /^\+[1-9]\d{6,14}$/u.test(candidate) ? candidate : null

@@ -156,11 +156,40 @@ const SYNONYMS = {
     'your-preferred-time',
     'your-preferred-day',
   ],
-  // A country field — name or ISO code. Used for phone dial-code composing.
-  country: ['country', 'your-country', 'country-code', 'country-of-residence', 'nationality'],
+  // A country field — name, ISO code, or a DIAL CODE ("+20"). Used for phone
+  // dial-code composing.
+  //
+  // `intl-country-code` is the hidden field an intl-tel-input phone widget posts
+  // (`intl_country_code=+20`) — the flag dropdown the enquirer actually picks. It
+  // was missing here, so the dial code they selected was parked in `extraFields`
+  // and the resolver fell through to IP geolocation, which returns the carrier's
+  // regional transit hub rather than the enquirer's country (Egypt→France,
+  // Malaysia→Singapore, Nigeria→Netherlands). Every such number was then composed
+  // against the wrong dial code — structurally valid E.164, silently undialable.
+  // The sibling names cover the same widget under other plugin builds.
+  country: [
+    'country',
+    'your-country',
+    'country-code',
+    'country-of-residence',
+    'nationality',
+    'intl-country-code',
+    'phone-country-code',
+    'phone-country',
+    'dial-code',
+  ],
   // The visitor's IP, when the form forwards it (CF7 `_remote_ip`, hidden
   // fields). normKey turns `_remote_ip` into `remote-ip`.
-  ip: ['ip', 'remote-ip', 'user-ip', 'client-ip', 'visitor-ip', 'ip-address', 'user-ip-address', 'remote-addr'],
+  ip: [
+    'ip',
+    'remote-ip',
+    'user-ip',
+    'client-ip',
+    'visitor-ip',
+    'ip-address',
+    'user-ip-address',
+    'remote-addr',
+  ],
   // A subject/topic dropdown — "Which course?", "Subject", "Interested in".
   subject: [
     'subject',
@@ -273,11 +302,27 @@ const NAT_MDY_RE = new RegExp(
 )
 const WEEKDAY_RE = /\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\b/iu
 const MONTH3: Record<string, number> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
 }
 const WEEKDAY3: Record<string, number> = {
-  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
 }
 
 function pad2(n: number): string {
