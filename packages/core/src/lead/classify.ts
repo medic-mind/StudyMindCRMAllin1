@@ -37,12 +37,70 @@ const GENERIC_CATEGORIES = new Set([
   FREE_RESOURCES_CATEGORY,
 ])
 
-/** Pick the single best Subject for the card tag: the form-selected subject
- * wins (the enquirer told us directly), then the most-specific category. */
+/** Academic LEVELS (key stage / qualification), not topics. A level says how
+ * advanced the work is, never what it is about — "A-Level" is not a subject.
+ *
+ * These are still emitted as categories and stay stamped on the lead (the
+ * operator wants to see GCSE / A-Level / IB); they are just barred from taking
+ * the Subject slot while a real subject is available. Without this a Study Mind
+ * enquiry from /subject/a-level-chemistry-tutors/ was tagged Subject "A-Level"
+ * even though the page — and the matched `chemistry-tuition` product — say
+ * Chemistry. Compared via `levelKey`, so "A Level", "A-Level" and "alevel" are
+ * one value. */
+const LEVEL_CATEGORIES: ReadonlySet<string> = new Set([
+  'gcse',
+  'igcse',
+  'alevel',
+  'aslevel',
+  'a2',
+  'ib',
+  'ks1',
+  'ks2',
+  'ks3',
+  'ks4',
+  'ks5',
+  '11plus',
+  '13plus',
+  'commonentrance',
+  'sixthform',
+  'primary',
+  'secondary',
+  'undergraduate',
+  'postgraduate',
+])
+
+/** Fold a category/form value to its level key: lower-case, drop separators,
+ *  and normalise the "+" in 11+/13+ so every spelling compares equal. */
+function levelKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\+/gu, 'plus')
+    .replace(/[^a-z0-9]/gu, '')
+}
+
+function isLevel(value: string): boolean {
+  return LEVEL_CATEGORIES.has(levelKey(value))
+}
+
+/**
+ * Pick the single best Subject for the card tag.
+ *
+ * Order: a real SUBJECT the enquirer stated → a real subject the page implies →
+ * the academic level → a generic service bucket. A level only becomes the
+ * Subject when the page yields no subject at all, which is the previous
+ * behaviour and the right fallback for a generic /contact or /consultation page.
+ */
 function pickSubject(formSubject: string | null, cats: string[]): string | null {
+  const subjectCat = cats.find((c) => !GENERIC_CATEGORIES.has(c) && !isLevel(c))
+  // The form value still wins when it IS a subject — the enquirer told us
+  // directly. But a level dropdown ("A-Level", "GCSE") must never displace the
+  // subject the landing page identifies.
+  if (formSubject && !isLevel(formSubject)) return formSubject
+  if (subjectCat) return subjectCat
+  // Nothing subject-shaped anywhere: fall back to the level, then generic.
   if (formSubject) return formSubject
-  const specific = cats.find((c) => !GENERIC_CATEGORIES.has(c))
-  if (specific) return specific
+  const level = cats.find((c) => isLevel(c))
+  if (level) return level
   const firstReal = cats.find((c) => c !== FREE_RESOURCES_CATEGORY)
   return firstReal ?? null
 }
